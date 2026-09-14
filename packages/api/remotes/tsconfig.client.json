@@ -24,6 +24,9 @@
       "path": "../../client/file-upload/tsconfig.client.json"
     },
     {
+      "path": "../../credentials/authorization"
+    },
+    {
       "path": "../../credentials/credentials"
     },
     {
@@ -70,6 +73,9 @@
     },
     {
       "path": "../workspace-files/tsconfig.client.json"
+    },
+    {
+      "path": "../authorization-controller"
     },
     {
       "path": "../settings-controller"

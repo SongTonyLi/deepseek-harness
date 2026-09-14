@@ -16,7 +16,17 @@ Keys are write-only. The page receives a redacted descriptor after saving, never
 
 Choose **Add provider** and pick a provider dsh ships with; the list shows provider ids such as `anthropic`, `openai`, `moonshotai` for Kimi, or `zai` for GLM. Enter its API key and save. The installed catalog supplies the endpoint, protocol, and model list.
 
-Providers that sign in with OAuth, such as Codex, are not supported here yet.
+## Sign in to a provider
+
+Some providers take a sign-in instead of an API key. Codex is the one most people want: signing in with a ChatGPT Plus or Pro account makes the GPT-5 and GPT-6 Codex models available through that subscription, with no API key and no per-token billing.
+
+Choose **Add provider**, pick `openai-codex`, and save it; then choose **Sign in** on its card. A dialog opens with a link to the provider's page. Complete the sign-in there and the dialog reports success. If the provider asks anything on the way — which login method to use, a code to paste back — the dialog asks it too, and **Continue** sends your answer.
+
+On a machine with no browser, pick the device-code method when the provider offers it: the dialog then shows a short code to type on the page it names, from any other device.
+
+A signed-in provider shows **Signed in with a provider subscription** on its card. Its models appear in the picker like any other configured provider. **Sign out** forgets the credential on this machine; it does not end the session at the provider, so revoke it in your provider account if you need that.
+
+Providers that ship a subscription login show these controls; the rest ask only for an API key, in the card's own field. A sign-in is stored in `$DSH_HOME/.credentials.yaml` alongside your keys, and refreshes itself.
 
 ## Add a custom provider
 

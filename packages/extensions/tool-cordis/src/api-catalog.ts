@@ -594,6 +594,49 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'authorizationController',
+    summary: 'Host service backing the generated `ctx.remote.authorization` namespace.',
+    description: 'Host service backing the generated `ctx.remote.authorization` namespace.\n\nA running attempt is one stream: the surface opens `begin()`, reads the flow\'s notices and prompts as frames, answers a prompt through `answer()` or `decline()` naming the frame\'s `promptId`, and reads the settlement as the last frame. Closing the stream withdraws the attempt; `cancel()` does the same from a second call, for a surface that no longer holds the stream. One attempt per key at a time is the seam\'s rule, so the pending prompts of one key belong to exactly one stream.',
+    methods: [
+      {
+        signature: '@Remote async list(): Promise<AuthorizationFlowView[]>',
+        description: 'Every registered flow with its stored-record state, for a surface listing what can be signed into. A composition without the authorization seam offers nothing to sign into, so the list is empty rather than an error.',
+        parameters: [],
+        returns: 'one view per flow, in registration order.',
+        throws: ['RemoteError when the seam is mounted but no credential provider is.'],
+      },
+      {
+        signature: '@Remote({ mode: \'stream\' }) begin(request: AuthorizationBeginRequest, signal: AbortSignal): AsyncIterable<AuthorizationFrame>',
+        description: 'Run one attempt and stream what the flow says. The stream ends with a `settled` frame, or fails with `authorization/rejected` when the seam refuses the request or the flow fails. Aborting `signal` — closing the stream — withdraws the attempt.\n\nThe attempt starts when the carrier pulls the first frame, not when this method returns: a stream nobody consumes must not hold the key for the life of the process.',
+        parameters: [{ name: 'request', description: 'the key to authorize and, optionally, the method.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
+        returns: 'the attempt\'s frames, in order.',
+      },
+      {
+        signature: '@Remote answer(key: string, promptId: string, value: string): Promise<void>',
+        description: 'Answer one prompt of the running attempt. The value crosses the wire in this direction only: no read path returns it.',
+        parameters: [{ name: 'key', description: 'the key of the attempt that asked.' }, { name: 'promptId', description: 'the prompt frame\'s id.' }, { name: 'value', description: 'what the human typed, or the chosen option\'s id.' }],
+        throws: ['RemoteError `authorization/no-prompt` when nothing with that id is waiting.'],
+      },
+      {
+        signature: '@Remote decline(key: string, promptId: string): Promise<void>',
+        description: 'Decline one prompt of the running attempt; the attempt settles `cancelled`.',
+        parameters: [{ name: 'key', description: 'the key of the attempt that asked.' }, { name: 'promptId', description: 'the prompt frame\'s id.' }],
+        throws: ['RemoteError `authorization/no-prompt` when nothing with that id is waiting.'],
+      },
+      {
+        signature: '@Remote cancel(key: string): Promise<void>',
+        description: 'Withdraw the attempt running for a key, if any, from a call that does not hold the attempt\'s stream.',
+        parameters: [{ name: 'key', description: 'the key whose attempt should stop.' }],
+      },
+      {
+        signature: '@Remote async signOut(key: string): Promise<void>',
+        description: 'Forget the stored credential record for a key. Removing an absent record is a no-op; the issuer is not told.',
+        parameters: [{ name: 'key', description: 'the record to delete.' }],
+        throws: ['RemoteError `authorization/rejected` when the store refuses the delete.'],
+      },
+    ],
+  },
+  {
     key: 'clientModules',
     summary: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows.',
     description: 'The web plugin table service: incremental `dsh.client` scan + wire composition + bundle route + index injection rows. Construction runs the activation scan synchronously — a malformed declaration or missing bundle among the already-loaded entries aggregates into one loud throw (FAILED fiber; the boot activation audit reports it).',
@@ -3739,12 +3782,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AttachmentId = Branded<\'AttachmentId\'>;',
   },
   {
+    name: 'AuthorizationBeginRequest',
+    declaration: 'export interface AuthorizationBeginRequest {\n    readonly key: string;\n    readonly method?: string;\n}',
+  },
+  {
     name: 'AuthorizationEntry',
     declaration: 'export interface AuthorizationEntry {\n    key: CredentialKey;\n    label: string;\n    methods: readonly AuthorizationMethod[];\n    inFlight: boolean;\n}',
   },
   {
     name: 'AuthorizationFlow',
     declaration: 'export interface AuthorizationFlow {\n    readonly key: CredentialKey;\n    readonly label: string;\n    readonly methods: readonly [\n        AuthorizationMethod,\n        ...AuthorizationMethod[]\n    ];\n    run(session: AuthorizationSession): Promise<void>;\n}',
+  },
+  {
+    name: 'AuthorizationFlowView',
+    declaration: 'export interface AuthorizationFlowView {\n    readonly key: string;\n    readonly scope: string;\n    readonly id: string;\n    readonly label: string;\n    readonly methods: readonly AuthorizationMethod[];\n    readonly inFlight: boolean;\n    readonly configured: boolean;\n    readonly kind?: \'api-key\' | \'grant\';\n}',
+  },
+  {
+    name: 'AuthorizationFrame',
+    declaration: 'export type AuthorizationFrame = AuthorizationNoticeFrame | AuthorizationPromptFrame | AuthorizationPromptWithdrawnFrame | AuthorizationSettledFrame;',
   },
   {
     name: 'AuthorizationInteraction',
@@ -3759,6 +3814,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AuthorizationNotice {\n    message: string;\n    url?: string;\n    code?: string;\n}',
   },
   {
+    name: 'AuthorizationNoticeFrame',
+    declaration: 'export interface AuthorizationNoticeFrame {\n    readonly type: \'notice\';\n    readonly message: string;\n    readonly url?: string;\n    readonly code?: string;\n}',
+  },
+  {
     name: 'AuthorizationOutcome',
     declaration: 'export interface AuthorizationOutcome {\n    status: AuthorizationStatus;\n}',
   },
@@ -3767,8 +3826,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AuthorizationPrompt = {\n    signal?: AbortSignal;\n} & ({\n    kind: \'text\';\n    message: string;\n    placeholder?: string;\n} | {\n    kind: \'secret\';\n    message: string;\n    placeholder?: string;\n} | {\n    kind: \'select\';\n    message: string;\n    options: readonly AuthorizationPromptOption[];\n});',
   },
   {
+    name: 'AuthorizationPromptFrame',
+    declaration: 'export interface AuthorizationPromptFrame {\n    readonly type: \'prompt\';\n    readonly promptId: string;\n    readonly kind: \'text\' | \'secret\' | \'select\';\n    readonly message: string;\n    readonly placeholder?: string;\n    readonly options?: readonly AuthorizationPromptOption[];\n}',
+  },
+  {
     name: 'AuthorizationPromptOption',
     declaration: 'export interface AuthorizationPromptOption {\n    id: string;\n    label: string;\n    description?: string;\n}',
+  },
+  {
+    name: 'AuthorizationPromptWithdrawnFrame',
+    declaration: 'export interface AuthorizationPromptWithdrawnFrame {\n    readonly type: \'prompt-withdrawn\';\n    readonly promptId: string;\n}',
   },
   {
     name: 'AuthorizationRequest',
@@ -3777,6 +3844,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AuthorizationSession',
     declaration: 'export interface AuthorizationSession {\n    readonly method: string;\n    readonly signal: AbortSignal;\n    notify(notice: AuthorizationNotice): void;\n    prompt(prompt: AuthorizationPrompt): Promise<string>;\n}',
+  },
+  {
+    name: 'AuthorizationSettledFrame',
+    declaration: 'export interface AuthorizationSettledFrame {\n    readonly type: \'settled\';\n    readonly status: AuthorizationStatus;\n}',
   },
   {
     name: 'AuthorizationSettlement',
