@@ -122,6 +122,75 @@ async begin(request: AuthorizationRequest): Promise<AuthorizationOutcome>
 
 Source: [`packages/credentials/authorization/src/index.ts`](../../packages/credentials/authorization/src/index.ts)
 
+<a id="ctxauthorizationcontroller--authorizationcontroller"></a>
+
+### `ctx.authorizationController` — `AuthorizationController`
+
+Host service backing the generated `ctx.remote.authorization` namespace.
+
+A running attempt is one stream: the surface opens `begin()`, reads the flow's notices and prompts as frames, answers a prompt through `answer()` or `decline()` naming the frame's `promptId`, and reads the settlement as the last frame. Closing the stream withdraws the attempt; `cancel()` does the same from a second call, for a surface that no longer holds the stream. One attempt per key at a time is the seam's rule, so the pending prompts of one key belong to exactly one stream.
+
+```ts cordis-catalog
+/**
+ * Every registered flow with its stored-record state, for a surface listing
+ * what can be signed into. A composition without the authorization seam
+ * offers nothing to sign into, so the list is empty rather than an error.
+ * @returns one view per flow, in registration order.
+ * @throws RemoteError when the seam is mounted but no credential provider is.
+ */
+@Remote async list(): Promise<AuthorizationFlowView[]>
+
+/**
+ * Run one attempt and stream what the flow says. The stream ends with a
+ * `settled` frame, or fails with `authorization/rejected` when the seam
+ * refuses the request or the flow fails. Aborting `signal` — closing the
+ * stream — withdraws the attempt.
+ *
+ * The attempt starts when the carrier pulls the first frame, not when this
+ * method returns: a stream nobody consumes must not hold the key for the
+ * life of the process.
+ * @param request - the key to authorize and, optionally, the method.
+ * @param signal - cancellation owned by the Remote stream carrier.
+ * @returns the attempt's frames, in order.
+ */
+@Remote({ mode: 'stream' }) begin(request: AuthorizationBeginRequest, signal: AbortSignal): AsyncIterable<AuthorizationFrame>
+
+/**
+ * Answer one prompt of the running attempt. The value crosses the wire in
+ * this direction only: no read path returns it.
+ * @param key - the key of the attempt that asked.
+ * @param promptId - the prompt frame's id.
+ * @param value - what the human typed, or the chosen option's id.
+ * @throws RemoteError `authorization/no-prompt` when nothing with that id is waiting.
+ */
+@Remote answer(key: string, promptId: string, value: string): Promise<void>
+
+/**
+ * Decline one prompt of the running attempt; the attempt settles `cancelled`.
+ * @param key - the key of the attempt that asked.
+ * @param promptId - the prompt frame's id.
+ * @throws RemoteError `authorization/no-prompt` when nothing with that id is waiting.
+ */
+@Remote decline(key: string, promptId: string): Promise<void>
+
+/**
+ * Withdraw the attempt running for a key, if any, from a call that does not
+ * hold the attempt's stream.
+ * @param key - the key whose attempt should stop.
+ */
+@Remote cancel(key: string): Promise<void>
+
+/**
+ * Forget the stored credential record for a key. Removing an absent record
+ * is a no-op; the issuer is not told.
+ * @param key - the record to delete.
+ * @throws RemoteError `authorization/rejected` when the store refuses the delete.
+ */
+@Remote async signOut(key: string): Promise<void>
+```
+
+Source: [`packages/api/authorization-controller/src/index.ts`](../../packages/api/authorization-controller/src/index.ts)
+
 <a id="ctxcredentials--credentialprovider-abstract-seam"></a>
 
 ### `ctx.credentials` — `CredentialProvider` (abstract seam)
@@ -275,7 +344,7 @@ One authorization attempt has finished and released its key. Fires for every ter
 'authorization/settled'(key: CredentialKey, settlement: AuthorizationSettlement): void
 ```
 
-Source: [`packages/credentials/authorization/src/index.ts`](../../packages/credentials/authorization/src/index.ts)
+Source: [`packages/credentials/authorization/src/types.ts`](../../packages/credentials/authorization/src/types.ts)
 
 <a id="credentials-events"></a>
 

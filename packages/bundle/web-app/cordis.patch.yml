@@ -115,6 +115,12 @@
     - id: settings-controller
       name: '@deepseek-ai/dsh-api-settings-controller'
 
+    # Provider sign-in over Typert Remote: the flow directory, one attempt per
+    # stream, prompt answers, and sign-out. It lists nothing while the
+    # authorization seam is absent from the composition.
+    - id: authorization-controller
+      name: '@deepseek-ai/dsh-api-authorization-controller'
+
     # Workspace commands and reconnect-safe projection over Typert Remote.
     - id: workspace-controller
       name: '@deepseek-ai/dsh-api-workspace-controller'
@@ -245,6 +251,11 @@
 
     - id: ui-settings-plugin-inventory
       name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
+
+    # Provider sign-in on the Models page, over the authorization seam rows
+    # in the base layer. Without a mounted flow it renders nothing.
+    - id: ui-settings-signin
+      name: '@deepseek-ai/dsh-client-ui-settings-signin'
 
     - id: ui-conversation
       name: '@deepseek-ai/dsh-client-ui-conversation'
