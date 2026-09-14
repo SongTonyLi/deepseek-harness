@@ -121,7 +121,8 @@
     "@deepseek-ai/dsh-workflow-ptc": "workspace:^",
     "@deepseek-ai/dsh-agent-instructions": "workspace:^",
     "@deepseek-ai/dsh-ptc-runtime-node": "workspace:^",
-    "@deepseek-ai/dsh-plugin-manager": "workspace:^"
+    "@deepseek-ai/dsh-plugin-manager": "workspace:^",
+    "@deepseek-ai/dsh-authorization": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^"

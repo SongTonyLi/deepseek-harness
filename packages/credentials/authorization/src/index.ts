@@ -44,18 +44,6 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     authorization: AuthorizationService
   }
-
-  interface Events {
-    /**
-     * One authorization attempt has finished and released its key. Fires for
-     * every terminal outcome, failures included, so a surface watching a key it
-     * did not start (a second browser tab) learns the attempt is over.
-     * @mode emit
-     * @param key - the credential record the finished attempt was authorizing.
-     * @param settlement - how it ended, including the `failed` case its caller sees as a thrown error.
-     */
-    'authorization/settled'(key: CredentialKey, settlement: AuthorizationSettlement): void
-  }
 }
 
 /** Stable error taxonomy for authorization failures. */

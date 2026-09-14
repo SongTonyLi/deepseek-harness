@@ -28,6 +28,8 @@
       - button "编辑 openrouter": 编辑
       - button "删除 openrouter": 删除
       - alert: "llm-pi-ai: provider \"openrouter\" model \"111\" needs an api; the installed catalog does not describe it, so set the route's api to the wire protocol its endpoint speaks"
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
     - listitem:
       - text: zai
       - button "编辑 zai": 编辑
