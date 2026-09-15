@@ -762,6 +762,9 @@ export class TuiApp {
       this.notice(`${current.provider}/${current.model}: ${describeFailure(error)}`, 'error')
       return
     }
+    // The await above can settle after the app stops; the entry guard's
+    // narrowing does not survive it.
+    // oxlint-disable-next-line typescript/no-unnecessary-condition
     if (this.stopped) return
     if (efforts.length < 2) {
       this.notice(`${current.provider}/${current.model} has no selectable reasoning efforts`)
