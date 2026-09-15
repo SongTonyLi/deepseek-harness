@@ -31,17 +31,20 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-permission-presets'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { attachLocalFile, type PendingAttachment } from './attach.ts'
+import { listDeliverables, listPlugins, listSettings, listSubagents, resetSetting, sessionOutline, setSetting, showSetting } from './catalog.ts'
 import { AssistantBlock, NoticeBlock, ToolBlock, UserBlock, type BlockTheme } from './blocks.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { exportSessionZip } from './export.ts'
 import { ApprovalPrompt, ModalQueue, PickPrompt, QuestionPrompt, type PickItem } from './prompts.ts'
 import { describeSession, listSessionChoices } from './sessions.ts'
+import { compactionNotice, footerStatus, readStatusFacts, retryMessage, statusReport } from './status.ts'
 import { editorTheme, type Palette } from './style.ts'
 import {
   EMPTY_USAGE,
@@ -122,6 +125,12 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'skills', description: 'List the skills the Agent can load' },
   { name: 'signin', description: 'Sign in to a provider' },
   { name: 'export', description: 'Write this session log as a ZIP archive (/export [directory])' },
+  { name: 'status', description: 'Show context usage, token totals, session stats, todos, goal, plan, and permission' },
+  { name: 'outline', description: 'List the turns of this session with their prompts and replies' },
+  { name: 'deliverables', description: 'List the files the agent presented in this session' },
+  { name: 'subagents', description: 'List the subagent sessions under this session' },
+  { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
+  { name: 'plugins', description: 'List the composed plugins and their state' },
   { name: 'tools', description: 'Expand or collapse every tool card' },
   { name: 'quit', description: 'Save the session and exit' },
   { name: 'exit', description: 'Same as /quit' },
@@ -204,7 +213,7 @@ export class TuiApp {
       }),
       ctx.on('approval/request', (request, next) => {
         if (request.agent !== this.agent) return next()
-        return this.askApproval(request.toolName, request.reason, request.signal)
+        return this.askApproval(request.toolName, request.reason, request.callId, request.signal)
       }),
       ctx.on('user-questions/request', (request, next) => {
         if (request.agent !== this.agent) return next()
@@ -212,6 +221,12 @@ export class TuiApp {
       }),
       this.tui.addInputListener(data => this.onKey(data)),
     )
+    const projections = ctx.get('sessionProjections')
+    if (projections !== undefined) {
+      this.disposers.push(projections.onChanged((session) => {
+        if (session === this.agent.session) this.refreshFooter()
+      }))
+    }
     this.deps.terminal.setTitle(`dsh · ${this.deps.cwd}`)
     this.tui.setFocus(this.editor)
     this.tui.start()
@@ -369,12 +384,59 @@ export class TuiApp {
     if (permission !== undefined) parts.push(`permission ${permission}`)
     const usage = formatUsage(this.usage)
     if (usage !== '') parts.push(usage)
+    parts.push(...footerStatus(this.statusFacts()))
     parts.push(this.deps.cwd)
     if (this.pending.length > 0) parts.push(`${String(this.pending.length)} attached`)
     const hints = this.agent.status === 'running'
       ? 'Enter queues for the next turn · Ctrl+S steers this turn · Esc stops it · Ctrl+O tool output · Ctrl+C twice quits'
       : 'Enter sends · Esc stops the turn · Ctrl+O tool output · Ctrl+C twice quits'
     this.footer.setText(`${palette.dim(parts.join(' · '))}\n${palette.dim(hints)}`)
+    this.tui.requestRender()
+  }
+
+  private statusFacts(): ReturnType<typeof readStatusFacts> {
+    const projections = this.deps.ctx.get('sessionProjections')
+    return projections === undefined ? {} : readStatusFacts(projections, this.agent.session)
+  }
+
+  /** Print `rows` as one block, or `empty` as a notice when there are none. */
+  private showRows(rows: readonly string[], empty: string): void {
+    if (rows.length === 0) {
+      this.notice(empty)
+      return
+    }
+    this.chat.addChild(new Text(rows.join('\n'), 0, 1))
+    this.tui.requestRender()
+  }
+
+  private async settings(argument: string): Promise<void> {
+    const [first, second, ...rest] = argument === '' ? [] : argument.split(/\s+/u)
+    if (first === undefined) {
+      this.showRows(listSettings(this.deps.ctx), 'no settings namespaces are registered')
+      return
+    }
+    if (first === 'reset') {
+      if (second === undefined) {
+        this.notice('usage: /settings reset <namespace>', 'error')
+        return
+      }
+      this.notice(await resetSetting(this.deps.ctx, second), 'success')
+      return
+    }
+    if (second === undefined) {
+      this.showRows(showSetting(this.deps.ctx, first), `settings ${first} is empty`)
+      return
+    }
+    const value = rest.join(' ')
+    if (value === '') {
+      this.notice('usage: /settings <namespace> <path> <value>', 'error')
+      return
+    }
+    this.notice(await setSetting(this.deps.ctx, first, second, value), 'success')
+  }
+
+  private showStatus(): void {
+    this.chat.addChild(new Text(statusReport(this.statusFacts()).join('\n'), 0, 1))
     this.tui.requestRender()
   }
 
@@ -449,7 +511,8 @@ export class TuiApp {
     this.editor.setText('')
     this.editor.addToHistory(text)
     if (text.startsWith('/')) {
-      this.runCommand(text).catch((error: unknown) => { this.notice(`${text.split(' ')[0] ?? text} failed: ${describeFailure(error)}`, 'error') })
+      const name = text.slice(0, text.indexOf(' ') === -1 ? undefined : text.indexOf(' '))
+      this.runCommand(text).catch((error: unknown) => { this.notice(`${name} failed: ${describeFailure(error)}`, 'error') })
       return
     }
     this.submit(text, mode)
@@ -529,6 +592,24 @@ export class TuiApp {
         return
       case 'export':
         await this.exportSession(argument)
+        return
+      case 'status':
+        this.showStatus()
+        return
+      case 'outline':
+        this.showRows(sessionOutline(this.deps.ctx, this.agent.session), 'no completed turn yet')
+        return
+      case 'deliverables':
+        this.showRows(await listDeliverables(this.deps.ctx, this.agent.session.id, new AbortController().signal), 'nothing presented yet')
+        return
+      case 'subagents':
+        this.showRows(await listSubagents(this.deps.ctx, this.agent.session.id, new AbortController().signal), 'no subagent sessions')
+        return
+      case 'settings':
+        await this.settings(argument)
+        return
+      case 'plugins':
+        this.showRows(listPlugins(this.deps.ctx), 'no plugins are listed')
         return
       default:
         await this.runSharedCommand(line, name)
@@ -834,8 +915,16 @@ export class TuiApp {
 
   // ── seams ───────────────────────────────────────────────────────────────
 
-  private async askApproval(toolName: string, reason: string | undefined, signal: AbortSignal | undefined): Promise<ApprovalOutcome> {
-    const outcome = await this.modals.run(new ApprovalPrompt(this.deps.palette, toolName, reason), signal)
+  private async askApproval(
+    toolName: string,
+    reason: string | undefined,
+    callId: ToolCallId | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<ApprovalOutcome> {
+    // The logged call, when the request names one, shows what the tool is about to do.
+    const args = callId === undefined ? undefined : this.toolArguments.get(callId)
+    const detail = args === undefined ? [] : toolCallText(JSON.stringify(args), this.presentCall(toolName, args)).lines
+    const outcome = await this.modals.run(new ApprovalPrompt(this.deps.palette, toolName, reason, detail), signal)
     const tone: Tone = outcome === 'allowed-once' ? 'success' : 'dim'
     this.notice(`${toolName}: ${outcome === 'allowed-once' ? 'allowed once' : outcome}`, tone)
     return outcome
@@ -954,6 +1043,12 @@ export class TuiApp {
         break
       case 'permission/preset':
         this.refreshFooter()
+        break
+      case 'compaction/summary':
+        this.notice(compactionNotice(event.data))
+        break
+      case 'llm/retry':
+        this.loader.setMessage(retryMessage(event.data))
         break
       default:
         return

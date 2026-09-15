@@ -22,6 +22,10 @@
       "types": "./lib/types/types.d.ts",
       "default": "./lib/types/types.js"
     },
+    "./plan-review": {
+      "types": "./lib/types/plan-review.d.ts",
+      "default": "./lib/types/plan-review.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },

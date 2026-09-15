@@ -173,13 +173,16 @@ export async function bench(options: {
   hostFailure?: string
   /** Hold every host operation until the returned release is called. */
   hostGate?: { release: () => void }
+  /** Replace the real projection registry: `none` mounts nothing, an object is provided as the service. */
+  projections?: 'none' | { snapshot(session: Session, keys: readonly string[]): unknown; onChanged(listener: (session: Session) => void): () => void }
   /** History the host attaches to a resumed or forked session. */
   openedHistory?: readonly SessionEvent[]
   before?(ctx: Context): Promise<void> | void
 } = {}): Promise<Bench> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
-  await ctx.plugin(SessionProjectionRegistry)
+  if (options.projections === undefined) await ctx.plugin(SessionProjectionRegistry)
+  else if (options.projections !== 'none') ctx.provide('sessionProjections', options.projections as never)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await options.before?.(ctx)
@@ -288,7 +291,7 @@ export async function bench(options: {
       status = next
       agent.ctx.emit('agent/status', { agent, status: next })
     },
-    settle: () => new Promise(resolve => setTimeout(resolve, 40)),
+    settle: () => new Promise(resolve => setTimeout(resolve, 60)),
     stream: {
       start: () => { emit({ type: 'start', attemptId, revision: ++revision, turn: 1, step: 1 }) },
       chunk: (chunk) => { emit({ type: 'chunk', attemptId, revision: ++revision, index: index++, time: Date.now(), chunk }) },

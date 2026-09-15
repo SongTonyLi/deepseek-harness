@@ -27,6 +27,7 @@ kind: "package-reference"
 ### 公开 API
 
 - `ctx.userQuestions.ask(request): Promise<AskUserQuestionAnswer>` 派发回答者 waterfall，并等待首个被接受的回答。
+- `planReviewOptions(question): PlanReviewOptions | undefined`（也可从 `@deepseek-ai/dsh-user-questions/plan-review` 导入，不含 Service Definition，供 Client 打包使用）当问题是二元 `plan-review` 时，把它收窄为批准与拒绝两个选项；浏览器卡片与终端提示共享此收窄逻辑。
 
 ### 关键类型
 

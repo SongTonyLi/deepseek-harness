@@ -36,6 +36,16 @@
     - id: present
       name: '@deepseek-ai/dsh-tool-present'
 
+    # Whole-log turn outline for `/outline` (the turnOutline projection key)
+    # over the base session-projection registry.
+    - id: session-turn-outline
+      name: '@deepseek-ai/dsh-session-turn-outline'
+
+    # Turn, step, and latency totals for `/status` (the sessionStats
+    # projection key).
+    - id: session-stats
+      name: '@deepseek-ai/dsh-session-stats'
+
     - id: tui-app-startup
       name: '@deepseek-ai/dsh-tui-app/startup'
 

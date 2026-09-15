@@ -6,6 +6,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   AskUserQuestionAnswer, AskUserQuestionItem,
 } from '@deepseek-ai/dsh-user-questions'
+import { planReviewOptions } from '@deepseek-ai/dsh-user-questions/plan-review'
 import type { createQuestionDraftStore } from '../draft-store.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-session/client' {
@@ -82,22 +83,9 @@ export function planReviewOf(questions: readonly QuestionItem[]): PlanReview | u
   if (questions.length !== 1) return undefined
   // Length-checked above; the index read is the narrowing tax, not a guess.
   const question = questions[0] as QuestionItem
-  const intent = question.intent
-  if (intent?.kind !== 'plan-review' || question.detail === undefined) return undefined
-  if (question.multiSelect === true) return undefined
-  const options = question.options ?? []
-  if (options.length > 2) return undefined
-  const approve = options.find(option => option.label === intent.approve)
-  if (approve === undefined) return undefined
-  const decline = options.find(option => option.label !== intent.approve)
-  return {
-    id: question.id,
-    question: question.question,
-    plan: question.detail,
-    ...(intent.callId === undefined ? {} : { callId: intent.callId }),
-    approve,
-    ...(decline === undefined ? {} : { decline }),
-  }
+  const verdicts = planReviewOptions(question)
+  if (verdicts === undefined || question.detail === undefined) return undefined
+  return { id: question.id, question: question.question, plan: question.detail, ...verdicts }
 }
 
 let nextQuestionKey = 0

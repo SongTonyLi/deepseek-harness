@@ -39,16 +39,17 @@ dsh tui --resume <session-id>             # continue an earlier session
 
 ### 屏幕布局
 
-页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。对话记录下方依次是 agent 工作时的旋转指示、任何打开的提示、编辑器，以及两行页脚：模型与推理强度、权限预设、累计 token 用量、workspace、待发送附件数量与按键提示。
+页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。对话记录下方依次是 agent 工作时的旋转指示、任何打开的提示、编辑器，以及两行页脚：模型与推理强度、权限预设、累计 token 用量、上下文窗口百分比、来自投影接缝的 todo、目标与计划模式标记、workspace、待发送附件数量与按键提示。压缩与模型请求重试以通知形式出现，与浏览器标记承载的事实相同。
 
 ### 按键与命令
 
 | 按键 | 效果 |
 |---|---|
-| `Enter` | 发送编辑器文本；轮次进行中时它被引导（steer）进下一步 |
+| `Enter` | 发送编辑器文本；轮次进行中时它排队到下一轮次 |
+| `Ctrl+S` | 轮次进行中时，把编辑器文本引导（steer）进当前轮次的下一步 |
 | `Shift+Enter` | 插入换行 |
 | `Up` / `Down` | 调出先前的提示 |
-| `Esc` | 停止正在进行的轮次 |
+| `Esc` | 停止正在进行的轮次；已排队的消息保持排队 |
 | `Ctrl+O` | 展开或折叠所有工具卡片 |
 | `Ctrl+C` | 清空编辑器；600 ms 内再按一次则退出 |
 | `Ctrl+D` | 编辑器为空时退出 |
@@ -61,21 +62,27 @@ dsh tui --resume <session-id>             # continue an earlier session
 | `/model` | 为下一次请求选择模型，若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认 |
 | `/sessions` | 选择另一个持久化会话并切换过去 |
 | `/new` | 开始新会话 |
-| `/fork` | 在本会话最后一个完成轮次处 fork |
+| `/fork [turn]` | 在本会话最后一个完成轮次处 fork，或在第 `turn` 轮之后 fork |
 | `/title <text>` | 重命名本会话；单独使用时显示当前标题 |
 | `/attach <path>` | 把图片或文件附加到下一条提示；`/attach` 列出，`/attach clear` 丢弃 |
 | `/queue` | 显示为下一轮次与下一步排队的消息；`/queue clear` 丢弃它们 |
 | `/skills` | 列出 agent 可加载的技能 |
 | `/signin` | 通过提供方的通知与提示登录；`/signin <key>` 跳过选择器 |
 | `/export [dir]` | 把本会话的日志 ZIP（含子会话与附件）写入 `dir`，默认 workspace |
+| `/status` | 上下文窗口用量与构成、含缓存命中的 token 总计、会话统计、todo、目标、计划模式与权限 |
+| `/outline` | 本会话各轮次及其提示与回复预览 |
+| `/deliverables` | agent 交付的文件，按轮次分组 |
+| `/subagents` | 本会话之下的子 agent 会话，含活动状态与 id |
+| `/settings [ns [path value]]` | 列出命名空间、显示某一个或设置某个字段；`/settings reset <ns>` 恢复默认 |
+| `/plugins` | 已组合的插件及其启用状态与生命周期阶段 |
 | `/tools` | 像 `Ctrl+O` 一样展开或折叠所有工具卡片 |
-| `/quit` | 保存会话并退出 |
+| `/quit`、`/exit` | 保存会话并退出 |
 
 其他每条 `/name` 行都交给共享命令注册表，因此 `/compact`、`/permission`、`/goal` 与插件命令的行为和浏览器中一致。
 
 ### 来自 agent 的提示
 
-审批请求绘制 `Allow <tool>?`、请求方的理由以及两行选项：允许一次或拒绝；`Esc` 拒绝，`Ctrl+C` 取消该请求。`ask_user_question` 的问题绘制其选项加一行自由文本；多选用 `Space` 切换各行并通过 `Done` 确认。提示排队、一次只显示一个，被中止的请求会撤回其提示。
+审批请求绘制 `Allow <tool>?`、请求方的理由、请求所指的已记录调用（与其工具卡片相同的行，因此 shell 命令在运行前可读）以及两行选项：允许一次或拒绝；`Esc` 拒绝，`Ctrl+C` 取消该请求。`ask_user_question` 的问题把其 `detail` 渲染为 Markdown，置于选项与一行自由文本之上；多选用 `Space` 切换各行并通过 `Done` 确认。计划评审（`exit_plan_mode` 设置的 `plan-review` 意图）把计划绘制为 Markdown，并提供 Approve、Decline 与 Discuss 行，其中 Discuss 像浏览器卡片一样把请求交回编辑器。提示排队、一次只显示一个，被中止的请求会撤回其提示。
 
 ### 引用与附件
 
@@ -103,15 +110,15 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在其最后一个 `turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。
 
 ### 渲染模型
 
-持久事实来自会话日志：`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；插件通知是一行暗色文字，其他注入的上下文不绘制）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`session/title`（页眉）与 `permission/preset`（页脚）。实时增量来自 `agent/assistant-stream` 的文本与推理增量。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器使用的 `sessionQuery`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills` 与 `authorization`。模态提示是进程本地的呈现，从不写入日志。
+持久事实来自会话日志：`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；插件通知是一行暗色文字，其他注入的上下文不绘制）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`session/title`（页眉）与 `permission/preset`（页脚）。实时增量来自 `agent/assistant-stream` 的文本与推理增量。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器与 `/deliverables` 使用的 `sessionQuery`、供页脚、`/status` 与 `/outline` 使用的 `sessionProjections`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
 
 ### 基于 base 的 patch 面
 
-该 patch 叠加在 `dsh-base` 之上：在 base 的 `system-prompt` 行上设置编码 persona 前缀与 cwd 后缀，保留与 Web 表层相同的临时进程级 PTC 模式开关（`DSH_TOOLS_MODE`），插入 PTC 模式的 worker，挂载由终端应答其问题的模型侧 `ask_user_question` 工具，挂载浏览器所组合的同一批 `@` 引用解析器（`file-reference-local`、`session-reference`）与 `present` 交付物工具，并挂载启动提供方与 runner。base 的 agent 平面行（bash、文件系统、技能、目标、压缩、子 agent）保持启用，因为终端在进程范围内组合其 Agent。
+该 patch 叠加在 `dsh-base` 之上：在 base 的 `system-prompt` 行上设置编码 persona 前缀与 cwd 后缀，保留与 Web 表层相同的临时进程级 PTC 模式开关（`DSH_TOOLS_MODE`），插入 PTC 模式的 worker，挂载由终端应答其问题的模型侧 `ask_user_question` 工具，挂载浏览器所组合的同一批 `@` 引用解析器（`file-reference-local`、`session-reference`）与 `present` 交付物工具，加入 `/outline` 与 `/status` 背后的 `session-turn-outline` 与 `session-stats` 投影行，并挂载启动提供方与 runner。base 的 agent 平面行（bash、文件系统、技能、目标、压缩、子 agent）保持启用，因为终端在进程范围内组合其 Agent。
 
 ### 源码地图
 
@@ -129,10 +136,13 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/diff.ts`](src/diff.ts) | diff 卡片的行 diff 与 hunk 选择 |
 | [`src/style.ts`](src/style.ts) | 调色板与派生的 pi-tui 主题 |
 | [`src/completion.ts`](src/completion.ts) | 编辑器的斜杠命令与 `@` 引用补全 |
+| [`src/status.ts`](src/status.ts) | 基于投影接缝的页脚部件与 `/status` 报告；压缩与重试通知 |
+| [`src/catalog.ts`](src/catalog.ts) | `/settings`、`/plugins`、`/subagents`、`/deliverables` 与 `/outline` 的行 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |
 | — | 不发布运行时不变量伴随模块；应用只在一个 Agent 上注册监听器，不持有其他观察者可能与之矛盾的可变关系。 |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | 基于伪终端的渲染、按键、命令与两个接缝 |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的会话、附件、队列、技能、登录、导出、引用与推理强度命令 |
+| [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、目录命令、命令提示与审批详情 |
 | [`tests/index.spec.ts`](tests/index.spec.ts) | 创建、恢复分页、fork 切割、会话切换、退出流程与失败报告 |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 基于真实 Loader 配置树的命令行解析 |
 | [`../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts`](../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts) | 通过真实启动器与免密钥模拟模型运行随附 profile |
@@ -180,8 +190,8 @@ runner 不向请求前缀添加任何内容；`/model` 切换像在浏览器中�
 
 - **同一时间一个会话**——`/sessions`、`/new` 与 `/fork` 在会话间切换终端，但只有绑定的 Agent 流式显示；浏览器可并排展示多个会话。
 - **审批为一次性**——提示只提供允许一次或拒绝，与审批接缝的词汇一致；没有记忆的授权。
-- **仅浏览器的页面留在浏览器**——设置、插件清单、workspace 与目录选择器、在应用中打开的链接、轨迹视图、子 agent 浏览与消息反馈没有终端对应物；共享的 `/` 命令与页脚覆盖它们所改变的事实。
-- **交付物只列名、不打开**——`present` 工具的卡片显示其参数与结果文本；浏览器会预览交付的文件。
+- **仅浏览器的页面留在浏览器**——workspace 与目录选择器、在应用中打开的链接、轨迹账本与逐条消息的点赞/点踩没有终端对应物；`/settings`、`/plugins`、`/subagents`、`/outline` 与共享的 `/feedback` 以文本覆盖其事实，子 agent 的对话记录通过切换到子会话来阅读。
+- **交付物只列名、不打开**——`/deliverables` 列出交付路径；浏览器会预览这些文件。
 - **历史由终端回滚区持有**——除工具卡片外，对话记录不可搜索或折叠；更丰富的导航由浏览器表层持有。
 - **通过 `dsh` 启动器运行**——以其他方式启动该 profile 会在启动时失败，因为只有启动器能请求进程退出。
 

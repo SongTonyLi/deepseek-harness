@@ -4,13 +4,27 @@
  * @module @deepseek-ai/dsh-tui-app/prompts
  */
 
-import { Input, SelectList, Text, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type TUI } from '@earendil-works/pi-tui'
+import { Input, Markdown, SelectList, Text, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type TUI } from '@earendil-works/pi-tui'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
-import type { AskUserQuestionAnswerItem, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
-import { selectListTheme, type Palette } from './style.ts'
+import { planReviewOptions, type AskUserQuestionAnswerItem, type AskUserQuestionItem, type AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
+import { markdownTheme, selectListTheme, type Palette } from './style.ts'
 
 /** Rows a select list shows before scrolling. */
 const SELECT_MAX_VISIBLE = 8
+/** Call-detail rows an approval shows before folding the rest into a count. */
+const APPROVAL_DETAIL_MAX_ROWS = 12
+
+/**
+ * Cut detail rows to `max`, replacing the rest with a count.
+ * @param lines - the full rows.
+ * @param max - rows kept.
+ * @returns the rows to draw, with a trailing count of hidden rows when cut.
+ */
+function foldRows(lines: readonly string[], max: number): string[] {
+  if (lines.length <= max) return [...lines]
+  const hidden = lines.length - max
+  return [...lines.slice(0, max), `… ${String(hidden)} more line${hidden === 1 ? '' : 's'}`]
+}
 
 /** A prompt that settles with a value once the user answers or the asker withdraws it. */
 export interface ModalPrompt<T> extends Component {
@@ -41,14 +55,24 @@ class Settlement<T> {
   }
 }
 
-/** A heading over a select list; subclasses map the chosen row and the cancel key to a value. */
+/**
+ * A heading, optional dim indented body rows, then a select list; subclasses
+ * map the chosen row and the cancel key to a value.
+ */
 abstract class ListPrompt<T> implements ModalPrompt<T> {
   readonly settled: Promise<T>
   private readonly settlement = new Settlement<T>()
   private readonly heading: Text
   private readonly list: SelectList
 
-  constructor(palette: Palette, heading: string, items: SelectItem[], choose: (item: SelectItem) => T, cancel: () => T) {
+  constructor(
+    private readonly palette: Palette,
+    heading: string,
+    private readonly body: readonly string[],
+    items: SelectItem[],
+    choose: (item: SelectItem) => T,
+    cancel: () => T,
+  ) {
     this.settled = this.settlement.settled
     this.heading = new Text(heading, 0, 0)
     this.list = new SelectList(items, SELECT_MAX_VISIBLE, selectListTheme(palette))
@@ -76,17 +100,24 @@ abstract class ListPrompt<T> implements ModalPrompt<T> {
   }
 
   render(width: number): string[] {
-    return ['', ...this.heading.render(width), ...this.list.render(width)]
+    const inner = Math.max(1, width - 2)
+    const body = this.body.flatMap(line => wrapTextWithAnsi(this.palette.dim(line), inner).map(part => `  ${part}`))
+    return ['', ...this.heading.render(width), ...body, ...this.list.render(width)]
   }
 }
 
-/** Approval question: allow this one tool call or reject it; Escape rejects. */
+/**
+ * Approval question: allow this one tool call or reject it; Escape rejects.
+ * `detail` is the call's pre-rendered rows, the same text the tool card
+ * shows, drawn dim under the heading and folded past {@link APPROVAL_DETAIL_MAX_ROWS}.
+ */
 export class ApprovalPrompt extends ListPrompt<ApprovalOutcome> {
-  constructor(palette: Palette, toolName: string, reason: string | undefined) {
+  constructor(palette: Palette, toolName: string, reason: string | undefined, detail: readonly string[] = []) {
     const title = `${palette.warning('?')} ${palette.bold(`Allow ${toolName}?`)}`
     super(
       palette,
       reason === undefined ? title : `${title}\n${palette.dim(reason)}`,
+      foldRows(detail, APPROVAL_DETAIL_MAX_ROWS),
       [
         { value: 'allowed-once', label: 'Allow once', description: 'run this call' },
         { value: 'rejected', label: 'Reject', description: 'the tool call fails and the model is told' },
@@ -111,7 +142,7 @@ export interface PickItem {
 /** A generic list picker (models, sessions); Escape settles undefined. */
 export class PickPrompt extends ListPrompt<PickItem | undefined> {
   constructor(palette: Palette, title: string, items: readonly PickItem[]) {
-    super(palette, `${palette.accent('?')} ${palette.bold(title)}`, [...items], item => item, () => undefined)
+    super(palette, `${palette.accent('?')} ${palette.bold(title)}`, [], [...items], item => item, () => undefined)
   }
 
   withdraw(): void {
@@ -126,17 +157,36 @@ export type QuestionResult = AskUserQuestionAnswerItem | null
 const CUSTOM_VALUE = '\u0000custom'
 /** Marker value of the multi-select confirmation row. */
 const DONE_VALUE = '\u0000done'
+/** Marker value of the plan-review row that returns the user to the composer. */
+const DISCUSS_VALUE = '\u0000discuss'
 
 /**
- * One `ask_user_question` item: its options as a list, plus a free-text row.
- * Multi-select toggles with Space and confirms through the `Done` row; a
- * question with no options opens straight into free text, and Escape there
- * returns to the one-row list where a second Escape dismisses the question.
+ * A plan-review row: the fixed verdict label, with the asker's option text as
+ * the description so the user sees what the answer carries.
+ * @param label - the row label.
+ * @param option - the asker's option the row answers with.
+ * @returns the row.
+ */
+function verdictRow(label: string, option: AskUserQuestionOption): SelectItem {
+  const description = option.description ?? (option.label === label ? undefined : option.label)
+  return { value: option.label, label, ...description === undefined ? {} : { description } }
+}
+
+/**
+ * One `ask_user_question` item: its options as a list, plus a free-text row,
+ * with `detail` rendered as Markdown under the question. Multi-select toggles
+ * with Space and confirms through the `Done` row; a question with no options
+ * opens straight into free text, and Escape there returns to the one-row list
+ * where a second Escape dismisses the question. A plan-review question shows
+ * the plan and offers Approve, Decline (when the asker offered a second
+ * option), and Discuss; the verdicts answer with the asker's option label and
+ * Discuss dismisses the question so the user can reply in the composer.
  */
 export class QuestionPrompt implements ModalPrompt<QuestionResult> {
   readonly settled: Promise<QuestionResult>
   private readonly settlement = new Settlement<QuestionResult>()
   private readonly heading: Text
+  private readonly detail: Markdown | undefined
   private readonly list: SelectList
   private readonly input = new Input()
   private readonly selected = new Set<string>()
@@ -145,17 +195,23 @@ export class QuestionPrompt implements ModalPrompt<QuestionResult> {
   constructor(private readonly palette: Palette, private readonly question: AskUserQuestionItem) {
     this.settled = this.settlement.settled
     const header = question.header === undefined ? '' : `${palette.dim(question.header)}\n`
-    const detail = question.detail === undefined ? '' : `\n${palette.dim(question.detail)}`
-    this.heading = new Text(`${header}${palette.warning('?')} ${palette.bold(question.question)}${detail}`, 0, 0)
+    this.heading = new Text(`${header}${palette.warning('?')} ${palette.bold(question.question)}`, 0, 0)
+    this.detail = question.detail === undefined ? undefined : new Markdown(question.detail, 0, 0, markdownTheme(palette))
     const options = question.options ?? []
     this.typing = options.length === 0
-    const items = options.map(option => ({
-      value: option.label,
-      label: option.label,
-      ...option.description === undefined ? {} : { description: option.description },
-    }))
-    items.push({ value: CUSTOM_VALUE, label: 'Type an answer…' })
-    if (question.multiSelect === true) items.push({ value: DONE_VALUE, label: 'Done', description: 'confirm the selection' })
+    const review = planReviewOptions(question)
+    const items: SelectItem[] = []
+    if (review === undefined) {
+      for (const { label, description } of options) {
+        items.push({ value: label, label, ...description === undefined ? {} : { description } })
+      }
+      items.push({ value: CUSTOM_VALUE, label: 'Type an answer…' })
+      if (question.multiSelect === true) items.push({ value: DONE_VALUE, label: 'Done', description: 'confirm the selection' })
+    } else {
+      items.push(verdictRow('Approve', review.approve))
+      if (review.decline !== undefined) items.push(verdictRow('Decline', review.decline))
+      items.push({ value: DISCUSS_VALUE, label: 'Discuss', description: 'reply in the composer instead' })
+    }
     this.list = new SelectList(items, SELECT_MAX_VISIBLE, selectListTheme(palette))
     this.list.onSelect = (item) => { this.choose(item.value) }
     this.list.onCancel = () => { this.settlement.settle(null) }
@@ -170,6 +226,10 @@ export class QuestionPrompt implements ModalPrompt<QuestionResult> {
   private choose(value: string): void {
     if (value === CUSTOM_VALUE) {
       this.typing = true
+      return
+    }
+    if (value === DISCUSS_VALUE) {
+      this.settlement.settle(null)
       return
     }
     if (value === DONE_VALUE) {
@@ -205,12 +265,14 @@ export class QuestionPrompt implements ModalPrompt<QuestionResult> {
 
   invalidate(): void {
     this.heading.invalidate()
+    this.detail?.invalidate()
     this.list.invalidate()
     this.input.invalidate()
   }
 
   render(width: number): string[] {
     const lines = ['', ...this.heading.render(width)]
+    if (this.detail !== undefined) lines.push('', ...this.detail.render(width), '')
     if (this.question.multiSelect === true && this.selected.size > 0) {
       lines.push(...wrapTextWithAnsi(this.palette.dim(`selected: ${[...this.selected].join(', ')}`), width))
     }

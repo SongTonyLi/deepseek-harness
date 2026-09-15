@@ -53,7 +53,7 @@ kind: "package-reference"
 
 ### 阶段映射
 
-Fiber 状态映射到公共阶段词汇，其中 `disposed` 折叠为 `null`——fiber 已消失的条目没有可报告的存活根。因此阶段从不区分为什么没有存活根：条目可能从未启动，也可能其 fiber 已被释放。
+Fiber 状态映射到公共阶段词汇，其中 `disposed` 折叠为 `null`——fiber 已消失的条目没有可报告的存活根。因此阶段从不区分为什么没有存活根：条目可能从未启动，也可能其 fiber 已被释放。导出的 `pluginFiberPhase(state)` 就是该映射，因此终端表层的 `/plugins` 行与网关报告相同的阶段。
 
 ### 源码地图
 

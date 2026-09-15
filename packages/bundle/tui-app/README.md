@@ -39,16 +39,17 @@ On quit the app prints `dsh: session <id> saved; resume with: dsh --profile tui 
 
 ### The screen
 
-The header names the session by its title once one is generated or set, with the id beside it. The transcript grows in the terminal's own scrollback: your prompts start with `›` (attachments listed under them), assistant reasoning is dim above the Markdown reply, and each tool call is a card with a status glyph, the tool name, the presenter headline, and a body folded to `toolPreviewLines` rows. Below the transcript sit a spinner while the agent works, any open prompt, the editor, and a two-line footer with the model and reasoning effort, the permission preset, cumulative token usage, the workspace, the count of pending attachments, and the key hints.
+The header names the session by its title once one is generated or set, with the id beside it. The transcript grows in the terminal's own scrollback: your prompts start with `›` (attachments listed under them), assistant reasoning is dim above the Markdown reply, and each tool call is a card with a status glyph, the tool name, the presenter headline, and a body folded to `toolPreviewLines` rows. Below the transcript sit a spinner while the agent works, any open prompt, the editor, and a two-line footer with the model and reasoning effort, the permission preset, cumulative token usage, the context window percentage, todo and goal and plan-mode markers from the projection seam, the workspace, the count of pending attachments, and the key hints. Compaction and model-request retries appear as notices, the same facts the browser's markers carry.
 
 ### Keys and commands
 
 | Key | Effect |
 |---|---|
-| `Enter` | Send the editor text; while a turn runs it is steered into the next step |
+| `Enter` | Send the editor text; while a turn runs it is queued for the next turn |
+| `Ctrl+S` | While a turn runs, steer the editor text into the running turn's next step |
 | `Shift+Enter` | Insert a newline |
 | `Up` / `Down` | Recall earlier prompts |
-| `Esc` | Stop the running turn |
+| `Esc` | Stop the running turn; queued messages stay queued |
 | `Ctrl+O` | Expand or collapse every tool card |
 | `Ctrl+C` | Clear the editor; a second press within 600 ms quits |
 | `Ctrl+D` | Quit when the editor is empty |
@@ -61,21 +62,27 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/model` | Pick the model, then its reasoning effort when the model declares more than one, for the next request; `/model <provider>/<model>` selects directly and `/model save` stores the current selection as the default |
 | `/sessions` | Pick another persisted session and switch to it |
 | `/new` | Start a new session |
-| `/fork` | Fork this session at its last completed turn |
+| `/fork [turn]` | Fork this session at its last completed turn, or after turn `turn` |
 | `/title <text>` | Rename this session; alone it shows the current title |
 | `/attach <path>` | Attach an image or file to the next prompt; `/attach` lists, `/attach clear` drops them |
 | `/queue` | Show the messages queued for the next turn and step; `/queue clear` drops them |
 | `/skills` | List the skills the agent can load |
 | `/signin` | Sign in to a provider through its notices and prompts; `/signin <key>` skips the picker |
 | `/export [dir]` | Write this session's log ZIP (sub-sessions and attachments included) into `dir`, default the workspace |
+| `/status` | Context window usage and breakdown, token totals with cache hit, session stats, todos, goal, plan mode, and permission |
+| `/outline` | The turns of this session with their prompt and reply previews |
+| `/deliverables` | The files the agent presented, grouped by turn |
+| `/subagents` | The subagent sessions under this session, with activity and ids |
+| `/settings [ns [path value]]` | List namespaces, show one, or set one field; `/settings reset <ns>` restores defaults |
+| `/plugins` | The composed plugins with enablement and lifecycle phase |
 | `/tools` | Expand or collapse every tool card, like `Ctrl+O` |
-| `/quit` | Save the session and exit |
+| `/quit`, `/exit` | Save the session and exit |
 
 Every other `/name` line goes to the shared command registry, so `/compact`, `/permission`, `/goal`, and plugin commands work as they do in the browser.
 
 ### Prompts from the agent
 
-An approval request draws `Allow <tool>?` with the asker's reason and two rows, allow once or reject; `Esc` rejects and `Ctrl+C` cancels the request. An `ask_user_question` question draws its options plus a free-text row; multi-select toggles rows with `Space` and confirms through `Done`. Prompts queue and show one at a time, and an aborted request withdraws its prompt.
+An approval request draws `Allow <tool>?` with the asker's reason, the logged call the request names (the same rows as its tool card, so a shell command reads before it runs), and two rows, allow once or reject; `Esc` rejects and `Ctrl+C` cancels the request. An `ask_user_question` question renders its `detail` as Markdown above its options plus a free-text row; multi-select toggles rows with `Space` and confirms through `Done`. A plan review (the `plan-review` intent `exit_plan_mode` sets) draws the plan as Markdown with Approve, Decline, and Discuss rows, where Discuss returns the request to the composer as the browser's card does. Prompts queue and show one at a time, and an aborted request withdraws its prompt.
 
 ### References and attachments
 
@@ -103,15 +110,15 @@ The runner is a direct driver over the core API carrier, like `dsh-headless`, th
 
 ### Run flow
 
-The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after its last `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1.
+The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after the chosen (by default the last) `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle; while the host opens the next session the editor refuses input, and a quit during that wait releases the session that arrives afterwards. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1.
 
 ### Rendering model
 
-Durable facts come from the session log: `user/message` (own submissions are drawn once and their echo skipped by message id; a plugin notice is one dim row and other injected context is not drawn), `assistant/message` (which replaces the streamed block with the committed text and folds usage into the footer), `tool/call` and `tool/result` (drawn through the tool's `presentCall` and `presentResult` views when it declares them, with a raw-argument and raw-result fallback), `turn/end` notices, `session/title` (header), and `permission/preset` (footer). Live incrementality comes from `agent/assistant-stream` text and reasoning deltas. Session facts outside the log come from the same services the browser reads: `sessionTitle`, `permissionPresets`, `sessionQuery` for the picker, `fileReferences` and `sessionReferenceResolver` for `@` completion, `attachments`, `skills`, and `authorization`. Modal prompts are process-local presentation and are never logged.
+Durable facts come from the session log: `user/message` (own submissions are drawn once and their echo skipped by message id; a plugin notice is one dim row and other injected context is not drawn), `assistant/message` (which replaces the streamed block with the committed text and folds usage into the footer), `tool/call` and `tool/result` (drawn through the tool's `presentCall` and `presentResult` views when it declares them, with a raw-argument and raw-result fallback), `turn/end` notices, `session/title` (header), and `permission/preset` (footer). Live incrementality comes from `agent/assistant-stream` text and reasoning deltas. Session facts outside the log come from the same services the browser reads: `sessionTitle`, `permissionPresets`, `sessionQuery` for the picker and `/deliverables`, `sessionProjections` for the footer, `/status`, and `/outline`, `fileReferences` and `sessionReferenceResolver` for `@` completion, `attachments`, `skills`, `authorization`, `settings`, `subagents`, and the Loader's entries for `/plugins`. Modal prompts are process-local presentation and are never logged.
 
 ### Patch surface over base
 
-The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffix on the base `system-prompt` row, keeps the same temporary process-wide PTC mode opt-in (`DSH_TOOLS_MODE`) as the Web surface, inserts PTC mode's worker, mounts the model-facing `ask_user_question` tool whose questions the terminal answers, mounts the same `@`-reference resolvers (`file-reference-local`, `session-reference`) and the `present` deliverable tool the browser composes, and mounts the startup provider and the runner. The base agent-plane rows (bash, filesystem, skills, goals, compaction, subagents) stay enabled because the terminal composes its Agents process-wide.
+The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffix on the base `system-prompt` row, keeps the same temporary process-wide PTC mode opt-in (`DSH_TOOLS_MODE`) as the Web surface, inserts PTC mode's worker, mounts the model-facing `ask_user_question` tool whose questions the terminal answers, mounts the same `@`-reference resolvers (`file-reference-local`, `session-reference`) and the `present` deliverable tool the browser composes, adds the `session-turn-outline` and `session-stats` projection rows behind `/outline` and `/status`, and mounts the startup provider and the runner. The base agent-plane rows (bash, filesystem, skills, goals, compaction, subagents) stay enabled because the terminal composes its Agents process-wide.
 
 ### Source map
 
@@ -129,10 +136,13 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/diff.ts`](src/diff.ts) | Line diff and hunk selection for diff cards |
 | [`src/style.ts`](src/style.ts) | The palette and the derived pi-tui themes |
 | [`src/completion.ts`](src/completion.ts) | Slash-command and `@`-reference completion for the editor |
+| [`src/status.ts`](src/status.ts) | Footer parts and the `/status` report over the projection seam; compaction and retry notices |
+| [`src/catalog.ts`](src/catalog.ts) | Rows for `/settings`, `/plugins`, `/subagents`, `/deliverables`, and `/outline` |
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers listeners on one Agent and holds no mutable relation another observer could contradict. |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | Rendering, keys, commands, and both seams over a fake terminal |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | Session, attachment, queue, skill, sign-in, export, reference, and effort commands over scripted services |
+| [`tests/panels.spec.ts`](tests/panels.spec.ts) | Status footer and report, catalog commands, command hints, and the approval detail |
 | [`tests/index.spec.ts`](tests/index.spec.ts) | Creation, resume paging, fork cut, session switching, quit flow, and failure reporting |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
 | [`../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts`](../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts) | The shipped profile through the real launcher with a keyless mock model |
@@ -180,8 +190,8 @@ These limits describe the terminal surface as shipped; they are not a general CL
 
 - **One session at a time** — `/sessions`, `/new`, and `/fork` switch the terminal between sessions, but only the bound Agent streams; the browser shows several sessions side by side.
 - **Approvals are one-shot** — the prompt offers allow once or reject, matching the approval seam's vocabulary; there is no remembered grant.
-- **Browser-only pages stay in the browser** — settings, plugin inventory, workspace and directory pickers, open-in-app links, the trajectory view, subagent browsing, and message feedback have no terminal counterpart; the shared `/`-commands and the footer cover the facts they change.
-- **Deliverables are named, not opened** — the `present` tool's card shows its arguments and result text; the browser previews the delivered files.
+- **Browser-only pages stay in the browser** — workspace and directory pickers, open-in-app links, the trajectory ledger, and per-message like/dislike have no terminal counterpart; `/settings`, `/plugins`, `/subagents`, `/outline`, and the shared `/feedback` cover their facts as text, and subagent transcripts are read by switching to the child session.
+- **Deliverables are named, not opened** — `/deliverables` lists the presented paths; the browser previews the files.
 - **Terminal scrollback owns history** — the transcript is not searchable or foldable beyond tool cards; the browser surface owns richer navigation.
 - **Runs through the `dsh` launcher** — starting the profile another way fails at startup, because only the launcher can request the process exit.
 
