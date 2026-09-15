@@ -131,6 +131,7 @@ Loader 结算后，app-boot 在仅 optional 条目未激活时输出警告。如
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 启动 helper：配置解析、环境加载、会明确报错的保护机制、激活审计、patch 解析、配置 dump、harness 源码段落 |
+| [`src/invoking-directory.ts`](src/invoking-directory.ts) | 在包管理器把 cwd 改写为脚本所属包时恢复 `INIT_CWD` |
 | [`src/profile.ts`](src/profile.ts) | profile 发现、初始化、组合包解析、模块后备机制 |
 | [`src/profile-plugins.ts`](src/profile-plugins.ts) | 已安装依赖、bundle 启用策略与 manifest 更新 |
 | [`src/profile-sanitize.ts`](src/profile-sanitize.ts) | profile patch 备份与恢复 bundle 启用状态 |
@@ -175,7 +176,7 @@ Loader 结算后，app-boot 在仅 optional 条目未激活时输出警告。如
 
 - **运行时解析依赖 Node 内部机制**——受支持的 Node 版本需要 native builtin access addon 和可执行兼容验证。只有构建后的 Harness 自有 Worker 接收 generation bootstrap；第三方 Worker 与自定义 `vm` linker 保持原生解析。
 - **快照回放替换仅识别特定 basename**——只有以 `cordis.yml` 或 `cordis.yaml` 结尾的配置会映射到同级 `cordis.snapshot.yml`；自定义配置名称需要调用方自行选择。
-- **环境发现以启动为界**——`loadLayeredEnv` 只读取一次调用目录与 harness home 中的 `.env`；它不搜索父目录，也不跟随之后选择的 workspace。`loadEnv` 仍是非产品 bin 使用的单目录 helper。
+- **环境发现以启动为界**——当 npm 或 pnpm 把 `process.cwd()` 改写为脚本所属包时，产品 CLI 会先恢复 `INIT_CWD`，然后 `loadLayeredEnv` 只读取一次该调用目录与 harness home 中的 `.env`；它不搜索父目录，也不跟随之后选择的 workspace。`loadEnv` 仍是非产品 bin 使用的单目录 helper。
 - **用户 patch 会替换匹配到的整个配置**——按 id 定位的 patch 不做深度合并，因此 profile 覆盖必须重述需要保留的组合包字段。
 
 <a id="dev-note"></a>

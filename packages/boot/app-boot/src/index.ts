@@ -66,6 +66,8 @@ export {
   type PluginPackagesConfig,
 } from './profile-resolution/service.ts'
 
+export { resolveInvokingDirectory, restoreInvokingDirectory } from './invoking-directory.ts'
+
 /**
  * Resolve the config to boot. Replay swaps a `cordis.yml` basename for
  * `cordis.snapshot.yml` in the same directory; every other mode keeps the path.

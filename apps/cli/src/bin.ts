@@ -8,7 +8,7 @@
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { loadLayeredEnv, StartupError } from '@deepseek-ai/dsh-app-boot'
+import { loadLayeredEnv, restoreInvokingDirectory, StartupError } from '@deepseek-ai/dsh-app-boot'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { parseDshArgs } from './args.ts'
 import { reportStartupFailure } from './startup-diagnostics.ts'
@@ -28,6 +28,7 @@ function readVersion(): string {
  * @returns a promise that settles when the selected command mode finishes.
  */
 export async function runCli(): Promise<void> {
+  restoreInvokingDirectory()
   const version = readVersion()
   const invocation = parseDshArgs(process.argv.slice(2), version)
 
