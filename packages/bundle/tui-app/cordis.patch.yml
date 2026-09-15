@@ -17,10 +17,6 @@
     mode: !!js process.env.DSH_TOOLS_MODE
 
 - insert:
-    # PTC mode is a core execution capability, not a Web component.
-    - id: code-runtime
-      name: '@deepseek-ai/dsh-code-runtime-worker-thread'
-
     # The model-facing question tool; the terminal runner answers its
     # `user-questions/request` waterfall in the same process.
     - id: tool-ask-user

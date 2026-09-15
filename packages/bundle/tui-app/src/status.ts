@@ -12,7 +12,7 @@ import type { SessionEventMap } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import type { GoalPhase } from '@deepseek-ai/dsh-goal/types'
 import type { LlmRetryEventData } from '@deepseek-ai/dsh-llm-retry/types'
-import type { PermissionSelect } from '@deepseek-ai/dsh-permission-presets'
+import type { PermissionSelection } from '@deepseek-ai/dsh-permission-presets'
 import type { PlanProjection } from '@deepseek-ai/dsh-plan-mode/types'
 import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/types'
 import type { ContextBreakdownProjection, TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
@@ -68,7 +68,7 @@ export interface StatusFacts {
   todos?: TodoFacts
   goal?: GoalFacts
   plan?: PlanProjection
-  permissions?: PermissionSelect
+  permissions?: PermissionSelection
 }
 
 /** The read face of `ctx.sessionProjections` this module needs. */
@@ -209,9 +209,9 @@ export function statusReport(facts: StatusFacts): string[] {
     lines.push(`plan: ${facts.plan.active ? 'on' : 'off'}${facts.plan.pending ? ' (switching)' : ''}`)
   }
   if (facts.permissions !== undefined) {
-    const { options, currentValue } = facts.permissions
-    const current = options.find(option => option.value === currentValue)
-    lines.push(`permission: ${current?.name ?? currentValue}`)
+    // The projection carries the current value only; the selectable options
+    // moved to the process-level catalog Remote.
+    lines.push(`permission: ${facts.permissions.currentValue}`)
   }
   return lines.length === 0 ? ['no session status yet'] : lines
 }
