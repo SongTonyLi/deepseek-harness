@@ -180,6 +180,7 @@
     "doc-sync": "tsx scripts/run-gates.ts doc-sync",
     "hygiene": "tsx scripts/run-gates.ts hygiene",
     "publish:npm-baseline": "tsx scripts/publish-npm-baseline.ts",
+    "build:npm-cli": "tsx scripts/build-npm-cli-package.ts",
     "release:dsh": "tsx scripts/release/bump.ts --family dsh",
     "release:vendor": "tsx scripts/release/bump.ts --family vendor",
     "release:verify": "tsx scripts/release/verify.ts",
