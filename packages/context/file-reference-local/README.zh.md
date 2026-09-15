@@ -39,7 +39,7 @@ agent（智能体）及宿主 UI 可以用各 agent 本地工作区中经过排�
 
 ### 你能得到什么
 
-在宿主 UI 中输入 `@` 会为指定 agent 返回至多 `maxResults` 个排序路径候选。包含 `/` 的查询直接列出匹配目录的条目；裸查询对有界递归索引做模糊排序。目录候选以尾斜杠保持 mention 开放。任何工具结果之后，该 agent 的索引会被标记为陈旧：下一次查询仍由它作答，其替代品在后台构建，因此重建不会挡在光标前面。
+在宿主 UI 中输入 `@` 会为指定 agent 返回至多 `maxResults` 个排序路径候选。包含 `/` 的查询直接列出该目录的条目，包括 `../`、`~/` 与绝对路径；裸查询对有界工作区递归索引做模糊排序。目录候选以尾斜杠保持 mention 开放。任何工具结果之后，该 agent 的索引会被标记为陈旧：下一次查询仍由它作答，其替代品在后台构建，因此重建不会挡在光标前面。
 
 ### 配置
 
@@ -63,7 +63,7 @@ agent（智能体）及宿主 UI 可以用各 agent 本地工作区中经过排�
 
 ### 设计理念
 
-提供方为每个 agent 维护一个可复用的 `WorkspaceFileSearch`，以该会话的 `cwd` 为根。目录范围查询（`a/b/...`）列出实时目录状态，裸模糊查询共享一次有界递归遍历。每个工作区仅首次裸查询会等待该遍历；`tool/result` 事件把已完成的条目标记为陈旧，下一次裸查询在替代品构建期间继续由它作答。模型指引是按 agent 的提示词段，仅在指定 agent 拥有 `read` 工具时贡献；创建会等待提示词安装，安装失败会回滚 agent；agent dispose（资源释放）时会同时释放索引与提示词 fiber。
+提供方为每个 agent 维护一个可复用的 `WorkspaceFileSearch`，以该会话的 `cwd` 为根。目录范围查询（`a/b/...`、`../`、`~/` 或绝对目录）列出实时目录状态，裸模糊查询共享一次对工作区的有界递归遍历。每个工作区仅首次裸查询会等待该遍历；`tool/result` 事件把已完成的条目标记为陈旧，下一次裸查询在替代品构建期间继续由它作答。模型指引是按 agent 的提示词段，仅在指定 agent 拥有 `read` 工具时贡献；创建会等待提示词安装，安装失败会回滚 agent；agent dispose（资源释放）时会同时释放索引与提示词 fiber。
 
 ### 源码地图
 
@@ -105,7 +105,7 @@ agent（智能体）及宿主 UI 可以用各 agent 本地工作区中经过排�
 ##### 文件引用指令
 
 ```markdown
-Tokens prefixed with @ are workspace paths the user explicitly referenced, relative to the workspace root. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.
+Tokens prefixed with @ are paths the user explicitly referenced: relative to the workspace root, ../ from that root, ~/ from the home directory, or absolute. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.
 ```
 
 #### Token 影响
@@ -124,6 +124,7 @@ Tokens prefixed with @ are workspace paths the user explicitly referenced, relat
 这些限制说明该提供方何时不合适。它们是当前包约束。
 
 - **宿主本地命名空间**：提供方扫描 Harness 宿主的文件系统，因此远程或虚拟 `read` 实现需要使用命名空间与该工具一致的提供方。
+- **裸查询仍限于工作区**：不含目录前缀的查询只搜索会话工作目录索引；`../`、`~/` 与绝对查询即时列出被点名的目录。
 - **有界的提示性索引**：超大型工作区可能省略 `maxEntries` 之后的路径；被排除或无法读取的目录不会出现。默认排除项只列没有任何生态用作源码目录的构建产物；`lib` 被刻意排除在外，因此构建进 `lib` 的工作区需通过 `excludedDirectories` 自行加上。
 - **一次失效的陈旧窗口**：紧接工具结果之后的裸查询反映的是上一次遍历时的目录树；下一次查询才看到重建结果。
 - **没有忽略文件语义**：`.gitignore` 和其他项目忽略文件不会影响发现；系统只排除已配置的目录基名。

@@ -8,10 +8,10 @@ Sources: [`packages/context/file-reference/src/types.ts`](../../packages/context
 
 ## File candidates
 
-`FileReferenceCandidate` is the path-only discovery result. The addressed agent supplies the working-directory scope; providers decide ranking and namespace access without reading file contents.
+`FileReferenceCandidate` is the path-only discovery result. The addressed agent supplies the working-directory root for relative and bare queries; providers decide ranking and namespace access without reading file contents.
 
 ```ts type-equiv
-/** One path-only completion candidate inside the target session cwd. */
+/** One path-only completion candidate for a user-facing path. */
 interface FileReferenceCandidate {
   /** User-facing path accepted by normal prompts and filesystem tools. */
   path: string
@@ -138,8 +138,8 @@ Host capability for cancellable file-reference discovery.
 
 ```ts cordis-catalog
 /**
- * List file and directory candidates for one agent's working directory.
- * @param agent - target agent whose session cwd bounds discovery.
+ * List file and directory candidates for the addressed agent.
+ * @param agent - target agent; its session cwd is the root for relative and bare queries.
  * @param query - path text following `@` or `@"`.
  * @param signal - caller cancellation.
  * @returns deterministic path-only candidates.

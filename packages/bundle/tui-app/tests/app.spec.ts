@@ -260,7 +260,6 @@ describe('TuiApp', () => {
         ctx.commands.register({
           name: 'odd',
           description: 'rejects with a non-error',
-          // oxlint-disable-next-line prefer-promise-reject-errors -- the surface must render any rejection
           handler: () => Promise.reject('plain reason'),
         })
       },
@@ -269,6 +268,7 @@ describe('TuiApp', () => {
     await test.settle()
     expect(test.terminal.text()).toContain('/echo')
     expect(test.terminal.text()).toContain('Esc stops the running turn')
+    expect(test.terminal.text()).toContain('@ completes paths and sessions (workspace, ../, ~/, absolute)')
     typeLine(test.terminal, '/echo one two')
     typeLine(test.terminal, '/fail')
     typeLine(test.terminal, '/silent')

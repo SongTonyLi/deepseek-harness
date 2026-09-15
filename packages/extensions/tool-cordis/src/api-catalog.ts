@@ -965,8 +965,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'abstract list( agent: Agent, query: string, signal: AbortSignal, ): Promise<FileReferenceCandidate[]>',
-        description: 'List file and directory candidates for one agent\'s working directory.',
-        parameters: [{ name: 'agent', description: 'target agent whose session cwd bounds discovery.' }, { name: 'query', description: 'path text following `@` or `@"`.' }, { name: 'signal', description: 'caller cancellation.' }],
+        description: 'List file and directory candidates for the addressed agent.',
+        parameters: [{ name: 'agent', description: 'target agent; its session cwd is the root for relative and bare queries.' }, { name: 'query', description: 'path text following `@` or `@"`.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'deterministic path-only candidates.',
       },
     ],

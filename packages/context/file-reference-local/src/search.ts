@@ -7,6 +7,7 @@
  */
 
 import { lstat, readdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FileReferenceCandidate } from '@deepseek-ai/dsh-file-reference'
 
@@ -76,10 +77,11 @@ interface SettledIndex {
 
 /**
  * Cancellable, reusable fuzzy index rooted at one agent working directory.
- * Directory-scoped queries list live state; bare fuzzy queries share one
- * bounded traversal. Only the first query of a workspace waits for that
- * traversal — an invalidated index keeps answering while its replacement
- * builds behind the caret.
+ * Directory-scoped queries list live state, including parent (`../`), home
+ * (`~/`), and absolute directories; bare fuzzy queries share one bounded
+ * workspace traversal. Directory symlinks are never followed. Only the first
+ * query of a workspace waits for that traversal — an invalidated index keeps
+ * answering while its replacement builds behind the caret.
  */
 export class WorkspaceFileSearch {
   private readonly excludedDirectories: ReadonlySet<string>
@@ -115,6 +117,9 @@ export class WorkspaceFileSearch {
     signal.throwIfAborted()
     if (this.disposed) return []
     const query = rawQuery.replaceAll('\\', '/')
+    if (query === '..' || query === '~') {
+      return this.listDirectory(`${query}/`, '', signal)
+    }
     const slash = query.lastIndexOf('/')
     if (query === '' || slash >= 0) {
       const directory = slash < 0 ? '' : query.slice(0, slash + 1)
@@ -260,25 +265,41 @@ async function resolveDisplayDirectory(
   signal: AbortSignal,
 ): Promise<string | undefined> {
   const resolvedRoot = resolve(root)
-  const absolute = resolve(resolvedRoot, displayDirectory === '' ? '.' : displayDirectory)
+  const expanded = expandHome(displayDirectory)
+  const absolute = isAbsolute(expanded)
+    ? resolve(expanded)
+    : resolve(resolvedRoot, expanded === '' ? '.' : expanded)
   const fromRoot = relative(resolvedRoot, absolute)
-  if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) return undefined
-  /* v8 ignore next -- only Windows can produce a cross-volume absolute relative path */
-  if (isAbsolute(fromRoot)) return undefined
-  let current = resolvedRoot
-  for (const segment of fromRoot.split(sep).filter(Boolean)) {
-    signal.throwIfAborted()
-    current = join(current, segment)
-    try {
-      const status = await lstat(current)
-      signal.throwIfAborted()
-      if (status.isSymbolicLink() || !status.isDirectory()) return undefined
-    } catch (_error: unknown) {
-      signal.throwIfAborted()
-      return undefined
+  const outside = fromRoot === '..' || fromRoot.startsWith(`..${sep}`)
+    /* v8 ignore next -- only Windows can produce a cross-volume absolute relative path */
+    || isAbsolute(fromRoot)
+  if (!outside) {
+    let current = resolvedRoot
+    for (const segment of fromRoot.split(sep).filter(Boolean)) {
+      current = join(current, segment)
+      if (await lstatDirectory(current, signal) === undefined) return undefined
     }
+    return absolute
   }
-  return absolute
+  return lstatDirectory(absolute, signal)
+}
+
+function expandHome(displayDirectory: string): string {
+  if (displayDirectory.startsWith('~/')) return join(homedir(), displayDirectory.slice(2))
+  return displayDirectory
+}
+
+async function lstatDirectory(absolute: string, signal: AbortSignal): Promise<string | undefined> {
+  try {
+    signal.throwIfAborted()
+    const status = await lstat(absolute)
+    signal.throwIfAborted()
+    if (status.isSymbolicLink() || !status.isDirectory()) return undefined
+    return absolute
+  } catch (_error: unknown) {
+    signal.throwIfAborted()
+    return undefined
+  }
 }
 
 async function readWorkspaceRoot(absolute: string, signal: AbortSignal) {

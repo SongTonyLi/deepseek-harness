@@ -14,6 +14,19 @@ const fsControl = vi.hoisted(() => ({
   denyReaddir: undefined as string | undefined,
 }))
 
+const homeControl = vi.hoisted(() => ({
+  /** Fake home directory for `~/` queries; `undefined` uses the real homedir. */
+  root: undefined as string | undefined,
+}))
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return {
+    ...actual,
+    homedir: () => homeControl.root ?? actual.homedir(),
+  }
+})
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
@@ -65,6 +78,7 @@ function search(root: string, overrides: Partial<ConstructorParameters<typeof Wo
 }
 
 afterEach(async () => {
+  homeControl.root = undefined
   for (const locked of locks.splice(0)) await chmod(locked, 0o700).catch(() => undefined)
   for (const instance of searches.splice(0)) instance.dispose()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -129,8 +143,57 @@ describe('WorkspaceFileSearch', () => {
       { path: `${absoluteSrc}terminal-view.ts`, kind: 'file' },
     ])
     expect(await files.list('~/.dsh-file-autocomplete-missing/', signal)).toEqual([])
-    expect(await files.list('../', signal)).toEqual([])
     expect(await files.list('README.md/', signal)).toEqual([])
+  })
+
+  it('lists parent, home, and absolute directories outside the workspace without following directory symlinks', async () => {
+    const nest = await mkdtemp(join(tmpdir(), 'dsh-file-autocomplete-nest-'))
+    roots.push(nest)
+    const root = join(nest, 'current')
+    const other = join(nest, 'other-repo')
+    await mkdir(root)
+    await mkdir(other)
+    await writeFile(join(root, 'here.ts'), 'here')
+    await writeFile(join(other, 'there.ts'), 'there')
+    await writeFile(join(nest, 'lone.txt'), 'lone')
+    try {
+      await symlink(
+        other,
+        join(nest, 'linked-out'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      )
+    } catch {
+      // Windows may deny symlink creation without Developer Mode; the product
+      // still skips a directory whose final path is a symlink when one exists.
+    }
+    homeControl.root = nest
+    const files = search(root)
+    const signal = new AbortController().signal
+    const parentListing = [
+      { path: '../current', kind: 'directory' as const },
+      { path: '../other-repo', kind: 'directory' as const },
+      { path: '../lone.txt', kind: 'file' as const },
+    ]
+    expect(await files.list('../', signal)).toEqual(parentListing)
+    expect(await files.list('..', signal)).toEqual(parentListing)
+    expect(await files.list('../other-repo/', signal)).toEqual([
+      { path: '../other-repo/there.ts', kind: 'file' },
+    ])
+    expect(await files.list('../lone.txt/', signal)).toEqual([])
+    expect(await files.list('../missing-dir/', signal)).toEqual([])
+    expect(await files.list('~', signal)).toEqual([
+      { path: '~/current', kind: 'directory' },
+      { path: '~/other-repo', kind: 'directory' },
+      { path: '~/lone.txt', kind: 'file' },
+    ])
+    expect(await files.list('~/other-repo/', signal)).toEqual([
+      { path: '~/other-repo/there.ts', kind: 'file' },
+    ])
+    const absoluteOther = other.replaceAll('\\', '/')
+    expect(await files.list(`${absoluteOther}/`, signal)).toEqual([
+      { path: `${absoluteOther}/there.ts`, kind: 'file' },
+    ])
+    expect(await files.list('../linked-out/', signal)).toEqual([])
   })
 
   it('does not traverse directory symlinks during direct completion', async () => {

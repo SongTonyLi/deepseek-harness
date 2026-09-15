@@ -48,6 +48,7 @@ dsh tui --resume <session-id>             # continue an earlier session
 | `Enter` | 发送编辑器文本；轮次进行中时它排队到下一轮次 |
 | `Ctrl+S` | 轮次进行中时，把编辑器文本引导（steer）进当前轮次的下一步 |
 | `Shift+Enter` | 插入换行 |
+| `Shift+Tab` | 循环切换当前模型的推理强度，从下一次请求生效 |
 | `Up` / `Down` | 调出先前的提示 |
 | `Esc` | 停止正在进行的轮次；已排队的消息保持排队 |
 | `Ctrl+O` | 展开或折叠所有工具卡片 |
@@ -68,6 +69,7 @@ dsh tui --resume <session-id>             # continue an earlier session
 | `/queue` | 显示为下一轮次与下一步排队的消息；`/queue clear` 丢弃它们 |
 | `/skills` | 列出 agent 可加载的技能 |
 | `/signin` | 通过提供方的通知与提示登录；`/signin <key>` 跳过选择器 |
+| `/login` | 用提供方订阅登录（隐藏仅收集密钥的登录）；`/login <key>` 跳过选择器 |
 | `/export [dir]` | 把本会话的日志 ZIP（含子会话与附件）写入 `dir`，默认 workspace |
 | `/status` | 上下文窗口用量与构成、含缓存命中的 token 总计、会话统计、todo、目标、计划模式与权限 |
 | `/outline` | 本会话各轮次及其提示与回复预览 |
@@ -86,7 +88,7 @@ dsh tui --resume <session-id>             # continue an earlier session
 
 ### 引用与附件
 
-`@` 后接文本会列出匹配的 workspace 文件、目录与其他会话，使用与浏览器编辑器插入相同的提及语法（`@path`、`@"path with spaces"` 与不透明的 `@[label](…)` 会话标记）；base 行把这些提及解析进提示，与浏览器中完全一致。`/attach <path>` 读取相对于 workspace 的本地文件并通过已组合的附件存储保存：`.png`、`.jpg`、`.jpeg`、`.webp` 与 `.gif` 作为图片块，其余作为文件块；待发送附件随下一条提示一起发送，并列在其下。
+`@` 后接文本会列出匹配的文件与目录——相对工作区、从工作区出发的 `../`、从家目录出发的 `~/`、或绝对路径——以及其他会话，使用与浏览器编辑器插入相同的提及语法（`@path`、`@"path with spaces"` 与不透明的 `@[label](…)` 会话标记）；base 行把这些提及解析进提示，与浏览器中完全一致。`/attach <path>` 读取相对于 workspace 的本地文件并通过已组合的附件存储保存：`.png`、`.jpg`、`.jpeg`、`.webp` 与 `.gif` 作为图片块，其余作为文件块；待发送附件随下一条提示一起发送，并列在其下。
 
 ### 配置
 
@@ -110,7 +112,7 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。Shift+Tab 循环切换绑定模型的适配器自有推理强度，并在提供方默认值处回绕；`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。
 
 ### 渲染模型
 
@@ -141,7 +143,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |
 | — | 不发布运行时不变量伴随模块；应用只在一个 Agent 上注册监听器，不持有其他观察者可能与之矛盾的可变关系。 |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | 基于伪终端的渲染、按键、命令与两个接缝 |
-| [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的会话、附件、队列、技能、登录、导出、引用与推理强度命令 |
+| [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的会话、附件、队列、技能、登录、`/login`、Shift+Tab 推理强度循环、导出、引用与推理强度命令 |
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、目录命令、命令提示与审批详情 |
 | [`tests/index.spec.ts`](tests/index.spec.ts) | 创建、恢复分页、fork 切割、会话切换、退出流程与失败报告 |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 基于真实 Loader 配置树的命令行解析 |

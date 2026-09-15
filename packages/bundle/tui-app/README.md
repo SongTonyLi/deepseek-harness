@@ -48,6 +48,7 @@ The header names the session by its title once one is generated or set, with the
 | `Enter` | Send the editor text; while a turn runs it is queued for the next turn |
 | `Ctrl+S` | While a turn runs, steer the editor text into the running turn's next step |
 | `Shift+Enter` | Insert a newline |
+| `Shift+Tab` | Cycle the current model's reasoning effort for the next request |
 | `Up` / `Down` | Recall earlier prompts |
 | `Esc` | Stop the running turn; queued messages stay queued |
 | `Ctrl+O` | Expand or collapse every tool card |
@@ -68,6 +69,7 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/queue` | Show the messages queued for the next turn and step; `/queue clear` drops them |
 | `/skills` | List the skills the agent can load |
 | `/signin` | Sign in to a provider through its notices and prompts; `/signin <key>` skips the picker |
+| `/login` | Sign in with a provider subscription (hides key-collecting logins); `/login <key>` skips the picker |
 | `/export [dir]` | Write this session's log ZIP (sub-sessions and attachments included) into `dir`, default the workspace |
 | `/status` | Context window usage and breakdown, token totals with cache hit, session stats, todos, goal, plan mode, and permission |
 | `/outline` | The turns of this session with their prompt and reply previews |
@@ -86,7 +88,7 @@ An approval request draws `Allow <tool>?` with the asker's reason, the logged ca
 
 ### References and attachments
 
-`@` followed by text lists matching workspace files and directories and other sessions, in the same mention grammar the browser composer inserts (`@path`, `@"path with spaces"`, and the opaque `@[label](…)` session token); the base rows resolve those mentions into the prompt exactly as they do for the browser. `/attach <path>` reads a local file relative to the workspace and stores it through the composed attachment store, as an image block for `.png`, `.jpg`, `.jpeg`, `.webp`, and `.gif` and as a file block otherwise; pending attachments travel with the next prompt and are listed under it.
+`@` followed by text lists matching files and directories — workspace-relative, `../` from the workspace, `~/` from the home directory, or absolute — and other sessions, in the same mention grammar the browser composer inserts (`@path`, `@"path with spaces"`, and the opaque `@[label](…)` session token); the base rows resolve those mentions into the prompt exactly as they do for the browser. `/attach <path>` reads a local file relative to the workspace and stores it through the composed attachment store, as an image block for `.png`, `.jpg`, `.jpeg`, `.webp`, and `.gif` and as a file block otherwise; pending attachments travel with the next prompt and are listed under it.
 
 ### Configuration
 
@@ -110,7 +112,7 @@ The runner is a direct driver over the core API carrier, like `dsh-headless`, th
 
 ### Run flow
 
-The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after the chosen (by default the last) `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle; while the host opens the next session the editor refuses input, and a quit during that wait releases the session that arrives afterwards. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1.
+The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after the chosen (by default the last) `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle; while the host opens the next session the editor refuses input, and a quit during that wait releases the session that arrives afterwards. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1. Shift+Tab cycles the bound model's adapter-owned reasoning efforts, wrapping through the provider default, and `/login` starts `authorization.begin` with only subscription methods (every method except a key-collecting `api-key` login).
 
 ### Rendering model
 
@@ -141,7 +143,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers listeners on one Agent and holds no mutable relation another observer could contradict. |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | Rendering, keys, commands, and both seams over a fake terminal |
-| [`tests/commands.spec.ts`](tests/commands.spec.ts) | Session, attachment, queue, skill, sign-in, export, reference, and effort commands over scripted services |
+| [`tests/commands.spec.ts`](tests/commands.spec.ts) | Session, attachment, queue, skill, sign-in, `/login`, Shift+Tab effort cycling, export, reference, and effort commands over scripted services |
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | Status footer and report, catalog commands, command hints, and the approval detail |
 | [`tests/index.spec.ts`](tests/index.spec.ts) | Creation, resume paging, fork cut, session switching, quit flow, and failure reporting |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
