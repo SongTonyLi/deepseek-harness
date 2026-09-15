@@ -92,11 +92,43 @@ describe('session commands', () => {
     await test.settle()
     expect(test.hostCalls).toEqual(['create', 'fork:session-opened-1'])
     expect(test.opened[1]?.disposed).toBe(1)
+    typeLine(test.terminal, '/fork 2')
+    await test.settle()
+    typeLine(test.terminal, '/fork x')
+    typeLine(test.terminal, '/fork 0')
+    await test.settle()
+    expect(test.hostCalls).toEqual(['create', 'fork:session-opened-1', 'fork:session-fork-of-session-opened-1@2'])
+    expect(test.terminal.text()).toContain('usage: /fork · /fork <turn>')
     test.setStatus('running')
     typeLine(test.terminal, '/new')
     await test.settle()
-    expect(test.hostCalls).toHaveLength(2)
+    expect(test.hostCalls).toHaveLength(3)
     expect(test.terminal.text()).toContain('stop the running turn (Esc) before switching')
+  })
+
+  it('refuses input and a second switch while the host opens, and releases a session opened after quit', async () => {
+    const gate = { release: () => {} }
+    const test = await bench({ hostGate: gate })
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    expect(test.hostCalls).toEqual(['create'])
+    typeLine(test.terminal, 'too early')
+    typeLine(test.terminal, '/fork')
+    await test.settle()
+    expect(test.terminal.text().split('wait for the session switch to finish')).toHaveLength(3)
+    expect(test.calls.followups).toHaveLength(0)
+    expect(test.hostCalls).toEqual(['create'])
+    gate.release()
+    await test.settle()
+    expect(test.terminal.text()).toContain('new session: session session-opened-1')
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    test.terminal.type(KEY.ctrlD)
+    expect(test.quits).toHaveLength(1)
+    gate.release()
+    await test.settle()
+    expect(test.opened[2]?.disposed).toBe(1)
+    expect(test.quits[0]?.agent.session.id).toBe('session-opened-1')
   })
 
   it('reports host failures and a previous session that would not release', async () => {
@@ -215,6 +247,37 @@ describe('attachments', () => {
     }), { surfaceOp: 'append' })
     await test.settle()
     expect(test.terminal.text()).toMatch(/replayed\s+\[image\]/u)
+  })
+})
+
+describe('command failures and aliases', () => {
+  it('turns a rejected command into a notice instead of an unhandled rejection', async () => {
+    const test = await bench({ before: (ctx) => { ctx.provide('skills', { list: () => Promise.reject(new Error('catalog offline')) } as never) } })
+    typeLine(test.terminal, '/skills')
+    await test.settle()
+    expect(test.terminal.text()).toContain('/skills failed: catalog offline')
+  })
+
+  it('accepts /exit as /quit and lists it in help', async () => {
+    const test = await bench()
+    typeLine(test.terminal, '/help')
+    await test.settle()
+    expect(test.terminal.text()).toContain('/exit')
+    typeLine(test.terminal, '/exit')
+    expect(test.quits).toHaveLength(1)
+  })
+
+  it('drops pending attachments on a switch with a notice', async () => {
+    const test = await bench({
+      before: (ctx) => { ctx.provide('attachments', { saveFile: () => Promise.resolve({ kind: 'file', id: 'file' }) } as never) },
+    })
+    await writeFile(join(dir, 'a.txt'), 'a')
+    typeLine(test.terminal, `/attach ${join(dir, 'a.txt')}`)
+    await test.settle()
+    expect(test.terminal.text()).toContain('attached file a.txt')
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    expect(test.terminal.text()).toContain('1 pending attachment(s) stayed with the previous session')
   })
 })
 
@@ -426,6 +489,26 @@ describe('references and model', () => {
     expect(bare.terminal.text()).toContain('@none')
   })
 
+  it('swallows an aborted reference request and reports other resolver failures once', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('fileReferences', {
+          list: (_agent: unknown, query: string, signal: AbortSignal) => {
+            if (query === 'slow') return new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(new Error('aborted')) }) })
+            return Promise.reject(new Error('index broken'))
+          },
+        } as never)
+      },
+    })
+    for (const char of '@slow') test.terminal.type(char)
+    await test.settle()
+    // The next keystroke aborts the pending request; only the new request's failure is reported.
+    test.terminal.type('x')
+    await test.settle()
+    expect(test.terminal.text().split('@ completion failed')).toHaveLength(2)
+    expect(test.terminal.text()).toContain('@ completion failed: index broken')
+  })
+
   it('picks a reasoning effort after the model and saves the default', async () => {
     const saved: unknown[] = []
     const test = await bench({
@@ -476,14 +559,14 @@ describe('references and model', () => {
     typeLine(test.terminal, '/model p/broken')
     await test.settle()
     expect(test.terminal.text()).toContain('p/broken: no such model')
-    expect(test.selection.current).toEqual({ provider: 'p', model: 'broken' })
+    expect(test.selection.current).toEqual({ provider: 'p', model: 'blank' })
     typeLine(test.terminal, '/model bad')
     typeLine(test.terminal, '/model bad/')
     await test.settle()
     expect(test.terminal.text()).toContain('usage: /model <provider>/<model>')
     typeLine(test.terminal, '/model save')
     await test.settle()
-    expect(saved).toEqual([['agent-default-model', { provider: 'p', model: 'broken' }]])
-    expect(test.terminal.text()).toContain('default model saved: p/broken')
+    expect(saved).toEqual([['agent-default-model', { provider: 'p', model: 'blank' }]])
+    expect(test.terminal.text()).toContain('default model saved: p/blank')
   })
 })

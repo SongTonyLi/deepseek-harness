@@ -16,7 +16,7 @@ describe('listSessionChoices', () => {
     await expect(listSessionChoices(new Context(), 'session-a' as SessionId, signal)).resolves.toEqual([])
   })
 
-  it('lists root sessions newest first with their titles and marks the current one', async () => {
+  it('lists sessions and forks newest first with their titles, hides subagents, and marks the current one', async () => {
     const ctx = new Context()
     const asked: unknown[] = []
     ctx.provide('sessionQuery', {
@@ -30,14 +30,16 @@ describe('listSessionChoices', () => {
         asked.push(ids)
         return Promise.resolve([
           { status: 'fulfilled', value: { title: { title: 'Newer' } } },
+          { status: 'fulfilled', value: {} },
           { status: 'rejected', reason: new Error('gone') },
         ])
       },
     } as never)
     const choices = await listSessionChoices(ctx, 'session-a' as SessionId, signal)
-    expect(asked).toEqual([['session-b', 'session-a']])
+    expect(asked).toEqual([['session-child', 'session-b', 'session-a']])
     expect(choices).toEqual([
-      { id: 'session-b', title: 'Newer', cwd: '/work', createdAt: 20, current: false },
+      { id: 'session-child', title: 'Newer', cwd: '/work', createdAt: 30, current: false },
+      { id: 'session-b', title: undefined, cwd: '/work', createdAt: 20, current: false },
       { id: 'session-a', title: undefined, cwd: '/work', createdAt: 10, current: true },
     ])
   })

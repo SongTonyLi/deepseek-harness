@@ -13,6 +13,8 @@ export interface CompletableCommand {
   /** The name without the leading slash. */
   name: string
   description: string
+  /** The command's free-form input placeholder, when it takes input. */
+  hint?: string
 }
 
 /** One `@` reference the editor can insert. */
@@ -63,7 +65,11 @@ export function editorCompletion(sources: CompletionSources): AutocompleteProvid
       const prefix = before
       const items: AutocompleteItem[] = sources.commands()
         .filter(command => `/${command.name}`.startsWith(prefix))
-        .map(command => ({ value: `/${command.name}`, label: `/${command.name}`, description: command.description }))
+        .map(command => ({
+          value: `/${command.name}`,
+          label: `/${command.name}`,
+          description: command.hint === undefined ? command.description : `${command.description} · ${command.hint}`,
+        }))
       return items.length === 0 ? null : { items, prefix }
     },
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {

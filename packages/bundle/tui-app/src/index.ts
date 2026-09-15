@@ -119,19 +119,24 @@ function coreServices(ctx: Context): CoreServices | undefined {
 }
 
 /**
- * The fork prefix of a session: its events through the last completed turn,
- * up to the next turn's start, the same cut the browser's fork command takes.
+ * The fork prefix of a session: its events through a completed turn, up to
+ * the next turn's start, the same cut the browser's fork command takes.
  * @param ctx - plugin context carrying the session query engine.
  * @param id - the session to fork.
+ * @param turn - the completed turn to cut after; the last one when omitted.
  * @returns the seed events.
- * @throws when no query engine is composed or the session has no completed turn.
+ * @throws when no query engine is composed or the session has no such completed turn.
  */
-async function forkSeed(ctx: Context, id: SessionId): Promise<SessionEvent[]> {
+async function forkSeed(ctx: Context, id: SessionId, turn: number | undefined): Promise<SessionEvent[]> {
   const query = ctx.get('sessionQuery')
   if (query === undefined) throw new Error('forking a session needs a composed session query engine')
   using source = await query.observeSession(id)
-  const boundary = source.events.findLast(event => event.type === 'turn/end')
-  if (boundary === undefined) throw new Error(`session ${id} has no completed turn to fork from`)
+  const boundary = source.events.findLast(event => event.type === 'turn/end' && (turn === undefined || event.data.turn === turn))
+  if (boundary === undefined) {
+    throw new Error(turn === undefined
+      ? `session ${id} has no completed turn to fork from`
+      : `session ${id} has no completed turn ${String(turn)} to fork from`)
+  }
   let cut = boundary.seq + 1
   while (cut < source.events.length && source.events[cut]?.type !== 'turn/start') cut += 1
   return source.events.slice(0, cut)
@@ -170,7 +175,7 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string): SessionHost
   return {
     create: () => create(undefined, undefined),
     resume: async id => bind((_selection, setup) => agents.resume({ resumeSessionId: id, setup }), await readHistory(ctx, id)),
-    fork: async id => create(await forkSeed(ctx, id), id),
+    fork: async (id, turn) => create(await forkSeed(ctx, id, turn), id),
   }
 }
 

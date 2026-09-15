@@ -20,7 +20,7 @@ export interface SessionChoice {
 }
 
 /**
- * List persisted root sessions newest first, with their titles.
+ * List persisted sessions newest first, with their titles; subagent sessions are excluded.
  * @param ctx - plugin context carrying the session query engine.
  * @param currentId - the session the terminal drives, marked in the result.
  * @param signal - cancels the listing.
@@ -30,7 +30,8 @@ export async function listSessionChoices(ctx: Context, currentId: SessionId, sig
   const query = ctx.get('sessionQuery')
   if (query === undefined) return []
   const records = (await query.listSessions(signal))
-    .filter(record => record.header.parentSession === undefined && record.header.origin === undefined)
+    // Forks keep their parent lineage and stay listed; only subagent sessions are hidden, as in the browser sidebar.
+    .filter(record => record.header.origin === undefined)
     .sort((left, right) => right.header.createdAt - left.header.createdAt)
   const titles = await query.readTitleSnapshots(records.map(record => record.header.id), signal)
   return records.map((record, index) => {
