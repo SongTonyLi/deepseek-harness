@@ -8,7 +8,7 @@
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { loadLayeredEnv } from '@deepseek-ai/dsh-app-boot'
+import { loadLayeredEnv, restoreInvokingDirectory } from '@deepseek-ai/dsh-app-boot'
 import { parseDshArgs } from './args.ts'
 
 // Both the source tree (apps/cli/src) and the bundled bin (apps/cli/lib) sit
@@ -26,6 +26,7 @@ function readVersion(): string {
  * @returns a promise that settles when the selected command mode finishes.
  */
 export async function runCli(): Promise<void> {
+  restoreInvokingDirectory()
   const invocation = parseDshArgs(process.argv.slice(2), readVersion())
 
   switch (invocation.mode) {

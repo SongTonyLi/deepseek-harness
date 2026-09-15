@@ -33,7 +33,7 @@ An `@path` token at the start of input or after whitespace triggers completion; 
 
 ### Getting candidates
 
-`ctx.fileReferences.list(agent, query, signal)` returns path-only file and directory candidates for one agent's working directory, deterministically ranked by the provider. Directory mentions render with a trailing `/` so completion can descend another level. Browser consumers call the Session Controller adapter as `ctx.remote.fileReferences.list`; the trailing signal cancels a slow autocomplete.
+`ctx.fileReferences.list(agent, query, signal)` returns path-only file and directory candidates for the addressed agent, deterministically ranked by the provider. Bare queries search the session working directory; a query that names `../`, `~/`, or an absolute directory lists that directory live. Directory mentions render with a trailing `/` so completion can descend another level. Browser consumers call the Session Controller adapter as `ctx.remote.fileReferences.list`; the trailing signal cancels a slow autocomplete.
 
 ### Pairing with a provider
 

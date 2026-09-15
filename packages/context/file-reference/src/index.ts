@@ -14,7 +14,7 @@ export type { ActiveAtToken } from './grammar.ts'
 export type { FileReferenceCandidate } from './types.ts'
 
 /** Model guidance for path-only references selected by a user interface. */
-export const FILE_REFERENCE_PROMPT = 'Tokens prefixed with @ are workspace paths the user explicitly referenced, relative to the workspace root. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.'
+export const FILE_REFERENCE_PROMPT = 'Tokens prefixed with @ are paths the user explicitly referenced: relative to the workspace root, ../ from that root, ~/ from the home directory, or absolute. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -29,8 +29,8 @@ export abstract class FileReferenceService extends Service {
   }
 
   /**
-   * List file and directory candidates for one agent's working directory.
-   * @param agent - target agent whose session cwd bounds discovery.
+   * List file and directory candidates for the addressed agent.
+   * @param agent - target agent; its session cwd is the root for relative and bare queries.
    * @param query - path text following `@` or `@"`.
    * @param signal - caller cancellation.
    * @returns deterministic path-only candidates.

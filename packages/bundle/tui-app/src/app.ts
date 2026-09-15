@@ -123,6 +123,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'attach', description: 'Attach a file or image to the next prompt (/attach <path>, /attach clear)' },
   { name: 'queue', description: 'Show or clear the messages queued for the Agent (/queue clear)' },
   { name: 'skills', description: 'List the skills the Agent can load' },
+  { name: 'login', description: 'Sign in with a provider subscription (/login <key> skips the picker)' },
   { name: 'signin', description: 'Sign in to a provider' },
   { name: 'export', description: 'Write this session log as a ZIP archive (/export [directory])' },
   { name: 'status', description: 'Show context usage, token totals, session stats, todos, goal, plan, and permission' },
@@ -135,6 +136,15 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'quit', description: 'Save the session and exit' },
   { name: 'exit', description: 'Same as /quit' },
 ]
+
+/**
+ * Whether a sign-in method is a provider subscription rather than a key field.
+ * `api-key` is the id a key-collecting login registers under; every other id
+ * is a subscription method, matching the Models card.
+ */
+function isSubscriptionMethod(method: { readonly id: string }): boolean {
+  return method.id !== 'api-key'
+}
 
 /** Tone of a notice row. */
 type Tone = 'dim' | 'error' | 'success'
@@ -164,6 +174,8 @@ export class TuiApp {
   private toolsExpanded = false
   /** Set while a session switch awaits the host, so input cannot target the session being left. */
   private switching = false
+  /** Serializes Shift+Tab effort cycles so rapid presses apply in order. */
+  private effortCycle = Promise.resolve()
   private usage: UsageTotals = EMPTY_USAGE
   private lastCtrlC = 0
   private stopped = false
@@ -486,6 +498,14 @@ export class TuiApp {
       this.toggleTools()
       return { consume: true }
     }
+    if (matchesKey(data, 'shift+tab')) {
+      this.effortCycle = this.effortCycle.then(
+        () => this.cycleEffort(),
+        /* v8 ignore next -- cycleEffort handles its own failures; this recovers a rejected chain */
+        () => this.cycleEffort(),
+      )
+      return { consume: true }
+    }
     return undefined
   }
 
@@ -587,6 +607,9 @@ export class TuiApp {
       case 'skills':
         await this.showSkills()
         return
+      case 'login':
+        await this.signIn(argument, true)
+        return
       case 'signin':
         await this.signIn(argument)
         return
@@ -622,8 +645,9 @@ export class TuiApp {
     const keys = [
       'Enter sends · Shift+Enter inserts a newline · Up/Down recall history',
       'While a turn runs: Enter queues for the next turn · Ctrl+S steers the running turn',
-      '@ completes workspace paths and sessions · / completes commands',
+      '@ completes paths and sessions (workspace, ../, ~/, absolute) · / completes commands',
       'Esc stops the running turn · Ctrl+O expands or collapses tool output',
+      'Shift+Tab cycles the current model\'s reasoning effort for the next request',
       'Ctrl+C clears the input (twice quits) · Ctrl+D on an empty input quits',
     ]
     this.chat.addChild(new Text([...rows, '', ...keys.map(palette.dim)].join('\n'), 0, 1))
@@ -717,6 +741,42 @@ export class TuiApp {
     const picked = await this.modals.run(new PickPrompt(this.deps.palette, `Reasoning effort for ${model.model}`, items))
     if (picked === undefined) return null
     return picked.value === '' ? undefined : ReasoningEffortId(picked.value)
+  }
+
+  /**
+   * Advance the bound selection to the next reasoning effort, wrapping through
+   * the provider default. A model with fewer than two efforts has nothing to cycle.
+   */
+  private async cycleEffort(): Promise<void> {
+    if (this.stopped || this.modals.isActive()) return
+    const current = this.currentSelection()
+    const llm = this.deps.ctx.get('llm')
+    if (llm === undefined) {
+      this.notice('no model catalog is composed', 'error')
+      return
+    }
+    let efforts
+    try {
+      efforts = (await llm.resolveModelInfo(current.provider, current.model)).reasoning?.efforts ?? []
+    } catch (error: unknown) {
+      this.notice(`${current.provider}/${current.model}: ${describeFailure(error)}`, 'error')
+      return
+    }
+    if (this.stopped) return
+    if (efforts.length < 2) {
+      this.notice(`${current.provider}/${current.model} has no selectable reasoning efforts`)
+      return
+    }
+    const steps: Array<ReasoningEffortId | undefined> = [undefined, ...efforts.map(effort => effort.id)]
+    const index = steps.findIndex(step => step === current.reasoningEffort)
+    const next = steps[index === -1 ? 1 : (index + 1) % steps.length]
+    this.bound.selection.current = next === undefined
+      ? { provider: current.provider, model: current.model }
+      : { provider: current.provider, model: current.model, reasoningEffort: next }
+    this.notice(next === undefined
+      ? 'effort: provider default from the next request'
+      : `effort ${next} from the next request`, 'success')
+    this.refreshFooter()
   }
 
   private async modelItems(): Promise<PickItem[]> {
@@ -832,20 +892,30 @@ export class TuiApp {
     this.tui.requestRender()
   }
 
-  private async signIn(argument: string): Promise<void> {
+  /**
+   * Start a provider sign-in through the authorization seam.
+   * @param argument - a flow key that skips the provider picker, or empty to pick.
+   * @param subscriptionOnly - when true, hide key-collecting `api-key` methods so `/login` matches the Models card.
+   */
+  private async signIn(argument: string, subscriptionOnly = false): Promise<void> {
     const authorization = this.deps.ctx.get('authorization')
     if (authorization === undefined) {
       this.notice('no sign-in flows are composed', 'error')
       return
     }
-    const entries = authorization.list()
+    const listed = authorization.list()
+    const entries = subscriptionOnly
+      ? listed
+        .map(entry => ({ key: entry.key, label: entry.label, methods: entry.methods.filter(isSubscriptionMethod) }))
+        .filter(entry => entry.methods.length > 0)
+      : listed
     if (entries.length === 0) {
-      this.notice('no provider offers a sign-in flow')
+      this.notice(subscriptionOnly ? 'no provider offers a subscription sign-in' : 'no provider offers a sign-in flow')
       return
     }
     let key = argument
     if (key === '') {
-      const picked = await this.modals.run(new PickPrompt(this.deps.palette, 'Sign in to', entries.map(entry => ({
+      const picked = await this.modals.run(new PickPrompt(this.deps.palette, subscriptionOnly ? 'Log in with' : 'Sign in to', entries.map(entry => ({
         value: entry.key,
         label: entry.label,
         description: entry.methods.map(method => method.label).join(', '),
@@ -855,7 +925,7 @@ export class TuiApp {
     }
     const entry = entries.find(candidate => candidate.key === key)
     if (entry === undefined) {
-      this.notice(`no sign-in flow for ${key}`, 'error')
+      this.notice(subscriptionOnly ? `no subscription sign-in for ${key}` : `no sign-in flow for ${key}`, 'error')
       return
     }
     let method = entry.methods[0]?.id

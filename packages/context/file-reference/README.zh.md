@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 获取候选
 
-`ctx.fileReferences.list(agent, query, signal)` 返回指定 agent 工作目录中仅含路径的文件与目录候选，由提供方确定性地排序。目录 mention 呈现时带尾随 `/`，使补全可以继续深入下一层。浏览器消费方通过 Session Controller 适配器的 `ctx.remote.fileReferences.list` 调用同一发现能力；末位 signal 参数可取消慢速自动补全。
+`ctx.fileReferences.list(agent, query, signal)` 返回指定 agent 的仅含路径的文件与目录候选，由提供方确定性地排序。裸查询搜索会话工作目录；以 `../`、`~/` 或绝对目录命名的查询会即时列出该目录。目录 mention 呈现时带尾随 `/`，使补全可以继续深入下一层。浏览器消费方通过 Session Controller 适配器的 `ctx.remote.fileReferences.list` 调用同一发现能力；末位 signal 参数可取消慢速自动补全。
 
 ### 搭配提供方
 

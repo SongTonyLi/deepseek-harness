@@ -8,10 +8,10 @@
 
 ## 文件候选项
 
-`FileReferenceCandidate` 是仅含路径的发现结果。被寻址的 agent 提供工作目录范围；提供方负责排序和命名空间访问，但不会读取文件内容。
+`FileReferenceCandidate` 是仅含路径的发现结果。被寻址的 agent 为相对查询与裸查询提供工作目录根；提供方负责排序和命名空间访问，但不会读取文件内容。
 
 ```ts type-equiv
-/** One path-only completion candidate inside the target session cwd. */
+/** One path-only completion candidate for a user-facing path. */
 interface FileReferenceCandidate {
   /** User-facing path accepted by normal prompts and filesystem tools. */
   path: string
@@ -136,8 +136,8 @@ Host capability for cancellable file-reference discovery.
 
 ```ts cordis-catalog
 /**
- * List file and directory candidates for one agent's working directory.
- * @param agent - target agent whose session cwd bounds discovery.
+ * List file and directory candidates for the addressed agent.
+ * @param agent - target agent; its session cwd is the root for relative and bare queries.
  * @param query - path text following `@` or `@"`.
  * @param signal - caller cancellation.
  * @returns deterministic path-only candidates.

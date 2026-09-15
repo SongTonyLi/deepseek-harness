@@ -99,6 +99,7 @@ profile 是同一套 dsh 安装提供不同应用界面的方式：`web`、`tui`
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 启动 helper：配置解析、环境加载、会明确报错的保护机制、激活审计、patch 解析、配置 dump、harness 源码段落 |
+| [`src/invoking-directory.ts`](src/invoking-directory.ts) | 在包管理器把 cwd 改写为脚本所属包时恢复 `INIT_CWD` |
 | [`src/profile.ts`](src/profile.ts) | profile 发现、初始化、组合包解析、模块后备机制 |
 | — | 不发布运行时不变式伴生入口；边界与回放测试覆盖其协议映射。 |
 
@@ -140,7 +141,7 @@ profile 是同一套 dsh 安装提供不同应用界面的方式：`web`、`tui`
 
 - **裸包 specifier 依赖 Loader 内部机制**——生产 bin 需要 Loader 的可选原生辅助组件；没有该辅助组件的进程内调用方必须使用可解析的相对／file specifier，或提供自己的模块解析钩子。
 - **快照回放替换仅识别特定 basename**——只有以 `cordis.yml` 或 `cordis.yaml` 结尾的配置会映射到同级 `cordis.snapshot.yml`；自定义配置名称需要调用方自行选择。
-- **环境发现以启动为界**——`loadLayeredEnv` 只读取一次调用目录与 harness home 中的 `.env`；它不搜索父目录，也不跟随之后选择的 workspace。`loadEnv` 仍是非产品 bin 使用的单目录 helper。
+- **环境发现以启动为界**——当 npm 或 pnpm 把 `process.cwd()` 改写为脚本所属包时，产品 CLI 会先恢复 `INIT_CWD`，然后 `loadLayeredEnv` 只读取一次该调用目录与 harness home 中的 `.env`；它不搜索父目录，也不跟随之后选择的 workspace。`loadEnv` 仍是非产品 bin 使用的单目录 helper。
 - **用户 patch 会替换匹配到的整个配置**——按 id 定位的 patch 不做深度合并，因此 profile 覆盖必须重述需要保留的组合包字段。
 
 <a id="dev-note"></a>
