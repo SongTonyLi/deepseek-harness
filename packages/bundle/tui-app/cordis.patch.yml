@@ -1,0 +1,42 @@
+# The dsh-tui-app bundle patch: the interactive terminal surface directly over
+# dsh-base. It mounts no Host, HTTP server, Web runtime, or browser plugin. An
+# ordinary provider plugin injects `cmdlineArgs`, parses the optional prompt
+# positional and `--resume` (`dsh --profile tui [prompt...]`) plus this app's
+# --help, then the terminal runner creates or resumes one Agent through the
+# core registry and drives it from the terminal until the user quits.
+
+- id: system-prompt
+  config:
+    personaSuffix: Your working directory is {{cwd}}.
+    personaPrefix: >-
+      You are a coding agent powered by the {{model}} model.
+
+- id: tools
+  config:
+    # Keep the same temporary process-wide PTC mode opt-in as the Web surface.
+    mode: !!js process.env.DSH_TOOLS_MODE
+
+- insert:
+    # PTC mode is a core execution capability, not a Web component.
+    - id: code-runtime
+      name: '@deepseek-ai/dsh-code-runtime-worker-thread'
+
+    # The model-facing question tool; the terminal runner answers its
+    # `user-questions/request` waterfall in the same process.
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+
+    - id: tui-app-startup
+      name: '@deepseek-ai/dsh-tui-app/startup'
+
+    # Reads its invocation from the ordinary tuiStartup provider.
+    - id: tui-app
+      name: '@deepseek-ai/dsh-tui-app'
+      inject: [tuiStartup]
+      config:
+        prompt: !!js ctx.tuiStartup.prompt
+        resume: !!js ctx.tuiStartup.resume
+        toolPreviewLines: 8
+
+- id: hmr
+  disabled: true

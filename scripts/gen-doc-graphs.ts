@@ -186,7 +186,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'LLM adapter registry',
     mode: 'seam',
     implementations: ['llm-deepseek', 'llm-pi-ai', 'llm-replay'],
-    consumers: ['agent-loop', 'compaction-basic'],
+    consumers: ['agent-loop', 'compaction-basic', 'tui-app'],
     note: 'Adapters register provider implementations; the loop and compaction call the provider-neutral stream service.',
   },
   {
@@ -219,7 +219,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'session',
     title: 'In-memory session store',
     mode: 'core',
-    consumers: ['agent-loop', 'agent', 'session-persistence', 'session-query', 'session-query-sqlite', 'subagent-in-process-driver', 'invariants', 'message-feedback'],
+    consumers: ['agent-loop', 'agent', 'session-persistence', 'session-query', 'session-query-sqlite', 'subagent-in-process-driver', 'invariants', 'message-feedback', 'headless', 'tui-app'],
     note: 'Owns append-only Session instances and emits the durable session event feed.',
   },
   {
@@ -328,7 +328,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Durable session persistence seam',
     mode: 'seam',
     implementations: ['session-persistence-jsonl'],
-    consumers: ['agent-loop', 'tool-bash', 'hooks-claude-code', 'hooks-codex', 'session-query', 'session-query-sqlite', 'message-feedback'],
+    consumers: ['agent-loop', 'tool-bash', 'hooks-claude-code', 'hooks-codex', 'session-query', 'session-query-sqlite', 'message-feedback', 'tui-app'],
     note: 'The JSONL backend persists the SessionEvent vocabulary as one artifact per Session.',
   },
   {
@@ -460,7 +460,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'tools',
     title: 'Tool registry and guarded execution pipeline',
     mode: 'core',
-    consumers: ['agent-loop', 'tool-ask-user', 'tool-bash', 'tool-cordis', 'tool-fs', 'tool-terminal', 'tool-skill', 'tool-subagent', 'tool-todo', 'tool-web'],
+    consumers: ['agent-loop', 'tool-ask-user', 'tool-bash', 'tool-cordis', 'tool-fs', 'tool-terminal', 'tool-skill', 'tool-subagent', 'tool-todo', 'tool-web', 'tui-app'],
     note: 'Registers capabilities, owns PTC mode transport, and routes calls through pre-policy, monotonic guards, around dispatch, post-policy, and final-result observation.',
   },
   {
@@ -468,7 +468,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'user-questions',
     title: 'Human question/answer seam',
     mode: 'seam',
-    consumers: ['tool-ask-user'],
+    consumers: ['tool-ask-user', 'tui-app'],
     note: 'UI front ends provide the active human-answer provider; tool-ask-user pauses a tool call on the provider-neutral ask() promise.',
   },
   {
@@ -522,7 +522,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'agent',
     title: 'Agent service',
     mode: 'core',
-    consumers: ['agent-loop', 'acp', 'subagent-in-process-driver'],
+    consumers: ['agent-loop', 'acp', 'subagent-in-process-driver', 'headless', 'tui-app'],
     note: 'Owns live Agent handles, the create/resume factory seam, and process-local initiator propagation.',
   },
   {
@@ -530,7 +530,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'agent-default-model',
     title: 'Default Agent model selection',
     mode: 'core',
-    consumers: ['api-session-controller', 'headless'],
+    consumers: ['api-session-controller', 'headless', 'tui-app'],
     note: 'Layers the default ModelSelection through settings so direct and Host-backed Agent entry points share one state owner.',
   },
   {
@@ -615,7 +615,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Approval seam',
     mode: 'seam',
     implementations: [],
-    consumers: ['tools', 'tool-bash', 'acp'],
+    consumers: ['tools', 'tool-bash', 'acp', 'tui-app'],
     note: 'One-shot permission decisions dispatched over the `approval/request` waterfall; answerers are listeners (the ACP bridge for its own agents), absence fails closed to `unavailable`.',
   },
   {
@@ -913,7 +913,7 @@ const APP_EXAMPLES = [
     title: 'DSH Base Composition',
     label: 'packages/bundle/base/cordis.patch.yml',
     config: 'packages/bundle/base/cordis.patch.yml',
-    summary: 'The dsh-base bundle patch shared by the web, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.',
+    summary: 'The dsh-base bundle patch shared by the web, tui, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.',
   },
 ]
 

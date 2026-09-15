@@ -114,6 +114,7 @@ flowchart TD
     pkg_acp["acp"]
   end
   subgraph group_api["packages/api"]
+    pkg_api_authorization_controller["api-authorization-controller"]
     pkg_api_gateway["api-gateway"]
     pkg_api_remotes["api-remotes"]
     pkg_api_session_controller["api-session-controller"]
@@ -141,6 +142,7 @@ flowchart TD
     pkg_headless["headless"]
     pkg_sdk_app["sdk-app"]
     pkg_sdk_minimal["sdk-minimal"]
+    pkg_tui_app["tui-app"]
     pkg_web_app["web-app"]
   end
   subgraph group_client["packages/client"]
@@ -182,6 +184,7 @@ flowchart TD
     pkg_client_ui_settings_models["client-ui-settings-models"]
     pkg_client_ui_settings_plugin_inventory["client-ui-settings-plugin-inventory"]
     pkg_client_ui_settings_plugins["client-ui-settings-plugins"]
+    pkg_client_ui_settings_signin["client-ui-settings-signin"]
     pkg_client_ui_settings_unarchive_sessions["client-ui-settings-unarchive-sessions"]
     pkg_client_ui_sidebar["client-ui-sidebar"]
     pkg_client_ui_sidebar_browser["client-ui-sidebar-browser"]
@@ -470,6 +473,9 @@ flowchart TD
   pkg_spill --> pkg_brand
   pkg_spill --> pkg_llm
   pkg_spill --> pkg_session
+  pkg_api_authorization_controller --> pkg_authorization
+  pkg_api_authorization_controller --> pkg_credentials
+  pkg_api_authorization_controller --> pkg_typert_protocol
   pkg_app_boot --> pkg_home_paths
   pkg_app_boot --> pkg_launch_environment
   pkg_app_boot --> pkg_system_prompt
@@ -808,6 +814,15 @@ flowchart TD
   pkg_hooks_codex --> pkg_session
   pkg_hooks_codex --> pkg_session_projection
   pkg_hooks_codex --> pkg_tools
+  pkg_tui_app --> pkg_agent
+  pkg_tui_app --> pkg_agent_default_model
+  pkg_tui_app --> pkg_commands
+  pkg_tui_app --> pkg_llm
+  pkg_tui_app --> pkg_session
+  pkg_tui_app --> pkg_session_persistence
+  pkg_tui_app --> pkg_tools
+  pkg_tui_app --> pkg_user_approval
+  pkg_tui_app --> pkg_user_questions
   pkg_command_compact --> pkg_commands
   pkg_command_compact --> pkg_compaction
   pkg_compaction_image_offload --> pkg_agent
@@ -1365,6 +1380,7 @@ flowchart TD
 | [`client-ui-settings-models`](../packages/client/ui-settings-models) | `client` | — |
 | [`client-ui-settings-plugin-inventory`](../packages/client/ui-settings-plugin-inventory) | `client` | — |
 | [`client-ui-settings-plugins`](../packages/client/ui-settings-plugins) | `client` | — |
+| [`client-ui-settings-signin`](../packages/client/ui-settings-signin) | `client` | — |
 | [`client-ui-settings-unarchive-sessions`](../packages/client/ui-settings-unarchive-sessions) | `client` | — |
 | [`client-ui-sidebar`](../packages/client/ui-sidebar) | `client` | — |
 | [`client-ui-sidebar-browser`](../packages/client/ui-sidebar-browser) | `client` | — |
@@ -1440,6 +1456,7 @@ flowchart TD
 | [`skill-badge`](../packages/skill/skill-badge) | `skill` | [`skill`](../packages/skill/skill) |
 | [`skill-office`](../packages/skill/skill-office) | `skill` | [`skill`](../packages/skill/skill) |
 | [`spill`](../packages/spill/spill) | `spill` | [`brand`](../packages/util/brand), [`llm`](../packages/llm/llm), [`session`](../packages/core/session) |
+| [`api-authorization-controller`](../packages/api/authorization-controller) | `api` | [`authorization`](../packages/credentials/authorization), [`credentials`](../packages/credentials/credentials), [`typert-protocol`](../packages/typert/protocol) |
 | [`app-boot`](../packages/boot/app-boot) | `boot` | [`home-paths`](../packages/util/home-paths), [`launch-environment`](../packages/util/launch-environment), [`system-prompt`](../packages/core/system-prompt) |
 | [`persona`](../packages/preset/persona) | `preset` | [`system-prompt`](../packages/core/system-prompt) |
 | [`sandbox`](../packages/sandbox/sandbox) | `sandbox` | [`llm`](../packages/llm/llm), [`session`](../packages/core/session) |
@@ -1516,6 +1533,7 @@ flowchart TD
 | [`tool-todo`](../packages/todo/tool-todo) | `todo` | [`agent`](../packages/core/agent), [`invariants`](../packages/runtime-diagnostics/invariants), [`session`](../packages/core/session), [`session-projection`](../packages/session/session-projection), [`tools`](../packages/core/tools) |
 | [`plan-mode`](../packages/plan/plan-mode) | `plan` | [`agent`](../packages/core/agent), [`commands`](../packages/interaction/commands), [`invariants`](../packages/runtime-diagnostics/invariants), [`llm`](../packages/llm/llm), [`session`](../packages/core/session), [`session-projection`](../packages/session/session-projection), [`system-prompt`](../packages/core/system-prompt), [`tools`](../packages/core/tools), [`user-questions`](../packages/interaction/user-questions) |
 | [`hooks-codex`](../packages/hooks/hooks-codex) | `hooks` | [`agent`](../packages/core/agent), [`hook-protocol`](../packages/hooks/hook-protocol), [`llm`](../packages/llm/llm), [`session`](../packages/core/session), [`session-projection`](../packages/session/session-projection), [`tools`](../packages/core/tools) |
+| [`tui-app`](../packages/bundle/tui-app) | `bundle` | [`agent`](../packages/core/agent), [`agent-default-model`](../packages/core/agent-default-model), [`commands`](../packages/interaction/commands), [`llm`](../packages/llm/llm), [`session`](../packages/core/session), [`session-persistence`](../packages/session/session-persistence), [`tools`](../packages/core/tools), [`user-approval`](../packages/interaction/user-approval), [`user-questions`](../packages/interaction/user-questions) |
 | [`command-compact`](../packages/compaction/command-compact) | `compaction` | [`commands`](../packages/interaction/commands), [`compaction`](../packages/compaction/compaction) |
 | [`compaction-image-offload`](../packages/compaction/compaction-image-offload) | `compaction` | [`agent`](../packages/core/agent), [`compaction`](../packages/compaction/compaction), [`llm`](../packages/llm/llm), [`session`](../packages/core/session) |
 | [`agent-instructions`](../packages/context/agent-instructions) | `context` | [`agent`](../packages/core/agent), [`fs`](../packages/fs/fs), [`home-paths`](../packages/util/home-paths), [`llm`](../packages/llm/llm), [`session`](../packages/core/session), [`session-projection`](../packages/session/session-projection), [`tools`](../packages/core/tools) |

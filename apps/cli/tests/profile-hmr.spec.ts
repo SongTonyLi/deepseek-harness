@@ -9,7 +9,7 @@ import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 
 /** Load one shipped bundle patch through the same parser as profile boot. */
-function bundle(name: 'acp-app' | 'base' | 'headless' | 'sdk-app' | 'sdk-minimal' | 'web-app'): PatchOptions[] {
+function bundle(name: 'acp-app' | 'base' | 'headless' | 'sdk-app' | 'sdk-minimal' | 'tui-app' | 'web-app'): PatchOptions[] {
   return loadOverlayPatches('profile-hmr test', join(REPOSITORY_ROOT, 'packages', 'bundle', name, 'cordis.patch.yml'))
 }
 
@@ -26,7 +26,7 @@ describe('YAML-owned profile HMR', () => {
     expect(hmr([bundle('base')]).disabled).not.toBe(true)
   })
 
-  it.each(['headless', 'sdk-app', 'acp-app'] as const)('%s disables HMR with a bundle override', (mode) => {
+  it.each(['headless', 'sdk-app', 'acp-app', 'tui-app'] as const)('%s disables HMR with a bundle override', (mode) => {
     expect(hmr([bundle('base'), bundle(mode)])).toMatchObject({ disabled: true })
     expect(hmr([bundle('base'), bundle(mode), [{ id: 'hmr', disabled: false }]])).toMatchObject({
       disabled: false, config: { root: [] },

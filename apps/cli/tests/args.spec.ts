@@ -30,6 +30,11 @@ describe('parseDshArgs', () => {
     expect(parse(['web'])).toEqual({ mode: 'profile', profile: 'web', patches: [], args: [] })
     expect(parse(['web', '--patch', 'web.yml']))
       .toEqual({ mode: 'profile', profile: 'web', patches: ['web.yml'], args: [] })
+    expect(parse(['tui'])).toEqual({ mode: 'profile', profile: 'tui', patches: [], args: [] })
+    expect(parse(['tui', '--resume', 'abc', 'explain']))
+      .toEqual({ mode: 'profile', profile: 'tui', patches: [], args: ['--resume', 'abc', 'explain'] })
+    expect(parse(['tui', '--dump-default-config']))
+      .toEqual({ mode: 'dump-config', profile: 'tui', defaultOnly: true, patches: [] })
   })
 
   it('ends the launcher flags at the first token it does not own', () => {
