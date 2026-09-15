@@ -12,6 +12,7 @@ const provider = editorCompletion({
   commands: () => [
     { name: 'help', description: 'Show help' },
     { name: 'model', description: 'Pick a model' },
+    { name: 'permission', description: 'Set the preset', hint: '<preset>' },
   ],
   references: (query, quoted) => {
     queries.push({ query, quoted })
@@ -27,6 +28,7 @@ describe('editor completion', () => {
       items: [
         { value: '/help', label: '/help', description: 'Show help' },
         { value: '/model', label: '/model', description: 'Pick a model' },
+        { value: '/permission', label: '/permission', description: 'Set the preset · <preset>' },
       ],
     })
     await expect(provider.getSuggestions(['/mo'], 0, 3, options)).resolves.toEqual({

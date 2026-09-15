@@ -76,8 +76,12 @@ export interface SessionHost {
   create(): Promise<BoundSession>
   /** Resume a persisted session. */
   resume(id: SessionId): Promise<BoundSession>
-  /** Fork a session at its last completed turn into a new session. */
-  fork(id: SessionId): Promise<BoundSession>
+  /**
+   * Fork a session into a new session at a completed turn.
+   * @param id - the source session.
+   * @param turn - the completed turn to cut after; the last one when omitted.
+   */
+  fork(id: SessionId, turn?: number): Promise<BoundSession>
 }
 
 /** What the application needs from its host. */
@@ -111,7 +115,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'model', description: 'Pick the model and reasoning effort for the next request (/model provider/model, /model save)' },
   { name: 'sessions', description: 'Switch to another session' },
   { name: 'new', description: 'Start a new session' },
-  { name: 'fork', description: 'Fork this session at its last completed turn' },
+  { name: 'fork', description: 'Fork this session at its last completed turn (/fork <turn> for an earlier one)' },
   { name: 'title', description: 'Rename this session (/title <text>)' },
   { name: 'attach', description: 'Attach a file or image to the next prompt (/attach <path>, /attach clear)' },
   { name: 'queue', description: 'Show or clear the messages queued for the Agent (/queue clear)' },
@@ -120,10 +124,14 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'export', description: 'Write this session log as a ZIP archive (/export [directory])' },
   { name: 'tools', description: 'Expand or collapse every tool card' },
   { name: 'quit', description: 'Save the session and exit' },
+  { name: 'exit', description: 'Same as /quit' },
 ]
 
 /** Tone of a notice row. */
 type Tone = 'dim' | 'error' | 'success'
+
+/** How a message submitted while a turn runs reaches the Agent. */
+type SubmitMode = 'queue' | 'steer'
 
 /** The interactive terminal application; one instance per process. */
 export class TuiApp {
@@ -145,6 +153,8 @@ export class TuiApp {
   private bound: BoundSession
   private streaming: AssistantBlock | undefined
   private toolsExpanded = false
+  /** Set while a session switch awaits the host, so input cannot target the session being left. */
+  private switching = false
   private usage: UsageTotals = EMPTY_USAGE
   private lastCtrlC = 0
   private stopped = false
@@ -156,6 +166,8 @@ export class TuiApp {
     this.tui = new TuiMainScreen(deps.terminal)
     this.header = new Text('', 0, 0)
     this.loader = new Loader(this.tui, palette.accent, palette.dim, 'thinking')
+    // pi-tui starts the spinner interval in the constructor; it runs only while mounted.
+    this.loader.stop()
     this.editor = new Editor(this.tui, editorTheme(palette), { paddingX: 1 })
     this.editor.setAutocompleteProvider(editorCompletion({
       commands: () => this.completableCommands(),
@@ -247,16 +259,27 @@ export class TuiApp {
       this.notice('stop the running turn (Esc) before switching sessions', 'error')
       return
     }
+    this.switching = true
     let next: BoundSession
     try {
       next = await open()
     } catch (error: unknown) {
+      this.switching = false
       this.notice(`${verb} failed: ${describeFailure(error)}`, 'error')
       return
     }
+    this.switching = false
+    if (this.stopped) {
+      // The user quit while the host was opening: the host already flushed the
+      // session that was bound, and this one has nothing to keep.
+      await next.dispose()
+      return
+    }
     const previous = this.bound
+    const dropped = this.pending.length
     this.bind(next)
     this.notice(`${verb}: session ${next.agent.session.id}`, 'success')
+    if (dropped > 0) this.notice(`${String(dropped)} pending attachment(s) stayed with the previous session`)
     try {
       await previous.dispose()
     } catch (error: unknown) {
@@ -267,10 +290,25 @@ export class TuiApp {
   private completableCommands(): CompletableCommand[] {
     const registry = this.deps.ctx.get('commands')
     const shared = registry?.list(this.agent) ?? []
-    return [...LOCAL_COMMANDS, ...shared.map(command => ({ name: command.name, description: command.description }))]
+    return [...LOCAL_COMMANDS, ...shared.map(command => ({
+      name: command.name,
+      description: command.description,
+      ...command.input === undefined ? {} : { hint: command.input.hint },
+    }))]
   }
 
   private async references(query: string, quoted: boolean, signal: AbortSignal): Promise<ReferenceItem[]> {
+    try {
+      return await this.listReferences(query, quoted, signal)
+    } catch (error: unknown) {
+      // The editor aborts a superseded request on the next keystroke; a
+      // resolver failure is not worth a notice per keystroke either.
+      if (!signal.aborted) this.notice(`@ completion failed: ${describeFailure(error)}`, 'error')
+      return []
+    }
+  }
+
+  private async listReferences(query: string, quoted: boolean, signal: AbortSignal): Promise<ReferenceItem[]> {
     const { ctx } = this.deps
     const items: ReferenceItem[] = []
     const files = ctx.get('fileReferences')
@@ -333,7 +371,9 @@ export class TuiApp {
     if (usage !== '') parts.push(usage)
     parts.push(this.deps.cwd)
     if (this.pending.length > 0) parts.push(`${String(this.pending.length)} attached`)
-    const hints = 'Enter sends · Esc stops the turn · Ctrl+O tool output · Ctrl+C twice quits'
+    const hints = this.agent.status === 'running'
+      ? 'Enter queues for the next turn · Ctrl+S steers this turn · Esc stops it · Ctrl+O tool output · Ctrl+C twice quits'
+      : 'Enter sends · Esc stops the turn · Ctrl+O tool output · Ctrl+C twice quits'
     this.footer.setText(`${palette.dim(parts.join(' · '))}\n${palette.dim(hints)}`)
     this.tui.requestRender()
   }
@@ -370,9 +410,14 @@ export class TuiApp {
     }
     if (matchesKey(data, 'escape') && !this.editor.isShowingAutocomplete()) {
       if (this.agent.status === 'running') {
-        this.agent.cancel({ kind: 'user' })
-        this.notice('stopping the turn…')
+        this.agent.cancel({ kind: 'user' }, { keepInbox: true })
+        const queued = this.agent.inbox.nextTurn.length + this.agent.inbox.nextStep.length
+        this.notice(queued === 0 ? 'stopping the turn…' : `stopping the turn… ${String(queued)} queued message(s) stay queued`)
       }
+      return { consume: true }
+    }
+    if (matchesKey(data, 'ctrl+s')) {
+      this.onSubmit(this.editor.getText(), 'steer')
       return { consume: true }
     }
     if (matchesKey(data, 'ctrl+o')) {
@@ -388,19 +433,29 @@ export class TuiApp {
     this.tui.requestRender()
   }
 
-  private onSubmit(raw: string): void {
+  /**
+   * Handle a submitted editor line: a `/` line runs a command, anything else
+   * becomes a user message.
+   * @param raw - the editor text.
+   * @param mode - how a message reaches a running Agent: `queue` waits for the next turn, `steer` enters the current one.
+   */
+  private onSubmit(raw: string, mode: SubmitMode = 'queue'): void {
     const text = raw.trim()
     if (text === '') return
+    if (this.switching) {
+      this.notice('wait for the session switch to finish', 'error')
+      return
+    }
     this.editor.setText('')
     this.editor.addToHistory(text)
     if (text.startsWith('/')) {
-      void this.runCommand(text)
+      this.runCommand(text).catch((error: unknown) => { this.notice(`${text.split(' ')[0] ?? text} failed: ${describeFailure(error)}`, 'error') })
       return
     }
-    this.submit(text)
+    this.submit(text, mode)
   }
 
-  private submit(text: string): void {
+  private submit(text: string, mode: SubmitMode = 'queue'): void {
     const agent = this.agent
     const attachments = this.pending.splice(0)
     const message: UserMessage = createUserMessage({
@@ -410,11 +465,14 @@ export class TuiApp {
     this.submittedIds.add(message.id)
     const shown = attachments.length === 0 ? text : `${text}\n${attachments.map(attachment => `[${attachment.block.type}: ${attachment.name}]`).join(' ')}`
     this.chat.addChild(new UserBlock(this.theme, shown))
-    if (agent.status === 'running') {
+    if (agent.status !== 'running') {
+      agent.followup(message)
+    } else if (mode === 'steer') {
       agent.steer(message)
-      this.notice('queued for the next step of the running turn')
+      this.notice('steering the running turn: it reaches the next step')
     } else {
       agent.followup(message)
+      this.notice('queued for the next turn (Ctrl+S steers the running turn instead)')
     }
     this.refreshFooter()
   }
@@ -445,9 +503,15 @@ export class TuiApp {
       case 'new':
         await this.switchSession(() => this.deps.host.create(), 'new session')
         return
-      case 'fork':
-        await this.switchSession(() => this.deps.host.fork(this.agent.session.id), 'forked')
+      case 'fork': {
+        const turn = argument === '' ? undefined : Number(argument)
+        if (turn !== undefined && !(Number.isSafeInteger(turn) && turn > 0)) {
+          this.notice('usage: /fork · /fork <turn>', 'error')
+          return
+        }
+        await this.switchSession(() => this.deps.host.fork(this.agent.session.id, turn), 'forked')
         return
+      }
       case 'title':
         this.renameSession(argument)
         return
@@ -476,6 +540,7 @@ export class TuiApp {
     const rows = this.completableCommands().map(command => `/${command.name.padEnd(12)} ${palette.dim(command.description)}`)
     const keys = [
       'Enter sends · Shift+Enter inserts a newline · Up/Down recall history',
+      'While a turn runs: Enter queues for the next turn · Ctrl+S steers the running turn',
       '@ completes workspace paths and sessions · / completes commands',
       'Esc stops the running turn · Ctrl+O expands or collapses tool output',
       'Ctrl+C clears the input (twice quits) · Ctrl+D on an empty input quits',
@@ -547,7 +612,7 @@ export class TuiApp {
 
   /**
    * Offer the model's reasoning efforts when it declares more than one.
-   * @returns the chosen effort, undefined for the provider default, or null when dismissed.
+   * @returns the chosen effort, undefined for the provider default, or null when dismissed or the model is unknown.
    */
   private async chooseEffort(model: ModelSelection): Promise<ReasoningEffortId | undefined | null> {
     const llm = this.deps.ctx.get('llm')
@@ -557,7 +622,7 @@ export class TuiApp {
       efforts = (await llm.resolveModelInfo(model.provider, model.model)).reasoning?.efforts ?? []
     } catch (error: unknown) {
       this.notice(`${model.provider}/${model.model}: ${describeFailure(error)}`, 'error')
-      return undefined
+      return null
     }
     if (efforts.length < 2) return undefined
     const items: PickItem[] = [
@@ -597,6 +662,7 @@ export class TuiApp {
   }
 
   private async chooseSession(): Promise<void> {
+    this.notice('listing sessions…')
     const choices = await listSessionChoices(this.deps.ctx, this.agent.session.id, new AbortController().signal)
     if (choices.length === 0) {
       this.notice('no persisted sessions are listed by the composed query engine', 'error')
@@ -604,8 +670,9 @@ export class TuiApp {
     }
     const items = choices.map((choice): PickItem => ({ value: choice.id, ...describeSession(choice) }))
     const picked = await this.modals.run(new PickPrompt(this.deps.palette, 'Switch to a session', items))
-    if (picked === undefined || picked.value === this.agent.session.id) return
-    await this.switchSession(() => this.deps.host.resume(picked.value as SessionId), 'resumed')
+    const target = choices.find(choice => choice.id === picked?.value)
+    if (target === undefined || target.current) return
+    await this.switchSession(() => this.deps.host.resume(target.id), 'resumed')
   }
 
   private renameSession(title: string): void {
@@ -756,6 +823,7 @@ export class TuiApp {
   }
 
   private async exportSession(argument: string): Promise<void> {
+    this.notice('/export: writing the archive…')
     try {
       const path = await exportSessionZip(this.deps.ctx, this.agent.session.id, argument === '' ? this.deps.cwd : argument, new AbortController().signal)
       this.notice(`exported ${path}`, 'success')

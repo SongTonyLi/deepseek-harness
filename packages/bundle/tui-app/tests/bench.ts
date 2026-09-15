@@ -109,6 +109,7 @@ export const KEY = {
   ctrlC: '\u0003',
   ctrlD: '\u0004',
   ctrlO: '\u000f',
+  ctrlS: '\u0013',
   up: '\u001b[A',
   down: '\u001b[B',
   space: ' ',
@@ -119,6 +120,8 @@ export interface AgentCalls {
   followups: UserMessage[]
   steers: UserMessage[]
   cancels: number
+  /** The options of the last cancel, e.g. `{ keepInbox: true }`. */
+  cancelOptions: unknown
 }
 
 export interface Bench {
@@ -168,6 +171,8 @@ export async function bench(options: {
   unselected?: boolean
   /** Make every host operation fail with this message. */
   hostFailure?: string
+  /** Hold every host operation until the returned release is called. */
+  hostGate?: { release: () => void }
   /** History the host attaches to a resumed or forked session. */
   openedHistory?: readonly SessionEvent[]
   before?(ctx: Context): Promise<void> | void
@@ -178,7 +183,7 @@ export async function bench(options: {
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await options.before?.(ctx)
-  const calls: AgentCalls = { followups: [], steers: [], cancels: 0 }
+  const calls: AgentCalls = { followups: [], steers: [], cancels: 0, cancelOptions: undefined }
   let status: 'idle' | 'running' = options.running === true ? 'running' : 'idle'
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
@@ -192,7 +197,7 @@ export async function bench(options: {
         inbox: createInboxStub(),
         get status() { return status },
         ctx: ownerCtx,
-        cancel: () => { calls.cancels += 1 },
+        cancel: (_reason, options) => { calls.cancels += 1; calls.cancelOptions = options },
         runMaintenance: () => Promise.reject(new Error('not used')),
         send: () => {},
         followup: (message) => { calls.followups.push(message) },
@@ -223,6 +228,7 @@ export async function bench(options: {
   const open = async (call: string, id: SessionId): Promise<BoundSession> => {
     hostCalls.push(call)
     if (options.hostFailure !== undefined) throw new Error(options.hostFailure)
+    if (options.hostGate !== undefined) await new Promise<void>((resolve) => { options.hostGate!.release = resolve })
     const handle = await ctx.agents.create({ sessionId: id, meta: { cwd: '/work' } })
     const entry = {
       bound: {
@@ -239,7 +245,7 @@ export async function bench(options: {
   const host: SessionHost = {
     create: () => open('create', `session-opened-${String(++openedCount)}` as SessionId),
     resume: id => open(`resume:${id}`, id),
-    fork: id => open(`fork:${id}`, `session-fork-of-${id}` as SessionId),
+    fork: (id, turn) => open(`fork:${id}${turn === undefined ? '' : `@${String(turn)}`}`, `session-fork-of-${id}` as SessionId),
   }
   let disposed = 0
   const initial: BoundSession = {

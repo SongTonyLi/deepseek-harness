@@ -212,6 +212,20 @@ describe('tui runner', () => {
     await settled()
     expect(open.observed.terminal.text()).toContain('has no completed turn')
     expect(open.observed.created).toHaveLength(1)
+    const two = await bench({ observed: [
+      { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+      { type: 'turn/end', seq: 1, time: 1, data: { turn: 1, reason: { kind: 'completed' } } },
+      { type: 'turn/start', seq: 2, time: 1, data: { turn: 2 } },
+      { type: 'turn/end', seq: 3, time: 1, data: { turn: 2, reason: { kind: 'completed' } } },
+    ] as never[] })
+    apply(two.ctx, { toolPreviewLines: 8 })
+    await settled()
+    typeLine(two.observed.terminal, '/fork 1')
+    await settled()
+    expect(two.observed.created[1]?.inheritedEventCount).toBe(2)
+    typeLine(two.observed.terminal, '/fork 7')
+    await settled()
+    expect(two.observed.terminal.text()).toContain('has no completed turn 7')
   })
 
   it('reports an Agent creation failure and exits 1', async () => {

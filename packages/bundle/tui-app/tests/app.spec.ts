@@ -38,17 +38,25 @@ describe('TuiApp', () => {
     expect(test.terminal.text().split('› hello there')).toHaveLength(2)
   })
 
-  it('ignores blank input and steers a running Agent instead of queueing a turn', async () => {
+  it('ignores blank input, queues Enter for the next turn while running, and steers on Ctrl+S', async () => {
     const test = await bench()
     test.terminal.type(KEY.enter)
     test.terminal.type(' ')
     test.terminal.type(KEY.enter)
+    test.terminal.type(KEY.ctrlS)
     expect(test.calls.followups).toHaveLength(0)
     test.setStatus('running')
     typeLine(test.terminal, 'also do this')
     await test.settle()
+    expect(test.calls.followups).toHaveLength(1)
+    expect(test.calls.steers).toHaveLength(0)
+    expect(test.terminal.text()).toContain('queued for the next turn')
+    expect(test.terminal.text()).toContain('Enter queues for the next turn · Ctrl+S steers')
+    for (const char of 'right now') test.terminal.type(char)
+    test.terminal.type(KEY.ctrlS)
+    await test.settle()
     expect(test.calls.steers).toHaveLength(1)
-    expect(test.terminal.text()).toContain('queued for the next step')
+    expect(test.terminal.text()).toContain('steering the running turn')
     expect(test.terminal.text()).toContain('thinking')
     test.setStatus('idle')
     test.setStatus('idle')
@@ -193,8 +201,13 @@ describe('TuiApp', () => {
     test.setStatus('running')
     test.terminal.type(KEY.escape)
     expect(test.calls.cancels).toBe(1)
+    expect(test.calls.cancelOptions).toEqual({ keepInbox: true })
     await test.settle()
-    expect(test.terminal.text()).toContain('stopping the turn')
+    expect(test.terminal.text()).toContain('stopping the turn…')
+    test.agent.inbox.append('next-turn', createUserMessage({ content: [{ type: 'text', text: 'later' }], source: { kind: 'user' } }))
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.terminal.text()).toContain('1 queued message(s) stay queued')
     test.terminal.type('d')
     test.terminal.type('r')
     test.terminal.type('a')
@@ -425,7 +438,7 @@ describe('TuiApp', () => {
   it('submits an initial prompt and keeps the loader when the Agent is already running', async () => {
     const test = await bench({ initialPrompt: 'first task', color: true, running: true })
     await test.settle()
-    expect(test.calls.steers).toHaveLength(1)
+    expect(test.calls.followups).toHaveLength(1)
     expect(test.terminal.text()).toContain('› first task')
     expect(test.terminal.text()).toContain('thinking')
     test.setStatus('running')
@@ -473,6 +486,7 @@ describe('TuiApp', () => {
       before: (ctx) => {
         ctx.provide('llm', {
           listProviders: () => [{ id: 'p1', name: 'One' }, { id: 'p2', name: 'Two' }, { id: 'p3', name: 'Three' }],
+          resolveModelInfo: () => Promise.resolve({}),
           listModels: (provider: string) => {
             if (provider === 'p3') return Promise.reject(new Error('offline'))
             return Promise.resolve(provider === 'p1'
