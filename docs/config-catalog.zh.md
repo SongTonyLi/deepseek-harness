@@ -3193,6 +3193,26 @@ export type ToolPresentationMode = 'native' | 'ptc' | 'both'
 
 来源：[`packages/core/tools/src/index.ts:647`](../packages/core/tools/src/index.ts)
 
+<a id="deepseek-aidsh-tui-app"></a>
+
+## `@deepseek-ai/dsh-tui-app`
+
+需要：`agentDefaultModel` · `agents` · `sessions`
+
+```ts config-catalog
+/** Plugin config: the invocation resolved from this app's injected provider service, plus presentation tunables. */
+export interface Config {
+  /** A first prompt submitted as soon as the terminal is up. */
+  prompt?: string
+  /** A persisted session id to resume instead of starting a new session. */
+  resume?: string
+  /** Collapsed tool-card body rows before `Ctrl+O` expands them. */
+  toolPreviewLines: number
+}
+```
+
+来源：[`packages/bundle/tui-app/src/index.ts:35`](../packages/bundle/tui-app/src/index.ts)
+
 <a id="deepseek-aidsh-typert-loader"></a>
 
 ## `@deepseek-ai/dsh-typert-loader`

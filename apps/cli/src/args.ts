@@ -10,8 +10,8 @@
  * `dsh --profile tui --resume abc` boots the tui profile with `--resume abc`,
  * and `dsh --profile web -h` prints the web app's help, not this one's.
  *
- * `web` is a hardcoded alias for `--profile web`; `plugin` manages a profile's
- * plugin dependencies by forwarding to pnpm.
+ * `web` and `tui` are hardcoded aliases for `--profile web` and `--profile tui`;
+ * `plugin` manages a profile's plugin dependencies by forwarding to pnpm.
  * @module @deepseek-ai/dsh/args
  */
 
@@ -51,7 +51,7 @@ interface PluginInvocation {
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
 export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
 
-/** Launcher flags shared by the default command and the `web` alias. */
+/** Launcher flags shared by the default command and the profile aliases. */
 interface BootOptions {
   patch?: string[]
   dumpConfig?: boolean
@@ -75,13 +75,14 @@ function rejectElectronProfile(program: Command, profile: string): void {
 const HELP_EXAMPLES = `
 Examples:
   dsh --profile web                          boot the web profile (same as: dsh web)
+  dsh --profile tui                          talk to the agent in this terminal (same as: dsh tui)
   dsh --profile rescue --from-default-profile web
                                              create rescue from the shipped web template, then boot it
   dsh --profile headless "run the tests"     answer one task, print the result, and exit
-  dsh --profile tui --patch ./extra.yml      boot a custom profile with one extra overlay
+  dsh --profile mine --patch ./extra.yml     boot a custom profile with one extra overlay
   dsh --profile tui --resume <session>       arguments after the launcher flags reach the app
   dsh --profile web --help                   the web app's own flags and help
-  dsh plugin --profile tui add <package>     install a plugin into the tui profile
+  dsh plugin --profile mine add <package>    install a plugin into the mine profile
 `
 
 /**
@@ -172,20 +173,25 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
     }
   }
 
-  const web = program.command('web').description('boot the web profile (alias of --profile web); the web app\'s own flags follow')
-  web
-    .helpOption(false)
-    .allowUnknownOption()
-    .passThroughOptions()
-    .enablePositionalOptions()
-    .argument('[args...]', 'arguments for the web app (see: dsh web --help)')
-    .option('--patch <path>', 'extra patch-list overlay applied after the profile layer (repeatable)', collect)
-    .option('--dump-config', 'print the composed web-profile tree (with the user layer and any --patch) and exit')
-    .option('--dump-default-config', 'print the web profile\'s bundle layers (no user layer) and exit')
-    .action((args: string[], options: BootOptions) => {
-      rejectParentOptions('web')
-      resolved = resolveBoot(web, 'web', options, args)
-    })
+  /** Register one profile alias: `dsh <name>` boots `--profile <name>` with the app's own flags following. */
+  const alias = (name: string, description: string): void => {
+    const command = program.command(name).description(description)
+    command
+      .helpOption(false)
+      .allowUnknownOption()
+      .passThroughOptions()
+      .enablePositionalOptions()
+      .argument('[args...]', `arguments for the ${name} app (see: dsh ${name} --help)`)
+      .option('--patch <path>', 'extra patch-list overlay applied after the profile layer (repeatable)', collect)
+      .option('--dump-config', `print the composed ${name}-profile tree (with the user layer and any --patch) and exit`)
+      .option('--dump-default-config', `print the ${name} profile's bundle layers (no user layer) and exit`)
+      .action((args: string[], options: BootOptions) => {
+        rejectParentOptions(name)
+        resolved = resolveBoot(command, name, options, args)
+      })
+  }
+  alias('web', 'boot the web profile (alias of --profile web); the web app\'s own flags follow')
+  alias('tui', 'talk to the agent in this terminal (alias of --profile tui); the terminal app\'s own flags follow')
 
   const plugin = program.command('plugin').description('manage a profile\'s plugins by forwarding the remaining arguments to pnpm in the profile directory')
   plugin
