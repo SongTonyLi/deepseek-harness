@@ -8,7 +8,7 @@ import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { apply, internals } from '../src/index.ts'
 import { FakeTerminal, KEY } from './bench.ts'
@@ -28,7 +28,7 @@ interface Observed {
 
 /** Mount the real registries around a scripted Agent factory and capture the process effects. */
 async function bench(
-  options: { history?: SessionEvent[]; failCreate?: boolean; noPersistence?: boolean } = {},
+  options: { history?: SessionEvent[]; failCreate?: boolean; noPersistence?: boolean; observed?: SessionEvent[] } = {},
 ): Promise<{ ctx: Context; observed: Observed }> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
@@ -37,8 +37,11 @@ async function bench(
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   const terminal = new FakeTerminal()
   const observed: Observed = { terminal, err: '', exits: [], order: [], created: [], resumed: [], cancels: 0 }
-  const makeAgent = async (ownerCtx: Context, id: SessionId, setup: CreateAgentOptions['setup'], meta?: CreateAgentOptions['meta']): Promise<AgentHandle> => {
-    const session = ctx.sessions.create(id, meta === undefined ? {} : { meta })
+  const makeAgent = async (ownerCtx: Context, id: SessionId, setup: CreateAgentOptions['setup'], meta?: CreateAgentOptions['meta'], seed?: readonly SessionEvent[]): Promise<AgentHandle> => {
+    const session = ctx.sessions.create(id, {
+      ...meta === undefined ? {} : { meta },
+      ...seed === undefined ? {} : { seed, inheritedEventCount: SessionLogOffset(seed.length) },
+    })
     const agent: Agent = {
       id: session.id,
       options: { provider: 'test-provider', model: 'test-model' },
@@ -62,7 +65,7 @@ async function bench(
     createAgent(ownerCtx, createOptions) {
       observed.created.push(createOptions)
       if (options.failCreate === true) return Promise.reject(new Error('factory refused'))
-      return makeAgent(ownerCtx, createOptions.sessionId, createOptions.setup, createOptions.meta)
+      return makeAgent(ownerCtx, createOptions.sessionId, createOptions.setup, createOptions.meta, createOptions.seed)
     },
     resume(ownerCtx, resumeOptions) {
       observed.resumed.push(resumeOptions)
@@ -81,6 +84,17 @@ async function bench(
       },
     } as never)
   }
+  if (options.observed !== undefined) {
+    const events = options.observed
+    ctx.provide('sessionQuery', {
+      observeSession: (id: SessionId) => {
+        observed.order.push(`observe:${id}`)
+        return Promise.resolve({ events, [Symbol.dispose]: () => { observed.order.push('release-observation') } })
+      },
+      listSessions: () => Promise.resolve([{ header: { id: 'session-old', createdAt: 1 } }]),
+      readTitleSnapshots: () => Promise.resolve([{ status: 'fulfilled', value: {} }]),
+    } as never)
+  }
   ctx.on('session/flush', () => { observed.order.push('flush') })
   internals.createTerminal = () => terminal
   internals.releaseInput = () => { observed.order.push('release') }
@@ -88,6 +102,11 @@ async function bench(
   internals.color = false
   ctx.provide('appExit', (code: number) => { observed.order.push(`exit:${String(code)}`); observed.exits.push(code) })
   return { ctx, observed }
+}
+
+function typeLine(terminal: FakeTerminal, text: string): void {
+  for (const char of text) terminal.type(char)
+  terminal.type(KEY.enter)
 }
 
 async function settled(): Promise<void> {
@@ -139,8 +158,60 @@ describe('tui runner', () => {
     const { ctx, observed } = await bench({ noPersistence: true })
     apply(ctx, { toolPreviewLines: 8, resume: 'session-old' })
     await settled()
-    expect(observed.err).toContain('--resume needs a composed session persistence provider')
+    expect(observed.err).toContain('resuming a session needs a composed session persistence provider')
     expect(observed.exits).toEqual([1])
+  })
+
+  it('forks at the last completed turn, resumes through the picker, and starts new sessions from the terminal', async () => {
+    const at = (type: string, seq: number, data: unknown): SessionEvent => ({ type, seq, time: 1, data }) as never
+    const events = [
+      at('turn/start', 0, { turn: 1 }),
+      at('turn/end', 1, { turn: 1, reason: { kind: 'completed' } }),
+      at('session/title', 2, { title: 'T', messageSeqs: [], source: { kind: 'user' } }),
+      at('turn/start', 3, { turn: 2 }),
+    ]
+    const { ctx, observed } = await bench({ observed: events })
+    apply(ctx, { toolPreviewLines: 8 })
+    await settled()
+    const first = observed.created[0]?.sessionId
+    typeLine(observed.terminal, '/fork')
+    await settled()
+    expect(observed.order).toEqual([`observe:${String(first)}`, 'release-observation', 'dispose'])
+    const fork = observed.created[1]
+    expect(fork?.seed).toEqual(events.slice(0, 3))
+    expect(fork?.inheritedEventCount).toBe(3)
+    expect(fork?.meta).toEqual({ cwd: process.cwd(), parentSession: first, isSeeded: true })
+    expect(observed.terminal.text()).toContain('forked: session session-')
+    typeLine(observed.terminal, '/new')
+    await settled()
+    expect(observed.created).toHaveLength(3)
+    expect(observed.created[2]?.meta).toEqual({ cwd: process.cwd() })
+    typeLine(observed.terminal, '/sessions')
+    await settled()
+    observed.terminal.type(KEY.enter)
+    await settled()
+    expect(observed.resumed.map(options => options.resumeSessionId)).toEqual(['session-old'])
+    expect(observed.order.slice(-3)).toEqual(['open:session-old:read', 'close', 'dispose'])
+    observed.terminal.type(KEY.ctrlD)
+    await settled()
+    expect(observed.err).toContain('session session-old saved')
+    expect(observed.exits).toEqual([0])
+  })
+
+  it('refuses to fork without a query engine or a completed turn', async () => {
+    const bare = await bench()
+    apply(bare.ctx, { toolPreviewLines: 8 })
+    await settled()
+    typeLine(bare.observed.terminal, '/fork')
+    await settled()
+    expect(bare.observed.terminal.text()).toContain('forked failed: forking a session needs a composed session query engine')
+    const open = await bench({ observed: [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } } as never] })
+    apply(open.ctx, { toolPreviewLines: 8 })
+    await settled()
+    typeLine(open.observed.terminal, '/fork')
+    await settled()
+    expect(open.observed.terminal.text()).toContain('has no completed turn')
+    expect(open.observed.created).toHaveLength(1)
   })
 
   it('reports an Agent creation failure and exits 1', async () => {

@@ -10,15 +10,15 @@ DeepSeek Harness 只随发行版交付了一个交互式表层，即 `dsh web` �
 
 ## 决定
 
-`packages/bundle/tui-app` 下的 `@deepseek-ai/dsh-tui-app` 是终端表层，`tui` 是随附 profile（`dsh-base` 加 `dsh-tui-app`，只在启动时应用 patch），并以 `dsh tui` 作为与 `dsh web` 并列的启动器别名。该组合包镜像 `dsh-headless`：`tui-app-startup` 命令行提供方发布 `tuiStartup`（可选的首个提示与 `--resume <session-id>`），`tui-app` runner 通过核心注册表创建或恢复一个 Agent 并驱动它直到用户退出。该 profile 保持 base 的 agent 平面行启用，只额外加入 PTC 模式的 worker 与 `ask_user_question` 工具。
+`packages/bundle/tui-app` 下的 `@deepseek-ai/dsh-tui-app` 是终端表层，`tui` 是随附 profile（`dsh-base` 加 `dsh-tui-app`，只在启动时应用 patch），并以 `dsh tui` 作为与 `dsh web` 并列的启动器别名。该组合包镜像 `dsh-headless`：`tui-app-startup` 命令行提供方发布 `tuiStartup`（可选的首个提示与 `--resume <session-id>`），`tui-app` runner 是核心注册表之上的会话宿主（创建、恢复、以浏览器相同的切割点在最后一个完成轮次处 fork），同一时间驱动一个绑定的 Agent 直到用户退出。该 profile 保持 base 的 agent 平面行启用，并加入 PTC 模式的 worker、`ask_user_question` 工具、`file-reference-local` 与 `session-reference` 解析器以及 `present` 工具，因此终端组合的模型侧行与浏览器相同。
 
 渲染器是 [`@earendil-works/pi-tui`](https://github.com/earendil-works/pi)，即 pi 编码 agent 维护的差分终端库，作为与仓库现有 `@earendil-works/pi-ai` 适配器并列的普通依赖引入，而不是 vendored 或打过补丁的副本。应用把自己的编辑器、Markdown、选择列表与加载指示组件组合在 pi-tui 的主屏渲染器上，因此终端回滚区保留对话记录。
 
-终端只读取其他表层已经使用的接缝。持久事实来自 `session/event`（`user/message`、`assistant/message`、`tool/call`、`tool/result`、`turn/end`）；实时文本来自 `agent/assistant-stream`；工具卡片使用每个工具的 `presentCall` 与 `presentResult` 视图；`/` 行在四个终端本地命令（`/help`、`/model`、`/tools`、`/quit`）之后交给 `ctx.commands.execute`；应用只为自己的 Agent 充当 `approval/request` 与 `user-questions/request` waterfall 的进程内应答器。提示是进程本地的呈现，从不写入日志。`--resume` 在 Agent 恢复前通过 `sessionPersistence` 的只读句柄分页读取持久化日志，因此生产代码中没有新增同步历史读取。
+终端只读取其他表层已经使用的接缝。持久事实来自 `session/event`（`user/message`、`assistant/message`、`tool/call`、`tool/result`、`turn/end`）；实时文本来自 `agent/assistant-stream`；工具卡片使用每个工具的 `presentCall` 与 `presentResult` 视图；`/` 行在终端本地命令之后交给 `ctx.commands.execute`；应用只为其绑定的 Agent 充当 `approval/request` 与 `user-questions/request` waterfall 的进程内应答器。与浏览器的对等来自读取同一批服务而非新增服务：`/sessions` 经 `sessionQuery` 列出，`/title` 经 `sessionTitle` 重命名，`/attach` 经 `attachments` 存储，`@` 补全查询 `fileReferences` 与 `sessionReferenceResolver` 并插入其规范提及，`/skills` 读取 `skills`，`/signin` 以终端作为交互运行 `authorization.begin`，`/export` 经 `dsh-session-log-export` 写出与浏览器下载路由相同的归档，`/model` 从 `llm.resolveModelInfo` 提供推理强度并经 `agentDefaultModel` 保存，页眉与页脚折叠 `session/title` 与 `permission/preset`。提示是进程本地的呈现，从不写入日志。`--resume` 在 Agent 恢复前通过 `sessionPersistence` 的只读句柄分页读取持久化日志，因此生产代码中没有新增同步历史读取。
 
 ## 验证
 
-包级测试在伪 `Terminal` 上驱动应用，输入原始按键字节并读取渲染文字，在逐文件覆盖率门槛下覆盖渲染、按键、两个交互接缝、本地与共享命令、模型选择器，以及 runner 的创建、恢复、退出与失败路径。启动提供方在真实 Loader 配置树上得到验证。`apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts` 通过真实 `dsh` 启动器与免密钥模拟模型启动随附 profile，驱动生产环境的 shell 工具，用 Ctrl+D 退出，并在第二个进程中恢复持久化会话。
+包级测试在伪 `Terminal` 上驱动应用，输入原始按键字节并读取渲染文字，在逐文件覆盖率门槛下覆盖渲染、按键、两个交互接缝、本地与共享命令、模型与推理强度选择器、会话切换与 fork、附件、`@` 补全、登录、导出，以及 runner 的创建、恢复、fork 切割、退出与失败路径。启动提供方在真实 Loader 配置树上得到验证。`apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts` 通过真实 `dsh` 启动器与免密钥模拟模型启动随附 profile，驱动生产环境的 shell 工具，用 Ctrl+D 退出，并在第二个进程中恢复持久化会话，其页眉带有生成的标题、页脚带有权限预设。
 
 ## 考虑过的替代方案
 
@@ -32,4 +32,4 @@ DeepSeek Harness 只随发行版交付了一个交互式表层，即 `dsh web` �
 
 ## 后果
 
-`dsh tui` 与 `dsh web`、`headless`、`sdk`、`sdk-minimal` 和 `acp` 一起成为随附应用；启动器、架构、启动与组合包文档列出它，profile 测试枚举其组合包。`tui` 不再是文档中自定义 profile 名称的占位符。终端每个进程一个会话，审批为一次性；更丰富的会话导航与记忆授权仍是浏览器表层的功能，直到有终端消费者证明其必要。
+`dsh tui` 与 `dsh web`、`headless`、`sdk`、`sdk-minimal` 和 `acp` 一起成为随附应用；启动器、架构、启动与组合包文档列出它，profile 测试枚举其组合包。`tui` 不再是文档中自定义 profile 名称的占位符。终端同一时间驱动一个会话，审批为一次性；浏览器保留其仅页面功能（设置、插件清单、workspace 与目录选择器、在应用中打开、轨迹、子 agent 浏览、消息反馈），终端通过共享的 `/` 命令与页脚覆盖这些页面所改变的事实。

@@ -3516,7 +3516,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/bundle/tui-app/src/index.ts:35`](../packages/bundle/tui-app/src/index.ts)
+Source: [`packages/bundle/tui-app/src/index.ts:37`](../packages/bundle/tui-app/src/index.ts)
 
 <a id="deepseek-aidsh-typert-loader"></a>
 

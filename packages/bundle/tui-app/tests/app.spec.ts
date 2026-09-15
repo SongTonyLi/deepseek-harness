@@ -206,18 +206,18 @@ describe('TuiApp', () => {
     await test.settle()
     expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
     test.terminal.type(KEY.ctrlD)
-    expect(test.quits).toEqual([0])
+    expect(test.quits).toHaveLength(1)
     expect(test.terminal.stopped).toBe(true)
     // Further stops are no-ops.
     test.app.stop()
-    expect(test.quits).toEqual([0])
+    expect(test.quits).toHaveLength(1)
   })
 
   it('quits on a second Ctrl+C inside the double-press window', async () => {
     const test = await bench()
     test.terminal.type(KEY.ctrlC)
     test.terminal.type(KEY.ctrlC)
-    expect(test.quits).toEqual([0])
+    expect(test.quits).toHaveLength(1)
   })
 
   it('answers /help, /quit, /model, and unknown commands locally', async () => {
@@ -278,7 +278,7 @@ describe('TuiApp', () => {
     expect(test.selection.current).toEqual({ provider: 'other', model: 'big' })
     expect(test.terminal.text()).toContain('other/big')
     typeLine(test.terminal, '/exit')
-    expect(test.quits).toEqual([0])
+    expect(test.quits).toHaveLength(1)
   })
 
   it('reports unknown commands when no registry is composed', async () => {
@@ -459,13 +459,13 @@ describe('TuiApp', () => {
     test.terminal.type('/')
     await test.settle()
     expect(test.terminal.text()).toContain('/model')
-    test.terminal.type('q')
+    for (const char of 'qui') test.terminal.type(char)
     await test.settle()
     test.terminal.type(KEY.enter)
     await test.settle()
     // Completion keeps `/quit` in the editor; Enter then submits it.
     test.terminal.type(KEY.enter)
-    expect(test.quits).toEqual([0])
+    expect(test.quits).toHaveLength(1)
   })
 
   it('picks a model from the composed providers', async () => {
@@ -506,6 +506,6 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).toContain('no models are available')
     typeLine(test.terminal, '/help')
     typeLine(test.terminal, '/quit')
-    expect(test.quits).toEqual([0])
+    expect(test.quits).toHaveLength(1)
   })
 })

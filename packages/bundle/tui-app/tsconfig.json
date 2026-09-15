@@ -18,6 +18,18 @@
       "path": "../../../vendor/schemastery"
     },
     {
+      "path": "../../attachment/attachment"
+    },
+    {
+      "path": "../../boot/cmdline"
+    },
+    {
+      "path": "../../context/file-reference"
+    },
+    {
+      "path": "../../context/session-reference"
+    },
+    {
       "path": "../../core/agent"
     },
     {
@@ -30,13 +42,13 @@
       "path": "../../core/tools"
     },
     {
-      "path": "../../llm/llm"
-    },
-    {
-      "path": "../../boot/cmdline"
+      "path": "../../credentials/authorization"
     },
     {
       "path": "../../interaction/commands"
+    },
+    {
+      "path": "../../interaction/permission-presets"
     },
     {
       "path": "../../interaction/user-approval"
@@ -45,7 +57,22 @@
       "path": "../../interaction/user-questions"
     },
     {
+      "path": "../../llm/llm"
+    },
+    {
+      "path": "../../session-query/session-log-export/tsconfig.host.json"
+    },
+    {
+      "path": "../../session-query/session-query"
+    },
+    {
       "path": "../../session/session-persistence"
+    },
+    {
+      "path": "../../session/session-title"
+    },
+    {
+      "path": "../../skill/skill"
     },
     {
       "path": "../../util/brand"
