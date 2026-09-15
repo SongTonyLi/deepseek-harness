@@ -24,6 +24,9 @@
       "path": "../../boot/cmdline"
     },
     {
+      "path": "../../compaction/compaction"
+    },
+    {
       "path": "../../context/file-reference"
     },
     {
@@ -45,6 +48,15 @@
       "path": "../../credentials/authorization"
     },
     {
+      "path": "../../fs/tool-present"
+    },
+    {
+      "path": "../../goal/goal"
+    },
+    {
+      "path": "../../host/plugin-inventory"
+    },
+    {
       "path": "../../interaction/commands"
     },
     {
@@ -60,6 +72,15 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../llm/llm-retry"
+    },
+    {
+      "path": "../../llm/token-meter"
+    },
+    {
+      "path": "../../plan/plan-mode"
+    },
+    {
       "path": "../../session-query/session-log-export/tsconfig.host.json"
     },
     {
@@ -69,10 +90,28 @@
       "path": "../../session/session-persistence"
     },
     {
+      "path": "../../session/session-projection"
+    },
+    {
+      "path": "../../session/session-stats"
+    },
+    {
       "path": "../../session/session-title"
     },
     {
+      "path": "../../session/session-turn-outline"
+    },
+    {
+      "path": "../../settings/settings"
+    },
+    {
       "path": "../../skill/skill"
+    },
+    {
+      "path": "../../subagent/subagent"
+    },
+    {
+      "path": "../../todo/tool-todo"
     },
     {
       "path": "../../util/brand"

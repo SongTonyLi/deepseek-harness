@@ -27,6 +27,7 @@ User-interaction Service Definition. It owns `ctx.userQuestions`, the service a 
 ### Public API
 
 - `ctx.userQuestions.ask(request): Promise<AskUserQuestionAnswer>` Dispatch the answerer waterfall and wait for the first accepted answer.
+- `planReviewOptions(question): PlanReviewOptions | undefined` (also at `@deepseek-ai/dsh-user-questions/plan-review`, free of the Service Definition for Client bundles) Narrow one question to its approve and decline options when it is a binary `plan-review`; the browser card and the terminal prompt share this narrowing.
 
 ### Key Types
 

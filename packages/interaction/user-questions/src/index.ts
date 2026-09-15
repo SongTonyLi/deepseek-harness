@@ -26,6 +26,7 @@ export type {
   AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionIntent, AskUserQuestionItem,
   AskUserQuestionOption,
 } from './types.ts'
+export { planReviewOptions, type PlanReviewOptions } from './plan-review.ts'
 
 /** Request for a human answer. */
 export interface AskUserQuestionRequest extends AskUserQuestionRequestEvent {}
