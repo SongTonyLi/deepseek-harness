@@ -10,11 +10,34 @@ import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, type StreamChunk, type ContentBlock, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { Terminal } from '@earendil-works/pi-tui'
-import { TuiApp } from '../src/app.ts'
+import { TuiApp, type BoundSession, type SessionHost } from '../src/app.ts'
 import { createPalette } from '../src/style.ts'
+
+/**
+ * Provide the export services over one stored session: a read handle with a
+ * bare header and one event, a lineage without descendants, and an empty
+ * attachment store.
+ * @param ctx - the context to provide into.
+ * @param id - the stored session.
+ * @param missing - make the persistence handle report the session as absent.
+ */
+export function exportStubs(ctx: Context, id: SessionId, missing = false): void {
+  ctx.provide('sessionPersistence', {
+    open: () => missing ? Promise.reject(new SessionPersistenceNotFoundError(id)) : Promise.resolve({
+      header: { version: 2, id, createdAt: 1, cwd: '/work', isSeeded: false },
+      read: () => Promise.resolve({ eventState: 'complete', events: [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }] }),
+      close: () => Promise.resolve(),
+    }),
+  } as never)
+  ctx.provide('sessionQuery', {
+    traceSession: () => Promise.resolve({ target: { header: { id } }, ancestors: [], descendants: [] }),
+  } as never)
+  ctx.provide('attachments', {} as never)
+}
 
 /** A terminal that records what the tree writes and lets tests type into it. */
 export class FakeTerminal implements Terminal {
@@ -106,7 +129,12 @@ export interface Bench {
   terminal: FakeTerminal
   selection: ModelSelectionRef
   app: TuiApp
-  quits: number[]
+  /** The sessions handed to `onQuit`. */
+  quits: BoundSession[]
+  /** What the scripted host was asked for, e.g. `create`, `resume:session-x`, `fork:session-x`. */
+  hostCalls: string[]
+  /** Sessions the host bound after the initial one, with their disposal counts. */
+  opened: { bound: BoundSession; disposed: number }[]
   /** Set the scripted Agent's status and publish the transition. */
   setStatus(status: 'idle' | 'running'): void
   /** Wait for the throttled renderer to draw pending changes. */
@@ -138,6 +166,10 @@ export async function bench(options: {
   running?: boolean
   /** Omit the model selection and the Agent's model options. */
   unselected?: boolean
+  /** Make every host operation fail with this message. */
+  hostFailure?: string
+  /** History the host attaches to a resumed or forked session. */
+  openedHistory?: readonly SessionEvent[]
   before?(ctx: Context): Promise<void> | void
 } = {}): Promise<Bench> {
   const ctx = new Context()
@@ -184,19 +216,51 @@ export async function bench(options: {
     ...options.unselected === true ? {} : { agentOptions: { provider: 'test-provider', model: 'test-model' } },
   })
   const terminal = new FakeTerminal()
-  const quits: number[] = []
-  const app = new TuiApp({
-    ctx,
+  const quits: BoundSession[] = []
+  const hostCalls: string[] = []
+  const opened: { bound: BoundSession; disposed: number }[] = []
+  let openedCount = 0
+  const open = async (call: string, id: SessionId): Promise<BoundSession> => {
+    hostCalls.push(call)
+    if (options.hostFailure !== undefined) throw new Error(options.hostFailure)
+    const handle = await ctx.agents.create({ sessionId: id, meta: { cwd: '/work' } })
+    const entry = {
+      bound: {
+        agent: handle.agent,
+        selection: { current: { provider: 'test-provider', model: 'opened-model' }, assembled: undefined },
+        history: options.openedHistory ?? [],
+        dispose: () => { entry.disposed += 1; return Promise.resolve() },
+      },
+      disposed: 0,
+    }
+    opened.push(entry)
+    return entry.bound
+  }
+  const host: SessionHost = {
+    create: () => open('create', `session-opened-${String(++openedCount)}` as SessionId),
+    resume: id => open(`resume:${id}`, id),
+    fork: id => open(`fork:${id}`, `session-fork-of-${id}` as SessionId),
+  }
+  let disposed = 0
+  const initial: BoundSession = {
     agent,
     selection,
+    history: options.history ?? [],
+    dispose: () => { disposed += 1; return Promise.resolve() },
+  }
+  opened.push({ bound: initial, get disposed() { return disposed } })
+  const app = new TuiApp({
+    ctx,
+    host,
+    initial,
     terminal,
     palette: createPalette(options.color ?? false),
     toolPreviewLines: options.toolPreviewLines ?? 3,
     cwd: '/work',
     releaseInput: () => {},
-    onQuit: () => { quits.push(0) },
+    onQuit: (bound) => { quits.push(bound) },
   })
-  app.start(options.history ?? [], options.initialPrompt)
+  app.start(options.initialPrompt)
   const session = agent.session
   const attemptId = LlmAttemptId(`${agent.id}:test`)
   let revision = 0
@@ -212,6 +276,8 @@ export async function bench(options: {
     selection,
     app,
     quits,
+    hostCalls,
+    opened,
     setStatus(next) {
       status = next
       agent.ctx.emit('agent/status', { agent, status: next })

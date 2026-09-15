@@ -1,8 +1,9 @@
 /**
  * @deepseek-ai/dsh-tui-app — the interactive terminal runner. The bundle patch
  * rides over dsh-base without Host, HTTP, or browser plugins; this runner
- * creates or resumes one Agent through the core registry, hands it to the
- * terminal application, and on quit flushes its Session and requests exit.
+ * creates, resumes, and forks Agents through the core registry as the
+ * terminal application's session host, and on quit flushes the bound Session
+ * and requests exit.
  *
  * @module @deepseek-ai/dsh-tui-app
  */
@@ -13,15 +14,16 @@ import { ProcessTerminal, type Terminal } from '@earendil-works/pi-tui'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { AgentHandle, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-session-query'
 // Empty type imports carry the loader Context merge for the settlement await
 // and the cmdline Context merge for the appExit host value.
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-cmdline'
-import { TuiApp } from './app.ts'
+import { TuiApp, type BoundSession, type SessionHost } from './app.ts'
 import { colorEnabled, createPalette } from './style.ts'
 import { describeFailure } from './transcript.ts'
 
@@ -70,7 +72,7 @@ export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stder
   color: colorEnabled(process.env, process.stdout.isTTY),
 }
 
-/** Events persisted for `--resume`, read through the storage handle before the Agent takes the log over. */
+/** Events read per page when a persisted session is resumed, through the storage handle before the Agent takes the log over. */
 const HISTORY_PAGE = 256
 
 /**
@@ -82,7 +84,7 @@ const HISTORY_PAGE = 256
  */
 async function readHistory(ctx: Context, id: SessionId): Promise<SessionEvent[]> {
   const persistence = ctx.get('sessionPersistence')
-  if (persistence === undefined) throw new Error('tui-app: --resume needs a composed session persistence provider')
+  if (persistence === undefined) throw new Error('tui-app: resuming a session needs a composed session persistence provider')
   const handle = await persistence.open(id, 'read')
   try {
     const events: SessionEvent[] = []
@@ -116,6 +118,62 @@ function coreServices(ctx: Context): CoreServices | undefined {
   return { agents, defaultModel, sessions }
 }
 
+/**
+ * The fork prefix of a session: its events through the last completed turn,
+ * up to the next turn's start, the same cut the browser's fork command takes.
+ * @param ctx - plugin context carrying the session query engine.
+ * @param id - the session to fork.
+ * @returns the seed events.
+ * @throws when no query engine is composed or the session has no completed turn.
+ */
+async function forkSeed(ctx: Context, id: SessionId): Promise<SessionEvent[]> {
+  const query = ctx.get('sessionQuery')
+  if (query === undefined) throw new Error('forking a session needs a composed session query engine')
+  using source = await query.observeSession(id)
+  const boundary = source.events.findLast(event => event.type === 'turn/end')
+  if (boundary === undefined) throw new Error(`session ${id} has no completed turn to fork from`)
+  let cut = boundary.seq + 1
+  while (cut < source.events.length && source.events[cut]?.type !== 'turn/start') cut += 1
+  return source.events.slice(0, cut)
+}
+
+/**
+ * The terminal's session host over the core Agent registry. Every Agent gets
+ * the model selection installed so `/model` applies from the next request.
+ * @param ctx - plugin context.
+ * @param core - the injected services.
+ * @param cwd - the workspace root recorded on new sessions.
+ * @returns the host.
+ */
+function sessionHost(ctx: Context, core: CoreServices, cwd: string): SessionHost {
+  const { agents, defaultModel } = core
+  const bind = async (
+    open: (selection: ModelSelectionRef, setup: AgentSetup) => ReturnType<typeof agents.create>,
+    history: readonly SessionEvent[],
+  ): Promise<BoundSession> => {
+    const selection: ModelSelectionRef = { current: undefined, assembled: undefined }
+    const handle = await open(selection, (agentCtx) => { installModelSelection(agentCtx, selection) })
+    await handle.agent.whenIdle()
+    return { agent: handle.agent, selection, history, dispose: () => handle.dispose() }
+  }
+  const create = (seed: SessionEvent[] | undefined, parent: SessionId | undefined): Promise<BoundSession> => bind((selection, setup) => {
+    const model = defaultModel.currentSelection()
+    selection.current = model
+    return agents.create({
+      sessionId: brandString<SessionId>(`session-${randomUUID()}`),
+      ...seed === undefined ? {} : { seed, inheritedEventCount: SessionLogOffset(seed.length) },
+      meta: { cwd, ...parent === undefined ? {} : { parentSession: parent, isSeeded: true } },
+      agentOptions: { provider: model.provider, model: model.model },
+      setup,
+    })
+  }, seed ?? [])
+  return {
+    create: () => create(undefined, undefined),
+    resume: async id => bind((_selection, setup) => agents.resume({ resumeSessionId: id, setup }), await readHistory(ctx, id)),
+    fork: async id => create(await forkSeed(ctx, id), id),
+  }
+}
+
 /** Report an unexpected runner failure and request a failing exit. */
 function fail(host: TuiHost, error: unknown): void {
   host.stderr.write(`dsh: ${describeFailure(error)}\n`)
@@ -123,8 +181,8 @@ function fail(host: TuiHost, error: unknown): void {
 }
 
 /**
- * Create or resume the Agent, start the terminal application, and request
- * process exit when the user quits.
+ * Create or resume the first Agent, start the terminal application over the
+ * session host, and request process exit when the user quits.
  * @param ctx - plugin context carrying the Agent, default model, Session, and launcher services.
  * @param config - the validated invocation and tunables.
  * @param host - process-facing effects.
@@ -136,51 +194,34 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
   const core = coreServices(ctx)
   // Early process shutdown can dispose the tree while settlement is pending.
   if (core === undefined) return
-  const { agents, defaultModel, sessions } = core
-
   const cwd = process.cwd()
-  const selection: ModelSelectionRef = { current: undefined, assembled: undefined }
-  const setup = (agentCtx: Context): void => { installModelSelection(agentCtx, selection) }
-  let handle: AgentHandle
-  let history: SessionEvent[] = []
-  if (config.resume === undefined) {
-    const model = defaultModel.currentSelection()
-    selection.current = model
-    handle = await agents.create({
-      sessionId: brandString<SessionId>(`session-${randomUUID()}`),
-      meta: { cwd },
-      agentOptions: { provider: model.provider, model: model.model },
-      setup,
-    })
-  } else {
-    const id = brandString<SessionId>(config.resume)
-    history = await readHistory(ctx, id)
-    handle = await agents.resume({ resumeSessionId: id, setup })
-  }
-  const agent = handle.agent
-  await agent.whenIdle()
+  const sessions = sessionHost(ctx, core, cwd)
+  const initial = config.resume === undefined
+    ? await sessions.create()
+    : await sessions.resume(brandString<SessionId>(config.resume))
 
   const app = new TuiApp({
     ctx,
-    agent,
-    selection,
+    host: sessions,
+    initial,
     terminal: host.createTerminal(),
     palette: createPalette(host.color),
     toolPreviewLines: config.toolPreviewLines,
     cwd,
     releaseInput: () => { host.releaseInput() },
-    onQuit: () => {
+    onQuit: (bound) => {
       void (async () => {
+        const { agent } = bound
         agent.cancel({ kind: 'user' })
         await agent.whenIdle()
-        await sessions.flush(agent.session)
+        await core.sessions.flush(agent.session)
         host.stderr.write(`dsh: session ${agent.session.id} saved; resume with: dsh --profile tui --resume ${agent.session.id}\n`)
-        await handle.dispose()
+        await bound.dispose()
         host.exit(0)
       })().catch((error: unknown) => { fail(host, error) })
     },
   })
-  app.start(history, config.prompt)
+  app.start(config.prompt)
 }
 
 /**

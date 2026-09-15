@@ -26,6 +26,20 @@
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 
+    # `@path` workspace references: the editor completes them from this
+    # service and the model reads the same prompt section as in the browser.
+    - id: file-reference-local
+      name: '@deepseek-ai/dsh-file-reference-local'
+
+    # `@[label](session:…)` mentions of other sessions, prepared as read-only
+    # context on the next step exactly as in the browser.
+    - id: session-reference
+      name: '@deepseek-ai/dsh-session-reference'
+
+    # Explicit deliverable declarations; the terminal lists presented paths.
+    - id: present
+      name: '@deepseek-ai/dsh-tool-present'
+
     - id: tui-app-startup
       name: '@deepseek-ai/dsh-tui-app/startup'
 

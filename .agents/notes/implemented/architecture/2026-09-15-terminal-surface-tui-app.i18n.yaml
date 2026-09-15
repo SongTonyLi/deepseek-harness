@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-15-terminal-surface-tui-app.md
-2026-09-15-terminal-surface-tui-app.md: 7ab2688e412eb16ea87b34383580e4be30399706
-2026-09-15-terminal-surface-tui-app.zh.md: a1d0752dedabdc1ee7f1465be845ca2e048a47fe
+2026-09-15-terminal-surface-tui-app.md: 0f6bfc7daedc2c298b1791be35100de97e0cffcc
+2026-09-15-terminal-surface-tui-app.zh.md: ac81c6b9a3ba4214a1da2a0536f46e8567b1b448

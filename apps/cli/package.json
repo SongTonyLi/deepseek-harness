@@ -48,6 +48,7 @@
     "@deepseek-ai/dsh-cordis-client-runner": "workspace:^",
     "@deepseek-ai/dsh-fs-local": "workspace:^",
     "@deepseek-ai/dsh-goal": "workspace:^",
+    "@deepseek-ai/dsh-file-reference-local": "workspace:^",
     "@deepseek-ai/dsh-goal-round-driver": "workspace:^",
     "@deepseek-ai/dsh-headless": "workspace:^",
     "@deepseek-ai/dsh-home-paths": "workspace:^",
