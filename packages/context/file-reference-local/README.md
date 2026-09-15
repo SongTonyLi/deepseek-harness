@@ -39,7 +39,7 @@ The defaults suit a typical workspace, so the minimal mount needs no configurati
 
 ### What you get
 
-Typing `@` in a host UI returns up to `maxResults` ranked path candidates for the addressed agent. A query containing `/` lists the matching directory's entries directly; a bare query fuzzy-ranks the bounded recursive index. Directory candidates keep the mention open with a trailing slash. After any tool result the agent's index is marked stale: the next query still answers from it and its replacement builds in the background, so a rebuild never sits in front of the caret.
+Typing `@` in a host UI returns up to `maxResults` ranked path candidates for the addressed agent. A query containing `/` lists that directory's entries directly, including `../`, `~/`, and absolute paths; a bare query fuzzy-ranks the bounded workspace index. Directory candidates keep the mention open with a trailing slash. After any tool result the agent's index is marked stale: the next query still answers from it and its replacement builds in the background, so a rebuild never sits in front of the caret.
 
 ### Configuration
 
@@ -63,7 +63,7 @@ This section explains the design of the provider; the observable behavior is cov
 
 ### Design concept
 
-The provider maintains one reusable `WorkspaceFileSearch` per agent, rooted at that session's `cwd`. Directory-scoped queries (`a/b/...`) list live directory state, while bare fuzzy queries share one bounded recursive traversal. Only a workspace's first bare query waits for that traversal; a `tool/result` event marks the settled entries stale, and the next bare query serves them while the replacement builds. The model guidance is a per-agent prompt section contributed only while the addressed agent has a `read` tool; agent disposal releases both the index and the prompt fiber.
+The provider maintains one reusable `WorkspaceFileSearch` per agent, rooted at that session's `cwd`. Directory-scoped queries (`a/b/...`, `../`, `~/`, or an absolute directory) list live directory state, while bare fuzzy queries share one bounded recursive traversal of the workspace. Only a workspace's first bare query waits for that traversal; a `tool/result` event marks the settled entries stale, and the next bare query serves them while the replacement builds. The model guidance is a per-agent prompt section contributed only while the addressed agent has a `read` tool; agent disposal releases both the index and the prompt fiber.
 
 ### Source map
 
@@ -105,7 +105,7 @@ When the addressed agent has an effective `read` tool, the provider contributes 
 ##### File-reference instruction
 
 ```markdown
-Tokens prefixed with @ are workspace paths the user explicitly referenced, relative to the workspace root. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.
+Tokens prefixed with @ are paths the user explicitly referenced: relative to the workspace root, ../ from that root, ~/ from the home directory, or absolute. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.
 ```
 
 #### Token effect
@@ -124,6 +124,7 @@ The stable sentence joins the system-prompt prefix. Mounting or removing this pr
 These limits define when the provider is a poor fit. They are current package constraints.
 
 - **Host-local namespace** — the provider scans the Harness host filesystem, so remote or virtual `read` implementations require a provider whose namespace matches the tool.
+- **Workspace-bounded bare queries** — a query without a directory prefix searches only the session working directory index; `../`, `~/`, and absolute queries list the named directory live.
 - **Bounded advisory index** — very large workspaces may omit paths after `maxEntries`, and excluded or unreadable directories do not appear. The default exclusions name only build outputs no ecosystem also uses for sources; `lib` is deliberately absent, so a workspace that builds into it adds that name through `excludedDirectories`.
 - **One invalidation of staleness** — a bare query answered right after a tool result reflects the tree as of the previous traversal; the following query sees the rebuild.
 - **No ignore-file semantics** — `.gitignore` and other project ignore files do not influence discovery; only configured directory basenames are excluded.

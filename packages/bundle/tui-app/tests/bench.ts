@@ -112,6 +112,7 @@ export const KEY = {
   ctrlS: '\u0013',
   up: '\u001b[A',
   down: '\u001b[B',
+  shiftTab: '\u001b[Z',
   space: ' ',
 } as const
 

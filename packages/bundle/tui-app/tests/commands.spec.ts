@@ -1,4 +1,5 @@
-/** The terminal's session, attachment, queue, skill, sign-in, export, and reference commands over scripted services. */
+/** The terminal's session, attachment, queue, skill, sign-in, `/login`,
+ *  Shift+Tab effort cycling, export, and reference commands over scripted services. */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -320,7 +321,8 @@ describe('queue, skills, and export', () => {
     const test = await bench({ before: (ctx) => { exportStubs(ctx, 'session-tui-test' as SessionId) } })
     typeLine(test.terminal, `/export ${dir}`)
     await test.settle()
-    expect(test.terminal.text()).toContain(`exported ${join(dir, 'dsh-session-session-tui-test.zip')}`)
+    // The notice wraps the archive path across terminal columns.
+    expect(test.terminal.text().replaceAll(/\s+/g, '')).toContain(`exported${join(dir, 'dsh-session-session-tui-test.zip')}`)
     const bare = await bench()
     typeLine(bare.terminal, '/export')
     await bare.settle()
@@ -454,6 +456,61 @@ describe('sign-in', () => {
     await test.settle()
     expect(flow.begun).toEqual([])
   })
+
+  it('lists /login in help and offers only subscription methods', async () => {
+    const flow: Flow = {
+      entries: [
+        { key: 'codex', label: 'Codex', methods: [{ id: 'oauth', label: 'ChatGPT' }, { id: 'api-key', label: 'API key' }] },
+        { key: 'keys', label: 'Keys only', methods: [{ id: 'api-key', label: 'API key' }] },
+      ],
+      outcome: 'authorized',
+      prompts: [],
+      begun: [],
+    }
+    const test = await bench({ before: (ctx) => { authorization(ctx, flow) } })
+    typeLine(test.terminal, '/help')
+    await test.settle()
+    expect(test.terminal.text()).toContain('/login')
+    expect(test.terminal.text()).toContain('Shift+Tab cycles the current model')
+    typeLine(test.terminal, '/login')
+    await test.settle()
+    expect(test.terminal.text()).toContain('ChatGPT')
+    expect(test.terminal.text()).not.toContain('API key')
+    expect(test.terminal.text()).not.toContain('Keys only')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(flow.begun).toEqual([{ key: 'codex', method: 'oauth' }, []])
+    expect(test.terminal.text()).toContain('signed in to Codex')
+    typeLine(test.terminal, '/login keys')
+    await test.settle()
+    expect(test.terminal.text()).toContain('no subscription sign-in for keys')
+    const none = await bench({ before: (ctx) => { authorization(ctx, { entries: [{ key: 'keys', label: 'Keys only', methods: [{ id: 'api-key', label: 'API key' }] }], outcome: 'authorized', prompts: [], begun: [] }) } })
+    typeLine(none.terminal, '/login')
+    await none.settle()
+    expect(none.terminal.text()).toContain('no provider offers a subscription sign-in')
+    const blocked = await bench({
+      before: (ctx) => {
+        authorization(ctx, {
+          entries: [{ key: 'codex', label: 'Codex', methods: [{ id: 'oauth', label: 'ChatGPT' }] }],
+          outcome: 'authorized',
+          prompts: [],
+          begun: [],
+        })
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
+        } as never)
+      },
+    })
+    typeLine(blocked.terminal, '/login')
+    await blocked.settle()
+    blocked.terminal.type(KEY.shiftTab)
+    await blocked.settle()
+    expect(blocked.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    blocked.terminal.type(KEY.escape)
+    await blocked.settle()
+  })
 })
 
 describe('references and model', () => {
@@ -568,5 +625,69 @@ describe('references and model', () => {
     await test.settle()
     expect(saved).toEqual([['agent-default-model', { provider: 'p', model: 'blank' }]])
     expect(test.terminal.text()).toContain('default model saved: p/blank')
+  })
+
+  it('cycles the current model reasoning effort on Shift+Tab', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [{ id: 'p', name: 'P' }],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: (_provider: string, model: string) => {
+            if (model === 'broken') return Promise.reject(new Error('no such model'))
+            if (model === 'plain') return Promise.resolve({ reasoning: { efforts: [{ id: 'only', name: 'Only' }] } })
+            if (model === 'blank') return Promise.resolve({ reasoning: {} })
+            return Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+          },
+        } as never)
+      },
+    })
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    expect(test.terminal.text()).toContain('effort low from the next request')
+    test.terminal.type(KEY.shiftTab)
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    expect(test.terminal.text()).toContain('effort: provider default from the next request')
+    test.selection.current = { provider: 'test-provider', model: 'test-model', reasoningEffort: 'stale' as never }
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    test.selection.current = { provider: 'p', model: 'plain' }
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.terminal.text()).toContain('p/plain has no selectable reasoning efforts')
+    expect(test.selection.current).toEqual({ provider: 'p', model: 'plain' })
+    test.selection.current = { provider: 'p', model: 'blank' }
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.terminal.text()).toContain('p/blank has no selectable reasoning efforts')
+    test.selection.current = { provider: 'p', model: 'broken' }
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.terminal.text()).toContain('p/broken: no such model')
+    const bare = await bench()
+    bare.terminal.type(KEY.shiftTab)
+    await bare.settle()
+    expect(bare.terminal.text()).toContain('no model catalog is composed')
+    let release: ((info: { reasoning: { efforts: { id: string; name: string }[] } }) => void) | undefined
+    const quitting = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: () => new Promise((resolve) => { release = resolve }),
+        } as never)
+      },
+    })
+    quitting.terminal.type(KEY.shiftTab)
+    await Promise.resolve()
+    quitting.terminal.type(KEY.shiftTab)
+    quitting.app.stop()
+    release?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+    await quitting.settle()
+    expect(quitting.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
   })
 })
