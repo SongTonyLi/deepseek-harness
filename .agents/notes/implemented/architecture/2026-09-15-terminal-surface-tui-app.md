@@ -1,0 +1,35 @@
+# Agent Note: Terminal surface as the shipped `tui` profile
+
+Status: implemented
+
+English | [中文](2026-09-15-terminal-surface-tui-app.zh.md)
+
+## Problem
+
+DeepSeek Harness shipped one interactive surface, the browser application behind `dsh web`; the terminal had only the one-shot `headless` runner, which answers a single task and exits. The [TUI package removal](../../archived/simplification/2026-08-04-remove-tui-package.md) deleted the earlier terminal frontend because nothing composed it, and it set the bar for a return: a named product deployment, an explicit package boundary, a concrete interaction provider, and assembled lifecycle acceptance. Users asking for a terminal workflow like the pi coding agent's had no supported answer.
+
+## Decision
+
+`@deepseek-ai/dsh-tui-app` under `packages/bundle/tui-app` is the terminal surface, and `tui` is a shipped profile (`dsh-base` plus `dsh-tui-app`, startup-only patch reload) with `dsh tui` as the launcher alias beside `dsh web`. The bundle mirrors `dsh-headless`: a `tui-app-startup` command-line provider publishes `tuiStartup` (an optional first prompt and `--resume <session-id>`), and the `tui-app` runner is a session host over the core registry (create, resume, fork at the last completed turn with the browser's cut) that drives one bound Agent at a time until the user quits. The profile keeps the base agent-plane rows enabled and adds PTC mode's worker, the `ask_user_question` tool, the `file-reference-local` and `session-reference` resolvers, and the `present` tool, so the terminal composes the same model-facing rows as the browser.
+
+The renderer is [`@earendil-works/pi-tui`](https://github.com/earendil-works/pi), the maintained differential terminal library of the pi coding agent, taken as an ordinary dependency next to the repository's existing `@earendil-works/pi-ai` adapter rather than a vendored or patched copy. The application composes its editor, Markdown, select-list, and loader components over the pi-tui main-screen renderer, so terminal scrollback keeps the transcript.
+
+The terminal reads only the seams other surfaces already use. Durable facts come from `session/event` (`user/message`, `assistant/message`, `tool/call`, `tool/result`, `turn/end`); live text comes from `agent/assistant-stream`; tool cards use each tool's `presentCall` and `presentResult` views; `/`-lines go to `ctx.commands.execute` after the terminal-local commands; and the app is the in-process answerer on the `approval/request` and `user-questions/request` waterfalls for its bound Agent only. Parity with the browser comes from reading the same services rather than new ones: `/sessions` lists through `sessionQuery`, `/title` renames through `sessionTitle`, `/attach` stores through `attachments`, `@` completion queries `fileReferences` and `sessionReferenceResolver` and inserts their canonical mentions, `/skills` reads `skills`, `/signin` runs `authorization.begin` with the terminal as the interaction, `/export` writes the same archive as the browser's download route through `dsh-session-log-export`, `/model` offers reasoning efforts from `llm.resolveModelInfo` and saves through `agentDefaultModel`, the header and footer fold `session/title` and `permission/preset`, the footer and `/status` read `sessionProjections` (context pressure, token usage, session stats, todos, goal, plan, permissions), `/outline` reads the `turnOutline` projection, `/deliverables` folds `deliverables/presented`, `/subagents` reads `subagents.listDescendants`, `/settings` reads and mutates `settings`, and `/plugins` reads the Loader's entries through `pluginFiberPhase` from `dsh-host-plugin-inventory`. The approval prompt shows the logged call the request names, and a `plan-review` question uses `planReviewOptions` from `dsh-user-questions`, the narrowing the browser card also uses. Submit semantics follow the browser: Enter queues for the next turn while a turn runs, Ctrl+S steers, and Esc cancels with `keepInbox`. Prompts are process-local presentation and are never logged. A `--resume` reads the persisted log through a `sessionPersistence` read handle in pages before the Agent resumes, so no new synchronous history read enters production code.
+
+## Verification
+
+Package specs drive the application over a fake `Terminal`, feeding raw key bytes and reading the rendered words, and cover rendering, keys, both interaction seams, local and shared commands, the model and effort pickers, session switching and forking, attachments, `@` completion, sign-in, export, and the runner's create, resume, fork-cut, quit, and failure paths at the per-file coverage gate. The startup provider is exercised over a real Loader tree. `apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts` boots the shipped profile through the real `dsh` launcher with the keyless mock model, drives the production shell tool, quits with Ctrl+D, and resumes the persisted session in a second process, where the header carries the generated title and the footer the permission preset.
+
+## Alternatives considered
+
+**Restore the deleted TUI package.** Rejected: the removal decision retired that implementation and its patched pi-tui; the current surface is smaller, built on the current seams, and owned by a shipped profile.
+
+**Serve the terminal through the SDK JSON-RPC or ACP server.** Rejected: both are automation transports whose approval and question flows target a remote client, while the terminal needs the same-process presentation the Web client gets through Typert Remote.
+
+**Write a terminal renderer in the repository.** Rejected under the dependencies-over-hand-rolling policy: pi-tui already owns differential rendering, raw-mode input, bracketed paste, the Kitty keyboard protocol, and an editor with history and completion.
+
+**Expose the pi-tui tree to plugins.** Deferred: the removal note records that a plugin-facing overlay API needs a concrete consumer; until one exists the tree stays private to the bundle.
+
+## Consequences
+
+`dsh tui` joins `dsh web`, `headless`, `sdk`, `sdk-minimal`, and `acp` as a shipped application; the launcher, architecture, boot, and bundle documents list it, and the profile tests enumerate its bundle. `tui` is no longer the documentation's placeholder for a custom profile name. The terminal drives one session at a time and its approvals are one-shot; the browser keeps its page-only features (workspace and directory pickers, open-in-app, the trajectory ledger, per-message feedback), and the terminal covers settings, plugins, subagents, deliverables, the turn outline, and status as text commands. The plan-review narrowing moved from the browser client into `dsh-user-questions/plan-review` and the fiber-phase mapping is exported by `dsh-host-plugin-inventory`, so both surfaces share one definition.

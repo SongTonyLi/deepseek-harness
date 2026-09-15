@@ -1,0 +1,129 @@
+/**
+ * The terminal palette: one table of SGR open/close pairs behind named roles,
+ * so components never emit raw escape codes. A disabled palette returns text
+ * unchanged for dumb terminals and captured output.
+ * @module @deepseek-ai/dsh-tui-app/style
+ */
+
+import type { EditorTheme, MarkdownTheme, SelectListTheme } from '@earendil-works/pi-tui'
+
+/** One styling function: wraps `text` in an SGR pair, or returns it verbatim. */
+export type Style = (text: string) => string
+
+/** Semantic roles the terminal surface draws with. */
+export interface Palette {
+  /** Recessed secondary text. */
+  dim: Style
+  bold: Style
+  italic: Style
+  underline: Style
+  /** Brand and focus color. */
+  accent: Style
+  success: Style
+  warning: Style
+  error: Style
+  /** Inverted foreground/background, used for the selected row. */
+  inverse: Style
+  /** Whether styling is active; false yields verbatim text from every role. */
+  readonly enabled: boolean
+}
+
+const ESC = '\u001b['
+
+/** SGR open/close code pairs by role. */
+const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, close: string]> = {
+  dim: ['2', '22'],
+  bold: ['1', '22'],
+  italic: ['3', '23'],
+  underline: ['4', '24'],
+  accent: ['36', '39'],
+  success: ['32', '39'],
+  warning: ['33', '39'],
+  error: ['31', '39'],
+  inverse: ['7', '27'],
+}
+
+/**
+ * Build the palette.
+ * @param enabled - whether escape sequences are emitted; false makes every role the identity.
+ * @returns the palette.
+ */
+export function createPalette(enabled: boolean): Palette {
+  const role = (name: keyof typeof SGR): Style => {
+    const [open, close] = SGR[name]
+    return enabled ? text => `${ESC}${open}m${text}${ESC}${close}m` : text => text
+  }
+  return {
+    dim: role('dim'),
+    bold: role('bold'),
+    italic: role('italic'),
+    underline: role('underline'),
+    accent: role('accent'),
+    success: role('success'),
+    warning: role('warning'),
+    error: role('error'),
+    inverse: role('inverse'),
+    enabled,
+  }
+}
+
+/**
+ * Decide whether the terminal gets color: `NO_COLOR` (any non-empty value)
+ * wins, then a non-empty non-zero `FORCE_COLOR`, then whether stdout is a TTY.
+ * @param env - the process environment.
+ * @param isTty - whether stdout is a terminal.
+ * @returns true when SGR styling should be emitted.
+ */
+export function colorEnabled(env: NodeJS.ProcessEnv, isTty: boolean): boolean {
+  if (env.NO_COLOR !== undefined && env.NO_COLOR !== '') return false
+  if (env.FORCE_COLOR !== undefined && env.FORCE_COLOR !== '' && env.FORCE_COLOR !== '0') return true
+  return isTty
+}
+
+/**
+ * The Markdown theme derived from the palette.
+ * @param palette - the active palette.
+ * @returns a complete pi-tui Markdown theme.
+ */
+export function markdownTheme(palette: Palette): MarkdownTheme {
+  return {
+    heading: text => palette.bold(palette.accent(text)),
+    link: palette.accent,
+    linkUrl: palette.dim,
+    code: palette.warning,
+    codeBlock: text => text,
+    codeBlockBorder: palette.dim,
+    quote: palette.italic,
+    quoteBorder: palette.dim,
+    hr: palette.dim,
+    listBullet: palette.accent,
+    bold: palette.bold,
+    italic: palette.italic,
+    strikethrough: palette.dim,
+    underline: palette.underline,
+  }
+}
+
+/**
+ * The select-list theme derived from the palette.
+ * @param palette - the active palette.
+ * @returns a complete pi-tui select-list theme.
+ */
+export function selectListTheme(palette: Palette): SelectListTheme {
+  return {
+    selectedPrefix: palette.accent,
+    selectedText: text => palette.bold(palette.accent(text)),
+    description: palette.dim,
+    scrollInfo: palette.dim,
+    noMatch: palette.dim,
+  }
+}
+
+/**
+ * The editor theme derived from the palette.
+ * @param palette - the active palette.
+ * @returns a complete pi-tui editor theme.
+ */
+export function editorTheme(palette: Palette): EditorTheme {
+  return { borderColor: palette.dim, selectList: selectListTheme(palette) }
+}

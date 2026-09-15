@@ -53,7 +53,7 @@ The gateway is a direct projection with no second lifecycle truth: every `list()
 
 ### The phase mapping
 
-Fiber states map onto the public phase vocabulary, with `disposed` folding into `null` — an entry whose fiber is gone has no live root to report. The phase therefore never distinguishes why no live root exists: the entry may never have started, or its fiber may already have been disposed.
+Fiber states map onto the public phase vocabulary, with `disposed` folding into `null` — an entry whose fiber is gone has no live root to report. The phase therefore never distinguishes why no live root exists: the entry may never have started, or its fiber may already have been disposed. The exported `pluginFiberPhase(state)` is that mapping, so the terminal surface's `/plugins` rows and the gateway report the same phase.
 
 ### Source map
 

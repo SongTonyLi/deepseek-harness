@@ -9,7 +9,7 @@ import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 
 /** Load one shipped bundle patch through the same parser as profile boot. */
-function bundle(name: 'acp-app' | 'base' | 'headless' | 'sdk-app' | 'sdk-minimal' | 'web-app'): PatchOptions[] {
+function bundle(name: 'acp-app' | 'base' | 'headless' | 'sdk-app' | 'sdk-minimal' | 'tui-app' | 'web-app'): PatchOptions[] {
   return loadOverlayPatches('profile-hmr test', join(REPOSITORY_ROOT, 'packages', 'bundle', name, 'cordis.patch.yml'))
 }
 
@@ -21,7 +21,7 @@ function hmr(layers: PatchOptions[][]) {
 }
 
 describe('profile module-HMR policy', () => {
-  it.each(['web-app', 'headless', 'sdk-app', 'acp-app'] as const)(
+  it.each(['web-app', 'headless', 'sdk-app', 'acp-app', 'tui-app'] as const)(
     '%s inherits the disabled base row without a mode override',
     (mode) => {
       const modePatches = bundle(mode)

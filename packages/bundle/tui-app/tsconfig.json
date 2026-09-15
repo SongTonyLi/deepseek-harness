@@ -1,0 +1,123 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../../vendor/loader"
+    },
+    {
+      "path": "../../../vendor/schemastery"
+    },
+    {
+      "path": "../../attachment/attachment"
+    },
+    {
+      "path": "../../boot/cmdline"
+    },
+    {
+      "path": "../../compaction/compaction"
+    },
+    {
+      "path": "../../context/file-reference"
+    },
+    {
+      "path": "../../context/session-reference"
+    },
+    {
+      "path": "../../core/agent"
+    },
+    {
+      "path": "../../core/agent-default-model"
+    },
+    {
+      "path": "../../core/session"
+    },
+    {
+      "path": "../../core/tools"
+    },
+    {
+      "path": "../../credentials/authorization"
+    },
+    {
+      "path": "../../fs/tool-present"
+    },
+    {
+      "path": "../../goal/goal"
+    },
+    {
+      "path": "../../host/plugin-inventory"
+    },
+    {
+      "path": "../../interaction/commands"
+    },
+    {
+      "path": "../../interaction/permission-presets"
+    },
+    {
+      "path": "../../interaction/user-approval"
+    },
+    {
+      "path": "../../interaction/user-questions"
+    },
+    {
+      "path": "../../llm/llm"
+    },
+    {
+      "path": "../../llm/llm-retry"
+    },
+    {
+      "path": "../../llm/token-meter"
+    },
+    {
+      "path": "../../plan/plan-mode"
+    },
+    {
+      "path": "../../session-query/session-log-export/tsconfig.host.json"
+    },
+    {
+      "path": "../../session-query/session-query"
+    },
+    {
+      "path": "../../session/session-persistence"
+    },
+    {
+      "path": "../../session/session-projection"
+    },
+    {
+      "path": "../../session/session-stats"
+    },
+    {
+      "path": "../../session/session-title"
+    },
+    {
+      "path": "../../session/session-turn-outline"
+    },
+    {
+      "path": "../../settings/settings"
+    },
+    {
+      "path": "../../skill/skill"
+    },
+    {
+      "path": "../../subagent/subagent"
+    },
+    {
+      "path": "../../todo/tool-todo"
+    },
+    {
+      "path": "../../util/brand"
+    },
+    {
+      "path": "../../util/values"
+    }
+  ]
+}

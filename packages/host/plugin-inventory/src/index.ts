@@ -42,6 +42,15 @@ const FIBER_PHASE = {
   [FIBER_STATE.UNLOADING]: 'unloading',
 } as const satisfies Record<FiberState, PluginFiberPhase>
 
+/**
+ * The public phase of a root Fiber state.
+ * @param state - the Fiber state, or undefined when the entry has no root Fiber.
+ * @returns the phase, or null for no live root Fiber (absent or disposed).
+ */
+export function pluginFiberPhase(state: FiberState | undefined): PluginFiberPhase {
+  return state === undefined ? null : FIBER_PHASE[state]
+}
+
 /** Remote-only service exposing the Loader's current non-group entry state. */
 export class PluginInventoryGateway extends TypertRemoteService {
   static inject = ['loader']
@@ -71,7 +80,7 @@ export class PluginInventoryGateway extends TypertRemoteService {
         entryId: pluginEntryId(entry.id),
         moduleName: entry.options.name,
         enabled: !entry.disabled,
-        fiberPhase: entry.fiber === undefined ? null : FIBER_PHASE[entry.fiber.state],
+        fiberPhase: pluginFiberPhase(entry.fiber?.state),
       })
     }
     const presets = this.ctx.get('agentPresets')
@@ -81,7 +90,7 @@ export class PluginInventoryGateway extends TypertRemoteService {
         ...composition,
         rows: composition.rows.map(({ fiberState, ...row }) => ({
           ...row,
-          fiberPhase: fiberState === undefined ? null : FIBER_PHASE[fiberState],
+          fiberPhase: pluginFiberPhase(fiberState),
         })),
       }),
     )
