@@ -260,6 +260,7 @@ describe('TuiApp', () => {
         ctx.commands.register({
           name: 'odd',
           description: 'rejects with a non-error',
+          // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- A non-Error reason is what this case exercises.
           handler: () => Promise.reject('plain reason'),
         })
       },
