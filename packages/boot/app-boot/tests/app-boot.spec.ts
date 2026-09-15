@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -8,7 +8,8 @@ import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import {
   addHarnessSourceSection, assertEntriesActivated, assertEntriesLoaded, boot,
   FAIL_LOUD_RELEASE_TIMEOUT_MS, HARNESS_SOURCE_SECTION,
-  installFailLoud, loadEnv, loadLayeredEnv, loadOverlayPatches, resolveConfigPath, type FailLoudProcess,
+  installFailLoud, loadEnv, loadLayeredEnv, loadOverlayPatches, resolveConfigPath,
+  resolveInvokingDirectory, restoreInvokingDirectory, type FailLoudProcess,
 } from '../src/index.ts'
 
 const NAME = 'dsh-test-bin'
@@ -23,6 +24,82 @@ const tmp = (): string => {
   tempRoots.push(dir)
   return dir
 }
+
+describe('resolveInvokingDirectory', () => {
+  it('keeps the process cwd when this is not a package-script rewrite', () => {
+    const checkout = tmp()
+    const project = tmp()
+    writeFileSync(join(checkout, 'package.json'), '{}\n')
+    expect(resolveInvokingDirectory({ cwd: checkout })).toBe(realpathSync(checkout))
+    expect(resolveInvokingDirectory({ cwd: checkout, initCwd: '' })).toBe(realpathSync(checkout))
+    expect(resolveInvokingDirectory({ cwd: checkout, initCwd: '  ' })).toBe(realpathSync(checkout))
+    expect(resolveInvokingDirectory({ cwd: checkout, initCwd: project, packageJson: '' })).toBe(realpathSync(checkout))
+    expect(resolveInvokingDirectory({ cwd: checkout, initCwd: project })).toBe(realpathSync(checkout))
+    expect(resolveInvokingDirectory({
+      cwd: project,
+      initCwd: checkout,
+      packageJson: join(checkout, 'package.json'),
+    })).toBe(realpathSync(project))
+    expect(resolveInvokingDirectory({
+      cwd: checkout,
+      initCwd: project,
+      packageJson: join(checkout, 'missing', 'package.json'),
+    })).toBe(realpathSync(checkout))
+    expect(resolveInvokingDirectory({ cwd: join(checkout, 'gone') })).toBe(resolve(join(checkout, 'gone')))
+  })
+
+  it('returns INIT_CWD when pnpm rewrote cwd to the package that owns the running script', () => {
+    const checkout = tmp()
+    const project = tmp()
+    writeFileSync(join(checkout, 'package.json'), '{}\n')
+    expect(resolveInvokingDirectory({
+      cwd: checkout,
+      initCwd: project,
+      packageJson: join(checkout, 'package.json'),
+    })).toBe(realpathSync(project))
+  })
+
+  it('keeps the process cwd when INIT_CWD is missing or not a directory', () => {
+    const checkout = tmp()
+    writeFileSync(join(checkout, 'package.json'), '{}\n')
+    writeFileSync(join(checkout, 'not-a-dir'), 'x')
+    expect(resolveInvokingDirectory({
+      cwd: checkout,
+      initCwd: join(checkout, 'no-such'),
+      packageJson: join(checkout, 'package.json'),
+    })).toBe(realpathSync(checkout))
+    expect(resolveInvokingDirectory({
+      cwd: checkout,
+      initCwd: join(checkout, 'not-a-dir'),
+      packageJson: join(checkout, 'package.json'),
+    })).toBe(realpathSync(checkout))
+  })
+
+  it('chdir to INIT_CWD only for a package-script rewrite', () => {
+    const checkout = tmp()
+    const project = tmp()
+    writeFileSync(join(checkout, 'package.json'), '{}\n')
+    const previous = process.cwd()
+    const previousInit = process.env.INIT_CWD
+    const previousPackage = process.env.npm_package_json
+    process.chdir(checkout)
+    process.env.INIT_CWD = checkout
+    process.env.npm_package_json = join(checkout, 'package.json')
+    try {
+      expect(restoreInvokingDirectory()).toBe(realpathSync(checkout))
+      expect(process.cwd()).toBe(realpathSync(checkout))
+      process.env.INIT_CWD = project
+      expect(restoreInvokingDirectory()).toBe(realpathSync(project))
+      expect(process.cwd()).toBe(realpathSync(project))
+    } finally {
+      process.chdir(previous)
+      if (previousInit === undefined) delete process.env.INIT_CWD
+      else process.env.INIT_CWD = previousInit
+      if (previousPackage === undefined) delete process.env.npm_package_json
+      else process.env.npm_package_json = previousPackage
+    }
+  })
+})
 
 describe('resolveConfigPath', () => {
   it('resolves relative to the given cwd outside replay mode', () => {
