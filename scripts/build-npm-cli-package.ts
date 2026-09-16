@@ -11,8 +11,9 @@
  *   cannot parse. Every range is pinned to the version staged beside it.
  * - Native packages resolve one `os`/`cpu` variant per platform, so bundling the
  *   staged tree would publish a darwin-arm64-only package. Those variants are
- *   dropped from the payload and re-declared as top-level `optionalDependencies`
- *   covering every platform their parent knows.
+ *   dropped from the payload, removed from bundled parent manifests, and
+ *   re-declared once as top-level `optionalDependencies` covering every platform
+ *   their parent knows.
  * - `dsh` requires `--profile`, so the shipped bin defaults a bare invocation to
  *   the tui profile and passes every other argument through untouched.
  *
@@ -143,6 +144,98 @@ export function npmPayloadExclusion(path: string): string | undefined {
   if (name === '@mixmark-io/domino' && (entry === 'test' || entry.startsWith('test/'))) return 'Domino test fixtures'
   if (name === 'node-pty' && entry.startsWith('prebuilds/') && file.endsWith('.pdb')) return 'node-pty debug symbols'
   return undefined
+}
+
+/**
+ * Move every platform-specific optional family to the published package root.
+ *
+ * The staged tree contains only the current host's `os`/`cpu` variant. A
+ * surviving parent that names that constrained package identifies the complete
+ * family to lift, including absent variants for other platforms. After the full
+ * family map is known, every lifted name is removed from every surviving
+ * bundled manifest so npm sees one declaration when installing globally.
+ *
+ * @param nodeModules - payload `node_modules` containing materialized package directories.
+ * @param packages - top-level package names in that payload.
+ * @returns Optional dependencies for the published package root.
+ */
+export async function liftPlatformOptionalDependencies(
+  nodeModules: string,
+  packages: readonly string[],
+): Promise<Record<string, string>> {
+  const manifests = new Map<string, StagedManifest>()
+  const constrained = new Set<string>()
+  for (const name of packages) {
+    const manifest = await readManifest(join(nodeModules, name, 'package.json'))
+    manifests.set(name, manifest)
+    if (manifest.os !== undefined || manifest.cpu !== undefined) constrained.add(name)
+  }
+
+  const normalizedRange = (parent: string, variant: string, range: string): string => {
+    if (!range.startsWith('workspace:')) return range
+    const version = manifests.get(parent)?.version
+    if (version === undefined) {
+      throw new Error(`build-npm-cli-package: ${parent} has no version to pin its ${variant} variant`)
+    }
+    return version
+  }
+  const lifted = new Map<string, { range: string; parent: string }>()
+  const recordLift = (variant: string, range: string, parent: string): void => {
+    const previous = lifted.get(variant)
+    if (previous !== undefined && previous.range !== range) {
+      throw new Error(
+        `build-npm-cli-package: ${variant} has conflicting lifted ranges ${previous.range} from ${previous.parent} and ${range} from ${parent}`,
+      )
+    }
+    if (previous === undefined) lifted.set(variant, { range, parent })
+  }
+
+  for (const name of packages) {
+    if (constrained.has(name)) continue
+    const optional = manifests.get(name)?.optionalDependencies ?? {}
+    if (!Object.keys(optional).some(variant => constrained.has(variant))) continue
+    for (const [variant, range] of Object.entries(optional)) {
+      recordLift(variant, normalizedRange(name, variant, range), name)
+    }
+  }
+
+  // Validate every surviving declaration before the first write, so a range
+  // conflict leaves the payload untouched.
+  const rewrites: Array<{ path: string; manifest: StagedManifest }> = []
+  for (const name of packages) {
+    if (constrained.has(name)) continue
+    const manifest = manifests.get(name)
+    const optional = manifest?.optionalDependencies
+    if (manifest === undefined || optional === undefined) continue
+    const retained: Record<string, string> = {}
+    let changed = false
+    for (const [dependency, range] of Object.entries(optional)) {
+      const root = lifted.get(dependency)
+      if (root === undefined) {
+        retained[dependency] = range
+        continue
+      }
+      const resolved = normalizedRange(name, dependency, range)
+      if (resolved !== root.range) {
+        throw new Error(
+          `build-npm-cli-package: ${dependency} has conflicting lifted ranges ${root.range} from ${root.parent} and ${resolved} from ${name}`,
+        )
+      }
+      changed = true
+    }
+    if (!changed) continue
+    const rewritten = { ...manifest }
+    if (Object.keys(retained).length === 0) delete rewritten.optionalDependencies
+    else rewritten.optionalDependencies = retained
+    rewrites.push({ path: join(nodeModules, name, 'package.json'), manifest: rewritten })
+  }
+
+  for (const rewrite of rewrites) await writeManifest(rewrite.path, rewrite.manifest)
+  for (const name of constrained) {
+    await rm(join(nodeModules, name), { recursive: true, force: true })
+    console.log(`build-npm-cli-package: unbundled host-only variant ${name}`)
+  }
+  return Object.fromEntries([...lifted].map(([name, value]) => [name, value.range]))
 }
 
 /** Stages the closure and rewrites it into a publishable package. */
@@ -426,40 +519,13 @@ class NpmPackageBuild {
   }
 
   /**
-   * Drop the host-only native variants and return every platform variant their
-   * parents declare, so the published manifest can request one per platform.
+   * Drop host-only native variants, move their complete families to the
+   * published root, and remove duplicate declarations from bundled manifests.
    * @param packages - the payload's top-level package names.
    * @returns Optional dependencies covering every platform, by package name.
    */
   async liftPlatformVariants(packages: readonly string[]): Promise<Record<string, string>> {
-    const nodeModules = join(this.options.dist, 'node_modules')
-    const constrained = new Set<string>()
-    const versions = new Map<string, string>()
-    for (const name of packages) {
-      const manifest = await readManifest(join(nodeModules, name, 'package.json'))
-      if (manifest.version !== undefined) versions.set(name, manifest.version)
-      if (manifest.os !== undefined || manifest.cpu !== undefined) constrained.add(name)
-    }
-    const lifted: Record<string, string> = {}
-    for (const name of packages) {
-      if (constrained.has(name)) continue
-      const manifest = await readManifest(join(nodeModules, name, 'package.json'))
-      const optional = manifest.optionalDependencies ?? {}
-      if (!Object.keys(optional).some(variant => constrained.has(variant))) continue
-      const parentVersion = versions.get(name)
-      for (const [variant, range] of Object.entries(optional)) {
-        // `workspace:` ranges only appear between packages this repository
-        // versions together, so the parent's version names the variant exactly.
-        if (!range.startsWith('workspace:')) lifted[variant] = range
-        else if (parentVersion !== undefined) lifted[variant] = parentVersion
-        else throw new Error(`build-npm-cli-package: ${name} has no version to pin its ${variant} variant`)
-      }
-    }
-    for (const name of constrained) {
-      await rm(join(nodeModules, name), { recursive: true, force: true })
-      console.log(`build-npm-cli-package: unbundled host-only variant ${name}`)
-    }
-    return lifted
+    return liftPlatformOptionalDependencies(join(this.options.dist, 'node_modules'), packages)
   }
 
   /**

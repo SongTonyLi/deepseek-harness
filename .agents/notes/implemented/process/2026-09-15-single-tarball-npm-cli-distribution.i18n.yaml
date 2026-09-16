@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-15-single-tarball-npm-cli-distribution.md
-2026-09-15-single-tarball-npm-cli-distribution.md: c3327737e0af8d4176fdfeaa6b4e249afbfd18d2
-2026-09-15-single-tarball-npm-cli-distribution.zh.md: 7eaae209bb13197394aefbbac2278c73c3ac67b5
+2026-09-15-single-tarball-npm-cli-distribution.md: 8d0fe2c270490ac6bc01d0a12598496bb2ce90b0
+2026-09-15-single-tarball-npm-cli-distribution.zh.md: 5b12a16acdfb7645bd2ea09a9690092f0fc0b7b9
