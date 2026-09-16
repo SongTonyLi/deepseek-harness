@@ -19,7 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
-import { ReasoningEffortId, createUserMessage, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, createUserMessage, type LlmModelReasoningInfo, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
@@ -41,6 +41,7 @@ import { attachLocalFile, type PendingAttachment } from './attach.ts'
 import { listDeliverables, listPlugins, listSettings, listSubagents, resetSetting, sessionOutline, setSetting, showSetting } from './catalog.ts'
 import { AssistantBlock, NoticeBlock, ToolBlock, UserBlock, type BlockTheme } from './blocks.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
+import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { exportSessionZip } from './export.ts'
 import { ApprovalPrompt, ModalQueue, PickPrompt, QuestionPrompt, type PickItem } from './prompts.ts'
 import { describeSession, listSessionChoices } from './sessions.ts'
@@ -116,6 +117,7 @@ export interface TuiAppDeps {
 const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'help', description: 'Show commands and keys' },
   { name: 'model', description: 'Pick the model and reasoning effort for the next request (/model provider/model, /model save)' },
+  { name: 'effort', description: 'Pick the current model\'s reasoning effort for the next request (/effort <id>, /effort default)' },
   { name: 'sessions', description: 'Switch to another session' },
   { name: 'new', description: 'Start a new session' },
   { name: 'fork', description: 'Fork this session at its last completed turn (/fork <turn> for an earlier one)' },
@@ -151,6 +153,17 @@ type Tone = 'dim' | 'error' | 'success'
 
 /** How a message submitted while a turn runs reaches the Agent. */
 type SubmitMode = 'queue' | 'steer'
+
+/** What the terminal could read about one model's reasoning efforts. */
+type EffortLookup =
+  /** The model declares efforts to choose between. */
+  | { kind: 'ready'; reasoning: LlmModelReasoningInfo }
+  /** No model catalog is composed in this profile. */
+  | { kind: 'no-catalog' }
+  /** Fewer than two declared efforts, so there is nothing to choose. */
+  | { kind: 'no-efforts' }
+  /** The catalog could not resolve the model; the message names the failure. */
+  | { kind: 'failed'; message: string }
 
 /** The interactive terminal application; one instance per process. */
 export class TuiApp {
@@ -580,6 +593,9 @@ export class TuiApp {
       case 'model':
         await this.chooseModel(argument)
         return
+      case 'effort':
+        await this.chooseCurrentEffort(argument)
+        return
       case 'sessions':
         await this.chooseSession()
         return
@@ -703,7 +719,10 @@ export class TuiApp {
         this.notice('no models are available from the composed providers', 'error')
         return
       }
-      const picked = await this.modals.run(new PickPrompt(this.deps.palette, 'Model for the next request', items))
+      const current = this.currentSelection()
+      const picked = await this.modals.run(new PickPrompt(this.deps.palette, 'Model for the next request', items, {
+        current: `${current.provider}/${current.model}`,
+      }))
       if (picked === undefined) return
       const slash = picked.value.indexOf('/')
       next = { provider: picked.value.slice(0, slash), model: picked.value.slice(slash + 1) }
@@ -716,31 +735,72 @@ export class TuiApp {
   }
 
   /**
-   * Offer the model's reasoning efforts when it declares more than one.
+   * Offer the model's reasoning efforts when it declares more than one. The
+   * picker opens on the effort already in force for that exact model.
+   * @param model - the model the user picked.
    * @returns the chosen effort, undefined for the provider default, or null when dismissed or the model is unknown.
    */
   private async chooseEffort(model: ModelSelection): Promise<ReasoningEffortId | undefined | null> {
-    const llm = this.deps.ctx.get('llm')
-    if (llm === undefined) return undefined
-    let efforts
-    try {
-      efforts = (await llm.resolveModelInfo(model.provider, model.model)).reasoning?.efforts ?? []
-    } catch (error: unknown) {
-      this.notice(`${model.provider}/${model.model}: ${describeFailure(error)}`, 'error')
+    const lookup = await this.lookupEfforts(model)
+    // The lookup can settle after the user quits; the model change dies with it.
+    if (this.stopped) return null
+    if (lookup.kind === 'failed') {
+      this.notice(lookup.message, 'error')
       return null
     }
-    if (efforts.length < 2) return undefined
-    const items: PickItem[] = [
-      { value: '', label: 'provider default' },
-      ...efforts.map(effort => ({
-        value: effort.id,
-        label: effort.name,
-        ...effort.description === undefined ? {} : { description: effort.description },
-      })),
-    ]
-    const picked = await this.modals.run(new PickPrompt(this.deps.palette, `Reasoning effort for ${model.model}`, items))
+    if (lookup.kind !== 'ready') return undefined
+    const current = this.currentSelection()
+    const sameModel = current.provider === model.provider && current.model === model.model
+    const picked = await this.modals.run(new PickPrompt(
+      this.deps.palette,
+      `Reasoning effort · ${model.provider}/${model.model}`,
+      effortItems(lookup.reasoning),
+      {
+        body: ['Esc cancels the model change'],
+        current: (sameModel ? current.reasoningEffort : undefined) ?? PROVIDER_DEFAULT,
+      },
+    ))
     if (picked === undefined) return null
-    return picked.value === '' ? undefined : ReasoningEffortId(picked.value)
+    return picked.value === PROVIDER_DEFAULT ? undefined : ReasoningEffortId(picked.value)
+  }
+
+  /**
+   * Choose the bound model's reasoning effort for the next request: an empty
+   * argument opens the picker on the effort in force, `default` restores the
+   * provider default, and anything else names a declared effort.
+   * @param argument - a declared effort id, `default`, or empty.
+   */
+  private async chooseCurrentEffort(argument: string): Promise<void> {
+    const current = this.currentSelection()
+    const lookup = await this.lookupEfforts(current)
+    // The lookup can settle after the user quits.
+    if (this.stopped) return
+    if (lookup.kind !== 'ready') {
+      this.reportEffortLookup(lookup, current)
+      return
+    }
+    const { reasoning } = lookup
+    if (argument !== '') {
+      const matched = matchEffort(reasoning, argument)
+      if (matched === null) {
+        const declared = reasoning.efforts.map(effort => effort.id).join(', ')
+        this.notice(`${current.provider}/${current.model} has no effort "${argument}" (${declared}, default)`, 'error')
+        return
+      }
+      this.applyEffort(current, matched)
+      return
+    }
+    const picked = await this.modals.run(new PickPrompt(
+      this.deps.palette,
+      `Reasoning effort · ${current.provider}/${current.model}`,
+      effortItems(reasoning),
+      {
+        body: [effortHint(reasoning, current.reasoningEffort)],
+        current: current.reasoningEffort ?? PROVIDER_DEFAULT,
+      },
+    ))
+    if (picked === undefined) return
+    this.applyEffort(current, picked.value === PROVIDER_DEFAULT ? undefined : ReasoningEffortId(picked.value))
   }
 
   /**
@@ -750,35 +810,70 @@ export class TuiApp {
   private async cycleEffort(): Promise<void> {
     if (this.stopped || this.modals.isActive()) return
     const current = this.currentSelection()
-    const llm = this.deps.ctx.get('llm')
-    if (llm === undefined) {
-      this.notice('no model catalog is composed', 'error')
-      return
-    }
-    let efforts
-    try {
-      efforts = (await llm.resolveModelInfo(current.provider, current.model)).reasoning?.efforts ?? []
-    } catch (error: unknown) {
-      this.notice(`${current.provider}/${current.model}: ${describeFailure(error)}`, 'error')
-      return
-    }
-    // The await above can settle after the app stops; the entry guard's
-    // narrowing does not survive it.
-    // oxlint-disable-next-line typescript/no-unnecessary-condition
+    const lookup = await this.lookupEfforts(current)
+    // The lookup can settle after the user quits, past the entry guard.
     if (this.stopped) return
-    if (efforts.length < 2) {
-      this.notice(`${current.provider}/${current.model} has no selectable reasoning efforts`)
+    if (lookup.kind !== 'ready') {
+      this.reportEffortLookup(lookup, current)
       return
     }
-    const steps: Array<ReasoningEffortId | undefined> = [undefined, ...efforts.map(effort => effort.id)]
+    const steps: Array<ReasoningEffortId | undefined> = [undefined, ...lookup.reasoning.efforts.map(effort => effort.id)]
     const index = steps.findIndex(step => step === current.reasoningEffort)
-    const next = steps[index === -1 ? 1 : (index + 1) % steps.length]
-    this.bound.selection.current = next === undefined
-      ? { provider: current.provider, model: current.model }
-      : { provider: current.provider, model: current.model, reasoningEffort: next }
-    this.notice(next === undefined
+    this.applyEffort(current, steps[index === -1 ? 1 : (index + 1) % steps.length])
+  }
+
+  /**
+   * Read what one model declares about reasoning effort.
+   * @param model - the model to resolve.
+   * @returns the declared efforts, or why the terminal has none to offer.
+   */
+  private async lookupEfforts(model: ModelSelection): Promise<EffortLookup> {
+    const llm = this.deps.ctx.get('llm')
+    if (llm === undefined) return { kind: 'no-catalog' }
+    let reasoning: LlmModelReasoningInfo | undefined
+    try {
+      reasoning = (await llm.resolveModelInfo(model.provider, model.model)).reasoning
+    } catch (error: unknown) {
+      return { kind: 'failed', message: `${model.provider}/${model.model}: ${describeFailure(error)}` }
+    }
+    if (reasoning === undefined || reasoning.efforts.length < 2) return { kind: 'no-efforts' }
+    return { kind: 'ready', reasoning }
+  }
+
+  /**
+   * Print why a model offers no effort to choose.
+   * @param lookup - a lookup that resolved no efforts.
+   * @param model - the model it was read for.
+   */
+  private reportEffortLookup(lookup: Exclude<EffortLookup, { kind: 'ready' }>, model: ModelSelection): void {
+    switch (lookup.kind) {
+      case 'no-catalog':
+        this.notice('no model catalog is composed', 'error')
+        return
+      case 'failed':
+        this.notice(lookup.message, 'error')
+        return
+      case 'no-efforts':
+        this.notice(`${model.provider}/${model.model} has no selectable reasoning efforts`)
+        return
+      /* v8 ignore next -- closed-union exhaustiveness guard */
+      default:
+        assertNever(lookup, 'effort lookup')
+    }
+  }
+
+  /**
+   * Install one reasoning effort on the bound selection for the next request.
+   * @param model - the provider and model the effort belongs to.
+   * @param effort - the chosen effort, or undefined for the provider default.
+   */
+  private applyEffort(model: ModelSelection, effort: ReasoningEffortId | undefined): void {
+    this.bound.selection.current = effort === undefined
+      ? { provider: model.provider, model: model.model }
+      : { provider: model.provider, model: model.model, reasoningEffort: effort }
+    this.notice(effort === undefined
       ? 'effort: provider default from the next request'
-      : `effort ${next} from the next request`, 'success')
+      : `effort ${effort} from the next request`, 'success')
     this.refreshFooter()
   }
 

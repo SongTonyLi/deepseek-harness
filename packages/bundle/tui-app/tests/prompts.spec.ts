@@ -122,6 +122,27 @@ describe('prompts', () => {
     await expect(cancelled.settled).resolves.toBeUndefined()
   })
 
+  it('opens a pick on the row in force, marks it, and draws the body under the heading', async () => {
+    const items = [
+      { value: '', label: 'Provider default' },
+      { value: 'low', label: 'Low' },
+      { value: 'high', label: 'High', description: 'slow' },
+    ]
+    const marked = new PickPrompt(palette, 'Effort', items, { body: ['current: High'], current: 'high' })
+    const lines = marked.render(40).map(line => line.trimEnd())
+    expect(lines.slice(0, 3)).toEqual(['', '? Effort', '  current: High'])
+    expect(lines.join('\n')).toContain('High ✓')
+    expect(lines.join('\n')).not.toContain('Low ✓')
+    marked.handleInput(KEY.enter)
+    await expect(marked.settled).resolves.toEqual({ value: 'high', label: 'High', description: 'slow' })
+    const first = new PickPrompt(palette, 'Effort', items, { current: '' })
+    expect(first.render(40).join('\n')).toContain('Provider default ✓')
+    first.handleInput(KEY.enter)
+    await expect(first.settled).resolves.toEqual({ value: '', label: 'Provider default' })
+    const absent = new PickPrompt(palette, 'Effort', items, { current: 'gone' })
+    expect(absent.render(40).join('\n')).not.toContain('✓')
+  })
+
   it('shows queued prompts in order and restores focus afterwards', async () => {
     const focused: unknown[] = []
     const renders: number[] = []
