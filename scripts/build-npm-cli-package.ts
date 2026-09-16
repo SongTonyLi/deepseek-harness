@@ -29,8 +29,13 @@ import { parseArgs } from 'node:util'
 const DEPLOY_ROOT_PACKAGE = 'dsh-python-runtime-closure'
 /** Workspace `node_modules` the legacy hoister may leave direct dependencies in. */
 const DEPLOY_SOURCE_NODE_MODULES = 'python/sdk-runtime/node_modules'
-/** The published package name. */
-const PACKAGE_NAME = 'dsh-cli'
+/**
+ * The published package name. Scoped, because npm rejects an unscoped
+ * `dsh-cli` as too similar to the existing `dshcli`, and the surrounding
+ * unscoped names (`dsh-tui`, `dsh-terminal`, `dsh-agent`) are taken by
+ * unrelated projects. A scope skips that similarity check entirely.
+ */
+const DEFAULT_PACKAGE_NAME = '@songtonyli/dsh-cli'
 /** The executable the package installs. */
 const BIN_NAME = 'dsh'
 /** The profile a bare `dsh` invocation boots. */
@@ -63,6 +68,8 @@ interface BuildOptions {
   readonly dist: string
   /** Version the published package carries. */
   readonly version: string
+  /** Name the published package carries. */
+  readonly name: string
 }
 
 /**
@@ -539,7 +546,7 @@ class NpmPackageBuild {
    * @param optional - platform variants npm resolves per install.
    */
   async writePackage(packages: readonly string[], optional: Record<string, string>): Promise<void> {
-    const { dist, version } = this.options
+    const { dist, version, name: packageName } = this.options
     const nodeModules = join(dist, 'node_modules')
     const dependencies: Record<string, string> = {}
     for (const name of packages) {
@@ -551,10 +558,10 @@ class NpmPackageBuild {
     await mkdir(join(dist, 'bin'), { recursive: true })
     await writeFile(
       join(dist, 'bin', `${BIN_NAME}.mjs`),
-      BIN_SOURCE.replace('{{version}}', version).replace('{{harnessVersion}}', harnessVersion),
+      BIN_SOURCE.replaceAll('{{name}}', packageName).replaceAll('{{version}}', version).replace('{{harnessVersion}}', harnessVersion),
     )
     await writeManifest(join(dist, 'package.json'), {
-      name: PACKAGE_NAME,
+      name: packageName,
       version,
       description: 'The dsh terminal agent: an interactive TUI over the DeepSeek Harness, with its whole Node runtime bundled in one install.',
       license: 'MIT',
@@ -567,7 +574,7 @@ class NpmPackageBuild {
       bundleDependencies: [...packages],
     })
     await cp(join(root, 'LICENSE'), join(dist, 'LICENSE'))
-    await writeFile(join(dist, 'README.md'), README_SOURCE.replace('{{version}}', version))
+    await writeFile(join(dist, 'README.md'), README_SOURCE.replaceAll('{{name}}', packageName).replace('{{version}}', version))
   }
 
   /** Pack the publishable directory and report the tarball. */
@@ -579,7 +586,7 @@ class NpmPackageBuild {
 /** The installed executable: default a bare invocation to the tui profile. */
 const BIN_SOURCE = `#!/usr/bin/env node
 /**
- * The \`dsh\` executable installed by ${PACKAGE_NAME}.
+ * The \`dsh\` executable installed by {{name}}.
  *
  * The launcher requires a profile, so a bare \`dsh\` boots ${DEFAULT_PROFILE}. Every
  * invocation that already carries arguments is passed through untouched, which
@@ -595,9 +602,9 @@ const argv = process.argv.slice(2)
 
 // The launcher reports the harness version it was built from, which is not the
 // version this package publishes. Reporting only one of the two would make an
-// ordinary \`npm install dsh-cli@x\` look like it installed something else.
+// ordinary \`npm install {{name}}@x\` look like it installed something else.
 if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-V')) {
-  console.log('${PACKAGE_NAME} {{version}} (deepseek-harness {{harnessVersion}})')
+  console.log('{{name}} {{version}} (deepseek-harness {{harnessVersion}})')
   process.exit(0)
 }
 
@@ -606,12 +613,12 @@ await runCli()
 `
 
 /** The published readme. */
-const README_SOURCE = `# dsh-cli
+const README_SOURCE = `# {{name}}
 
 An interactive terminal agent built on the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), published from the [SongTonyLi fork](https://github.com/SongTonyLi/deepseek-harness) that adds the terminal surface.
 
 \`\`\`sh
-npm install -g dsh-cli
+npm install -g {{name}}
 export DEEPSEEK_API_KEY=...
 dsh
 \`\`\`
@@ -655,6 +662,7 @@ async function resolveOptions(): Promise<BuildOptions> {
       staging: { type: 'string', default: 'tmp/dsh-cli-staging' },
       dist: { type: 'string', default: 'tmp/dsh-cli-dist' },
       version: { type: 'string' },
+      name: { type: 'string', default: DEFAULT_PACKAGE_NAME },
     },
   })
   const rootManifest = await readManifest(join(root, 'package.json'))
@@ -666,6 +674,7 @@ async function resolveOptions(): Promise<BuildOptions> {
     staging: resolve(root, values.staging),
     dist: resolve(root, values.dist),
     version,
+    name: values.name,
   }
 }
 
@@ -686,7 +695,7 @@ async function main(): Promise<void> {
   await build.pinWorkspaceRanges(bundled)
   await build.writePackage(bundled, optionalVariants)
   await build.pack()
-  console.log(`build-npm-cli-package: ${PACKAGE_NAME}@${options.version} bundles ${bundled.length} packages`)
+  console.log(`build-npm-cli-package: ${options.name}@${options.version} bundles ${bundled.length} packages`)
 }
 
 if (import.meta.main) await main()
