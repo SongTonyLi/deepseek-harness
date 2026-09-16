@@ -579,7 +579,7 @@ describe('references and model', () => {
           ]),
           resolveModelInfo: (_provider: string, model: string) => {
             if (model === 'broken') return Promise.reject(new Error('no such model'))
-            if (model === 'blank') return Promise.resolve({ reasoning: {} })
+            if (model === 'blank') return Promise.resolve({ reasoning: { efforts: [] } })
             return Promise.resolve(model === 'think'
               ? { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High', description: 'slow' }] } }
               : { reasoning: { efforts: [{ id: 'only', name: 'Only' }] } })
@@ -590,15 +590,25 @@ describe('references and model', () => {
     })
     typeLine(test.terminal, '/model p/think')
     await test.settle()
-    expect(test.terminal.text()).toContain('Reasoning effort for think')
+    expect(test.terminal.text()).toContain('Reasoning effort · p/think')
+    expect(test.terminal.text()).toContain('Esc cancels the model change')
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.selection.current).toEqual({ provider: 'p', model: 'think', reasoningEffort: 'high' })
     expect(test.terminal.text()).toContain('effort high')
+    // Re-picking the same model opens on the effort in force, so Enter keeps it.
     typeLine(test.terminal, '/model p/think')
     await test.settle()
+    expect(test.terminal.text()).toContain('High ✓')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'p', model: 'think', reasoningEffort: 'high' })
+    typeLine(test.terminal, '/model p/think')
+    await test.settle()
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.up)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.selection.current).toEqual({ provider: 'p', model: 'think' })
@@ -636,7 +646,7 @@ describe('references and model', () => {
           resolveModelInfo: (_provider: string, model: string) => {
             if (model === 'broken') return Promise.reject(new Error('no such model'))
             if (model === 'plain') return Promise.resolve({ reasoning: { efforts: [{ id: 'only', name: 'Only' }] } })
-            if (model === 'blank') return Promise.resolve({ reasoning: {} })
+            if (model === 'blank') return Promise.resolve({ reasoning: { efforts: [] } })
             return Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
           },
         } as never)
@@ -689,5 +699,118 @@ describe('references and model', () => {
     release?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
     await quitting.settle()
     expect(quitting.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+  })
+})
+
+describe('the effort command', () => {
+  /** A catalog whose models declare two efforts, one effort, or nothing resolvable. */
+  function catalog(ctx: Context): void {
+    ctx.provide('llm', {
+      listProviders: () => [{ id: 'p', name: 'P' }],
+      listModels: () => Promise.resolve([]),
+      resolveModelInfo: (_provider: string, model: string) => {
+        if (model === 'broken') return Promise.reject(new Error('no such model'))
+        if (model === 'plain') return Promise.resolve({ reasoning: { efforts: [{ id: 'only', name: 'Only' }] } })
+        return Promise.resolve({
+          reasoning: {
+            defaultEffort: 'low',
+            efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High', description: 'slow' }],
+          },
+        })
+      },
+    } as never)
+  }
+
+  it('opens on the effort in force and applies the picked one', async () => {
+    const test = await bench({ before: catalog })
+    typeLine(test.terminal, '/effort')
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen).toContain('Reasoning effort · test-provider/test-model')
+    expect(screen).toContain('current: Provider default · Esc keeps it · Shift+Tab cycles')
+    expect(screen).toContain('Provider default ✓')
+    expect(screen).toContain('resolves to Low')
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' })
+    expect(test.terminal.text()).toContain('effort high from the next request')
+    typeLine(test.terminal, '/effort')
+    await test.settle()
+    expect(test.terminal.text()).toContain('current: High · Esc keeps it')
+    expect(test.terminal.text()).toContain('High ✓')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' })
+    typeLine(test.terminal, '/effort')
+    await test.settle()
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    expect(test.terminal.text()).toContain('effort: provider default from the next request')
+  })
+
+  it('takes a declared effort or the default keyword as its argument', async () => {
+    const test = await bench({ before: catalog })
+    typeLine(test.terminal, '/effort High')
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' })
+    typeLine(test.terminal, '/effort default')
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    expect(test.terminal.text()).toContain('effort: provider default from the next request')
+    typeLine(test.terminal, '/effort turbo')
+    await test.settle()
+    expect(test.terminal.text()).toContain('test-provider/test-model has no effort "turbo" (low, high, default)')
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+  })
+
+  it('reports a model, a catalog, or a profile that offers no effort', async () => {
+    const test = await bench({ before: catalog })
+    test.selection.current = { provider: 'p', model: 'plain' }
+    typeLine(test.terminal, '/effort')
+    await test.settle()
+    expect(test.terminal.text()).toContain('p/plain has no selectable reasoning efforts')
+    test.selection.current = { provider: 'p', model: 'broken' }
+    typeLine(test.terminal, '/effort high')
+    await test.settle()
+    expect(test.terminal.text()).toContain('p/broken: no such model')
+    expect(test.selection.current).toEqual({ provider: 'p', model: 'broken' })
+    const bare = await bench()
+    typeLine(bare.terminal, '/effort')
+    await bare.settle()
+    expect(bare.terminal.text()).toContain('no model catalog is composed')
+  })
+
+  it('opens no picker when the lookup settles after the app stops', async () => {
+    /** A catalog whose lookups hang until the test releases them. */
+    async function gated(line: string): Promise<{ screen: string; selection: unknown }> {
+      let release: ((info: { reasoning: { efforts: { id: string; name: string }[] } }) => void) | undefined
+      const test = await bench({
+        before: (ctx) => {
+          ctx.provide('llm', {
+            listProviders: () => [],
+            listModels: () => Promise.resolve([]),
+            resolveModelInfo: () => new Promise((resolve) => { release = resolve }),
+          } as never)
+        },
+      })
+      typeLine(test.terminal, line)
+      await Promise.resolve()
+      test.app.stop()
+      release?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+      await test.settle()
+      return { screen: test.terminal.text(), selection: test.selection.current }
+    }
+
+    const effort = await gated('/effort')
+    expect(effort.screen).not.toContain('Reasoning effort ·')
+    expect(effort.selection).toEqual({ provider: 'test-provider', model: 'test-model' })
+    const model = await gated('/model p/think')
+    expect(model.screen).not.toContain('Reasoning effort ·')
+    expect(model.selection).toEqual({ provider: 'test-provider', model: 'test-model' })
   })
 })
