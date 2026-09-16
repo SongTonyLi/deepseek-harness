@@ -19,7 +19,7 @@ Status: implemented
 暂存树的四项性质由构建过程建立而非假定，因为每一项在用户运行结果之前都不可见：
 
 - **`workspace:` 范围被固定。** `pnpm deploy` 会把它们留在嵌套清单里，而 npm 无法解析该协议。每个范围都被改写为暂存在其旁边的版本，因为载荷是封闭的，所以这个版本是精确的。
-- **平台变体不打包。** 带 `os`/`cpu` 的包每个平台解析出一份构建，因此打包暂存树会发布一个仅限 darwin-arm64 的包。这些包被从载荷中移除，其父包的完整变体列表被提升为顶层 `optionalDependencies`，让 npm 在每次安装时选择。这覆盖 ripgrep、sharp、koffi、`node-addon-require-builtin` 和 Landlock 启动器；`node-pty` 与 `pi-tui` 在同一个包内附带全部预构建，保持打包。
+- **平台变体不打包。** 带 `os`/`cpu` 的包每个平台解析出一份构建，因此打包暂存树会发布一个仅限 darwin-arm64 的包。构建会从载荷中移除这些变体，从已打包父包的清单中删除其条目，并在发布包的顶层 `optionalDependencies` 中只声明一次每个变体，让 npm 在每次安装时选择。单一声明使全局 npm 安装能够实体化所选变体，而不是保留空的嵌套包目录。这覆盖 ripgrep、sharp、koffi、`node-addon-require-builtin` 和 Landlock 启动器；`node-pty` 与 `pi-tui` 在同一个包内附带全部预构建，保持打包。
 - **补齐缺失的 workspace peer。** `workspace:` peer 只能由本仓库满足，因此 pnpm 的 peer 自动安装无法提供它，deploy 根的依赖列表是唯一会引入它的东西。当该列表不全时，构建会按该 workspace 包发布时的样子打包并解包进载荷，重复直到没有未解析项。以此方式组装终端 profile 发现了两处这样的缺口：`dsh-session-title-llm` 和 `dsh-util-workspace-path`，二者都经由 `dsh-base` 到达，且都不被 `verify-runtime-closure` 发现——它遍历的是已发布的 agent preset 而非 bundle patch。
 - **载荷在打包前被证明是封闭的。** 载荷中每个包的每个依赖以及每个非可选 peer 都必须在载荷内解析。该检查先于版本范围固定运行，因为固定会丢弃它无法解析的范围，否则就会抹掉证据。
 
@@ -29,7 +29,7 @@ Status: implemented
 
 ## Verification
 
-`pnpm run build:npm-cli` 在出现无法解析的运行时边时让构建失败，这正是已发布的 tarball 无法挽回的性质。组装出的包已从其 tarball 安装到检出目录之外的干净工程中，并在已发布的各界面上验证：`dsh --version`、`dsh --help`、`dsh tui --help`、`dsh --profile headless --help` 和 `dsh web --help` 均有应答；不带参数的 `dsh` 在 pty 下初始化 `tui` profile，渲染出会话抬头、模型、权限预设与按键提示，并带着 resume 提示干净退出。安装树中存在 `@deepseek-ai/dsh-tui-app` 正是所用为打包载荷而非 registry 副本的证据，因为该包并未发布。
+`pnpm run build:npm-cli` 在出现无法解析的运行时边时让构建失败，这正是已发布的 tarball 无法挽回的性质。聚焦的打包测试还固定了仅由根部声明平台变体、`workspace:` 范围归一化、保留无关可选依赖以及在修改前检测冲突。组装出的包已从其 tarball 安装到干净的全局前缀中，`@vscode/ripgrep` 会在那里解析并执行所选的 `rg` 二进制。已发布命令检查仍包括 `dsh --version`、`dsh --help`、`dsh tui --help`、`dsh --profile headless --help` 和 `dsh web --help`；不带参数的 `dsh` 在 pty 下初始化 `tui` profile，渲染出会话抬头、模型、权限预设与按键提示，并带着 resume 提示干净退出。安装树中存在 `@deepseek-ai/dsh-tui-app` 证明所用的是打包载荷而非 registry 副本，因为该包并未发布。
 
 未覆盖模型往返：冒烟测试在没有 provider 密钥的情况下运行，因此该组装只验证到首次模型请求之前。
 
