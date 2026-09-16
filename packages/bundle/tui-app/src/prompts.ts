@@ -88,6 +88,14 @@ abstract class ListPrompt<T> implements ModalPrompt<T> {
     this.settlement.settle(value)
   }
 
+  /**
+   * Open the list on one row instead of the first.
+   * @param index - the row to highlight.
+   */
+  protected highlight(index: number): void {
+    this.list.setSelectedIndex(index)
+  }
+
   abstract withdraw(): void
 
   handleInput(data: string): void {
@@ -139,10 +147,30 @@ export interface PickItem {
   description?: string
 }
 
+/** What a picker shows beyond its rows. */
+export interface PickOptions {
+  /** Dim rows drawn between the heading and the list. */
+  body?: readonly string[]
+  /** The row value in force: the list opens on that row and marks it. */
+  current?: string
+}
+
+/** Marks the row a picker opened on, so it stays visible after the highlight moves. */
+const CURRENT_MARK = ' ✓'
+
 /** A generic list picker (models, sessions); Escape settles undefined. */
 export class PickPrompt extends ListPrompt<PickItem | undefined> {
-  constructor(palette: Palette, title: string, items: readonly PickItem[]) {
-    super(palette, `${palette.accent('?')} ${palette.bold(title)}`, [], [...items], item => item, () => undefined)
+  constructor(palette: Palette, title: string, items: readonly PickItem[], options: PickOptions = {}) {
+    const inForce = items.findIndex(item => item.value === options.current)
+    super(
+      palette,
+      `${palette.accent('?')} ${palette.bold(title)}`,
+      options.body ?? [],
+      items.map((item, index) => index === inForce ? { ...item, label: `${item.label}${CURRENT_MARK}` } : { ...item }),
+      row => items.find(item => item.value === row.value),
+      () => undefined,
+    )
+    if (inForce > 0) this.highlight(inForce)
   }
 
   withdraw(): void {
