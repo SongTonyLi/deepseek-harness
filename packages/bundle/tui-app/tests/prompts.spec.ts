@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { Container, type TUI } from '@earendil-works/pi-tui'
 import type { AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
-import { ApprovalPrompt, ModalQueue, PickPrompt, QuestionPrompt } from '../src/prompts.ts'
+import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt } from '../src/prompts.ts'
 import { createPalette } from '../src/style.ts'
 import { KEY } from './bench.ts'
 
@@ -141,6 +141,98 @@ describe('prompts', () => {
     await expect(first.settled).resolves.toEqual({ value: '', label: 'Provider default' })
     const absent = new PickPrompt(palette, 'Effort', items, { current: 'gone' })
     expect(absent.render(40).join('\n')).not.toContain('✓')
+  })
+
+  describe('detail page', () => {
+    /** Keys the page scrolls with, as the raw bytes a terminal sends. */
+    const PAGE_UP = '\u001b[5~'
+    const PAGE_DOWN = '\u001b[6~'
+
+    /** What the hint line says while every row fits at once. */
+    const HINT = '↑ ↓ scroll · Enter, Esc, or ← returns'
+
+    /** The drawn lines: a blank, the heading, the visible rows, then the hint line. */
+    const page = (prompt: DetailPrompt, width = 40): string[] => prompt.render(width).map(line => line.trimEnd())
+
+    /** Twenty numbered rows, four past the visible cap. */
+    const numbered = Array.from({ length: 20 }, (_item, index) => `row ${String(index)}`)
+
+    /** Whether the page has settled, once pending microtasks have run. */
+    async function hasSettled(prompt: DetailPrompt): Promise<boolean> {
+      let settled = false
+      void prompt.settled.then(() => { settled = true })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      return settled
+    }
+
+    it('draws the heading over the rows and names the keys it answers', () => {
+      const prompt = new DetailPrompt(palette, 'session-a', ['reviewer', 'running · continuable', 'created: 2026-02-03 14:25'])
+      expect(page(prompt)).toEqual(['', 'session-a', 'reviewer', 'running · continuable', 'created: 2026-02-03 14:25', HINT])
+      const colored = new DetailPrompt(createPalette(true), 'session-a', ['reviewer'])
+      const lines = page(colored)
+      expect(lines[1]).toBe('\u001b[1m\u001b[36msession-a\u001b[39m\u001b[22m')
+      expect(lines.at(-1)).toBe(`\u001b[2m${HINT}\u001b[22m`)
+      prompt.invalidate()
+    })
+
+    it('wraps a row too wide for the terminal', () => {
+      const prompt = new DetailPrompt(palette, 'session-a', ['presented: report.md', 'a'.repeat(30)])
+      expect(page(prompt, 20)).toEqual(['', 'session-a', 'presented: report.md', 'a'.repeat(20), 'a'.repeat(10), HINT])
+    })
+
+    it('keeps the rows still while they all fit', () => {
+      const prompt = new DetailPrompt(palette, 'session-a', ['first', 'last'])
+      prompt.handleInput(KEY.down)
+      prompt.handleInput(PAGE_DOWN)
+      expect(page(prompt)).toEqual(['', 'session-a', 'first', 'last', HINT])
+    })
+
+    it('scrolls the rows past the visible cap and reports the position', () => {
+      const prompt = new DetailPrompt(palette, 'session-a', numbered)
+      const first = page(prompt)
+      expect(first.slice(2, 4)).toEqual(['row 0', 'row 1'])
+      expect(first).toHaveLength(19)
+      expect(first.at(-2)).toBe('row 15')
+      expect(first.at(-1)).toBe(`${HINT} · (1/20)`)
+      prompt.handleInput(KEY.down)
+      const moved = page(prompt)
+      expect(moved[2]).toBe('row 1')
+      expect(moved.at(-1)).toBe(`${HINT} · (2/20)`)
+      prompt.handleInput(KEY.up)
+      prompt.handleInput(KEY.up)
+      expect(page(prompt).at(-1)).toBe(`${HINT} · (1/20)`)
+      prompt.handleInput(PAGE_DOWN)
+      const paged = page(prompt)
+      expect(paged[2]).toBe('row 4')
+      expect(paged.at(-2)).toBe('row 19')
+      expect(paged.at(-1)).toBe(`${HINT} · (5/20)`)
+      prompt.handleInput(KEY.down)
+      expect(page(prompt).at(-1)).toBe(`${HINT} · (5/20)`)
+      prompt.handleInput(PAGE_UP)
+      expect(page(prompt).at(-1)).toBe(`${HINT} · (1/20)`)
+    })
+
+    it('brings the rows back into view when a wider terminal wraps fewer of them', () => {
+      const prompt = new DetailPrompt(palette, 'session-a', Array.from({ length: 6 }, () => 'alpha beta gamma delta epsilon zeta'))
+      page(prompt, 12)
+      prompt.handleInput(PAGE_DOWN)
+      const scrolled = page(prompt, 12).at(-1)
+      expect(scrolled).toMatch(/ · \((?!1\/)\d+\/\d+\)$/u)
+      expect(page(prompt, 80).at(-1)).toBe(HINT)
+    })
+
+    it('settles on Enter, Escape, or Left and ignores every other key', async () => {
+      for (const key of [KEY.enter, KEY.escape, KEY.left]) {
+        const prompt = new DetailPrompt(palette, 'session-a', numbered)
+        prompt.handleInput(key)
+        await expect(hasSettled(prompt)).resolves.toBe(true)
+      }
+      const open = new DetailPrompt(palette, 'session-a', numbered)
+      for (const key of [KEY.right, KEY.tab, KEY.space, 'x']) open.handleInput(key)
+      await expect(hasSettled(open)).resolves.toBe(false)
+      open.withdraw()
+      await expect(open.settled).resolves.toBeUndefined()
+    })
   })
 
   it('shows queued prompts in order and restores focus afterwards', async () => {

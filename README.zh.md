@@ -28,6 +28,25 @@ npx @deepseek-ai/dsh web
 
 该命令默认会在 `http://127.0.0.1:3080` 启动 Web UI，本机启动时还会用默认浏览器打开页面。通过 SSH 启动时只打印宿主机 URL，因为本地转发地址由 SSH 客户端或编辑器持有。传入 `--no-open` 可仅运行服务器而不打开浏览器。详见 [Web UI 指南](docs/user/guide/index.zh.md)。
 
+<a id="run-in-the-terminal"></a>
+
+### 在终端中运行
+
+如需在当前所在的终端里与 agent 对话，不使用浏览器、也不启动服务器：
+
+```sh
+npx @deepseek-ai/dsh tui
+```
+
+该命令会启动一个多轮会话：回复就地流式显示，工具调用变成可折叠的卡片，审批与提问出现在输入框上方。命令行上的首个提示会在终端就绪后立即提交，`--resume <session-id>` 会继续一个已持久化的会话而不是新建会话，`--no-open` 则打印登录 URL 而不打开默认浏览器。
+
+```sh
+npx @deepseek-ai/dsh tui "explain this repository"
+npx @deepseek-ai/dsh tui --resume <session-id>
+```
+
+`Enter` 发送，`Esc` 停止正在运行的轮次，`Ctrl+O` 展开所有工具卡片，连按两次 `Ctrl+C`（或在输入为空时按 `Ctrl+D`）退出，并打印该会话的恢复命令。`Shift+Up` 把焦点移入页脚状态栏，在其中 `Left` / `Right` 遍历各分段，`Enter` 打开所选分段的详情，`Esc` 返回编辑器。在终端内输入 `/help` 可查看命令，其中包括 `/model`、`/sessions`、`/attach` 与 `/status`。详见[终端应用](packages/bundle/tui-app/README.zh.md)。
+
 <a id="run-from-source"></a>
 
 ### 从源码运行
@@ -42,7 +61,7 @@ pnpm run build
 pnpm dsh web
 ```
 
-`pnpm run build` 会准备仓库产物。`pnpm dsh web` 会直接使用这些已构建产物，不会重新构建。
+`pnpm run build` 会准备仓库产物。`pnpm dsh web` 会直接使用这些已构建产物，不会重新构建；`pnpm dsh tui` 以同样的方式启动终端会话。
 
 ## 社区与支持
 
