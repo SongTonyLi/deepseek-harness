@@ -5,6 +5,7 @@
 
 export { runNativeCommand } from './runner.ts'
 export type { NativeCommandRunner } from './runner.ts'
+export { openNativeUrl } from './url-opener.ts'
 export {
   canOpenNativePath,
   nativeFileManager,

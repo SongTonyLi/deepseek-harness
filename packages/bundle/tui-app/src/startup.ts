@@ -25,6 +25,8 @@ export interface TuiStartupValues {
   prompt: string | undefined
   /** A persisted session id to resume instead of starting a new session. */
   resume: string | undefined
+  /** Whether authorization pages may open in the local default browser. */
+  openBrowser: boolean
 }
 
 /**
@@ -37,6 +39,7 @@ function tuiCommand(): Command {
     .description('Talk to the agent in this terminal: streamed replies, tool cards, approvals, and slash commands.')
     .helpOption('-h, --help', 'show this help')
     .option('--resume <session-id>', 'continue a persisted session instead of starting a new one')
+    .option('--no-open', 'print sign-in URLs instead of opening the default browser')
     .argument('[prompt...]', 'an optional first prompt; multiple words are joined by spaces')
     .addHelpText('after', `
 Examples:
@@ -58,12 +61,13 @@ Ctrl+C twice (or Ctrl+D on an empty input) quits. Type /help for commands.
  */
 export function apply(ctx: Context): void {
   const program = tuiCommand()
-  program.action((words: string[], options: { resume?: string }) => {
+  program.action((words: string[], options: { resume?: string; open: boolean }) => {
     const prompt = words.join(' ').trim()
     if (options.resume !== undefined && options.resume.trim() === '') program.error('error: --resume needs a session id')
     ctx.provide(TUI_STARTUP_SERVICE, {
       prompt: prompt === '' ? undefined : prompt,
       resume: options.resume,
+      openBrowser: options.open,
     } satisfies TuiStartupValues)
   })
   parseCmdline(ctx, program)

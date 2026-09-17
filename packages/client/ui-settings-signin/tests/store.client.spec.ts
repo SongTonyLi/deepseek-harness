@@ -175,13 +175,17 @@ describe('one attempt', () => {
     const running = controller.begin(CODEX, 'openai-codex', 'oauth')
     await settled(controller, state => state.attempt !== undefined)
     expect(calls.begin).toHaveBeenCalledWith('llm-pi-ai/openai-codex', 'oauth', expect.any(AbortSignal))
-    stream.push({ type: 'notice', message: 'Open this page', url: 'https://auth.example', code: 'AB-12' })
+    stream.push({
+      type: 'notice', message: 'Open this page', url: 'https://auth.example', openInBrowser: true, code: 'AB-12',
+    })
     stream.push({ type: 'prompt', promptId: 'p1', kind: 'text', message: 'Paste the code', placeholder: 'code' })
     await settled(controller, state => state.attempt?.question !== undefined)
 
     const opened = controller.store.getSnapshot().attempt
     expect(opened).toMatchObject({ provider: 'openai-codex', label: 'OpenAI Codex', running: true })
-    expect(opened?.directions).toEqual([{ message: 'Open this page', url: 'https://auth.example', code: 'AB-12' }])
+    expect(opened?.directions).toEqual([{
+      message: 'Open this page', url: 'https://auth.example', openInBrowser: true, code: 'AB-12',
+    }])
     expect(opened?.question).toEqual({ promptId: 'p1', kind: 'text', message: 'Paste the code', placeholder: 'code' })
 
     await controller.answer('the-code')

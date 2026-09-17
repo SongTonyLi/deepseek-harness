@@ -16,6 +16,8 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
+import { canOpenNativePath, openNativeUrl } from '@deepseek-ai/dsh-native-command'
 import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-query'
@@ -41,12 +43,15 @@ export interface Config {
   resume?: string
   /** Collapsed tool-card body rows before `Ctrl+O` expands them. */
   toolPreviewLines: number
+  /** Permit local default-browser handoff for authorization pages. */
+  openBrowser: boolean
 }
 
 export const Config: z<Config> = z.object({
   prompt: z.string(),
   resume: z.string(),
   toolPreviewLines: z.natural().min(1).default(8),
+  openBrowser: z.boolean().default(true),
 })
 
 /** Process-facing effects of one run: the terminal, the error stream, and the launcher's bounded exit request. */
@@ -58,18 +63,24 @@ interface TuiHost {
   stderr: { write(chunk: string): unknown }
   /** Whether SGR styling is emitted. */
   color: boolean
+  /** Whether this Host can hand a URL to a local desktop. */
+  canOpenUrl(): boolean
+  /** Hand an authorization page to the local default browser. */
+  openUrl(url: string): Promise<void>
   /** Request process exit with `code` after the tree disposes. */
   exit(code: number): void
 }
 
 /** The process-bound pieces of the host; tests substitute a fake terminal and captured streams. */
-export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stderr' | 'color'> = {
+export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stderr' | 'color' | 'canOpenUrl' | 'openUrl'> = {
   /* v8 ignore next -- the process terminal owns raw stdin; tests substitute a fake */
   createTerminal: () => new ProcessTerminal(),
   /* v8 ignore next -- process stdin is the host's; tests substitute a recorder */
   releaseInput: () => { process.stdin.unref() },
   stderr: process.stderr,
   color: colorEnabled(process.env, process.stdout.isTTY),
+  canOpenUrl: () => canOpenNativePath(),
+  openUrl: openNativeUrl,
 }
 
 /** Events read per page when a persisted session is resumed, through the storage handle before the Agent takes the log over. */
@@ -204,6 +215,11 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
   const initial = config.resume === undefined
     ? await sessions.create()
     : await sessions.resume(brandString<SessionId>(config.resume))
+  const openUrl = config.openBrowser
+    && host.canOpenUrl()
+    && !launchedThroughSsh(launchEnvironmentOf(ctx))
+    ? (url: string): Promise<void> => host.openUrl(url)
+    : undefined
 
   const app = new TuiApp({
     ctx,
@@ -213,6 +229,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     palette: createPalette(host.color),
     toolPreviewLines: config.toolPreviewLines,
     cwd,
+    ...openUrl === undefined ? {} : { openUrl },
     releaseInput: () => { host.releaseInput() },
     onQuit: (bound) => {
       void (async () => {
@@ -246,6 +263,8 @@ export function apply(ctx: Context, config: Config): void {
     releaseInput: internals.releaseInput,
     stderr: internals.stderr,
     color: internals.color,
+    canOpenUrl: internals.canOpenUrl,
+    openUrl: internals.openUrl,
     exit,
   }
   void run(ctx, config, host).catch((error: unknown) => { fail(host, error) })

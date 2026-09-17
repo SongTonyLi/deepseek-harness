@@ -50,7 +50,7 @@ This package takes no configuration.
 
 ### Running one attempt
 
-`begin(request, signal)` is a stream. Each item is one frame: a `notice` carrying what the human must do and any page or code it refers to, a `prompt` carrying a question and the id an answer names, a `prompt-withdrawn` for a question the flow retired, and a final `settled` frame carrying `authorized` or `cancelled`. The attempt starts when the carrier pulls the first frame and ends when the stream does; closing the stream withdraws it. `cancel(key)` withdraws it from a call that no longer holds the stream, which is what a Cancel button on a re-rendered page uses.
+`begin(request, signal)` is a stream. Each item is one frame: a `notice` carrying what the human must do, any page or code it refers to, and whether a desktop surface should hand that page to the default browser, a `prompt` carrying a question and the id an answer names, a `prompt-withdrawn` for a question the flow retired, and a final `settled` frame carrying `authorized` or `cancelled`. The attempt starts when the carrier pulls the first frame and ends when the stream does; closing the stream withdraws it. `cancel(key)` withdraws it from a call that no longer holds the stream, which is what a Cancel button on a re-rendered page uses.
 
 A question is answered by a second call naming the frame's `promptId`: `answer(key, promptId, value)` with the typed text or the chosen option's id, or `decline(key, promptId)` when the human says no, which settles the attempt as `cancelled`. Only the attempt's own prompts can be answered, so a stale id is refused rather than silently applied to a newer attempt.
 

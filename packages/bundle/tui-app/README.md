@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in the terminal you are already in, with no browser and no server. Replies stream as you watch, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, `/attach` adds images and files, and `/`-commands share the Web registry. Sessions persist: `/sessions`, `/new`, and `/fork` switch between them, `/export` writes the browser's ZIP, and `--resume` continues one later. It runs the same model, tools, and safety defaults as `dsh web`, one session at a time.
+`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in the terminal you are already in, with no browser-hosted application and no server. Replies stream as you watch, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, `/attach` adds images and files, and `/`-commands share the Web registry. Sessions persist: `/sessions`, `/new`, and `/fork` switch between them, `/export` writes the browser's ZIP, and `--resume` continues one later. It runs the same model, tools, and safety defaults as `dsh web`, one session at a time.
 
 ## Table of Contents
 
@@ -33,6 +33,7 @@ Start a session, type, and read the answer in place. `dsh tui` is an alias of `d
 dsh tui                                   # new session, wait for input
 dsh tui "explain this repository"         # new session with a first prompt
 dsh tui --resume <session-id>             # continue an earlier session
+dsh tui --no-open                         # print sign-in URLs without opening a browser
 ```
 
 On quit the app prints `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>` on stderr for the session bound at that moment. A resumed session redraws its persisted history before accepting input; inside the terminal, `/sessions` opens a picker over every persisted root session, `/new` starts a fresh one, and `/fork` copies the current session up to its last completed turn into a new one, the same cut the browser's fork takes. Switching releases the previous Agent and redraws the transcript of the next.
@@ -82,6 +83,10 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 
 Every other `/name` line goes to the shared command registry, so `/compact`, `/permission`, `/goal`, and plugin commands work as they do in the browser.
 
+### Subscription sign-in
+
+`/login` stores a subscription credential but does not activate a dormant model route. Configure the catalog route first, then use its full credential key; for example, run `/settings llm-pi-ai providers.openai-codex {}` and then `/login llm-pi-ai/openai-codex`. A marked authorization page opens in the local default browser while its URL remains in the transcript as a fallback. SSH launches, hosts without a desktop, `--no-open`, and opener failures leave the manual URL and device-code paths available instead.
+
 ### Prompts from the agent
 
 An approval request draws `Allow <tool>?` with the asker's reason, the logged call the request names (the same rows as its tool card, so a shell command reads before it runs), and two rows, allow once or reject; `Esc` rejects and `Ctrl+C` cancels the request. An `ask_user_question` question renders its `detail` as Markdown above its options plus a free-text row; multi-select toggles rows with `Space` and confirms through `Done`. A plan review (the `plan-review` intent `exit_plan_mode` sets) draws the plan as Markdown with Approve, Decline, and Discuss rows, where Discuss returns the request to the composer as the browser's card does. Prompts queue and show one at a time, and an aborted request withdraws its prompt.
@@ -97,8 +102,9 @@ An approval request draws `Allow <tool>?` with the asker's reason, the logged ca
 | `prompt` | none | A first prompt submitted when the terminal is up |
 | `resume` | none | A persisted session id to continue instead of starting a new one |
 | `toolPreviewLines` | `8` | Collapsed tool-card body rows before `Ctrl+O` expands them |
+| `openBrowser` | `true` | Hand marked authorization pages to the local default browser |
 
-`prompt` and `resume` come from the command line through the startup provider; the generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tui-app) is the exhaustive source for every accepted field.
+`prompt`, `resume`, and `openBrowser` come from the command line through the startup provider; the generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tui-app) is the exhaustive source for every accepted field.
 
 -----
 
@@ -112,7 +118,7 @@ The runner is a direct driver over the core API carrier, like `dsh-headless`, th
 
 ### Run flow
 
-The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after the chosen (by default the last) `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle; while the host opens the next session the editor refuses input, and a quit during that wait releases the session that arrives afterwards. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1. Shift+Tab cycles the bound model's adapter-owned reasoning efforts, wrapping through the provider default, and `/login` starts `authorization.begin` with only subscription methods (every method except a key-collecting `api-key` login).
+The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after the chosen (by default the last) `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle; while the host opens the next session the editor refuses input, and a quit during that wait releases the session that arrives afterwards. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1. Shift+Tab cycles the bound model's adapter-owned reasoning efforts, wrapping through the provider default, and `/login` starts `authorization.begin` with only subscription methods (every method except a key-collecting `api-key` login). A notice the flow marks with `openInBrowser` is handed to the default browser through `dsh-native-command`'s credential-scrubbed helper while the URL stays printed; the handoff is suppressed when `openBrowser` is false, the launch came through SSH, or the host has no desktop, and an opener failure becomes a notice beside the URL rather than a sign-in failure.
 
 ### Rendering model
 
@@ -127,7 +133,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | The `tui-app` plugin: the session host (create, resume, fork), history read, quit flow, exit mapping |
-| [`src/startup.ts`](src/startup.ts) | The `tui-app-startup` provider: prompt positional, `--resume`, and `--help` |
+| [`src/startup.ts`](src/startup.ts) | The `tui-app-startup` provider: prompt positional, `--resume`, `--no-open`, and `--help` |
 | [`src/app.ts`](src/app.ts) | The terminal application: layout, keys, commands, session binding, seams, log and stream folding |
 | [`src/sessions.ts`](src/sessions.ts) | The `/sessions` list over the query engine and its picker rows |
 | [`src/attach.ts`](src/attach.ts) | `/attach`: local files into image or file blocks through the attachment store |

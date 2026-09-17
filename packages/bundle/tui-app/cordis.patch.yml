@@ -1,8 +1,8 @@
 # The dsh-tui-app bundle patch: the interactive terminal surface directly over
 # dsh-base. It mounts no Host, HTTP server, Web runtime, or browser plugin. An
 # ordinary provider plugin injects `cmdlineArgs`, parses the optional prompt
-# positional and `--resume` (`dsh --profile tui [prompt...]`) plus this app's
-# --help, then the terminal runner creates or resumes one Agent through the
+# positional, `--resume`, and `--no-open` (`dsh --profile tui [prompt...]`)
+# plus this app's --help, then the terminal runner creates or resumes one Agent through the
 # core registry and drives it from the terminal until the user quits.
 
 - id: system-prompt
@@ -56,4 +56,5 @@
       config:
         prompt: !!js ctx.tuiStartup.prompt
         resume: !!js ctx.tuiStartup.resume
+        openBrowser: !!js ctx.tuiStartup.openBrowser
         toolPreviewLines: 8

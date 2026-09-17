@@ -50,7 +50,7 @@ kind: "package-reference"
 
 ### 运行一次尝试
 
-`begin(request, signal)` 是一条流。每一项都是一个帧：`notice` 携带人需要做的事以及它涉及的页面或验证码，`prompt` 携带一个提问以及回答时要指明的 id，`prompt-withdrawn` 对应 flow 撤回的提问，最后的 `settled` 帧携带 `authorized` 或 `cancelled`。尝试在载体拉取第一帧时开始，随流结束而结束；关闭该流即撤回它。`cancel(key)` 用于已不再持有该流的调用撤回它，这正是重新渲染后的页面上「取消」按钮所用的方式。
+`begin(request, signal)` 是一条流。每一项都是一个帧：`notice` 携带人需要做的事、它涉及的页面或验证码，以及桌面界面是否应把该页面交给默认浏览器，`prompt` 携带一个提问以及回答时要指明的 id，`prompt-withdrawn` 对应 flow 撤回的提问，最后的 `settled` 帧携带 `authorized` 或 `cancelled`。尝试在载体拉取第一帧时开始，随流结束而结束；关闭该流即撤回它。`cancel(key)` 用于已不再持有该流的调用撤回它，这正是重新渲染后的页面上「取消」按钮所用的方式。
 
 回答提问要用第二次调用并指明该帧的 `promptId`：`answer(key, promptId, value)` 传入输入的文本或所选项的 id，或在人拒绝时用 `decline(key, promptId)`，后者会让尝试以 `cancelled` 结算。只有该尝试自己的提问可以被回答，因此过期的 id 会被拒绝，而不会被悄悄用在更新的尝试上。
 
