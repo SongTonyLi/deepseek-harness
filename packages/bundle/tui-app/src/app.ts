@@ -2,17 +2,23 @@
  * The interactive terminal application: it renders the durable session log
  * and the live assistant stream of one Agent at a time into a pi-tui tree,
  * turns keystrokes into agent input, answers the approval and user-questions
- * seams for that Agent, and switches between sessions through its host.
+ * seams for that Agent, and switches between sessions through its host. Under
+ * the editor it keeps two docked regions the keyboard can take over — the
+ * subagent panel and the status bar — and one repeating tick advances their
+ * elapsed counters and re-reads a stale subagent listing. A second tick, at
+ * its own period, brightens the text of the message streaming right now.
  * @module @deepseek-ai/dsh-tui-app/app
  */
 
+import { homedir } from 'node:os'
 import {
   Container,
-  Editor,
   Loader,
   Text,
   TuiMainScreen,
   matchesKey,
+  type RgbColor,
+  type SelectListLayoutOptions,
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { Context } from '@deepseek-ai/cordis'
@@ -22,6 +28,7 @@ import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
 import { ReasoningEffortId, createUserMessage, type LlmModelReasoningInfo, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
+import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
@@ -34,24 +41,59 @@ import type {} from '@deepseek-ai/dsh-permission-presets'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-skill'
+// Carries the subagent lifecycle events, the descendant listing, and the
+// `subagentTiming` projection key; `tokenUsage` rides the token meter.
+import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
+import type {} from '@deepseek-ai/dsh-token-meter/client'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { attachLocalFile, type PendingAttachment } from './attach.ts'
-import { listDeliverables, listPlugins, listSettings, listSubagents, resetSetting, sessionOutline, setSetting, showSetting } from './catalog.ts'
+import {
+  listDeliverables,
+  listPlugins,
+  listSettings,
+  listSubagentChoices,
+  resetSetting,
+  sessionOutline,
+  setSetting,
+  showSetting,
+  subagentChoice,
+  subagentDetail,
+  type SubagentChoice,
+} from './catalog.ts'
 import { AssistantBlock, NoticeBlock, ToolBlock, UserBlock, type BlockTheme } from './blocks.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
+import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { exportSessionZip } from './export.ts'
-import { ApprovalPrompt, ModalQueue, PickPrompt, QuestionPrompt, type PickItem } from './prompts.ts'
+import { FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
+import {
+  FIRST_FOOTER_SEGMENT,
+  buildFooterSegments,
+  footerSelectionIndex,
+  renderFooter,
+  type FooterSegment,
+  type FooterSegmentId,
+} from './footer.ts'
+import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
 import { describeSession, listSessionChoices } from './sessions.ts'
-import { compactionNotice, footerStatus, readStatusFacts, retryMessage, statusReport } from './status.ts'
+import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
+import {
+  renderSubagentPanel,
+  subagentPanelView,
+  type SubagentLiveFacts,
+  type SubagentPanelRow,
+  type SubagentPanelView,
+} from './subagent-panel.ts'
+import { listTodoChoices, todoDetail, type TodoTransition } from './todos.ts'
 import { editorTheme, type Palette } from './style.ts'
 import {
   EMPTY_USAGE,
   addUsage,
   contentText,
   describeFailure,
+  formatElapsed,
   formatUsage,
   parseArguments,
   toolCallText,
@@ -62,6 +104,61 @@ import {
 
 /** A second Ctrl+C inside this window quits. */
 const QUIT_DOUBLE_PRESS_MS = 600
+
+/**
+ * Row layout of the todo picker: the label column grows with the widest todo
+ * line instead of stopping at the list's 32-column default, which would cut a
+ * todo well inside the width its rows are built for. 68 columns hold the
+ * status glyph, the row's own content cap, and the gap before the status
+ * column. A presentation choice of this terminal surface, not a deployment
+ * setting.
+ */
+const TODO_ROW_LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 1, maxPrimaryColumnWidth: 68 }
+
+/** The panel draw of a session with no subagent rows. */
+const EMPTY_PANEL_VIEW: SubagentPanelView = { rows: [], hidden: 0, ticking: false }
+
+/**
+ * How long the application waits for the terminal to answer the OSC 11
+ * background-color query it sends once at start. The query is a round trip to
+ * the attached terminal, so this bounds one local handshake, not a deployment
+ * choice; a terminal that stays silent leaves the fade in its two-level mode.
+ */
+const BACKGROUND_QUERY_TIMEOUT_MS = 200
+
+/** Drawing settings before the background query settles, and whenever the terminal draws no ramp. */
+const NO_FADE: FadeStyle = { capability: 'none', ramp: [] }
+
+/**
+ * Relative luminance of the terminal background at which the foreground is
+ * taken to be dark rather than light, as a fraction of a full channel.
+ */
+const DARK_BACKGROUND_LUMINANCE = 0.5
+
+/** The foreground assumed over a dark background. */
+const LIGHT_FOREGROUND: RgbColor = { r: 255, g: 255, b: 255 }
+
+/** The foreground assumed over a light background. */
+const DARK_FOREGROUND: RgbColor = { r: 0, g: 0, b: 0 }
+
+/**
+ * The foreground the ramp climbs towards.
+ *
+ * pi-tui reports the terminal background but never its foreground, so this is
+ * an assumption: a light foreground over a dark background and the reverse.
+ * It is never drawn - the streaming block withholds the oldest visible level,
+ * which is the only level this color reaches - and only sets the direction
+ * and spacing of the levels below it.
+ * @param background - the background the terminal reported.
+ * @returns the assumed foreground.
+ */
+function assumedForeground(background: RgbColor): RgbColor {
+  const luminance = (0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b) / 255
+  return luminance < DARK_BACKGROUND_LUMINANCE ? LIGHT_FOREGROUND : DARK_FOREGROUND
+}
+
+/** Which docked region owns the keyboard. */
+type FocusRegion = 'editor' | 'bar' | 'panel'
 
 /** One Agent the terminal drives, with the facts the host resolved for it. */
 export interface BoundSession {
@@ -100,6 +197,38 @@ export interface TuiAppDeps {
   palette: Palette
   /** Collapsed tool-card body rows. */
   toolPreviewLines: number
+  /** Period of the live-refresh tick, in milliseconds. */
+  liveRefreshMs: number
+  /** Brightness levels streamed text climbs; the oldest visible level is `fadeSteps - 1`. */
+  fadeSteps: number
+  /** Period of the fade tick, in milliseconds: one brightness level per tick. */
+  fadeStepMs: number
+  /** Draw streamed text at the normal foreground with no ramp and no fade tick. */
+  reducedMotion: boolean
+  /**
+   * Process environment the fade capability is decided from (`NO_COLOR`,
+   * `COLORTERM`, `TERM`). Read once at start, never from the render path, so
+   * tests drive every capability without touching `process.env`.
+   */
+  env: NodeJS.ProcessEnv
+  /**
+   * Wall clock the elapsed counters are measured against. Tests substitute a
+   * clock they step by hand, so no spec waits on real time.
+   * @returns the current Unix time in milliseconds.
+   */
+  now(): number
+  /**
+   * Start one repeating tick. The app arms at most one per purpose and only
+   * while that purpose needs it: the live refresh while a turn is running, a
+   * listed child is timing an open turn, or the listing is stale, and the
+   * fade while streamed text is still brightening. The production source
+   * registers each interval as an effect of the plugin fiber; tests
+   * substitute a source they step by hand.
+   * @param callback - runs once per period.
+   * @param delayMs - the period.
+   * @returns the disposer that stops this tick.
+   */
+  tick(callback: () => void, delayMs: number): () => void
   /** The workspace root shown in the footer and used for relative attachment and export paths. */
   cwd: string
   /** Hand an authorization page to the local default browser; absent when automatic handoff is disabled. */
@@ -131,9 +260,10 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'signin', description: 'Sign in to a provider' },
   { name: 'export', description: 'Write this session log as a ZIP archive (/export [directory])' },
   { name: 'status', description: 'Show context usage, token totals, session stats, todos, goal, plan, and permission' },
+  { name: 'todos', description: 'Browse the agent\'s todo list (Enter shows one item in full)' },
   { name: 'outline', description: 'List the turns of this session with their prompts and replies' },
   { name: 'deliverables', description: 'List the files the agent presented in this session' },
-  { name: 'subagents', description: 'List the subagent sessions under this session' },
+  { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter shows one session\'s details)' },
   { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
   { name: 'plugins', description: 'List the composed plugins and their state' },
   { name: 'tools', description: 'Expand or collapse every tool card' },
@@ -156,6 +286,29 @@ type Tone = 'dim' | 'error' | 'success'
 /** How a message submitted while a turn runs reaches the Agent. */
 type SubmitMode = 'queue' | 'steer'
 
+/**
+ * What the terminal remembers about one todo line across writes. The todo
+ * list carries no identity, so the content is the key: a reworded item is a
+ * new one, and the item it replaced is gone.
+ */
+interface TodoHistory extends TodoTransition {
+  /** The status the last write carried, which tells a status change from a repeat. */
+  status: TodoItem['status']
+}
+
+/** One entry of a browsable list: the row the picker shows and the page behind it. */
+interface BrowseRow {
+  /** The picker row; its `value` identifies the entry across reopenings. */
+  item: PickItem
+  /** Heading of the entry's detail page. */
+  heading: string
+  /**
+   * Read the entry's detail rows.
+   * @returns the rows to show; a rejection is shown as the rows instead.
+   */
+  detail(): Promise<readonly string[]>
+}
+
 /** What the terminal could read about one model's reasoning efforts. */
 type EffortLookup =
   /** The model declares efforts to choose between. */
@@ -175,7 +328,10 @@ export class TuiApp {
   private readonly statusSlot = new Container()
   private readonly loader: Loader
   private readonly modalSlot = new Container()
-  private readonly editor: Editor
+  private readonly editor: BarCursorEditor
+  /** Holds {@link panel} exactly while the bound session has subagent rows. */
+  private readonly panelSlot = new Container()
+  private readonly panel: Text
   private readonly footer: Text
   private readonly modals: ModalQueue
   private readonly theme: BlockTheme
@@ -183,7 +339,43 @@ export class TuiApp {
   private readonly toolArguments = new Map<ToolCallId, unknown>()
   private readonly submittedIds = new Set<string>()
   private readonly disposers: (() => void)[] = []
+  /** Turn facts of the bound session's todo lines, keyed by content. */
+  private todoTurns = new Map<string, TodoHistory>()
+  /** The turn the last logged `turn/start` opened; 0 before the first one. */
+  private turn = 0
+  /** When the running turn started, from its `turn/start` envelope; absent between turns. */
+  private turnStartedAt: number | undefined
   private pending: PendingAttachment[] = []
+  /** The home directory the footer shortens the workspace path against. */
+  private readonly home = homedir()
+  /** The segments of the last footer draw, in bar order. */
+  private segments: readonly FooterSegment[] = []
+  /** Which docked region owns the keyboard. */
+  private focus: FocusRegion = 'editor'
+  /** The segment the status bar holds; read only while the bar has focus. */
+  private barSelection: FooterSegmentId = FIRST_FOOTER_SEGMENT
+  /** The descendant listing the last reconcile produced, in pre-order. */
+  private subagentEntries: readonly SubagentDescendantListEntry[] = []
+  /** The rows of the last panel draw. */
+  private panelView: SubagentPanelView = EMPTY_PANEL_VIEW
+  /** The panel row the selection sits on; absent before the first row is drawn. */
+  private panelSelection: SessionId | undefined
+  /** Whether a live signal invalidated the listing since the last reconcile. */
+  private subagentsStale = false
+  /** Set while a listing is in flight, so two reconciles never overlap. */
+  private listing = false
+  /** Why the last listing failed; cleared by the next one that succeeds. */
+  private listingFailure: string | undefined
+  /** Disposer of the live-refresh tick while it is armed. */
+  private ticker: (() => void) | undefined
+  /** Disposer of the fade tick while it is armed. */
+  private fadeTicker: (() => void) | undefined
+  /** The tail of the message streaming right now; absent between messages. */
+  private fadeTail: FadeTracker | undefined
+  /** Whether this terminal draws a ramp at all, decided once at start. */
+  private fading = false
+  /** How streamed text is drawn; `none` until the background query settles. */
+  private fadeStyle: FadeStyle = NO_FADE
   private bound: BoundSession
   private streaming: AssistantBlock | undefined
   private toolsExpanded = false
@@ -191,6 +383,8 @@ export class TuiApp {
   private switching = false
   /** Serializes Shift+Tab effort cycles so rapid presses apply in order. */
   private effortCycle = Promise.resolve()
+  /** Serializes `/attach` reads so pending attachments keep the typed order. */
+  private attaching = Promise.resolve()
   private usage: UsageTotals = EMPTY_USAGE
   private lastCtrlC = 0
   private stopped = false
@@ -199,20 +393,25 @@ export class TuiApp {
     const palette = deps.palette
     this.bound = deps.initial
     this.theme = { palette, toolPreviewLines: deps.toolPreviewLines }
-    this.tui = new TuiMainScreen(deps.terminal)
+    // The second parameter is `showHardwareCursor`: the editor draws no block
+    // of its own, so the terminal's own cursor is the caret. Setting it here
+    // rather than through `setShowHardwareCursor` keeps the constructor from
+    // requesting a render before the tree has children.
+    this.tui = new TuiMainScreen(deps.terminal, true)
     this.header = new Text('', 0, 0)
     this.loader = new Loader(this.tui, palette.accent, palette.dim, 'thinking')
     // pi-tui starts the spinner interval in the constructor; it runs only while mounted.
     this.loader.stop()
-    this.editor = new Editor(this.tui, editorTheme(palette), { paddingX: 1 })
+    this.editor = new BarCursorEditor(this.tui, editorTheme(palette), { paddingX: 1 })
     this.editor.setAutocompleteProvider(editorCompletion({
       commands: () => this.completableCommands(),
       references: (query, quoted, signal) => this.references(query, quoted, signal),
     }))
     this.editor.onSubmit = (text) => { this.onSubmit(text) }
+    this.panel = new Text('', 0, 0)
     this.footer = new Text('', 0, 0)
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
-    for (const child of [this.header, this.chat, this.statusSlot, this.modalSlot, this.editor, this.footer]) {
+    for (const child of [this.header, this.chat, this.statusSlot, this.modalSlot, this.editor, this.panelSlot, this.footer]) {
       this.tui.addChild(child)
     }
   }
@@ -235,9 +434,19 @@ export class TuiApp {
         this.onStreamFrame(frame)
       }),
       ctx.on('agent/status', ({ agent: subject, status }) => {
-        if (subject !== this.agent) return
+        if (subject !== this.agent) {
+          // Every Agent of this process reaches here, the subagent children
+          // included; one of them changing state can add or drop a panel row.
+          this.markSubagentsStale()
+          return
+        }
         this.setWorking(status === 'running')
       }),
+      // Neither lifecycle edge carries the delegating parent, so they mark the
+      // listing stale rather than adding or removing a row themselves; both
+      // fire for out-of-process children too.
+      ctx.on('subagent/start', () => { this.markSubagentsStale() }),
+      ctx.on('subagent/end', () => { this.markSubagentsStale() }),
       ctx.on('approval/request', (request, next) => {
         if (request.agent !== this.agent) return next()
         return this.askApproval(request.toolName, request.reason, request.callId, request.signal)
@@ -252,22 +461,63 @@ export class TuiApp {
     if (projections !== undefined) {
       this.disposers.push(projections.onChanged((session) => {
         if (session === this.agent.session) this.refreshFooter()
+        else this.markSubagentsStale()
       }))
     }
     this.deps.terminal.setTitle(`dsh · ${this.deps.cwd}`)
     this.tui.setFocus(this.editor)
     this.tui.start()
+    this.deps.terminal.write(SET_BLINKING_BAR_CURSOR)
+    this.startFade()
     this.bind(this.bound)
     if (initialPrompt !== undefined) this.submit(initialPrompt)
+  }
+
+  /**
+   * Decide whether streamed text fades at all, once per run, from the
+   * palette, the environment, and the reduced-motion preference. A terminal
+   * that draws no ramp tracks no tail and arms no fade tick, so streaming
+   * costs there exactly what it did before the effect existed.
+   */
+  private startFade(): void {
+    const capability = resolveFadeCapability({
+      paletteEnabled: this.deps.palette.enabled,
+      env: this.deps.env,
+      reducedMotion: this.deps.reducedMotion,
+    })
+    if (capability === 'none') return
+    this.fading = true
+    void this.resolveFadeRamp(capability)
+  }
+
+  /**
+   * Ask the terminal for its background color, the only color a ramp can be
+   * built from, and settle the drawing settings on the answer. A terminal
+   * that answers nothing usable - the query timed out, or its reply did not
+   * parse - leaves the two-level mode, which needs no colors. Text streamed
+   * before the answer arrives draws as the Markdown component rendered it.
+   * @param capability - how far this terminal encodes one ramp level.
+   */
+  private async resolveFadeRamp(capability: Exclude<FadeCapability, 'none'>): Promise<void> {
+    const background = await this.tui.queryTerminalBackgroundColor({ timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS })
+    if (this.stopped) return
+    this.fadeStyle = background === undefined
+      ? { capability: 'dim', ramp: [] }
+      : { capability, ramp: buildFadeRamp(background, assumedForeground(background), this.deps.fadeSteps) }
   }
 
   /** Release the terminal and tell the host to exit; later calls are no-ops. */
   stop(): void {
     if (this.stopped) return
     this.stopped = true
+    this.updateTicker()
+    this.updateFadeTicker()
     for (const dispose of this.disposers.splice(0)) dispose()
     this.modals.withdrawActive()
     this.loader.stop()
+    // The shell that regains the terminal keeps whatever caret shape it was
+    // left with, so the application gives the terminal's own shape back.
+    this.deps.terminal.write(SET_TERMINAL_DEFAULT_CURSOR)
     this.tui.stop()
     this.deps.releaseInput()
     this.deps.onQuit(this.bound)
@@ -282,13 +532,24 @@ export class TuiApp {
     this.toolBlocks.clear()
     this.toolArguments.clear()
     this.submittedIds.clear()
+    this.todoTurns.clear()
+    this.turn = 0
+    this.turnStartedAt = undefined
     this.streaming = undefined
+    this.endFade()
     this.usage = EMPTY_USAGE
     this.pending = []
+    this.subagentEntries = []
+    this.panelSelection = undefined
+    this.listingFailure = undefined
+    this.subagentsStale = false
     this.setWorking(next.agent.status === 'running')
     for (const event of next.history) this.onSessionEvent(next.agent.session, event)
     this.refreshHeader()
     this.refreshFooter()
+    this.refreshSubagentPanel()
+    // Seeding the panel is a listing of its own, not an event handler's read.
+    void this.reconcileSubagents()
   }
 
   /**
@@ -404,21 +665,197 @@ export class TuiApp {
 
   private refreshFooter(): void {
     const palette = this.deps.palette
-    const selection = this.currentSelection()
-    const parts = [`${selection.provider}/${selection.model}`]
-    if (selection.reasoningEffort !== undefined) parts.push(`effort ${selection.reasoningEffort}`)
     const permission = this.deps.ctx.get('permissionPresets')?.current(this.agent.session)
-    if (permission !== undefined) parts.push(`permission ${permission}`)
-    const usage = formatUsage(this.usage)
-    if (usage !== '') parts.push(usage)
-    parts.push(...footerStatus(this.statusFacts()))
-    parts.push(this.deps.cwd)
-    if (this.pending.length > 0) parts.push(`${String(this.pending.length)} attached`)
+    const started = this.turnStartedAt
+    const inbox = this.agent.inbox
+    this.segments = buildFooterSegments({
+      selection: this.currentSelection(),
+      ...permission === undefined ? {} : { permission },
+      ...started === undefined ? {} : {
+        turn: {
+          number: this.turn,
+          startedAt: started,
+          elapsed: formatElapsed(this.deps.now() - started),
+          queuedNextTurn: inbox.nextTurn.length,
+          queuedNextStep: inbox.nextStep.length,
+        },
+      },
+      usage: formatUsage(this.usage),
+      facts: this.statusFacts(),
+      cwd: this.deps.cwd,
+      home: this.home,
+      attachments: this.pending.map(attachment => ({ name: attachment.name, kind: attachment.block.type })),
+    })
     const hints = this.agent.status === 'running'
       ? 'Enter queues for the next turn · Ctrl+S steers this turn · Esc stops it · Ctrl+O tool output · Ctrl+C twice quits'
       : 'Enter sends · Esc stops the turn · Ctrl+O tool output · Ctrl+C twice quits'
-    this.footer.setText(`${palette.dim(parts.join(' · '))}\n${palette.dim(hints)}`)
+    this.footer.setText(renderFooter(this.segments, {
+      palette,
+      ...this.focus === 'bar' ? { selected: footerSelectionIndex(this.segments, this.barSelection) } : {},
+      hints,
+    }))
     this.tui.requestRender()
+  }
+
+  // ── subagent panel ──────────────────────────────────────────────────────
+
+  /**
+   * Redraw the panel from the last listing and a fresh sample of the live
+   * facts. The panel is mounted exactly while it has a row, so the last
+   * resident child leaving takes the panel with it — and the keyboard back to
+   * the editor when the panel held it.
+   */
+  private refreshSubagentPanel(): void {
+    const view = subagentPanelView({
+      entries: this.subagentEntries,
+      facts: this.subagentFacts(),
+      now: this.deps.now(),
+    })
+    this.panelView = view
+    const mounted = this.panelSlot.children.length > 0
+    if (view.rows.length === 0) {
+      this.panelSelection = undefined
+      if (this.focus === 'panel') this.setFocus('editor')
+      if (mounted) this.panelSlot.removeChild(this.panel)
+    } else {
+      if (!mounted) this.panelSlot.addChild(this.panel)
+      const selected = this.panelSelectionIndex(view.rows)
+      this.panelSelection = view.rows[selected]?.id
+      this.panel.setText(renderSubagentPanel(view, {
+        palette: this.deps.palette,
+        ...this.focus === 'panel' ? { selected } : {},
+        ...this.listingFailure === undefined ? {} : { failure: this.listingFailure },
+      }))
+    }
+    this.updateTicker()
+    this.tui.requestRender()
+  }
+
+  /**
+   * Sample what this process knows about each listed child right now: whether
+   * its Agent is running a turn, and one projection read for its timing and
+   * token totals. Both reads are synchronous and touch no session log; a
+   * child with no live Agent here contributes no facts.
+   * @returns the facts by child session id.
+   */
+  private subagentFacts(): Map<SessionId, SubagentLiveFacts> {
+    const facts = new Map<SessionId, SubagentLiveFacts>()
+    const { ctx } = this.deps
+    const agents = ctx.get('agents')
+    const projections = ctx.get('sessionProjections')
+    for (const entry of this.subagentEntries) {
+      const child = agents?.get(entry.id)
+      if (child === undefined) continue
+      const live: SubagentLiveFacts = { running: child.status === 'running' }
+      if (projections !== undefined) {
+        const { values } = projections.snapshot(child.session, ['subagentTiming', 'tokenUsage'])
+        const timing = values.subagentTiming
+        if (timing !== undefined) {
+          live.settledMs = timing.settledMs
+          if (timing.active !== undefined) live.activeSince = timing.active.since
+        }
+        const usage = values.tokenUsage
+        if (usage !== undefined) {
+          live.usage = {
+            inputTokens: usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
+            outputTokens: usage.outputTokens,
+          }
+        }
+      }
+      facts.set(entry.id, live)
+    }
+    return facts
+  }
+
+  /**
+   * Where the panel draws its selection.
+   * @param rows - the rows of the current draw.
+   * @returns the selected row's index, or 0 once the child behind it is gone.
+   */
+  private panelSelectionIndex(rows: readonly SubagentPanelRow[]): number {
+    const index = rows.findIndex(row => row.id === this.panelSelection)
+    return index === -1 ? 0 : index
+  }
+
+  /**
+   * Mark the descendant listing out of date. The listing is never read from
+   * the handler that noticed: the shared tick performs at most one read per
+   * period, which bounds a burst of child events to one listing.
+   */
+  private markSubagentsStale(): void {
+    if (this.deps.ctx.get('subagents') === undefined) return
+    this.subagentsStale = true
+    this.updateTicker()
+  }
+
+  /**
+   * Re-read the descendant listing once. Two listings never overlap and a
+   * result the terminal moved away from is discarded — both leave the listing
+   * stale, so the next tick reads again. A rejection keeps the rows the last
+   * good listing produced and records the reason without a fresh stale mark,
+   * so a failing service is retried on the next live signal rather than once
+   * per tick.
+   */
+  private async reconcileSubagents(): Promise<void> {
+    const subagents = this.deps.ctx.get('subagents')
+    if (subagents === undefined) return
+    if (this.listing) {
+      this.markSubagentsStale()
+      return
+    }
+    this.listing = true
+    this.subagentsStale = false
+    const session = this.agent.session
+    try {
+      const entries = await subagents.listDescendants(session.id, new AbortController().signal)
+      if (this.agent.session === session) {
+        this.subagentEntries = entries
+        this.listingFailure = undefined
+      } else {
+        this.markSubagentsStale()
+      }
+    } catch (error: unknown) {
+      this.reportListingFailure(describeFailure(error))
+    } finally {
+      this.listing = false
+      if (!this.stopped) this.refreshSubagentPanel()
+    }
+  }
+
+  /**
+   * Record why the listing failed. The panel carries the reason as one line
+   * under its rows; the transcript hears only about a reason that changed, so
+   * a service that keeps failing cannot fill the conversation with notices.
+   * @param message - the failure text.
+   */
+  private reportListingFailure(message: string): void {
+    if (this.listingFailure === message) return
+    this.listingFailure = message
+    this.notice(`subagent listing failed: ${message}`, 'error')
+  }
+
+  /**
+   * Arm the live-refresh tick while something needs it and disarm it
+   * otherwise: a running turn and a drawn row timing an open turn each need
+   * one redraw per period, and a stale listing needs one reconcile. Exactly
+   * one runs at a time, and a stopped app runs none.
+   */
+  private updateTicker(): void {
+    if (!this.stopped && (this.turnStartedAt !== undefined || this.subagentsStale || this.panelView.ticking)) {
+      this.ticker ??= this.deps.tick(() => { this.onTick() }, this.deps.liveRefreshMs)
+      return
+    }
+    const ticker = this.ticker
+    if (ticker === undefined) return
+    this.ticker = undefined
+    ticker()
+  }
+
+  /** One live-refresh period: reconcile a stale listing, then redraw what the clock moved. */
+  private onTick(): void {
+    if (this.subagentsStale) void this.reconcileSubagents()
+    this.refreshSubagentPanel()
+    if (this.turnStartedAt !== undefined) this.refreshFooter()
   }
 
   private statusFacts(): ReturnType<typeof readStatusFacts> {
@@ -432,8 +869,130 @@ export class TuiApp {
       this.notice(empty)
       return
     }
+    this.showBlock(rows)
+  }
+
+  /** Print `rows` into the transcript as one block. */
+  private showBlock(rows: readonly string[]): void {
     this.chat.addChild(new Text(rows.join('\n'), 0, 1))
     this.tui.requestRender()
+  }
+
+  /**
+   * Show one prompt through the modal queue. Whichever docked region holds
+   * the keyboard gives it up first: the queue hands focus to the editor once
+   * the prompt settles, and a bar or panel that still held it would swallow
+   * every key typed after that.
+   * @param prompt - the prompt to show.
+   * @param signal - withdraws the prompt when aborted.
+   * @returns the prompt's settled value.
+   */
+  private showModal<T>(prompt: ModalPrompt<T>, signal?: AbortSignal): Promise<T> {
+    this.focusEditor()
+    return this.modals.run(prompt, signal)
+  }
+
+  /**
+   * Walk a list one entry at a time: the picker opens on `rows`, `Enter`
+   * shows the picked entry's details, leaving the details returns to the
+   * picker on the entry just read, and `Esc` at the picker returns to the
+   * editor. An entry whose details cannot be read shows the failure in their
+   * place, so the list stays open.
+   * @param title - the picker heading.
+   * @param rows - the entries to walk, in list order.
+   * @param layout - how each row splits its width between label and description; the picker's default when omitted.
+   */
+  private async browse(title: string, rows: readonly BrowseRow[], layout?: SelectListLayoutOptions): Promise<void> {
+    let visited: string | undefined
+    for (;;) {
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, title, rows.map(row => row.item), {
+        ...visited === undefined ? {} : { current: visited },
+        ...layout === undefined ? {} : { layout },
+      }))
+      if (picked === undefined) return
+      const row = rows.find(candidate => candidate.item.value === picked.value)
+      /* v8 ignore next -- the picker settles with one of the rows it was handed */
+      if (row === undefined) return
+      visited = picked.value
+      await this.showDetail(row)
+    }
+  }
+
+  /**
+   * Show one entry's detail page, with a failed read printed in place of its
+   * rows. Both the picker loop and the subagent panel enter a page this way.
+   * @param row - the entry the user opened.
+   */
+  private async showDetail(row: BrowseRow): Promise<void> {
+    await this.showModal(new DetailPrompt(this.deps.palette, row.heading, await this.detailRows(row)))
+  }
+
+  /**
+   * The rows one list entry's detail page shows.
+   * @param row - the entry the user opened.
+   * @returns its detail rows, or the failure text when the read fails.
+   */
+  private async detailRows(row: BrowseRow): Promise<readonly string[]> {
+    try {
+      return await row.detail()
+    } catch (error: unknown) {
+      /* v8 ignore next -- subagentDetail, the only resolver today, reports its own read failures as rows */
+      return [describeFailure(error)]
+    }
+  }
+
+  /**
+   * Walk the agent's todo list: one row per item, and entering a row shows
+   * that item in full with its position, the list's counts by status, and the
+   * turns it was first written in and last changed status in.
+   */
+  private async browseTodos(): Promise<void> {
+    const items = this.statusFacts().todos?.items ?? []
+    const choices = listTodoChoices(this.deps.ctx, this.agent.session)
+    if (choices.length === 0) {
+      this.notice('no todos yet')
+      return
+    }
+    // Nothing is awaited between the two reads above, so both see one list:
+    // the counts and position an entered page prints agree with the rows drawn.
+    const tracked = items.map(item => this.todoTurns.get(item.content))
+    await this.browse('Todos', choices.map((choice): BrowseRow => ({
+      item: { value: String(choice.index), label: choice.label, description: choice.description },
+      heading: `Todo ${String(choice.index + 1)}`,
+      detail: () => Promise.resolve(todoDetail(items, choice.index, tracked[choice.index])),
+    })), TODO_ROW_LAYOUT)
+  }
+
+  /**
+   * The browsable entry behind one subagent row: the same detail page the
+   * `/subagents` list and the live panel open.
+   * @param choice - the listing row.
+   * @returns the entry.
+   */
+  private subagentBrowseRow(choice: SubagentChoice): BrowseRow {
+    return {
+      item: { value: choice.id, label: choice.label, description: choice.description },
+      heading: choice.id,
+      detail: () => subagentDetail(this.deps.ctx, choice, new AbortController().signal),
+    }
+  }
+
+  /**
+   * Open the selected panel row's session details, then give the keyboard
+   * back to the panel unless its last row left while the page was open. A
+   * diagnostic row explains itself in the panel and opens nothing.
+   */
+  private async openPanelRow(): Promise<void> {
+    const rows = this.panelView.rows
+    const row = rows[this.panelSelectionIndex(rows)]
+    /* v8 ignore next -- the panel answers keys only while it has rows to select from */
+    if (row === undefined) return
+    if (!row.enterable) return
+    const entry = this.subagentEntries.find(candidate => candidate.id === row.id)
+    /* v8 ignore next -- every drawn row comes from the entries of the last listing */
+    if (entry === undefined) return
+    await this.showDetail(this.subagentBrowseRow(subagentChoice(entry)))
+    if (this.panelView.rows.length > 0) this.focusRegion('panel')
   }
 
   private async settings(argument: string): Promise<void> {
@@ -463,8 +1022,7 @@ export class TuiApp {
   }
 
   private showStatus(): void {
-    this.chat.addChild(new Text(statusReport(this.statusFacts()).join('\n'), 0, 1))
-    this.tui.requestRender()
+    this.showBlock(statusReport(this.statusFacts()))
   }
 
   private currentSelection(): ModelSelection {
@@ -482,7 +1040,10 @@ export class TuiApp {
       this.modals.withdrawActive()
       return { consume: true }
     }
+    // Ctrl+C and Ctrl+D keep their global meaning at the status bar, and give
+    // the keyboard back to the editor on the way.
     if (matchesKey(data, 'ctrl+c')) {
+      this.focusEditor()
       const now = Date.now()
       if (now - this.lastCtrlC < QUIT_DOUBLE_PRESS_MS) {
         this.stop()
@@ -494,7 +1055,21 @@ export class TuiApp {
       return { consume: true }
     }
     if (matchesKey(data, 'ctrl+d')) {
+      this.focusEditor()
       if (this.editor.getText() === '') this.stop()
+      return { consume: true }
+    }
+    if (this.focus === 'bar') return this.onStatusBarKey(data)
+    if (this.focus === 'panel') return this.onPanelKey(data)
+    if (matchesKey(data, 'shift+up')) {
+      this.focusBar()
+      return { consume: true }
+    }
+    // The docked cycle runs editor → bar → panel → editor, so the editor's
+    // step backwards is the panel; with no panel drawn the key is the
+    // editor's own.
+    if (matchesKey(data, 'shift+down') && this.panelView.rows.length > 0) {
+      this.focusRegion('panel')
       return { consume: true }
     }
     if (matchesKey(data, 'escape') && !this.editor.isShowingAutocomplete()) {
@@ -522,6 +1097,153 @@ export class TuiApp {
       return { consume: true }
     }
     return undefined
+  }
+
+  /**
+   * Answer one key while the status bar holds focus. Every key is consumed
+   * here, so nothing typed at the bar reaches the editor.
+   * @param data - the raw key bytes.
+   * @returns the consume marker the input listener returns.
+   */
+  private onStatusBarKey(data: string): { consume: true } {
+    if (matchesKey(data, 'escape') || matchesKey(data, 'shift+down')) {
+      this.focusEditor()
+      return { consume: true }
+    }
+    if (matchesKey(data, 'shift+up')) {
+      // Forward through the docked cycle: the panel when it is drawn, the
+      // editor when it is not.
+      this.focusRegion(this.panelView.rows.length > 0 ? 'panel' : 'editor')
+      return { consume: true }
+    }
+    if (matchesKey(data, 'left') || matchesKey(data, 'shift+tab')) {
+      this.moveStatusBar(-1)
+      return { consume: true }
+    }
+    if (matchesKey(data, 'right') || matchesKey(data, 'tab')) {
+      this.moveStatusBar(1)
+      return { consume: true }
+    }
+    if (matchesKey(data, 'enter')) this.openSegment(this.barSelection)
+    return { consume: true }
+  }
+
+  /**
+   * Answer one key while the subagent panel holds focus. Every key is
+   * consumed here; `Ctrl+C` and `Ctrl+D` never reach this far, keeping their
+   * global meaning.
+   * @param data - the raw key bytes.
+   * @returns the consume marker the input listener returns.
+   */
+  private onPanelKey(data: string): { consume: true } {
+    if (matchesKey(data, 'escape') || matchesKey(data, 'shift+up')) {
+      this.focusEditor()
+      return { consume: true }
+    }
+    if (matchesKey(data, 'shift+down')) {
+      this.focusBar()
+      return { consume: true }
+    }
+    if (matchesKey(data, 'up')) {
+      this.movePanel(-1)
+      return { consume: true }
+    }
+    if (matchesKey(data, 'down')) {
+      this.movePanel(1)
+      return { consume: true }
+    }
+    if (matchesKey(data, 'enter')) this.navigate('subagent details', () => this.openPanelRow())
+    return { consume: true }
+  }
+
+  /**
+   * Open one page a docked region's `Enter` leads to, reporting a failure as
+   * a notice instead of an unhandled rejection.
+   * @param label - what the notice calls the page.
+   * @param open - shows the page and settles when the user leaves it.
+   */
+  private navigate(label: string, open: () => Promise<void>): void {
+    open().catch((error: unknown) => { this.notice(`${label} failed: ${describeFailure(error)}`, 'error') })
+  }
+
+  /**
+   * Answer `Enter` on the held segment: a segment whose fact the app has a
+   * navigable page for opens that page, and every other segment prints its
+   * detail rows into the transcript.
+   * @param selected - the segment the bar holds.
+   */
+  private openSegment(selected: FooterSegmentId): void {
+    const segment = this.segments[footerSelectionIndex(this.segments, selected)]
+    /* v8 ignore next -- the bar draws at least the model segment, and an absent id falls back to it */
+    if (segment === undefined) return
+    if (segment.detail.kind === 'rows') {
+      this.showBlock(segment.detail.rows)
+      return
+    }
+    // The todo list is the one page the bar hands to the app today.
+    this.navigate('/todos', () => this.browseTodos())
+  }
+
+  /**
+   * Move the bar's selection, wrapping at both ends.
+   * @param step - 1 for the next segment, -1 for the previous one.
+   */
+  private moveStatusBar(step: number): void {
+    const count = this.segments.length
+    const next = this.segments[(footerSelectionIndex(this.segments, this.barSelection) + step + count) % count]
+    /* v8 ignore next -- the wrapped index stays inside the bar's own segments */
+    if (next !== undefined) this.barSelection = next.id
+    this.refreshFooter()
+  }
+
+  /**
+   * Move the panel's selection, wrapping at both ends of the drawn rows. The
+   * rows behind a `+<n> more` row are not selectable; `/subagents` walks the
+   * complete tree.
+   * @param step - 1 for the next row, -1 for the previous one.
+   */
+  private movePanel(step: number): void {
+    const rows = this.panelView.rows
+    const count = rows.length
+    const next = rows[(this.panelSelectionIndex(rows) + step + count) % count]
+    /* v8 ignore next -- the wrapped index stays inside the panel's own rows */
+    if (next !== undefined) this.panelSelection = next.id
+    this.refreshSubagentPanel()
+  }
+
+  /** Give the keyboard to the status bar, starting at its first segment. */
+  private focusBar(): void {
+    this.barSelection = FIRST_FOOTER_SEGMENT
+    this.focusRegion('bar')
+  }
+
+  /** Hand the keyboard back to the editor; a no-op while the editor already has it. */
+  private focusEditor(): void {
+    this.focusRegion('editor')
+  }
+
+  /**
+   * Move the keyboard between the docked regions and redraw both of them, so
+   * the region losing focus stops drawing its selection.
+   * @param region - the region that takes the keyboard.
+   */
+  private focusRegion(region: FocusRegion): void {
+    if (this.focus === region) return
+    this.setFocus(region)
+    this.refreshSubagentPanel()
+  }
+
+  /**
+   * Give the keyboard to `region` and redraw the bar. The caller redraws the
+   * panel; the panel's own refresh calls this when its last row leaves.
+   * @param region - the region that takes the keyboard.
+   */
+  private setFocus(region: FocusRegion): void {
+    this.focus = region
+    // pi-tui accepts a null focus, so the editor stops drawing its cursor
+    // while a docked region owns the keyboard.
+    this.tui.setFocus(region === 'editor' ? this.editor : null)
+    this.refreshFooter()
   }
 
   private toggleTools(): void {
@@ -637,15 +1359,24 @@ export class TuiApp {
       case 'status':
         this.showStatus()
         return
+      case 'todos':
+        await this.browseTodos()
+        return
       case 'outline':
         this.showRows(sessionOutline(this.deps.ctx, this.agent.session), 'no completed turn yet')
         return
       case 'deliverables':
         this.showRows(await listDeliverables(this.deps.ctx, this.agent.session.id, new AbortController().signal), 'nothing presented yet')
         return
-      case 'subagents':
-        this.showRows(await listSubagents(this.deps.ctx, this.agent.session.id, new AbortController().signal), 'no subagent sessions')
+      case 'subagents': {
+        const choices = await listSubagentChoices(this.deps.ctx, this.agent.session.id, new AbortController().signal)
+        if (choices.length === 0) {
+          this.notice('no subagent sessions')
+          return
+        }
+        await this.browse('Subagent sessions', choices.map(choice => this.subagentBrowseRow(choice)))
         return
+      }
       case 'settings':
         await this.settings(argument)
         return
@@ -666,6 +1397,8 @@ export class TuiApp {
       '@ completes paths and sessions (workspace, ../, ~/, absolute) · / completes commands',
       'Esc stops the running turn · Ctrl+O expands or collapses tool output',
       'Shift+Tab cycles the current model\'s reasoning effort for the next request',
+      'Shift+Up focuses the status bar: ← → select a fact, Enter shows its details, Esc returns to the input',
+      'Shift+Up again focuses the subagent panel while it is drawn: ↑ ↓ select a child, Enter shows its session',
       'Ctrl+C clears the input (twice quits) · Ctrl+D on an empty input quits',
     ]
     this.chat.addChild(new Text([...rows, '', ...keys.map(palette.dim)].join('\n'), 0, 1))
@@ -722,7 +1455,7 @@ export class TuiApp {
         return
       }
       const current = this.currentSelection()
-      const picked = await this.modals.run(new PickPrompt(this.deps.palette, 'Model for the next request', items, {
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Model for the next request', items, {
         current: `${current.provider}/${current.model}`,
       }))
       if (picked === undefined) return
@@ -753,7 +1486,7 @@ export class TuiApp {
     if (lookup.kind !== 'ready') return undefined
     const current = this.currentSelection()
     const sameModel = current.provider === model.provider && current.model === model.model
-    const picked = await this.modals.run(new PickPrompt(
+    const picked = await this.showModal(new PickPrompt(
       this.deps.palette,
       `Reasoning effort · ${model.provider}/${model.model}`,
       effortItems(lookup.reasoning),
@@ -792,7 +1525,7 @@ export class TuiApp {
       this.applyEffort(current, matched)
       return
     }
-    const picked = await this.modals.run(new PickPrompt(
+    const picked = await this.showModal(new PickPrompt(
       this.deps.palette,
       `Reasoning effort · ${current.provider}/${current.model}`,
       effortItems(reasoning),
@@ -911,7 +1644,7 @@ export class TuiApp {
       return
     }
     const items = choices.map((choice): PickItem => ({ value: choice.id, ...describeSession(choice) }))
-    const picked = await this.modals.run(new PickPrompt(this.deps.palette, 'Switch to a session', items))
+    const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Switch to a session', items))
     const target = choices.find(choice => choice.id === picked?.value)
     if (target === undefined || target.current) return
     await this.switchSession(() => this.deps.host.resume(target.id), 'resumed')
@@ -935,7 +1668,24 @@ export class TuiApp {
     }
   }
 
-  private async attach(argument: string): Promise<void> {
+  /**
+   * Run one `/attach` after every `/attach` typed before it. Each command
+   * reaches this from its own unawaited dispatch, so two of them read their
+   * files at the same time and the slower read would otherwise land second
+   * whichever file the user named first. Queueing them keeps `pending`, the
+   * footer count, and the notices in the order the user typed.
+   * @param argument - the command argument: a path, `clear`, or nothing.
+   * @returns when this attachment has settled.
+   */
+  private attach(argument: string): Promise<void> {
+    // `attachNow` reports every failure through a notice and never rejects,
+    // so one failed attachment cannot break the queue for the next one.
+    const settled = this.attaching.then(() => this.attachNow(argument))
+    this.attaching = settled
+    return settled
+  }
+
+  private async attachNow(argument: string): Promise<void> {
     if (argument === '' ) {
       this.notice(this.pending.length === 0
         ? 'nothing attached; /attach <path> attaches a file or image to the next prompt'
@@ -1016,7 +1766,7 @@ export class TuiApp {
     }
     let key = argument
     if (key === '') {
-      const picked = await this.modals.run(new PickPrompt(this.deps.palette, subscriptionOnly ? 'Log in with' : 'Sign in to', entries.map(entry => ({
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, subscriptionOnly ? 'Log in with' : 'Sign in to', entries.map(entry => ({
         value: entry.key,
         label: entry.label,
         description: entry.methods.map(method => method.label).join(', '),
@@ -1031,7 +1781,7 @@ export class TuiApp {
     }
     let method = entry.methods[0]?.id
     if (entry.methods.length > 1) {
-      const picked = await this.modals.run(new PickPrompt(this.deps.palette, `Sign-in method for ${entry.label}`, entry.methods.map(candidate => ({ value: candidate.id, label: candidate.label }))))
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, `Sign-in method for ${entry.label}`, entry.methods.map(candidate => ({ value: candidate.id, label: candidate.label }))))
       if (picked === undefined) return
       method = picked.value
     }
@@ -1062,7 +1812,7 @@ export class TuiApp {
 
   private async answerAuthorizationPrompt(prompt: AuthorizationPrompt): Promise<string> {
     if (prompt.kind === 'select') {
-      const picked = await this.modals.run(new PickPrompt(this.deps.palette, prompt.message, prompt.options.map(option => ({
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, prompt.message, prompt.options.map(option => ({
         value: option.id,
         label: option.label,
         ...option.description === undefined ? {} : { description: option.description },
@@ -1070,7 +1820,7 @@ export class TuiApp {
       if (picked === undefined) throw new AuthorizationDeclinedError('the sign-in prompt was dismissed')
       return picked.value
     }
-    const answer = await this.modals.run(new QuestionPrompt(this.deps.palette, {
+    const answer = await this.showModal(new QuestionPrompt(this.deps.palette, {
       id: 'authorization',
       question: prompt.message,
       ...prompt.placeholder === undefined ? {} : { detail: prompt.placeholder },
@@ -1100,7 +1850,7 @@ export class TuiApp {
     // The logged call, when the request names one, shows what the tool is about to do.
     const args = callId === undefined ? undefined : this.toolArguments.get(callId)
     const detail = args === undefined ? [] : toolCallText(JSON.stringify(args), this.presentCall(toolName, args)).lines
-    const outcome = await this.modals.run(new ApprovalPrompt(this.deps.palette, toolName, reason, detail), signal)
+    const outcome = await this.showModal(new ApprovalPrompt(this.deps.palette, toolName, reason, detail), signal)
     const tone: Tone = outcome === 'allowed-once' ? 'success' : 'dim'
     this.notice(`${toolName}: ${outcome === 'allowed-once' ? 'allowed once' : outcome}`, tone)
     return outcome
@@ -1112,7 +1862,7 @@ export class TuiApp {
   ): Promise<AskUserQuestionAnswer> {
     const answers: AskUserQuestionAnswer['answers'] = []
     for (const question of questions) {
-      const answer = await this.modals.run(new QuestionPrompt(this.deps.palette, question), signal)
+      const answer = await this.showModal(new QuestionPrompt(this.deps.palette, question), signal)
       if (answer === null) throw new Error('the question was dismissed')
       answers.push(answer)
     }
@@ -1129,16 +1879,90 @@ export class TuiApp {
     return this.streaming
   }
 
+  /**
+   * Take one visible text delta: the block draws it and the tail of that same
+   * block ages it. The tail is created with the first delta of a message, so
+   * a block rebuilt from history or committed from the log never carries one.
+   * @param delta - the streamed text delta.
+   */
+  private appendStreamedText(delta: string): void {
+    const block = this.streamingBlock()
+    block.appendText(delta)
+    if (!this.fading) return
+    if (this.fadeTail === undefined) {
+      this.fadeTail = new FadeTracker({ steps: this.deps.fadeSteps })
+      block.setFade({
+        spans: () => this.fadeTail?.spans() ?? [],
+        style: () => this.fadeStyle,
+        steps: this.deps.fadeSteps,
+        flush: () => { this.flushFade() },
+      })
+    }
+    this.fadeTail.append(delta)
+    this.updateFadeTicker()
+  }
+
+  /**
+   * Settle what the current block has drawn and stop tracking it: the tail
+   * goes, so its text renders at the terminal's foreground from the next
+   * render on, and no fade tick stays armed between messages.
+   */
+  private endFade(): void {
+    this.fadeTail = undefined
+    this.updateFadeTicker()
+  }
+
+  /**
+   * Settle what is drawn while the message keeps streaming, which the block
+   * asks for after a width change. The tracker stays, so what it knows about
+   * the arrival rate survives a resize and only the tail is dropped.
+   */
+  private flushFade(): void {
+    this.fadeTail?.flush()
+    this.updateFadeTicker()
+  }
+
+  /**
+   * Arm the fade tick while a chunk is still below the last brightness level
+   * and disarm it otherwise, so a session that is not streaming runs no fade
+   * timer. Exactly one runs at a time, and a stopped app runs none.
+   */
+  private updateFadeTicker(): void {
+    const tail = this.fadeTail
+    if (!this.stopped && tail !== undefined && tail.needsRepaint()) {
+      this.fadeTicker ??= this.deps.tick(() => { this.onFadeTick(tail) }, this.deps.fadeStepMs)
+      return
+    }
+    const ticker = this.fadeTicker
+    if (ticker === undefined) return
+    this.fadeTicker = undefined
+    ticker()
+  }
+
+  /**
+   * One fade period over the tail the tick was armed for. Every change to the
+   * tail runs {@link TuiApp.updateFadeTicker} again, so an armed period always
+   * holds that same tail and always moves a chunk's color; the render request
+   * redraws the lines it moved, and the disarm check follows the ageing.
+   * @param tail - the tail this tick was armed for.
+   */
+  private onFadeTick(tail: FadeTracker): void {
+    tail.tick()
+    this.tui.requestRender()
+    this.updateFadeTicker()
+  }
+
   private onStreamFrame(frame: AssistantStreamFrame): void {
     switch (frame.type) {
       case 'start':
         this.streaming = undefined
+        this.endFade()
         return
       case 'chunk': {
         const chunk = frame.chunk
         switch (chunk.type) {
           case 'text-delta':
-            if (chunk.text !== '') this.streamingBlock().appendText(chunk.text)
+            if (chunk.text !== '') this.appendStreamedText(chunk.text)
             break
           case 'reasoning-delta':
             if (chunk.text !== '') this.streamingBlock().appendReasoning(chunk.text)
@@ -1161,6 +1985,7 @@ export class TuiApp {
       case 'end':
         // An abandoned attempt keeps what it streamed; the retry starts a new block.
         this.streaming = undefined
+        this.endFade()
         this.tui.requestRender()
         return
       /* v8 ignore next -- closed-union exhaustiveness guard */
@@ -1172,8 +1997,24 @@ export class TuiApp {
   // ── durable log ─────────────────────────────────────────────────────────
 
   private onSessionEvent(session: Session, event: SessionEvent): void {
-    if (session !== this.agent.session) return
+    if (session !== this.agent.session) {
+      // Every live session of this process reaches here, the subagent
+      // children included; their events only tell the panel its listing aged.
+      this.markSubagentsStale()
+      return
+    }
     switch (event.type) {
+      case 'turn/start':
+        // The turn every later event of this turn belongs to, including the
+        // todo writes, which carry no turn of their own.
+        this.turn = event.data.turn
+        this.turnStartedAt = event.time
+        this.updateTicker()
+        this.refreshFooter()
+        break
+      case 'todo/write':
+        this.trackTodoTurns(event.data.todos)
+        break
       case 'user/message':
         this.onUserMessage(event.data)
         break
@@ -1183,6 +2024,7 @@ export class TuiApp {
         const reasoning = message.content.filter(block => block.type === 'reasoning').map(block => block.text).join('')
         this.streamingBlock().commit(text, reasoning, interrupted === true)
         this.streaming = undefined
+        this.endFade()
         if (usage !== undefined) {
           this.usage = addUsage(this.usage, usage)
           this.refreshFooter()
@@ -1210,6 +2052,10 @@ export class TuiApp {
         break
       }
       case 'turn/end': {
+        this.turnStartedAt = undefined
+        this.updateTicker()
+        this.endFade()
+        this.refreshFooter()
         const notice = turnEndNotice(event.data.reason)
         if (notice !== undefined) this.notice(notice, event.data.reason.kind === 'error' ? 'error' : 'dim')
         break
@@ -1230,6 +2076,28 @@ export class TuiApp {
         return
     }
     this.tui.requestRender()
+  }
+
+  /**
+   * Fold one whole-list todo write into the turn facts: a content this
+   * session has not carried before starts at the current turn, a known
+   * content whose status moved records that turn, and a content the write
+   * dropped is forgotten.
+   * @param todos - the list the write replaced the previous one with.
+   */
+  private trackTodoTurns(todos: readonly TodoItem[]): void {
+    const tracked = new Map<string, TodoHistory>()
+    for (const item of todos) {
+      const known = this.todoTurns.get(item.content)
+      if (known === undefined) {
+        tracked.set(item.content, { firstTurn: this.turn, statusTurn: this.turn, status: item.status })
+      } else if (known.status === item.status) {
+        tracked.set(item.content, known)
+      } else {
+        tracked.set(item.content, { firstTurn: known.firstTurn, statusTurn: this.turn, status: item.status })
+      }
+    }
+    this.todoTurns = tracked
   }
 
   private onUserMessage(message: UserMessage): void {

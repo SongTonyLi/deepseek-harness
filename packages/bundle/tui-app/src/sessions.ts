@@ -7,6 +7,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-query'
+import { formatTimestamp } from './transcript.ts'
 
 /** One switchable session as the picker shows it. */
 export interface SessionChoice {
@@ -53,8 +54,7 @@ export async function listSessionChoices(ctx: Context, currentId: SessionId, sig
  * @returns the label and description.
  */
 export function describeSession(choice: SessionChoice): { label: string; description: string } {
-  const when = new Date(choice.createdAt).toISOString().slice(0, 16).replace('T', ' ')
-  const parts = [when]
+  const parts = [formatTimestamp(choice.createdAt)]
   if (choice.cwd !== undefined) parts.push(choice.cwd)
   if (choice.current) parts.push('current')
   return { label: choice.title ?? choice.id, description: parts.join(' · ') }

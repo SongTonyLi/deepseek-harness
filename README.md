@@ -41,7 +41,7 @@ npx @deepseek-ai/dsh tui "explain this repository"
 npx @deepseek-ai/dsh tui --resume <session-id>
 ```
 
-`Enter` sends, `Esc` stops the running turn, `Ctrl+O` expands every tool card, and `Ctrl+C` twice (or `Ctrl+D` on an empty input) quits and prints the resume command for the session. Type `/help` inside the terminal for the commands, among them `/model`, `/sessions`, `/attach`, and `/status`. See [terminal application](packages/bundle/tui-app/README.md).
+`Enter` sends, `Esc` stops the running turn, `Ctrl+O` expands every tool card, and `Ctrl+C` twice (or `Ctrl+D` on an empty input) quits and prints the resume command for the session. `Shift+Up` moves focus into the footer status bar, where `Left` / `Right` walk its segments, `Enter` opens the selected segment's details, and `Esc` returns to the editor. Type `/help` inside the terminal for the commands, among them `/model`, `/sessions`, `/attach`, and `/status`. See [terminal application](packages/bundle/tui-app/README.md).
 
 ### Run from source
 

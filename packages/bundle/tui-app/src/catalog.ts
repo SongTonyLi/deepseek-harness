@@ -2,19 +2,29 @@
  * Terminal rows for the browser's settings, plugins, subagents, deliverables,
  * and turn-outline pages. Each reader resolves its service through `ctx.get`
  * and throws an `Error` naming the absent service; the app prints the message.
+ * `subagentDetail` is the exception: it returns that message as a row.
  * @module @deepseek-ai/dsh-tui-app/catalog
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { pluginFiberPhase } from '@deepseek-ai/dsh-host-plugin-inventory'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-query'
-import type {} from '@deepseek-ai/dsh-session-turn-outline'
+import type {} from '@deepseek-ai/dsh-session-title/types'
+import type { TurnOutlineEntry } from '@deepseek-ai/dsh-session-turn-outline'
 import type { SettingsDescriptor, SettingsProvider } from '@deepseek-ai/dsh-settings'
-import type {} from '@deepseek-ai/dsh-subagent'
+import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { PresentedFile } from '@deepseek-ai/dsh-tool-present/types'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { describeFailure, formatTimestamp } from './transcript.ts'
+
+/**
+ * Turns and presented files a subagent detail page lists in full; the rest of
+ * each list folds into one `… <n> more …` row.
+ */
+const SUBAGENT_DETAIL_LIMIT = 8
 
 /** Two-space indentation per nesting level. */
 function indent(depth: number): string {
@@ -133,27 +143,130 @@ export function listPlugins(ctx: Context): string[] {
   return rows
 }
 
+/** One `/subagents` picker row over a descendant listing entry. */
+export interface SubagentChoice {
+  /** The descendant session id; the picker row value. */
+  id: SessionId
+  /** Root-relative depth, 1 for a direct child. */
+  depth: number
+  /** Row label: the depth indent, then the durable label when the entry has one, else the id. */
+  label: string
+  /** Row description: activity, mode, the id when the label already shows one, or the diagnostic reason. */
+  description: string
+  /** Whether session details can be read for this row; false for a `diagnostic` entry. */
+  enterable: boolean
+}
+
 /**
- * Every session-backed subagent below one session in pre-order, one row each,
- * indented by tree depth: the child session id (usable with `/sessions` and
- * `--resume`), its activity, mode, and label; a diagnostic candidate shows its
- * reason instead.
+ * One descendant listing entry as a picker row: the child session id (usable
+ * with `/sessions` and `--resume`), its activity, mode, and label, or a
+ * diagnostic candidate's reason. The live panel enters the same row.
+ * @param entry - the listing entry.
+ * @returns the row; `enterable` is false exactly for a diagnostic entry.
+ */
+export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoice {
+  const prefix = indent(entry.depth - 1)
+  switch (entry.kind) {
+    case 'child': {
+      const parts: string[] = [entry.activity, entry.mode]
+      // The label took the id's place in the row label, so the description carries it.
+      if (entry.label !== undefined) parts.push(entry.id)
+      return {
+        id: entry.id,
+        depth: entry.depth,
+        label: `${prefix}${entry.label ?? entry.id}`,
+        description: parts.join(' · '),
+        enterable: true,
+      }
+    }
+    case 'diagnostic':
+      return {
+        id: entry.id,
+        depth: entry.depth,
+        label: `${prefix}${entry.id}`,
+        description: entry.reason,
+        enterable: false,
+      }
+    default:
+      return assertNever(entry, 'tui subagent list entry')
+  }
+}
+
+/**
+ * Every session-backed subagent below one session in pre-order as picker rows.
  * @param ctx - plugin context carrying the optional subagent runtime.
  * @param sessionId - the root session whose descendants are listed.
  * @param signal - cancels the listing.
- * @returns the rows, empty when the session has no subagents.
+ * @returns one choice per descendant in listing order, empty when the session has no subagents.
  * @throws {Error} when no subagent runtime is mounted.
  */
-export async function listSubagents(ctx: Context, sessionId: SessionId, signal: AbortSignal): Promise<string[]> {
+export async function listSubagentChoices(ctx: Context, sessionId: SessionId, signal: AbortSignal): Promise<SubagentChoice[]> {
   const subagents = ctx.get('subagents')
   if (subagents === undefined) throw new Error('subagents are not mounted in this profile')
-  const entries = await subagents.listDescendants(sessionId, signal)
-  return entries.map((entry) => {
-    const prefix = `${indent(entry.depth - 1)}${entry.id}`
-    if (entry.kind === 'diagnostic') return `${prefix}  ${entry.reason}`
-    const label = entry.label === undefined ? '' : `  ${entry.label}`
-    return `${prefix}  ${entry.activity}  ${entry.mode}${label}`
-  })
+  return (await subagents.listDescendants(sessionId, signal)).map(subagentChoice)
+}
+
+/**
+ * The rows shown when the user enters one subagent picker row: the row's own
+ * label and description, the session's creation time and workspace, its
+ * title, its turn outline, and the files it presented. Turns and presented
+ * files each stop at {@link SUBAGENT_DETAIL_LIMIT} entries and fold the rest
+ * into one counting row; a fact this profile keeps no projection or header
+ * field for is skipped.
+ *
+ * Reading the session never throws here: a row that is not `enterable`, an
+ * absent session query engine, and a failed read each return explanatory
+ * rows instead.
+ * @param ctx - plugin context carrying the optional session query engine.
+ * @param choice - the entered picker row.
+ * @param signal - cancels a cold log read.
+ * @returns the detail rows; never empty.
+ */
+export async function subagentDetail(ctx: Context, choice: SubagentChoice, signal: AbortSignal): Promise<string[]> {
+  if (!choice.enterable) return [choice.id, `unreadable subagent session: ${choice.description}`]
+  const query = ctx.get('sessionQuery')
+  if (query === undefined) return [`cannot read ${choice.id}: the session query engine is not mounted in this profile`]
+  try {
+    using observation = await query.observeSession(choice.id, { signal, projectionMode: 'all' })
+    // The row label carries the tree indent; one session's details show no tree.
+    const rows = [choice.label.slice(indent(choice.depth - 1).length), choice.description]
+    rows.push(`created: ${formatTimestamp(observation.header.createdAt)}`)
+    const { cwd } = observation.header
+    if (cwd !== undefined) rows.push(`workspace: ${cwd}`)
+    const values = observation.projections?.values
+    const title = values?.title
+    if (title !== undefined && title !== null) rows.push(`title: ${title}`)
+    rows.push(...foldDetailRows(values?.turnOutline ?? [], outlineRows, 'turn'))
+    rows.push(...foldDetailRows(presentedPaths(observation.events), path => [`presented: ${path}`], 'file'))
+    return rows
+  } catch (error: unknown) {
+    return [`cannot read ${choice.id}: ${describeFailure(error)}`]
+  }
+}
+
+/** Every presented path in log order, one entry per file of every `deliverables/presented` event. */
+function presentedPaths(events: readonly SessionEvent[]): string[] {
+  const paths: string[] = []
+  for (const event of events) {
+    if (event.type !== 'deliverables/presented') continue
+    for (const file of event.data.files) paths.push(file.path)
+  }
+  return paths
+}
+
+/** The leading entries rendered in full, then one row counting the entries left out. */
+function foldDetailRows<T>(entries: readonly T[], render: (entry: T) => string[], noun: string): string[] {
+  const rows = entries.slice(0, SUBAGENT_DETAIL_LIMIT).flatMap(render)
+  const hidden = Math.max(0, entries.length - SUBAGENT_DETAIL_LIMIT)
+  if (hidden > 0) rows.push(`… ${String(hidden)} more ${noun}${hidden === 1 ? '' : 's'}`)
+  return rows
+}
+
+/** One outline entry: the numbered prompt, then the indented response once the turn ended with text. */
+function outlineRows(entry: TurnOutlineEntry): string[] {
+  const rows = [`${String(entry.turn)}. ${entry.prompt === '' ? '(no prompt)' : entry.prompt}`]
+  if (entry.response !== '') rows.push(`${indent(1)}→ ${entry.response}`)
+  return rows
 }
 
 /**
@@ -201,10 +314,5 @@ export function sessionOutline(ctx: Context, session: Session): string[] {
   if (projections === undefined) throw new Error('session projections are not mounted in this profile')
   const outline = projections.snapshot(session, ['turnOutline']).values.turnOutline
   if (outline === undefined) throw new Error('the turnOutline projection is not registered in this profile')
-  const rows: string[] = []
-  for (const entry of outline) {
-    rows.push(`${String(entry.turn)}. ${entry.prompt === '' ? '(no prompt)' : entry.prompt}`)
-    if (entry.response !== '') rows.push(`${indent(1)}→ ${entry.response}`)
-  }
-  return rows
+  return outline.flatMap(outlineRows)
 }

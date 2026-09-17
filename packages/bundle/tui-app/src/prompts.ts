@@ -1,10 +1,11 @@
 /**
- * Modal prompts the agent raises through the approval and user-questions
- * seams, and the queue that shows them one at a time above the editor.
+ * Modal prompts the terminal shows above the editor — the approval and
+ * user-questions seams, list pickers, and read-only detail pages — and the
+ * queue that shows them one at a time.
  * @module @deepseek-ai/dsh-tui-app/prompts
  */
 
-import { Input, Markdown, SelectList, Text, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type TUI } from '@earendil-works/pi-tui'
+import { Input, Markdown, SelectList, Text, decodeKittyPrintable, fuzzyFilter, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type SelectListLayoutOptions, type TUI } from '@earendil-works/pi-tui'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { planReviewOptions, type AskUserQuestionAnswerItem, type AskUserQuestionItem, type AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
 import { markdownTheme, selectListTheme, type Palette } from './style.ts'
@@ -63,21 +64,42 @@ abstract class ListPrompt<T> implements ModalPrompt<T> {
   readonly settled: Promise<T>
   private readonly settlement = new Settlement<T>()
   private readonly heading: Text
-  private readonly list: SelectList
+  private list: SelectList
 
   constructor(
-    private readonly palette: Palette,
+    protected readonly palette: Palette,
     heading: string,
     private readonly body: readonly string[],
     items: SelectItem[],
-    choose: (item: SelectItem) => T,
-    cancel: () => T,
+    private readonly choose: (item: SelectItem) => T,
+    private readonly cancel: () => T,
+    private readonly layout?: SelectListLayoutOptions,
   ) {
     this.settled = this.settlement.settled
     this.heading = new Text(heading, 0, 0)
-    this.list = new SelectList(items, SELECT_MAX_VISIBLE, selectListTheme(palette))
-    this.list.onSelect = (item) => { this.settlement.settle(choose(item)) }
-    this.list.onCancel = () => { this.settlement.settle(cancel()) }
+    this.list = this.listOver(items)
+  }
+
+  /**
+   * A select list over `items` wired to this prompt's settlement. `SelectList`
+   * takes its rows at construction and exposes no way to replace them, so a
+   * different row set means a different list.
+   * @param items - the rows to show.
+   * @returns the list, highlighting its first row.
+   */
+  private listOver(items: SelectItem[]): SelectList {
+    const list = new SelectList(items, SELECT_MAX_VISIBLE, selectListTheme(this.palette), this.layout)
+    list.onSelect = (item) => { this.settlement.settle(this.choose(item)) }
+    list.onCancel = () => { this.settlement.settle(this.cancel()) }
+    return list
+  }
+
+  /**
+   * Show `items` instead of the current rows, highlighting the first one.
+   * @param items - the rows to show.
+   */
+  protected setRows(items: SelectItem[]): void {
+    this.list = this.listOver(items)
   }
 
   /**
@@ -110,7 +132,17 @@ abstract class ListPrompt<T> implements ModalPrompt<T> {
   render(width: number): string[] {
     const inner = Math.max(1, width - 2)
     const body = this.body.flatMap(line => wrapTextWithAnsi(this.palette.dim(line), inner).map(part => `  ${part}`))
-    return ['', ...this.heading.render(width), ...body, ...this.list.render(width)]
+    return ['', ...this.heading.render(width), ...body, ...this.listLines(width)]
+  }
+
+  /**
+   * The lines under the body rows: the select list, which a subclass may
+   * precede or replace.
+   * @param width - the terminal width.
+   * @returns the rendered lines.
+   */
+  protected listLines(width: number): string[] {
+    return this.list.render(width)
   }
 }
 
@@ -153,28 +185,203 @@ export interface PickOptions {
   body?: readonly string[]
   /** The row value in force: the list opens on that row and marks it. */
   current?: string
+  /**
+   * How each row splits its width between the label and the description; the
+   * list's own defaults when absent, which cut a label past 30 columns to keep
+   * the description column aligned.
+   */
+  layout?: SelectListLayoutOptions
 }
 
 /** Marks the row a picker opened on, so it stays visible after the highlight moves. */
 const CURRENT_MARK = ' ✓'
 
-/** A generic list picker (models, sessions); Escape settles undefined. */
+/** What the filter line says while the query is empty. */
+const FILTER_HINT = 'type to filter · Enter selects · Esc cancels'
+
+/** Characters a typed query never carries: C0 controls, DEL, and C1 controls. */
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u
+
+/**
+ * The text one key press types.
+ * @param data - the bytes the terminal sent.
+ * @returns the characters to append to a query, or undefined for control keys and escape sequences.
+ */
+function typedText(data: string): string | undefined {
+  const kitty = decodeKittyPrintable(data)
+  if (kitty !== undefined) return kitty
+  return CONTROL_CHARACTERS.test(data) ? undefined : data
+}
+
+/**
+ * The text a picker row is matched against.
+ * @param row - the row.
+ * @returns the label and description joined, so one query can span both.
+ */
+function rowText(row: SelectItem): string {
+  return row.description === undefined ? row.label : `${row.label} ${row.description}`
+}
+
+/**
+ * A generic list picker (models, sessions) with a type-to-filter query.
+ * Printable keys extend the query, Backspace drops its last character, and
+ * Ctrl+U clears it; Escape clears a non-empty query and settles undefined
+ * once the query is empty. The visible rows are the query's fuzzy matches
+ * against each row's label and description, best match first; the row in
+ * force keeps its mark and stays highlighted only while the query is empty.
+ */
 export class PickPrompt extends ListPrompt<PickItem | undefined> {
+  /** Every row in declared order, without the mark, as matched against. */
+  private readonly rows: readonly SelectItem[]
+  /** The same rows with the in-force one marked, shown while the query is empty. */
+  private readonly markedRows: readonly SelectItem[]
+  /** Index of the row in force, or -1 when no row is. */
+  private readonly inForce: number
+  /** What the user has typed, empty until the first printable key. */
+  private query = ''
+  /** The rows the list shows: all of them, or the query's matches. */
+  private visible: readonly SelectItem[]
+
   constructor(palette: Palette, title: string, items: readonly PickItem[], options: PickOptions = {}) {
+    const rows = items.map((item): SelectItem => ({ ...item }))
     const inForce = items.findIndex(item => item.value === options.current)
+    const markedRows = rows.map((row, index) => index === inForce ? { ...row, label: `${row.label}${CURRENT_MARK}` } : row)
     super(
       palette,
       `${palette.accent('?')} ${palette.bold(title)}`,
       options.body ?? [],
-      items.map((item, index) => index === inForce ? { ...item, label: `${item.label}${CURRENT_MARK}` } : { ...item }),
+      [...markedRows],
       row => items.find(item => item.value === row.value),
       () => undefined,
+      options.layout,
     )
+    this.rows = rows
+    this.markedRows = markedRows
+    this.inForce = inForce
+    this.visible = markedRows
     if (inForce > 0) this.highlight(inForce)
+  }
+
+  /**
+   * Apply `query` and rebuild the visible rows from it.
+   * @param query - the new query; an empty one restores the declared order, the mark, and the row in force.
+   */
+  private setQuery(query: string): void {
+    if (query === this.query) return
+    this.query = query
+    this.visible = query === '' ? this.markedRows : fuzzyFilter([...this.rows], query, rowText)
+    this.setRows([...this.visible])
+    if (query === '' && this.inForce > 0) this.highlight(this.inForce)
   }
 
   withdraw(): void {
     this.settle(undefined)
+  }
+
+  override handleInput(data: string): void {
+    if (matchesKey(data, 'escape') && this.query !== '') {
+      this.setQuery('')
+      return
+    }
+    if (matchesKey(data, 'backspace')) {
+      this.setQuery(this.query.slice(0, -1))
+      return
+    }
+    if (matchesKey(data, 'ctrl+u')) {
+      this.setQuery('')
+      return
+    }
+    const typed = typedText(data)
+    if (typed === undefined) {
+      super.handleInput(data)
+      return
+    }
+    this.setQuery(this.query + typed)
+  }
+
+  protected override listLines(width: number): string[] {
+    const filter = this.query === ''
+      ? FILTER_HINT
+      : `filter: ${this.query} · ${String(this.visible.length)}/${String(this.rows.length)}`
+    const shown = this.query !== '' && this.visible.length === 0
+      ? [this.palette.dim(`  no row matches "${this.query}"`)]
+      : super.listLines(width)
+    return [this.palette.dim(filter), ...shown]
+  }
+}
+
+/** Detail rows a read-only page draws at once; the rest wait behind a scroll. */
+const DETAIL_MAX_VISIBLE = 16
+
+/** The keys a read-only detail page answers, drawn dim under its rows. */
+const DETAIL_HINT = '↑ ↓ scroll · Enter, Esc, or ← returns'
+
+/**
+ * A read-only page over rows the caller already rendered: an accented
+ * heading, the rows wrapped to the terminal width, and the hint line. `Up`
+ * and `Down` move one row, `PageUp` and `PageDown` a full page, and the hint
+ * line carries the first visible row and the total once the rows pass
+ * {@link DETAIL_MAX_VISIBLE}. `Enter`, `Escape`, and `Left` settle it; every
+ * other key is ignored.
+ */
+export class DetailPrompt implements ModalPrompt<void> {
+  readonly settled: Promise<void>
+  private readonly settlement = new Settlement<void>()
+  private readonly heading: Text
+  /** Index of the first visible wrapped row. */
+  private offset = 0
+  /** Wrapped rows the last render produced, which bounds scrolling; 0 before the first render. */
+  private total = 0
+
+  constructor(private readonly palette: Palette, heading: string, private readonly rows: readonly string[]) {
+    this.settled = this.settlement.settled
+    this.heading = new Text(palette.bold(palette.accent(heading)), 0, 0)
+  }
+
+  /**
+   * The largest first-visible row index; 0 while every row fits at once.
+   * @returns the index scrolling stops at.
+   */
+  private maxOffset(): number {
+    return Math.max(0, this.total - DETAIL_MAX_VISIBLE)
+  }
+
+  /**
+   * Move the visible window, stopping at both ends.
+   * @param step - rows to move by; negative scrolls toward the first row.
+   */
+  private scroll(step: number): void {
+    this.offset = Math.max(0, Math.min(this.offset + step, this.maxOffset()))
+  }
+
+  withdraw(): void {
+    this.settlement.settle()
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, 'up')) this.scroll(-1)
+    else if (matchesKey(data, 'down')) this.scroll(1)
+    else if (matchesKey(data, 'pageUp')) this.scroll(-DETAIL_MAX_VISIBLE)
+    else if (matchesKey(data, 'pageDown')) this.scroll(DETAIL_MAX_VISIBLE)
+    else if (matchesKey(data, 'enter') || matchesKey(data, 'escape') || matchesKey(data, 'left')) this.settlement.settle()
+  }
+
+  invalidate(): void {
+    this.heading.invalidate()
+  }
+
+  render(width: number): string[] {
+    const wrapped = this.rows.flatMap(row => wrapTextWithAnsi(row, Math.max(1, width)))
+    this.total = wrapped.length
+    // A wider terminal wraps fewer rows, which can leave the offset past the end.
+    this.offset = Math.min(this.offset, this.maxOffset())
+    const position = this.maxOffset() === 0 ? '' : ` · (${String(this.offset + 1)}/${String(this.total)})`
+    return [
+      '',
+      ...this.heading.render(width),
+      ...wrapped.slice(this.offset, this.offset + DETAIL_MAX_VISIBLE),
+      this.palette.dim(`${DETAIL_HINT}${position}`),
+    ]
   }
 }
 

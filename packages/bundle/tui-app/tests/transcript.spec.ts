@@ -8,6 +8,8 @@ import {
   contentText,
   describeFailure,
   diffRows,
+  formatElapsed,
+  formatTimestamp,
   formatTokens,
   formatUsage,
   parseArguments,
@@ -51,6 +53,38 @@ describe('diff', () => {
     const rows = diffLines('1\n2\n3\n4\n5\n6\n7\n8\n9', '1\n2\n3\nX\n5\n6\n7\n8\nY')
     expect(hunks(rows, 1).map(row => row === undefined ? '…' : `${row.kind[0]!}${row.text}`))
       .toEqual(['…', 'c3', 'r4', 'aX', 'c5', '…', 'c8', 'r9', 'aY'])
+  })
+})
+
+describe('formatElapsed', () => {
+  it('counts whole seconds up to a minute, starting at zero', () => {
+    expect(formatElapsed(0)).toBe('0s')
+    expect(formatElapsed(999)).toBe('0s')
+    expect(formatElapsed(8000)).toBe('8s')
+    expect(formatElapsed(59_999)).toBe('59s')
+  })
+
+  it('pads the smaller unit once a larger one leads', () => {
+    expect(formatElapsed(60_000)).toBe('1m00s')
+    expect(formatElapsed(72_400)).toBe('1m12s')
+    expect(formatElapsed(3_599_000)).toBe('59m59s')
+  })
+
+  it('drops the seconds past an hour and keeps counting hours', () => {
+    expect(formatElapsed(3_600_000)).toBe('1h00m')
+    expect(formatElapsed(3_840_000)).toBe('1h04m')
+    expect(formatElapsed(94_020_000)).toBe('26h07m')
+  })
+
+  it('reads a clock that moved backwards as no time at all', () => {
+    expect(formatElapsed(-5000)).toBe('0s')
+  })
+})
+
+describe('formatTimestamp', () => {
+  it('dates a recorded moment to the minute in UTC', () => {
+    expect(formatTimestamp(Date.UTC(2026, 1, 3, 14, 25, 30))).toBe('2026-02-03 14:25')
+    expect(formatTimestamp(0)).toBe('1970-01-01 00:00')
   })
 })
 

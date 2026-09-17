@@ -225,7 +225,8 @@ describe('attachments', () => {
       { type: 'text', text: 'look at these' },
     ])
     expect(test.terminal.text()).toContain('[file: notes.txt] [image: shot.png]')
-    expect(test.terminal.text().trimEnd().endsWith('Ctrl+C twice quits')).toBe(true)
+    // The hint line now ends with the key that focuses the status bar.
+    expect(test.terminal.text().trimEnd().endsWith('Ctrl+C twice quits · Shift+↑ status bar')).toBe(true)
     expect(test.terminal.text().split('\n').filter(line => line.includes('/work')).at(-1)).not.toContain('attached')
     typeLine(test.terminal, `/attach ${join(dir, 'notes.txt')}`)
     await test.settle()
@@ -235,6 +236,39 @@ describe('attachments', () => {
     typeLine(test.terminal, `/attach ${join(dir, 'missing.txt')}`)
     await test.settle()
     expect(test.terminal.text()).toContain('attach failed')
+  })
+
+  it('keeps the typed order when a later attachment reads faster than an earlier one', async () => {
+    await writeFile(join(dir, 'slow.txt'), 'hi')
+    await writeFile(join(dir, 'quick.png'), Buffer.from([1]))
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('attachments', {
+          // The image store answers at once and the file store a timer later,
+          // so the read of the file typed first settles after the read of the
+          // image typed second.
+          saveImages: () => Promise.resolve([{ kind: 'image', id: 'img', mediaType: 'image/png' }]),
+          saveFile: () => new Promise(resolve => setTimeout(() => { resolve({ kind: 'file', id: 'file' }) }, 20)),
+        } as never)
+      },
+    })
+    // Each command runs from its own unawaited dispatch, as two lines typed in
+    // a row do.
+    typeLine(test.terminal, `/attach ${join(dir, 'slow.txt')}`)
+    typeLine(test.terminal, `/attach ${join(dir, 'quick.png')}`)
+    await test.settle()
+    await test.settle()
+    typeLine(test.terminal, '/attach')
+    await test.settle()
+    expect(test.terminal.text()).toContain('attached: slow.txt, quick.png')
+    typeLine(test.terminal, 'both please')
+    await test.settle()
+    expect(test.calls.followups[0]?.content).toEqual([
+      { type: 'file', attachment: { kind: 'file', id: 'file' } },
+      { type: 'image', attachment: { kind: 'image', id: 'img', mediaType: 'image/png' } },
+      { type: 'text', text: 'both please' },
+    ])
+    expect(test.terminal.text()).toContain('[file: slow.txt] [image: quick.png]')
   })
 
   it('reports a missing attachment store and draws attachment markers of replayed prompts', async () => {

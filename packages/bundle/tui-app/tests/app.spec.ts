@@ -524,3 +524,240 @@ describe('TuiApp', () => {
     expect(test.quits).toHaveLength(1)
   })
 })
+
+describe('the status bar', () => {
+  /** A bench whose context projection gives the bar a segment between the model and the workspace. */
+  function benchWithContext(): Promise<Awaited<ReturnType<typeof bench>>> {
+    const contextPressure = { projectedTokens: 54_000, pressureTokens: 50_000, contextWindow: 128_000 }
+    return bench({
+      projections: {
+        snapshot: () => ({ asOfSeq: -1, values: { contextPressure } }),
+        onChanged: () => () => {},
+      },
+    })
+  }
+
+  it('advertises the entry key while the editor keeps focus', async () => {
+    const test = await bench()
+    await test.settle()
+    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    expect(test.terminal.text()).not.toContain('← → select')
+  })
+
+  it('takes focus on Shift+Up, swaps the hints, and keeps typed keys out of the editor', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(test.terminal.text()).toContain('← → select · Enter details · Esc back')
+    for (const char of 'zzz') test.terminal.type(char)
+    test.terminal.type(KEY.ctrlO)
+    await test.settle()
+    expect(test.calls.followups).toHaveLength(0)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    typeLine(test.terminal, 'hello')
+    await test.settle()
+    // The keys pressed at the bar never reached the editor, so the prompt is exactly what was typed after Esc.
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'hello' }]])
+  })
+
+  it('leaves a running turn alone while Esc returns focus to the editor', async () => {
+    const test = await bench({ running: true })
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(1)
+  })
+
+  it('moves the selection with Left, Right, and Tab, wrapping at both ends', async () => {
+    const test = await benchWithContext()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.tab)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('context: ~54k / 128k (42%)')
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workspace: /work')
+    // Past the last segment the selection wraps to the model.
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('model: test-model')
+    // And before the first one it wraps to the workspace again.
+    test.terminal.type(KEY.left)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text().split('workspace: /work')).toHaveLength(3)
+    test.terminal.type(KEY.shiftTab)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text().split('context: ~54k / 128k (42%)')).toHaveLength(3)
+  })
+
+  it('cycles the reasoning effort with Shift+Tab only while the editor has focus', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
+        } as never)
+      },
+    })
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    // At the bar the same key moves the selection instead, leaving the effort in force.
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workspace: /work')
+  })
+
+  it('prints the details of the selected segment and keeps the bar focused', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen).toContain('provider: test-provider')
+    expect(screen).toContain('reasoning effort: the model\'s own default')
+    expect(screen).toContain('/model picks the provider and model for the next request')
+    expect(test.terminal.text()).toContain('← → select · Enter details · Esc back')
+  })
+
+  it('closes the docked cycle at the editor when no subagent panel is drawn', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    // Shift+Down at the editor has no panel to reach, so the editor keeps it.
+    test.terminal.type(KEY.shiftDown)
+    typeLine(test.terminal, 'hello')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'hello' }]])
+  })
+
+  it('returns focus to the editor on Shift+Down', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    typeLine(test.terminal, 'back to typing')
+    await test.settle()
+    expect(test.calls.followups).toHaveLength(1)
+  })
+
+  it('keeps Ctrl+C and Ctrl+D global and hands focus back to the editor', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
+    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    const quitting = await bench()
+    quitting.terminal.type(KEY.shiftUp)
+    quitting.terminal.type(KEY.ctrlD)
+    await quitting.settle()
+    expect(quitting.quits).toHaveLength(1)
+  })
+
+  it('gives the keyboard to the editor after a modal opened while the bar held it', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    const answered = test.ctx.waterfall(
+      'approval/request',
+      { agent: test.agent, toolName: 'bash' },
+      () => Promise.resolve<ApprovalOutcome>('unavailable'),
+    )
+    await test.settle()
+    expect(test.terminal.text()).toContain('Allow bash?')
+    test.terminal.type(KEY.enter)
+    await expect(answered).resolves.toBe('allowed-once')
+    await test.settle()
+    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    typeLine(test.terminal, 'after the modal')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'after the modal' }]])
+  })
+
+  it('keeps the bar usable after the fact behind the selection disappears', async () => {
+    const test = await bench()
+    test.appendAssistant([{ type: 'text', text: 'done' }], { usage: { inputTokens: 10, outputTokens: 4 } })
+    await test.settle()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('this terminal: ↑10 ↓4 ctx 10')
+    // A session switch drops the terminal's own totals, so the usage segment goes with them.
+    test.terminal.type(KEY.escape)
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('model: opened-model')
+  })
+})
+
+/**
+ * Open a turn on the bound session and put the bench clock `elapsedMs` past
+ * the start the log recorded, so the readout is the spec's own number.
+ * @param test - the running bench.
+ * @param turn - the turn number the event carries.
+ * @param elapsedMs - how far past the start the clock sits.
+ */
+function startTurn(test: Awaited<ReturnType<typeof bench>>, turn: number, elapsedMs: number): void {
+  test.session.append('turn/start', { turn })
+  const started = test.session.ownEvents().at(-1)?.time ?? 0
+  test.setNow(started + elapsedMs)
+}
+
+describe('the running-turn counter', () => {
+  it('appears on turn/start, advances on a tick, and goes away on turn/end', async () => {
+    const test = await bench()
+    await test.settle()
+    expect(await test.screen()).not.toContain('turn 0s')
+    startTurn(test, 4, 0)
+    await test.settle()
+    expect(test.terminal.text()).toContain('turn 0s')
+    expect(test.tickArmed()).toBe(true)
+    // One period with nothing else happening still moves the readout.
+    test.tick()
+    await test.settle()
+    expect(test.terminal.text()).toContain('turn 1s')
+    test.session.append('turn/end', { turn: 4, reason: { kind: 'completed' } })
+    await test.settle()
+    expect(await test.screen()).not.toContain('turn 1s')
+    expect(test.tickArmed()).toBe(false)
+  })
+
+  it('details the turn, when it started, and what is queued behind it', async () => {
+    const test = await bench({ running: true })
+    startTurn(test, 4, 72_000)
+    test.agent.inbox.append('next-turn', createUserMessage({ content: [{ type: 'text', text: 'later' }], source: { kind: 'user' } }))
+    await test.settle()
+    // The bar holds the model segment first; the turn segment follows the
+    // permission one, which no bench profile composes.
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen).toContain('turn 4')
+    expect(screen).toContain('elapsed: 1m12s')
+    expect(screen).toContain('queued: 1 for the next turn · 0 for the next step')
+    expect(screen).toMatch(/started: \d{4}-\d{2}-\d{2} \d{2}:\d{2}/u)
+  })
+})

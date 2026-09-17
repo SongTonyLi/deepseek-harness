@@ -5,6 +5,7 @@ import CommandRuntime from '@deepseek-ai/dsh-commands'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
+import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { KEY, bench } from './bench.ts'
@@ -88,7 +89,7 @@ describe('status', () => {
 })
 
 describe('catalog commands', () => {
-  it('prints the outline, deliverables, subagents, and plugins, or their empty states', async () => {
+  it('prints the outline, deliverables, and plugins, or their empty states', async () => {
     const test = await bench({
       projections: { snapshot: () => ({ asOfSeq: 1, values: { turnOutline: [{ turn: 1, seq: 0, prompt: 'Fix it', response: 'Fixed.' }] } }), onChanged: () => () => {} },
       before: (ctx) => {
@@ -98,44 +99,32 @@ describe('catalog commands', () => {
             [Symbol.dispose]: () => {},
           }),
         } as never)
-        ctx.provide('subagents', {
-          listDescendants: () => Promise.resolve([{ kind: 'child', id: 'session-kid', activity: 'inactive', mode: 'one-shot', hasChildren: false, parentId: 'x', depth: 1 }]),
-        } as never)
         ctx.provide('loader', { * entries() { yield { id: 'llm', options: { name: '@deepseek-ai/dsh-llm' }, disabled: false, fiber: { state: 2 } } } } as never)
       },
     })
     typeLine(test.terminal, '/outline')
     typeLine(test.terminal, '/deliverables')
-    typeLine(test.terminal, '/subagents')
     typeLine(test.terminal, '/plugins')
     await test.settle()
     const screen = test.terminal.text()
     expect(screen).toContain('1. Fix it')
     expect(screen).toContain('report.md  Summary')
-    expect(screen).toContain('session-kid  inactive  one-shot')
     expect(screen).toContain('llm  @deepseek-ai/dsh-llm  enabled  active')
     const empty = await bench({
       projections: { snapshot: () => ({ asOfSeq: 1, values: { turnOutline: [] } }), onChanged: () => () => {} },
       before: (ctx) => {
         ctx.provide('sessionQuery', { observeSession: () => Promise.resolve({ events: [], [Symbol.dispose]: () => {} }) } as never)
-        ctx.provide('subagents', { listDescendants: () => Promise.resolve([]) } as never)
         ctx.provide('loader', { * entries() { /* nothing composed */ } } as never)
       },
     })
     typeLine(empty.terminal, '/outline')
     typeLine(empty.terminal, '/deliverables')
-    typeLine(empty.terminal, '/subagents')
     typeLine(empty.terminal, '/plugins')
     await empty.settle()
     const blank = empty.terminal.text()
     expect(blank).toContain('no completed turn yet')
     expect(blank).toContain('nothing presented yet')
-    expect(blank).toContain('no subagent sessions')
     expect(blank).toContain('no plugins are listed')
-    const bare = await bench()
-    typeLine(bare.terminal, '/subagents')
-    await bare.settle()
-    expect(bare.terminal.text()).toContain('/subagents failed: subagents are not mounted in this profile')
   })
 
   it('lists, shows, sets, and resets settings', async () => {
@@ -192,6 +181,260 @@ describe('catalog commands', () => {
     for (const char of '/go') test.terminal.type(char)
     await test.settle()
     expect(test.terminal.text()).toContain('Set the goal · <objective>')
+  })
+})
+
+describe('subagent sessions', () => {
+  /** Two readable subagent sessions and one the listing could not read. */
+  const descendants = [
+    { kind: 'child', id: 'session-kid', activity: 'inactive', mode: 'one-shot', hasChildren: true, parentId: 'session-tui-test', depth: 1 },
+    { kind: 'child', id: 'session-grandkid', activity: 'running', mode: 'continuable', label: 'reviewer', hasChildren: false, parentId: 'session-kid', depth: 2 },
+    { kind: 'diagnostic', id: 'session-broken', reason: 'corrupt', parentId: 'session-tui-test', depth: 1 },
+  ]
+
+  /**
+   * A bench whose subagent runtime lists `entries` and whose query engine
+   * answers with one titled session per id.
+   * @param entries - the descendant listing `/subagents` reads.
+   * @returns the started bench.
+   */
+  function benchWithSubagents(entries: unknown[]): Promise<Awaited<ReturnType<typeof bench>>> {
+    return bench({
+      subagents: () => Promise.resolve(entries as never),
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          observeSession: (id: string) => Promise.resolve({
+            header: { id, createdAt: Date.UTC(2026, 1, 3, 14, 25, 30), cwd: `/work/${id}` },
+            events: [],
+            projections: { asOfSeq: 1, values: { title: `${id} title`, turnOutline: [] } },
+            [Symbol.dispose]: () => {},
+          }),
+        } as never)
+      },
+    })
+  }
+
+  it('notices an empty list without opening anything', async () => {
+    const test = await benchWithSubagents([])
+    typeLine(test.terminal, '/subagents')
+    await test.settle()
+    expect(test.terminal.text()).toContain('no subagent sessions')
+    expect(test.terminal.text()).not.toContain('Subagent sessions')
+  })
+
+  it('names the missing runtime', async () => {
+    const test = await bench()
+    typeLine(test.terminal, '/subagents')
+    await test.settle()
+    expect(test.terminal.text()).toContain('/subagents failed: subagents are not mounted in this profile')
+  })
+
+  it('walks the sessions, shows one session, and reopens the list on it', async () => {
+    const test = await benchWithSubagents(descendants)
+    typeLine(test.terminal, '/subagents')
+    await test.settle()
+    const listed = test.terminal.text()
+    expect(listed).toContain('Subagent sessions')
+    expect(listed).toContain('session-kid')
+    expect(listed).toContain('inactive · one-shot')
+    expect(listed).toContain('reviewer')
+
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    const detail = test.terminal.text()
+    expect(detail).toContain('workspace: /work/session-grandkid')
+    expect(detail).toContain('title: session-grandkid title')
+    expect(detail).toContain('created: 2026-02-03 14:25')
+    expect(detail).toContain('↑ ↓ scroll · Enter, Esc, or ← returns')
+
+    // Leaving the details reopens the list on the session just read.
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('reviewer ✓')
+
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workspace: /work/session-kid')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.terminal.text()).toContain('session-kid ✓')
+
+    // A row the listing could not read opens its details all the same.
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('unreadable subagent session: corrupt')
+    test.terminal.type(KEY.left)
+    await test.settle()
+
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    typeLine(test.terminal, 'back to typing')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'back to typing' }]])
+  })
+})
+
+describe('todo list', () => {
+  const mixed: TodoItem[] = [
+    { content: 'read the spec', status: 'completed' },
+    { content: 'write the data layer', status: 'in_progress' },
+    { content: 'wire the picker', status: 'pending' },
+  ]
+
+  it('walks the list, shows one item in full, and reopens the list on it', async () => {
+    const test = await bench({ projections: projectionsStub(() => ({ todos: mixed })).stub })
+    typeLine(test.terminal, '/todos')
+    await test.settle()
+    const listed = test.terminal.text()
+    expect(listed).toContain('? Todos')
+    expect(listed).toContain('✓ read the spec')
+    expect(listed).toContain('▸ write the data layer')
+    expect(listed).toContain('being worked on now')
+
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    const detail = test.terminal.text()
+    expect(detail).toContain('Todo 2')
+    expect(detail).toContain('status: in progress')
+    expect(detail).toContain('item 2 of 3')
+    expect(detail).toContain('1 completed · 1 in progress · 1 pending')
+
+    // Leaving the item reopens the list on it.
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('write the data layer ✓')
+
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('status: completed')
+    expect(test.terminal.text()).toContain('item 1 of 3')
+
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    typeLine(test.terminal, 'back to typing')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'back to typing' }]])
+  })
+
+  it('draws a todo line too wide for the list default beside its status', async () => {
+    const content = 'Wire the navigable todo list into the terminal status bar'
+    const test = await bench({ projections: projectionsStub(() => ({ todos: [{ content, status: 'pending' }] })).stub })
+    typeLine(test.terminal, '/todos')
+    await test.settle()
+    expect(test.terminal.text()).toContain(`○ ${content}`)
+    expect(test.terminal.text()).toContain('pending')
+  })
+
+  it('opens the same list from the status bar, leaving the segment label alone', async () => {
+    const test = await bench({ projections: projectionsStub(() => ({ todos: mixed })).stub })
+    await test.settle()
+    expect(test.terminal.text()).toContain('todo 1/3')
+    // The bar holds the model segment first; the todo segment is the next one.
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('? Todos')
+    // The list replaced the printed section, so /status keeps its own wording.
+    expect(test.terminal.text()).not.toContain('todos: 1 done')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    typeLine(test.terminal, 'after the list')
+    await test.settle()
+    expect(test.calls.followups).toHaveLength(1)
+  })
+
+  it('notices an empty list instead of opening a picker', async () => {
+    const unmounted = await bench({ projections: 'none' })
+    typeLine(unmounted.terminal, '/todos')
+    await unmounted.settle()
+    expect(unmounted.terminal.text()).toContain('no todos yet')
+    expect(unmounted.terminal.text()).not.toContain('? Todos')
+    const unwritten = await bench({ projections: projectionsStub(() => ({ todos: null })).stub })
+    typeLine(unwritten.terminal, '/todos')
+    typeLine(unwritten.terminal, '/help')
+    await unwritten.settle()
+    expect(unwritten.terminal.text()).toContain('no todos yet')
+    expect(unwritten.terminal.text()).toContain('/todos')
+    expect(unwritten.terminal.text()).toContain('Browse the agent\'s todo list (Enter shows one item in full)')
+  })
+
+  it('reports the turn an item was written in and the turn its status moved', async () => {
+    let todos: TodoItem[] = []
+    const test = await bench({ projections: projectionsStub(() => ({ todos })).stub })
+    /** Log one turn that replaces the todo list with `next`. */
+    const write = (turn: number, next: TodoItem[]): void => {
+      test.session.append('turn/start', { turn })
+      todos = next
+      test.session.append('todo/write', { todos })
+      test.session.append('turn/end', { turn, reason: { kind: 'completed' } })
+    }
+    write(1, [{ content: 'read the spec', status: 'in_progress' }, { content: 'ship it', status: 'pending' }])
+    write(2, [{ content: 'read the spec', status: 'completed' }, { content: 'ship it', status: 'pending' }])
+    // The third turn drops the second item, so its return in the fourth starts it over.
+    write(3, [{ content: 'read the spec', status: 'completed' }])
+    write(4, [{ content: 'read the spec', status: 'completed' }, { content: 'ship it', status: 'pending' }])
+    await test.settle()
+
+    typeLine(test.terminal, '/todos')
+    await test.settle()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('first written in turn 1')
+    expect(test.terminal.text()).toContain('status last changed in turn 2')
+
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen).toContain('first written in turn 4')
+    // The item has held its status since it came back, so it reports no change.
+    expect(screen.split('status last changed in turn')).toHaveLength(2)
+  })
+
+  it('forgets the turn facts of the session it left', async () => {
+    let todos: TodoItem[] = []
+    const test = await bench({ projections: projectionsStub(() => ({ todos })).stub })
+    test.session.append('turn/start', { turn: 7 })
+    todos = [{ content: 'read the spec', status: 'pending' }]
+    test.session.append('todo/write', { todos })
+    await test.settle()
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    typeLine(test.terminal, '/todos')
+    await test.settle()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('status: pending')
+    expect(test.terminal.text()).not.toContain('first written in turn')
+  })
+
+  it('reports a failing todo read from the status bar instead of crashing', async () => {
+    const test = await bench({
+      projections: {
+        // Only the list's own one-key read fails, so the bar still draws its segments.
+        snapshot: (_session: Session, keys: readonly string[]) => {
+          if (keys.length === 1) throw new Error('the todos projection failed')
+          return { asOfSeq: 1, values: { todos: [{ content: 'read the spec', status: 'pending' }] } }
+        },
+        onChanged: () => () => {},
+      },
+    })
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('/todos failed: the todos projection failed')
   })
 })
 

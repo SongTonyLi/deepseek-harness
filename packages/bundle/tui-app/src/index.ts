@@ -26,6 +26,7 @@ import type {} from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import { TuiApp, type BoundSession, type SessionHost } from './app.ts'
+import { FADE_STEPS, FADE_TICK_MS } from './fade.ts'
 import { colorEnabled, createPalette } from './style.ts'
 import { describeFailure } from './transcript.ts'
 
@@ -43,6 +44,41 @@ export interface Config {
   resume?: string
   /** Collapsed tool-card body rows before `Ctrl+O` expands them. */
   toolPreviewLines: number
+  /**
+   * Period in milliseconds of the terminal's one repeating redraw: it
+   * advances the running-turn counter in the status bar and the per-child
+   * counters in the subagent panel, and re-reads the subagent listing a live
+   * signal marked stale. The terminal arms the interval only while a turn is
+   * running, a listed child is timing an open turn, or the listing is stale,
+   * and disarms it as soon as none of those hold, so an idle session runs no
+   * timer. A shorter period redraws more often; a longer one lets a counter
+   * lag behind by up to one period.
+   */
+  liveRefreshMs: number
+  /**
+   * Brightness levels streamed assistant text climbs through before it draws
+   * in the terminal's normal foreground: it enters near the terminal
+   * background and brightens one level per {@link Config.streamFadeStepMs},
+   * so the whole fade lasts `streamFadeSteps * streamFadeStepMs` and leaves
+   * that much text dimmed behind the stream head. Two levels is the shortest
+   * ramp that still shows; more levels spread the same period over a softer
+   * trailing edge. Text that has settled is never dimmed again.
+   */
+  streamFadeSteps: number
+  /**
+   * How long one brightness level lasts, in milliseconds, which is also the
+   * repaint period of the fading text. The terminal arms this repaint only
+   * while streamed text is still brightening and disarms it as soon as the
+   * last chunk settles, so an idle session runs no timer. A shorter period
+   * draws a smoother fade at the cost of more redraws.
+   */
+  streamFadeStepMs: number
+  /**
+   * Draw streamed assistant text at the normal foreground as it arrives, with
+   * no brightness ramp and no repeating repaint, for users who do not want
+   * text that changes after it is drawn.
+   */
+  reducedMotion: boolean
   /** Permit local default-browser handoff for authorization pages. */
   openBrowser: boolean
 }
@@ -51,6 +87,10 @@ export const Config: z<Config> = z.object({
   prompt: z.string(),
   resume: z.string(),
   toolPreviewLines: z.natural().min(1).default(8),
+  liveRefreshMs: z.natural().min(100).default(1000),
+  streamFadeSteps: z.natural().min(2).default(FADE_STEPS),
+  streamFadeStepMs: z.natural().min(16).default(FADE_TICK_MS),
+  reducedMotion: z.boolean().default(false),
   openBrowser: z.boolean().default(true),
 })
 
@@ -228,6 +268,21 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     terminal: host.createTerminal(),
     palette: createPalette(host.color),
     toolPreviewLines: config.toolPreviewLines,
+    liveRefreshMs: config.liveRefreshMs,
+    fadeSteps: config.streamFadeSteps,
+    fadeStepMs: config.streamFadeStepMs,
+    reducedMotion: config.reducedMotion,
+    env: process.env,
+    now: () => Date.now(),
+    tick: (callback, delayMs) => {
+      const dispose = ctx.effect(() => {
+        const timer = setInterval(callback, delayMs)
+        // A redraw timer must not hold the process open once the user quits.
+        timer.unref()
+        return () => { clearInterval(timer) }
+      }, 'tui-app: repeating redraw')
+      return () => void dispose()
+    },
     cwd,
     ...openUrl === undefined ? {} : { openUrl },
     releaseInput: () => { host.releaseInput() },

@@ -1,9 +1,9 @@
 /**
  * Persistent session status for the terminal: one read of the session
  * projections becomes plain facts, and pure formatters turn those facts into
- * footer parts, the `/status` report, and the one-line notices for
- * compaction and model-request retries. Nothing here touches the terminal,
- * the palette, or the agent.
+ * footer parts, the report sections `/status` and the status bar's segment
+ * details share, and the one-line notices for compaction and model-request
+ * retries. Nothing here touches the terminal, the palette, or the agent.
  * @module @deepseek-ai/dsh-tui-app/status
  */
 
@@ -12,13 +12,14 @@ import type { SessionEventMap } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import type { GoalPhase } from '@deepseek-ai/dsh-goal/types'
 import type { LlmRetryEventData } from '@deepseek-ai/dsh-llm-retry/types'
-import type { PermissionSelect } from '@deepseek-ai/dsh-permission-presets'
+import type { PermissionSelection } from '@deepseek-ai/dsh-permission-presets'
 import type { PlanProjection } from '@deepseek-ai/dsh-plan-mode/types'
 import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/types'
 import type { ContextBreakdownProjection, TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 // Type-only: merges the `compaction/summary` event into `SessionEventMap`.
 import type {} from '@deepseek-ai/dsh-compaction/types'
+import { TODO_GLYPH } from './todos.ts'
 import { formatTokens } from './transcript.ts'
 
 /** Context occupancy of the next request, present once a provider reported usage and a route capacity. */
@@ -68,7 +69,7 @@ export interface StatusFacts {
   todos?: TodoFacts
   goal?: GoalFacts
   plan?: PlanProjection
-  permissions?: PermissionSelect
+  permissions?: PermissionSelection
 }
 
 /** The read face of `ctx.sessionProjections` this module needs. */
@@ -131,37 +132,37 @@ export function readStatusFacts(projections: StatusProjections, session: Session
   return facts
 }
 
+/** One short footer part, tagged with the fact it reports. */
+export interface StatusPart {
+  /** Which projection fact the part stands for; the status bar reuses it as a segment id. */
+  id: 'context' | 'todo' | 'goal' | 'plan'
+  /** The text the footer draws. */
+  label: string
+}
+
 /**
  * The short footer parts: `ctx 42%`, `todo 2/5` (done over total),
  * `goal active`, and `plan` (`plan…` while a mode switch is pending).
  * @param facts - the facts one status read produced.
  * @returns one part per present fact, in footer order; empty when nothing is known.
  */
-export function footerStatus(facts: StatusFacts): string[] {
-  const parts: string[] = []
-  if (facts.context !== undefined) parts.push(`ctx ${String(facts.context.percent)}%`)
-  if (facts.todos !== undefined) parts.push(`todo ${String(facts.todos.done)}/${String(facts.todos.items.length)}`)
-  if (facts.goal !== undefined) parts.push(`goal ${facts.goal.phase}`)
-  if (facts.plan?.pending === true) parts.push('plan…')
-  else if (facts.plan?.active === true) parts.push('plan')
+export function footerStatus(facts: StatusFacts): StatusPart[] {
+  const parts: StatusPart[] = []
+  if (facts.context !== undefined) parts.push({ id: 'context', label: `ctx ${String(facts.context.percent)}%` })
+  if (facts.todos !== undefined) parts.push({ id: 'todo', label: `todo ${String(facts.todos.done)}/${String(facts.todos.items.length)}` })
+  if (facts.goal !== undefined) parts.push({ id: 'goal', label: `goal ${facts.goal.phase}` })
+  if (facts.plan?.pending === true) parts.push({ id: 'plan', label: 'plan…' })
+  else if (facts.plan?.active === true) parts.push({ id: 'plan', label: 'plan' })
   return parts
 }
 
-/** Glyph per todo status, matching the browser's list markers. */
-const TODO_GLYPH: Record<TodoItem['status'], string> = {
-  completed: '✓',
-  in_progress: '▸',
-  pending: '○',
-}
-
 /**
- * The multi-line `/status` report: context occupancy and composition, token
- * usage with the cache-hit share, session stats, the todo list, the goal,
- * plan mode, and the permission preset — one section per present fact.
+ * The context section: occupancy of the next request and, when the breakdown
+ * is registered, its system/tools/messages composition.
  * @param facts - the facts one status read produced.
- * @returns the report lines; a single explanatory line when nothing is known.
+ * @returns the section lines; empty when neither fact is known.
  */
-export function statusReport(facts: StatusFacts): string[] {
+export function contextLines(facts: StatusFacts): string[] {
   const lines: string[] = []
   if (facts.context !== undefined) {
     const { used, window, percent } = facts.context
@@ -171,6 +172,17 @@ export function statusReport(facts: StatusFacts): string[] {
     const { systemTokens, toolsTokens, messageTokens } = facts.breakdown
     lines.push(`  system ~${formatTokens(systemTokens)} · tools ~${formatTokens(toolsTokens)} · messages ~${formatTokens(messageTokens)}`)
   }
+  return lines
+}
+
+/**
+ * The usage section: cumulative provider-reported tokens with the cache-hit
+ * share, and the whole-log turn/step counts and wall times.
+ * @param facts - the facts one status read produced.
+ * @returns the section lines; empty when neither fact is known.
+ */
+export function usageLines(facts: StatusFacts): string[] {
+  const lines: string[] = []
   if (facts.tokenUsage !== undefined) {
     const usage = facts.tokenUsage
     const parts = [
@@ -195,24 +207,75 @@ export function statusReport(facts: StatusFacts): string[] {
     if (stats.decodeMs > 0) parts.push(`${String(Math.round(stats.decodeTokens / stats.decodeMs * 1000))} tok/s`)
     lines.push(`session: ${parts.join(' · ')}`)
   }
-  if (facts.todos !== undefined) {
-    const { items, done, active, pending } = facts.todos
-    lines.push(`todos: ${String(done)} done · ${String(active)} active · ${String(pending)} pending`)
-    for (const item of items) lines.push(`  ${TODO_GLYPH[item.status]} ${item.content}`)
-  }
-  if (facts.goal !== undefined) {
-    const goal = facts.goal
-    lines.push(`goal: ${goal.phase} · round ${String(goal.round)}/${String(goal.maxRounds)} · ${goal.objective}`)
-    if (goal.blockedReason !== undefined) lines.push(`  blocked: ${goal.blockedReason}`)
-  }
-  if (facts.plan !== undefined) {
-    lines.push(`plan: ${facts.plan.active ? 'on' : 'off'}${facts.plan.pending ? ' (switching)' : ''}`)
-  }
-  if (facts.permissions !== undefined) {
-    const { options, currentValue } = facts.permissions
-    const current = options.find(option => option.value === currentValue)
-    lines.push(`permission: ${current?.name ?? currentValue}`)
-  }
+  return lines
+}
+
+/**
+ * The todo section: the counts by status and the list itself.
+ * @param facts - the facts one status read produced.
+ * @returns the section lines; empty when no todo list is known.
+ */
+export function todoLines(facts: StatusFacts): string[] {
+  if (facts.todos === undefined) return []
+  const { items, done, active, pending } = facts.todos
+  return [
+    `todos: ${String(done)} done · ${String(active)} active · ${String(pending)} pending`,
+    ...items.map(item => `  ${TODO_GLYPH[item.status]} ${item.content}`),
+  ]
+}
+
+/**
+ * The goal section: phase, admitted rounds, objective, and the blocking
+ * condition while the goal is blocked.
+ * @param facts - the facts one status read produced.
+ * @returns the section lines; empty when the session carries no goal.
+ */
+export function goalLines(facts: StatusFacts): string[] {
+  if (facts.goal === undefined) return []
+  const goal = facts.goal
+  const lines = [`goal: ${goal.phase} · round ${String(goal.round)}/${String(goal.maxRounds)} · ${goal.objective}`]
+  if (goal.blockedReason !== undefined) lines.push(`  blocked: ${goal.blockedReason}`)
+  return lines
+}
+
+/**
+ * The plan-mode section.
+ * @param facts - the facts one status read produced.
+ * @returns the one section line; empty when no plan-mode projection is registered.
+ */
+export function planLines(facts: StatusFacts): string[] {
+  if (facts.plan === undefined) return []
+  return [`plan: ${facts.plan.active ? 'on' : 'off'}${facts.plan.pending ? ' (switching)' : ''}`]
+}
+
+/**
+ * The permission section. The projection carries the current value only; the
+ * selectable options moved to the process-level catalog Remote.
+ * @param facts - the facts one status read produced.
+ * @returns the one section line; empty when no permission service is composed.
+ */
+export function permissionLines(facts: StatusFacts): string[] {
+  if (facts.permissions === undefined) return []
+  return [`permission: ${facts.permissions.currentValue}`]
+}
+
+/**
+ * The multi-line `/status` report: context occupancy and composition, token
+ * usage with the cache-hit share, session stats, the todo list, the goal,
+ * plan mode, and the permission preset — one section per present fact. The
+ * status bar prints the same sections as one segment's details.
+ * @param facts - the facts one status read produced.
+ * @returns the report lines; a single explanatory line when nothing is known.
+ */
+export function statusReport(facts: StatusFacts): string[] {
+  const lines = [
+    ...contextLines(facts),
+    ...usageLines(facts),
+    ...todoLines(facts),
+    ...goalLines(facts),
+    ...planLines(facts),
+    ...permissionLines(facts),
+  ]
   return lines.length === 0 ? ['no session status yet'] : lines
 }
 
