@@ -17,7 +17,7 @@ import {
 } from '@earendil-works/pi-tui'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import type { AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
+import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
 import { ReasoningEffortId, createUserMessage, type LlmModelReasoningInfo, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
@@ -102,6 +102,8 @@ export interface TuiAppDeps {
   toolPreviewLines: number
   /** The workspace root shown in the footer and used for relative attachment and export paths. */
   cwd: string
+  /** Hand an authorization page to the local default browser; absent when automatic handoff is disabled. */
+  openUrl?: (url: string) => Promise<void>
   /**
    * Drop the host's reference to terminal input after the terminal stops. The
    * quit key arrives through a stdin read that pi-tui pauses from inside that
@@ -812,6 +814,7 @@ export class TuiApp {
     const current = this.currentSelection()
     const lookup = await this.lookupEfforts(current)
     // The lookup can settle after the user quits, past the entry guard.
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- The entry guard's narrowing does not survive the await above.
     if (this.stopped) return
     if (lookup.kind !== 'ready') {
       this.reportEffortLookup(lookup, current)
@@ -1042,6 +1045,11 @@ export class TuiApp {
             if (notice.url !== undefined) parts.push(notice.url)
             if (notice.code !== undefined) parts.push(`code: ${notice.code}`)
             this.notice(parts.join(' '))
+            if (notice.url !== undefined && notice.openInBrowser === true && this.deps.openUrl !== undefined) {
+              void this.deps.openUrl(notice.url).catch((error: unknown) => {
+                this.notice(`could not open sign-in page: ${describeFailure(error)}`, 'error')
+              })
+            }
           },
           prompt: prompt => this.answerAuthorizationPrompt(prompt),
         },
@@ -1059,7 +1067,7 @@ export class TuiApp {
         label: option.label,
         ...option.description === undefined ? {} : { description: option.description },
       }))), prompt.signal)
-      if (picked === undefined) throw new Error('the sign-in prompt was dismissed')
+      if (picked === undefined) throw new AuthorizationDeclinedError('the sign-in prompt was dismissed')
       return picked.value
     }
     const answer = await this.modals.run(new QuestionPrompt(this.deps.palette, {
@@ -1067,7 +1075,7 @@ export class TuiApp {
       question: prompt.message,
       ...prompt.placeholder === undefined ? {} : { detail: prompt.placeholder },
     }), prompt.signal)
-    if (answer?.custom === undefined) throw new Error('the sign-in prompt was dismissed')
+    if (answer?.custom === undefined) throw new AuthorizationDeclinedError('the sign-in prompt was dismissed')
     return answer.custom
   }
 

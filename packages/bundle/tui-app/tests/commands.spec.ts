@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import type { AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
+import { AuthorizationDeclinedError, type AuthorizationNotice, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { KEY, bench, exportStubs } from './bench.ts'
@@ -341,7 +341,7 @@ describe('sign-in', () => {
   interface BeginRequest {
     key: string
     method?: string
-    interaction: { notify(notice: unknown): void; prompt(prompt: AuthorizationPrompt): Promise<string> }
+    interaction: { notify(notice: AuthorizationNotice): void; prompt(prompt: AuthorizationPrompt): Promise<string> }
   }
 
   function authorization(ctx: Context, flow: Flow): void {
@@ -349,10 +349,21 @@ describe('sign-in', () => {
       list: () => flow.entries,
       begin: async (request: BeginRequest) => {
         flow.begun.push({ key: request.key, method: request.method })
-        request.interaction.notify({ message: 'open the page', url: 'https://example.test/auth', code: 'ABCD' })
+        request.interaction.notify({
+          message: 'open the page',
+          url: 'https://example.test/auth',
+          openInBrowser: true,
+          code: 'ABCD',
+        })
+        request.interaction.notify({ message: 'read more', url: 'https://example.test/info' })
         request.interaction.notify({ message: 'waiting for the browser' })
         const answers: string[] = []
-        for (const prompt of flow.prompts) answers.push(await request.interaction.prompt(prompt))
+        try {
+          for (const prompt of flow.prompts) answers.push(await request.interaction.prompt(prompt))
+        } catch (error: unknown) {
+          if (error instanceof AuthorizationDeclinedError) return { status: 'cancelled' }
+          throw error
+        }
         flow.begun.push(answers)
         return { status: flow.outcome }
       },
@@ -372,7 +383,11 @@ describe('sign-in', () => {
       ],
       begun: [],
     }
-    const test = await bench({ before: (ctx) => { authorization(ctx, flow) } })
+    const opened: string[] = []
+    const test = await bench({
+      openUrl: (url) => { opened.push(url); return Promise.resolve() },
+      before: (ctx) => { authorization(ctx, flow) },
+    })
     typeLine(test.terminal, '/signin')
     await test.settle()
     expect(test.terminal.text()).toContain('Device code, API key')
@@ -383,6 +398,8 @@ describe('sign-in', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('open the page https://example.test/auth code: ABCD')
+    expect(test.terminal.text()).toContain('read more https://example.test/info')
+    expect(opened).toEqual(['https://example.test/auth'])
     expect(test.terminal.text()).toContain('Which account?')
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.enter)
@@ -399,7 +416,25 @@ describe('sign-in', () => {
     expect(flow.begun.slice(2)).toEqual([{ key: 'other', method: undefined }, []])
   })
 
-  it('takes the provider from the argument, reports a cancelled flow, and fails loud on a dismissed prompt', async () => {
+  it('keeps the URL usable and the attempt running when browser handoff fails', async () => {
+    const flow: Flow = {
+      entries: [{ key: 'other', label: 'Other', methods: [{ id: 'oauth', label: 'Subscription' }] }],
+      outcome: 'authorized',
+      prompts: [],
+      begun: [],
+    }
+    const test = await bench({
+      openUrl: () => Promise.reject(new Error('desktop unavailable')),
+      before: (ctx) => { authorization(ctx, flow) },
+    })
+    typeLine(test.terminal, '/login other')
+    await test.settle()
+    expect(test.terminal.text()).toContain('open the page https://example.test/auth code: ABCD')
+    expect(test.terminal.text()).toContain('could not open sign-in page: desktop unavailable')
+    expect(test.terminal.text()).toContain('signed in to Other')
+  })
+
+  it('takes the provider from the argument, reports a cancelled flow, and treats dismissed prompts as cancellation', async () => {
     const flow: Flow = {
       entries: [{ key: 'other', label: 'Other', methods: [{ id: 'only', label: 'Only' }] }],
       outcome: 'cancelled',
@@ -419,7 +454,7 @@ describe('sign-in', () => {
     await test.settle()
     test.terminal.type(KEY.escape)
     await test.settle()
-    expect(test.terminal.text()).toContain('sign-in failed: the sign-in prompt was dismissed')
+    expect(test.terminal.text()).toContain('sign-in to Other cancelled')
     flow.prompts = [{ kind: 'text', message: 'Type', signal: new AbortController().signal }]
     typeLine(test.terminal, '/signin other')
     await test.settle()
@@ -427,7 +462,21 @@ describe('sign-in', () => {
     test.terminal.type(KEY.escape)
     test.terminal.type(KEY.escape)
     await test.settle()
-    expect(test.terminal.text().split('sign-in failed: the sign-in prompt was dismissed')).toHaveLength(3)
+    expect(test.terminal.text().split('sign-in to Other cancelled')).toHaveLength(4)
+  })
+
+  it('reports a flow failure as a sign-in failure', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('authorization', {
+          list: () => [{ key: 'other', label: 'Other', methods: [{ id: 'oauth', label: 'Subscription' }] }],
+          begin: () => Promise.reject(new Error('issuer unreachable')),
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/login other')
+    await test.settle()
+    expect(test.terminal.text()).toContain('sign-in failed: issuer unreachable')
   })
 
   it('reports missing flows and dismissed pickers', async () => {

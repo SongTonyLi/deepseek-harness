@@ -1,5 +1,5 @@
 ---
-description: "Host-native command and path-opening utilities with shell-free execution, cancellation, desktop detection, and WSL path handoff."
+description: "Host-native command, path-opening, and default-browser URL handoff utilities with shell-free execution, cancellation, desktop detection, and credential scrubbing."
 kind: "package-library"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-native-command` runs host executables without a shell and opens Host filesystem paths through the desktop. The command runner captures utf8 output, propagates cancellation, and hides transient Windows consoles. The path opener supports default-application and text-editor intents, browser-renderable documents, WSL translation, and desktop availability checks. It is a library, not a plugin: no `ctx`, no state, no events.
+`dsh-native-command` runs host executables without a shell, opens Host filesystem paths through the desktop, and hands HTTP(S) URLs to the default browser. The command runner captures utf8 output, propagates cancellation, and hides transient Windows consoles. The path opener supports default-application and text-editor intents, browser-renderable documents, WSL translation, and desktop availability checks. The URL opener keeps Harness credentials out of the browser's environment. It is a library, not a plugin: no `ctx`, no state, no events.
 
 ## Table of Contents
 
@@ -49,6 +49,10 @@ The `NativeCommandRunner` type is the injectable command boundary for host integ
 
 `revealNativePath(path, signal)` selects the file in Finder or Explorer, including WSL path translation, and opens its parent directory through `xdg-open` on desktop Linux. `nativeFileManager()` identifies that action for Host-derived UI labels; desktop availability remains a separate `canOpenNativePath()` check. Callers must authorize the absolute file path before invoking either operation. Platform dispatch is covered by injected-runner tests; native desktop verification belongs to the corresponding platform. Explorer receives an encoded file URI as a separate argument. Its exit code 1 is accepted as a delegated handoff; cancellation, missing executables, and other exit codes still reject. This acknowledgement does not prove that a desktop window selected the file.
 
+### Opening a URL in the default browser
+
+`openNativeUrl(url)` hands one HTTP(S) URL to the operating system's default browser and rejects every other protocol before spawning. The URL travels through a short-lived Node helper running the maintained `open` package with a scrubbed environment, so Harness credentials such as API keys and the Harness home never reach a newly launched browser process; on Windows the helper stays alive until PowerShell has accepted the handoff. The returned promise settles when the operating-system launcher exits, not when the browser window closes; a launch failure rejects with the helper's first stderr line, so the caller can fall back to showing the URL. This is the URL counterpart of the filesystem path opener — do not pass a URL to `openNativePath`, which treats its argument as a filesystem path.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -66,6 +70,7 @@ The command runner is a thin wrapper over Node's `execFile`. The path opener sel
 | [`src/index.ts`](src/index.ts) | Public command-runner and path-opener exports |
 | [`src/runner.ts`](src/runner.ts) | Shell-free `execFile` adapter |
 | [`src/path-opener.ts`](src/path-opener.ts) | Desktop detection, open intents, browser preference, and WSL translation |
+| [`src/url-opener.ts`](src/url-opener.ts) | Credential-scrubbed default-browser handoff for HTTP(S) URLs |
 | — | No runtime invariant companion is published; each run is one stateless child-process round trip with no owned event stream or mutable runtime data; behavior is enforced by unit tests. |
 
 ### What execFile gives the runner

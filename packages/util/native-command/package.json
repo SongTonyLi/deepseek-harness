@@ -26,6 +26,10 @@
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-subprocess": "workspace:^",
+    "open": "^11.0.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^"
   },

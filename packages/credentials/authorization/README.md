@@ -107,7 +107,7 @@ One attempt per key at a time. `begin()` validates the key and method, refuses a
 
 ### The interaction vocabulary
 
-A notice is one-way and never carries a secret: a message, optionally the page the human must open and the code they must enter there. A prompt is a question the flow cannot answer for itself — `text`, `secret`, or `select` — where `secret` differs from `text` only in presentation. A prompt carries its own signal so a flow that races a typed code against a browser callback can withdraw the losing question while the attempt continues; the request's signal withdraws the whole attempt instead. The vocabulary is deliberately smaller than any one provider's: it describes what a surface must render, so a surface that renders one flow renders all of them.
+A notice is one-way and never carries a secret: a message, optionally the page the human must open and the code they must enter there, and whether a desktop surface should hand that page to the default browser (`openInBrowser`, set for an authorization destination rather than an informational link; the printed URL always remains the fallback). A prompt is a question the flow cannot answer for itself — `text`, `secret`, or `select` — where `secret` differs from `text` only in presentation. A prompt carries its own signal so a flow that races a typed code against a browser callback can withdraw the losing question while the attempt continues; the request's signal withdraws the whole attempt instead. The vocabulary is deliberately smaller than any one provider's: it describes what a surface must render, so a surface that renders one flow renders all of them.
 
 ### Commit confirmation
 

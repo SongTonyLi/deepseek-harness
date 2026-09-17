@@ -3963,11 +3963,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AuthorizationNotice',
-    declaration: 'export interface AuthorizationNotice {\n    message: string;\n    url?: string;\n    code?: string;\n}',
+    declaration: 'export interface AuthorizationNotice {\n    message: string;\n    url?: string;\n    openInBrowser?: true;\n    code?: string;\n}',
   },
   {
     name: 'AuthorizationNoticeFrame',
-    declaration: 'export interface AuthorizationNoticeFrame {\n    readonly type: \'notice\';\n    readonly message: string;\n    readonly url?: string;\n    readonly code?: string;\n}',
+    declaration: 'export interface AuthorizationNoticeFrame {\n    readonly type: \'notice\';\n    readonly message: string;\n    readonly url?: string;\n    readonly openInBrowser?: true;\n    readonly code?: string;\n}',
   },
   {
     name: 'AuthorizationOutcome',

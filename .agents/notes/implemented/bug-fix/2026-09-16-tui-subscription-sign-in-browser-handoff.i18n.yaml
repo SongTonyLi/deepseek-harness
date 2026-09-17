@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-16-tui-subscription-sign-in-browser-handoff.md
+2026-09-16-tui-subscription-sign-in-browser-handoff.md: cc2c18804e1004e729c78bd8e83d6052cee1795c
+2026-09-16-tui-subscription-sign-in-browser-handoff.zh.md: a9ca7de3b19ffa50c6a7f48a13feb4360f000f4b

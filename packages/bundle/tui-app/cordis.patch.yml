@@ -56,4 +56,5 @@
       config:
         prompt: !!js ctx.tuiStartup.prompt
         resume: !!js ctx.tuiStartup.resume
+        openBrowser: !!js ctx.tuiStartup.openBrowser
         toolPreviewLines: 8

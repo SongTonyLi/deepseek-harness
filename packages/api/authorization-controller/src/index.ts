@@ -313,6 +313,7 @@ export class AuthorizationController extends TypertRemoteService {
             type: 'notice',
             message: notice.message,
             ...notice.url === undefined ? {} : { url: notice.url },
+            ...notice.openInBrowser === undefined ? {} : { openInBrowser: notice.openInBrowser },
             ...notice.code === undefined ? {} : { code: notice.code },
           })
         },

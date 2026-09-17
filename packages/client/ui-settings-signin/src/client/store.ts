@@ -33,6 +33,8 @@ export interface SignInQuestion {
 export interface SignInDirection {
   readonly message: string
   readonly url?: string
+  /** Whether a desktop surface may hand the page to its default browser. */
+  readonly openInBrowser?: true
   readonly code?: string
 }
 
@@ -323,6 +325,7 @@ export class SignInController {
             directions: [...attempt.directions, {
               message: frame.message,
               ...frame.url === undefined ? {} : { url: frame.url },
+              ...frame.openInBrowser === undefined ? {} : { openInBrowser: frame.openInBrowser },
               ...frame.code === undefined ? {} : { code: frame.code },
             }],
           }

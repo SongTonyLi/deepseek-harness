@@ -141,11 +141,12 @@ describe('pi-ai login flows', () => {
     expect(ui.notices).toEqual([
       { message: 'Read this first', url: 'https://help.example' },
       { message: 'Nothing to open' },
-      { message: 'Approve in the tab', url: 'https://auth.example/start' },
-      { message: 'Open this page to continue signing in.', url: 'https://auth.example/plain' },
+      { message: 'Approve in the tab', url: 'https://auth.example/start', openInBrowser: true },
+      { message: 'Open this page to continue signing in.', url: 'https://auth.example/plain', openInBrowser: true },
       {
         message: 'Enter this code on the verification page to finish signing in.',
         url: 'https://device.example',
+        openInBrowser: true,
         code: 'WXYZ-1234',
       },
       { message: 'Exchanging the code' },

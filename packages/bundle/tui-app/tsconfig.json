@@ -117,6 +117,12 @@
       "path": "../../util/brand"
     },
     {
+      "path": "../../util/launch-environment"
+    },
+    {
+      "path": "../../util/native-command"
+    },
+    {
       "path": "../../util/values"
     }
   ]

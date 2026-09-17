@@ -178,6 +178,8 @@ export async function bench(options: {
   projections?: 'none' | { snapshot(session: Session, keys: readonly string[]): unknown; onChanged(listener: (session: Session) => void): () => void }
   /** History the host attaches to a resumed or forked session. */
   openedHistory?: readonly SessionEvent[]
+  /** Authorization-page handoff; omitted to model a remote or headless terminal. */
+  openUrl?: (url: string) => Promise<void>
   before?(ctx: Context): Promise<void> | void
 } = {}): Promise<Bench> {
   const ctx = new Context()
@@ -267,6 +269,7 @@ export async function bench(options: {
     palette: createPalette(options.color ?? false),
     toolPreviewLines: options.toolPreviewLines ?? 3,
     cwd: '/work',
+    ...options.openUrl === undefined ? {} : { openUrl: options.openUrl },
     releaseInput: () => {},
     onQuit: (bound) => { quits.push(bound) },
   })

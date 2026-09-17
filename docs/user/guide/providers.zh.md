@@ -28,6 +28,8 @@
 
 自带订阅登录的提供方会显示这些控件，其余只在卡片自己的字段中要求 API 密钥。登录凭据与密钥一同存储在 `$DSH_HOME/.credentials.yaml` 中，并会自行刷新。
 
+在终端（`dsh tui`）中，登录分两条命令：先用 `/settings llm-pi-ai providers.openai-codex {}` 配置路由，再执行 `/login llm-pi-ai/openai-codex`。登录页面会在默认浏览器中打开，其地址同时保留在对话记录里；在 SSH 下或加上 `dsh tui --no-open` 时，请自行打开该地址，设备码方式在那里同样可用。
+
 ## 添加自定义提供方
 
 对于公司网关、自建服务器或已安装目录中不存在的提供方，选择**添加自定义提供方**。提供小写 Provider ID、基础 URL、API 协议、凭据和至少一个模型。**API 协议**必须选网关实际使用的那一种，表单提供三种：`openai-completions` 对应 OpenAI Chat Completions，`openai-responses` 对应 OpenAI Responses API，`anthropic-messages` 对应 Anthropic Messages API。一个提供方只使用一种协议，网关同时提供两种时需要建两个提供方。

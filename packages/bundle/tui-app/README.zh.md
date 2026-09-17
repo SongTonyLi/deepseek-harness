@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你当前所在的终端里启动一个多轮会话，没有浏览器、没有服务器。回复实时流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/attach` 加入图片与文件，`/` 命令与 Web 共用注册表。会话持久化：`/sessions`、`/new` 与 `/fork` 在会话间切换，`/export` 写出浏览器的 ZIP，`--resume` 稍后继续。它运行与 `dsh web` 相同的模型、工具与安全默认值，同一时间一个会话。
+`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你当前所在的终端里启动一个多轮会话，没有浏览器托管的应用、也没有服务器。回复实时流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/attach` 加入图片与文件，`/` 命令与 Web 共用注册表。会话持久化：`/sessions`、`/new` 与 `/fork` 在会话间切换，`/export` 写出浏览器的 ZIP，`--resume` 稍后继续。它运行与 `dsh web` 相同的模型、工具与安全默认值，同一时间一个会话。
 
 ## 目录
 
@@ -33,6 +33,7 @@ kind: "package-bundle"
 dsh tui                                   # new session, wait for input
 dsh tui "explain this repository"         # new session with a first prompt
 dsh tui --resume <session-id>             # continue an earlier session
+dsh tui --no-open                         # print sign-in URLs without opening a browser
 ```
 
 退出时应用在 stderr 为当时绑定的会话打印 `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>`。恢复的会话会在接受输入前先重绘其持久化历史；在终端内，`/sessions` 打开覆盖所有持久化根会话的选择器，`/new` 开始一个新会话，`/fork` 把当前会话复制到其最后一个完成轮次并作为新会话，切割点与浏览器的 fork 相同。切换会释放先前的 Agent 并重绘下一个会话的对话记录。
@@ -82,6 +83,10 @@ dsh tui --resume <session-id>             # continue an earlier session
 
 其他每条 `/name` 行都交给共享命令注册表，因此 `/compact`、`/permission`、`/goal` 与插件命令的行为和浏览器中一致。
 
+### 订阅登录
+
+`/login` 只存储订阅凭据，不会激活休眠的模型路由。先配置 catalog 路由，再使用完整的凭据键；例如先运行 `/settings llm-pi-ai providers.openai-codex {}`，再运行 `/login llm-pi-ai/openai-codex`。被标记的授权页面会在本地默认浏览器中打开，其 URL 同时保留在对话记录中作为后备。SSH 启动、无桌面的宿主、`--no-open` 以及打开器失败时，手动 URL 与设备码路径仍然可用。
+
 ### 来自 agent 的提示
 
 审批请求绘制 `Allow <tool>?`、请求方的理由、请求所指的已记录调用（与其工具卡片相同的行，因此 shell 命令在运行前可读）以及两行选项：允许一次或拒绝；`Esc` 拒绝，`Ctrl+C` 取消该请求。`ask_user_question` 的问题把其 `detail` 渲染为 Markdown，置于选项与一行自由文本之上；多选用 `Space` 切换各行并通过 `Done` 确认。计划评审（`exit_plan_mode` 设置的 `plan-review` 意图）把计划绘制为 Markdown，并提供 Approve、Decline 与 Discuss 行，其中 Discuss 像浏览器卡片一样把请求交回编辑器。提示排队、一次只显示一个，被中止的请求会撤回其提示。
@@ -97,8 +102,9 @@ dsh tui --resume <session-id>             # continue an earlier session
 | `prompt` | 无 | 终端就绪后提交的首个提示 |
 | `resume` | 无 | 要继续的持久化会话 id，而不是新建会话 |
 | `toolPreviewLines` | `8` | `Ctrl+O` 展开前折叠的工具卡片正文行数 |
+| `openBrowser` | `true` | 把被标记的授权页面交给本地默认浏览器 |
 
-`prompt` 与 `resume` 经启动提供方来自命令行；生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)是所有可接受字段的完整来源。
+`prompt`、`resume` 与 `openBrowser` 经启动提供方来自命令行；生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)是所有可接受字段的完整来源。
 
 -----
 
@@ -112,7 +118,7 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。Shift+Tab 循环切换绑定模型的适配器自有推理强度，并在提供方默认值处回绕；`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。Shift+Tab 循环切换绑定模型的适配器自有推理强度，并在提供方默认值处回绕；`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。
 
 ### 渲染模型
 
@@ -127,7 +133,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | `tui-app` 插件：会话宿主（创建、恢复、fork）、历史读取、退出流程、退出码映射 |
-| [`src/startup.ts`](src/startup.ts) | `tui-app-startup` 提供方：提示位置参数、`--resume` 与 `--help` |
+| [`src/startup.ts`](src/startup.ts) | `tui-app-startup` 提供方：提示位置参数、`--resume`、`--no-open` 与 `--help` |
 | [`src/app.ts`](src/app.ts) | 终端应用：布局、按键、命令、会话绑定、接缝、日志与流的折叠 |
 | [`src/sessions.ts`](src/sessions.ts) | 基于查询引擎的 `/sessions` 列表及其选择器行 |
 | [`src/attach.ts`](src/attach.ts) | `/attach`：本地文件经附件存储成为图片或文件块 |

@@ -68,6 +68,8 @@ export interface AuthorizationNoticeFrame {
   readonly message: string
   /** A page the human must open to continue. */
   readonly url?: string
+  /** Whether a desktop surface should hand `url` to the default browser; the URL remains the fallback. */
+  readonly openInBrowser?: true
   /** A short code the human must enter on that page. */
   readonly code?: string
 }
