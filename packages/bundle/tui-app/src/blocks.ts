@@ -6,6 +6,7 @@
  */
 
 import { Markdown, Text, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
+import { recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { markdownTheme, type Palette } from './style.ts'
 import { previewLines, type ToolCallText } from './transcript.ts'
 
@@ -47,9 +48,39 @@ export class NoticeBlock implements Component {
   }
 }
 
+/** The live fade of the one message streaming right now. */
+export interface FadeRender {
+  /**
+   * The tail to recolor. Read per render, not captured: the application ages
+   * it once per fade period and empties it when the message settles.
+   * @returns one span per tracked chunk, oldest first, with its current age.
+   */
+  spans(): readonly FadeSpan[]
+  /**
+   * The resolved capability and ramp. Read per render, not captured: the
+   * terminal background query settles after the application has started.
+   * @returns the settings the tail draws under right now.
+   */
+  style(): FadeStyle
+  /** Brightness levels the ramp carries, as the application built it. */
+  steps: number
+  /**
+   * Drop the tail, which the block asks for when the render width changed:
+   * the columns the tail was matched against no longer describe the
+   * rewrapped lines. The application keeps what it knows about the arrival
+   * rate, because a resize says nothing about it.
+   */
+  flush(): void
+}
+
 /**
  * An assistant reply: streamed reasoning above streamed Markdown text. The
  * durable `assistant/message` replaces both with the committed content.
+ *
+ * A block that is streaming right now can carry a {@link FadeRender}, which
+ * draws its newest text dimmed and brightening. A block rebuilt from history
+ * carries none, and {@link AssistantBlock.commit} drops the one a streaming
+ * block had, so settled text is never recolored.
  */
 export class AssistantBlock implements Component {
   private reasoning = ''
@@ -57,11 +88,22 @@ export class AssistantBlock implements Component {
   private interrupted = false
   private readonly markdown: Markdown
   private readonly reasoningText: Text
+  private fade: FadeRender | undefined
+  /** Width of the last render that drew a tail; absent before the first one. */
+  private fadeWidth: number | undefined
 
   constructor(private readonly theme: BlockTheme) {
     const palette = theme.palette
     this.markdown = new Markdown('', 0, 0, markdownTheme(palette))
     this.reasoningText = new Text('', 0, 0)
+  }
+
+  /**
+   * Draw this block's newest text through `fade` until it commits.
+   * @param fade - the tail and drawing settings of the running stream.
+   */
+  setFade(fade: FadeRender): void {
+    this.fade = fade
   }
 
   /**
@@ -92,6 +134,9 @@ export class AssistantBlock implements Component {
     this.text = text
     this.reasoning = reasoning
     this.interrupted = interrupted
+    // The committed content replaces what was streamed, so the tail no longer
+    // describes anything on screen and this block is settled for good.
+    this.fade = undefined
     this.markdown.setText(text)
     this.reasoningText.setText(this.theme.palette.dim(this.theme.palette.italic(reasoning.trimEnd())))
   }
@@ -104,9 +149,34 @@ export class AssistantBlock implements Component {
   render(width: number): string[] {
     const lines: string[] = ['']
     if (this.reasoning.trim() !== '') lines.push(...this.reasoningText.render(width), '')
-    if (this.text !== '') lines.push(...this.markdown.render(width))
+    if (this.text !== '') lines.push(...this.renderText(width))
     if (this.interrupted) lines.push(this.theme.palette.dim('[interrupted]'))
     return lines
+  }
+
+  /**
+   * The Markdown lines, with the streaming tail recolored.
+   *
+   * `recolorTail` matches the tail backwards from the end of what it is
+   * given, so it gets the Markdown lines alone: the reasoning above them and
+   * any marker below them would put the newest chunk somewhere other than the
+   * end and drop the whole tail to the plain foreground.
+   *
+   * Only chunks younger than `steps - 1` are handed over. The last ramp level
+   * is an assumed foreground - pi-tui reports the terminal background but not
+   * its foreground - so the oldest visible level is left to draw in the
+   * terminal's own foreground, which is also what the chunk draws in once it
+   * settles. No chunk can therefore jump color as it leaves the tail.
+   * @param width - the width the Markdown lays out in.
+   * @returns the lines to draw.
+   */
+  private renderText(width: number): string[] {
+    const fade = this.fade
+    const lines = this.markdown.render(width)
+    if (fade === undefined) return lines
+    if (this.fadeWidth !== undefined && this.fadeWidth !== width) fade.flush()
+    this.fadeWidth = width
+    return recolorTail(lines, fade.spans().filter(span => span.age < fade.steps - 1), fade.style())
   }
 }
 

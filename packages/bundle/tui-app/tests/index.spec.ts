@@ -11,7 +11,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import { apply, internals } from '../src/index.ts'
+import { Config, apply, internals } from '../src/index.ts'
 import { FakeTerminal, KEY } from './bench.ts'
 
 const originalInternals = { ...internals }
@@ -119,15 +119,33 @@ async function settled(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 40))
 }
 
+/**
+ * The validated config of one run, with every field a spec does not exercise
+ * at the value the schema defaults it to.
+ * @param overrides - the fields this spec drives.
+ * @returns the config `apply` is mounted with.
+ */
+function config(overrides: Partial<Config> = {}): Config {
+  return {
+    toolPreviewLines: 8,
+    liveRefreshMs: 1000,
+    streamFadeSteps: 5,
+    streamFadeStepMs: 40,
+    reducedMotion: false,
+    openBrowser: true,
+    ...overrides,
+  }
+}
+
 describe('tui runner', () => {
   it('refuses to mount without the launcher exit request', () => {
     const ctx = new Context()
-    expect(() => { apply(ctx, { toolPreviewLines: 8, openBrowser: true }) }).toThrow('ctx.appExit')
+    expect(() => { apply(ctx, config()) }).toThrow('ctx.appExit')
   })
 
   it('creates a fresh Agent with the default model, submits the prompt, and quits through flush and dispose', async () => {
     const { ctx, observed } = await bench()
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true, prompt: 'first' })
+    apply(ctx, config({ prompt: 'first' }))
     await settled()
     expect(observed.created).toHaveLength(1)
     expect(observed.created[0]?.meta).toEqual({ cwd: process.cwd() })
@@ -142,6 +160,24 @@ describe('tui runner', () => {
     expect(observed.terminal.stopped).toBe(true)
   })
 
+  it('drives the live counter from a real interval and clears it on quit', async () => {
+    const { ctx, observed } = await bench()
+    apply(ctx, config({ liveRefreshMs: 120 }))
+    await settled()
+    const id = observed.created[0]?.sessionId
+    if (id === undefined) throw new Error('the runner created no session')
+    const session = ctx.agents.get(id)?.session
+    if (session === undefined) throw new Error(`no live agent for ${id}`)
+    // A running turn arms the interval, which is the only production caller
+    // of the tick source; quitting disposes its effect.
+    session.append('turn/start', { turn: 1 })
+    await settled()
+    expect(observed.terminal.text()).toContain('turn 0s')
+    observed.terminal.type(KEY.ctrlD)
+    await settled()
+    expect(observed.order).toEqual(['release', 'cancel', 'flush', 'dispose', 'exit:0'])
+  })
+
   it('resumes a persisted session after paging its history through a read handle', async () => {
     const history: SessionEvent[] = Array.from({ length: 300 }, (_, seq) => ({
       type: 'user/message',
@@ -150,7 +186,7 @@ describe('tui runner', () => {
       data: createUserMessage({ content: [{ type: 'text', text: `prompt ${String(seq)}` }], source: { kind: 'user' } }),
     })) as never[]
     const { ctx, observed } = await bench({ history })
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true, resume: 'session-old' })
+    apply(ctx, config({ resume: 'session-old' }))
     await settled()
     expect(observed.order.slice(0, 2)).toEqual(['open:session-old:read', 'close'])
     expect(observed.resumed.map(options => options.resumeSessionId)).toEqual(['session-old'])
@@ -162,7 +198,7 @@ describe('tui runner', () => {
 
   it('fails loud when --resume has no persistence provider', async () => {
     const { ctx, observed } = await bench({ noPersistence: true })
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true, resume: 'session-old' })
+    apply(ctx, config({ resume: 'session-old' }))
     await settled()
     expect(observed.err).toContain('resuming a session needs a composed session persistence provider')
     expect(observed.exits).toEqual([1])
@@ -177,7 +213,7 @@ describe('tui runner', () => {
       at('turn/start', 3, { turn: 2 }),
     ]
     const { ctx, observed } = await bench({ observed: events })
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(ctx, config())
     await settled()
     const first = observed.created[0]?.sessionId
     typeLine(observed.terminal, '/fork')
@@ -206,13 +242,13 @@ describe('tui runner', () => {
 
   it('refuses to fork without a query engine or a completed turn', async () => {
     const bare = await bench()
-    apply(bare.ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(bare.ctx, config())
     await settled()
     typeLine(bare.observed.terminal, '/fork')
     await settled()
     expect(bare.observed.terminal.text()).toContain('forked failed: forking a session needs a composed session query engine')
     const open = await bench({ observed: [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } } as never] })
-    apply(open.ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(open.ctx, config())
     await settled()
     typeLine(open.observed.terminal, '/fork')
     await settled()
@@ -224,7 +260,7 @@ describe('tui runner', () => {
       { type: 'turn/start', seq: 2, time: 1, data: { turn: 2 } },
       { type: 'turn/end', seq: 3, time: 1, data: { turn: 2, reason: { kind: 'completed' } } },
     ] as never[] })
-    apply(two.ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(two.ctx, config())
     await settled()
     typeLine(two.observed.terminal, '/fork 1')
     await settled()
@@ -252,7 +288,7 @@ describe('tui runner', () => {
     internals.canOpenUrl = () => true
     internals.openUrl = (url) => { opened.push(url); return Promise.resolve() }
     provideAuth(local.ctx)
-    apply(local.ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(local.ctx, config())
     await settled()
     typeLine(local.observed.terminal, '/login codex')
     await settled()
@@ -263,7 +299,7 @@ describe('tui runner', () => {
       { source: 'process', values: { SSH_CONNECTION: '10.0.0.1 1 10.0.0.2 22' } },
     ]))
     provideAuth(ssh.ctx)
-    apply(ssh.ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(ssh.ctx, config())
     await settled()
     typeLine(ssh.observed.terminal, '/login codex')
     await settled()
@@ -272,7 +308,7 @@ describe('tui runner', () => {
 
     const disabled = await bench()
     provideAuth(disabled.ctx)
-    apply(disabled.ctx, { toolPreviewLines: 8, openBrowser: false })
+    apply(disabled.ctx, config({ openBrowser: false }))
     await settled()
     typeLine(disabled.observed.terminal, '/login codex')
     await settled()
@@ -282,7 +318,7 @@ describe('tui runner', () => {
 
   it('reports an Agent creation failure and exits 1', async () => {
     const { ctx, observed } = await bench({ failCreate: true })
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(ctx, config())
     await settled()
     expect(observed.err).toBe('dsh: factory refused\n')
     expect(observed.exits).toEqual([1])
@@ -291,7 +327,7 @@ describe('tui runner', () => {
 
   it('reports a failure during quit and exits 1', async () => {
     const { ctx, observed } = await bench()
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(ctx, config())
     await settled()
     ctx.on('session/flush', () => { throw new Error('disk gone') })
     observed.terminal.type(KEY.ctrlD)
@@ -302,7 +338,7 @@ describe('tui runner', () => {
 
   it('renders a non-error failure reason', async () => {
     const { ctx, observed } = await bench()
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(ctx, config())
     await settled()
     ctx.on('session/flush', () => { throw 'plain failure' })
     observed.terminal.type(KEY.ctrlD)
@@ -319,8 +355,40 @@ describe('tui runner', () => {
     const ctx = new Context()
     let exits = 0
     ctx.provide('appExit', () => { exits += 1 })
-    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
+    apply(ctx, config())
     await settled()
     expect(exits).toBe(0)
+  })
+})
+
+/**
+ * Run one cordis.yml entry through the plugin's schema, as the Loader does.
+ * @param input - the fields the entry set.
+ * @returns the validated config.
+ */
+function validate(input: Partial<Config>): Config {
+  return Config(input as Config)
+}
+
+describe('the presentation tunables', () => {
+  it('default to the shipped terminal settings', () => {
+    expect(validate({})).toEqual({
+      toolPreviewLines: 8,
+      liveRefreshMs: 1000,
+      streamFadeSteps: 5,
+      streamFadeStepMs: 40,
+      reducedMotion: false,
+      openBrowser: true,
+    })
+  })
+
+  it('refuse a fade shorter than two levels or faster than one frame', () => {
+    expect(() => validate({ streamFadeSteps: 1 })).toThrow()
+    expect(() => validate({ streamFadeStepMs: 15 })).toThrow()
+    expect(validate({ streamFadeSteps: 2, streamFadeStepMs: 16, reducedMotion: true })).toMatchObject({
+      streamFadeSteps: 2,
+      streamFadeStepMs: 16,
+      reducedMotion: true,
+    })
   })
 })

@@ -40,7 +40,9 @@ On quit the app prints `dsh: session <id> saved; resume with: dsh --profile tui 
 
 ### The screen
 
-The header names the session by its title once one is generated or set, with the id beside it. The transcript grows in the terminal's own scrollback: your prompts start with `›` (attachments listed under them), assistant reasoning is dim above the Markdown reply, and each tool call is a card with a status glyph, the tool name, the presenter headline, and a body folded to `toolPreviewLines` rows. Below the transcript sit a spinner while the agent works, any open prompt, the editor, and a two-line footer with the model and reasoning effort, the permission preset, cumulative token usage, the context window percentage, todo and goal and plan-mode markers from the projection seam, the workspace, the count of pending attachments, and the key hints. Compaction and model-request retries appear as notices, the same facts the browser's markers carry.
+The header names the session by its title once one is generated or set, with the id beside it. The transcript grows in the terminal's own scrollback: your prompts start with `›` (attachments listed under them), assistant reasoning is dim above the Markdown reply, and each tool call is a card with a status glyph, the tool name, the presenter headline, and a body folded to `toolPreviewLines` rows. Streamed reply text fades in: the newest words arrive near the terminal's background color and brighten to the normal foreground over `streamFadeSteps` levels of `streamFadeStepMs` each, so a soft edge trails the stream head, and text that has settled is never dimmed again. Below the transcript sit a spinner while the agent works, any open prompt, the editor, the subagent panel, and the footer: a status bar of segments over a line of key hints. The editor's caret is the terminal's own blinking bar: the app asks for that shape at start, gives your default back on quit, and draws no caret at all while the status bar or the panel holds the keyboard. Each segment appears only when its fact exists — the model and reasoning effort, the permission preset, the running turn's elapsed time, cumulative token usage, the context window percentage, todo and goal and plan-mode markers from the projection seam, the workspace path (shortened with `~` and `…/` when long), and the count of pending attachments — and `Shift+Up` moves focus into the bar to read a segment's details. Compaction and model-request retries appear as notices, the same facts the browser's markers carry.
+
+The subagent panel is drawn while a subagent session under the bound one is resident, or the listing carries a candidate it could not read. Its heading counts what it lists, and each row gives the child's depth indent, its label or id, its mode (`one-shot` or `continuable`), `resident`, whether its agent is `running` or `idle`, its elapsed time — the open turn's, else the total its settled turns took — and its token usage, as far as this process's own view of that child and the composed projections carry them. Six rows are drawn at most, with `+<n> more · /subagents lists them all` under them; a candidate the listing could not interpret draws as `unreadable: <reason>` and opens nothing, and a failed listing keeps the rows the last good one produced with `listing failed: <reason>` beneath. The panel disappears with its last row.
 
 ### Keys and commands
 
@@ -49,19 +51,27 @@ The header names the session by its title once one is generated or set, with the
 | `Enter` | Send the editor text; while a turn runs it is queued for the next turn |
 | `Ctrl+S` | While a turn runs, steer the editor text into the running turn's next step |
 | `Shift+Enter` | Insert a newline |
-| `Shift+Tab` | Cycle the current model's reasoning effort for the next request |
+| `Shift+Tab` | While the editor has focus, cycle the current model's reasoning effort for the next request |
 | `Up` / `Down` | Recall earlier prompts |
+| `Shift+Up` | Move focus on through the docked regions: editor → status bar → subagent panel → editor |
+| `Shift+Down` | Move focus back through that cycle; in the editor with no panel drawn it stays the editor's own key |
 | `Esc` | Stop the running turn; queued messages stay queued |
 | `Ctrl+O` | Expand or collapse every tool card |
 | `Ctrl+C` | Clear the editor; a second press within 600 ms quits |
 | `Ctrl+D` | Quit when the editor is empty |
+
+While the status bar has focus, `Left` / `Right` and `Tab` / `Shift+Tab` move between segments and wrap at both ends, `Enter` opens the selected segment while the bar keeps focus, `Shift+Up` moves on to the subagent panel while it is drawn, and `Esc` or `Shift+Down` returns focus to the editor. No other key reaches the editor while the bar has focus; `Ctrl+C` and `Ctrl+D` keep their usual meaning and return focus to the editor.
+
+While the subagent panel has focus, `Up` / `Down` move the selection and wrap at both ends, `Enter` opens that child's session details as a read-only page and comes back to the panel on the same row, `Shift+Down` moves on to the status bar, and `Esc` or `Shift+Up` returns focus to the editor. Every other key is consumed there as well, apart from `Ctrl+C` and `Ctrl+D`; the panel also hands the keyboard back to the editor when its last row leaves.
+
+Every segment except `todo` prints its details into the transcript, stating its current facts and naming what changes them: the model segment names `/model`, the effort segment `Shift+Tab`, and the permission segment its preset, the `turn` segment — drawn as `turn <elapsed>` between the permission and usage segments, and only while a turn runs — gives the turn number, its start time, its elapsed time, and the queued-message counts, while the usage, context, goal, and plan segments print the matching sections of the `/status` report, the workspace segment the full path, and the attachments segment the pending attachments. The `todo` segment opens the agent's todo list instead, the same list `/todos` opens.
 
 Typing `/` at the start of the editor completes the terminal's own commands and the shared registry's; `@` anywhere completes references.
 
 | Command | Effect |
 |---|---|
 | `/help` | List commands and keys |
-| `/model` | Pick the model, then its reasoning effort when the model declares more than one, for the next request; `/model <provider>/<model>` selects directly and `/model save` stores the current selection as the default |
+| `/model` | Pick the model (type to filter the rows), then its reasoning effort when the model declares more than one, for the next request; `/model <provider>/<model>` selects directly and `/model save` stores the current selection as the default |
 | `/sessions` | Pick another persisted session and switch to it |
 | `/new` | Start a new session |
 | `/fork [turn]` | Fork this session at its last completed turn, or after turn `turn` |
@@ -73,15 +83,20 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/login` | Sign in with a provider subscription (hides key-collecting logins); `/login <key>` skips the picker |
 | `/export [dir]` | Write this session's log ZIP (sub-sessions and attachments included) into `dir`, default the workspace |
 | `/status` | Context window usage and breakdown, token totals with cache hit, session stats, todos, goal, plan mode, and permission |
+| `/todos` | Browse the agent's todo list; `Enter` opens one item in full with its status, position, and turns |
 | `/outline` | The turns of this session with their prompt and reply previews |
 | `/deliverables` | The files the agent presented, grouped by turn |
-| `/subagents` | The subagent sessions under this session, with activity and ids |
+| `/subagents` | Browse the subagent sessions under this session; `Enter` opens one session's details |
 | `/settings [ns [path value]]` | List namespaces, show one, or set one field; `/settings reset <ns>` restores defaults |
 | `/plugins` | The composed plugins with enablement and lifecycle phase |
 | `/tools` | Expand or collapse every tool card, like `Ctrl+O` |
 | `/quit`, `/exit` | Save the session and exit |
 
 Every other `/name` line goes to the shared command registry, so `/compact`, `/permission`, `/goal`, and plugin commands work as they do in the browser.
+
+Every picker the terminal opens — the model and reasoning-effort lists of `/model`, `/sessions`, the `/subagents` and `/todos` lists, and the rows `/signin` and `/login` raise — filters its rows as you type: the query matches each row's label and description together, its whitespace- and slash-separated tokens must all match, and the rows are ordered best match first, so `dsk chat` and `deepseek/chat` both find `deepseek/deepseek-chat` and `gpt5` finds `gpt-5`. `Backspace` drops the last character, `Ctrl+U` clears the query, `Esc` clears a non-empty query and cancels the picker once the query is empty, `Up` / `Down` move within the matches, and `Enter` picks the highlighted row. The dim line above the rows reads `type to filter · Enter selects · Esc cancels` while the query is empty and `filter: <query> · <kept>/<total>` afterwards; a query nothing matches draws `no row matches "<query>"` in place of the rows, and the `✓` on the row in force — the row a picker opens on — shows only while the query is empty.
+
+`/subagents`, `/todos`, and the `todo` status-bar segment share one list-then-details interaction: the picker lists the entries, `Enter` opens the highlighted entry as a read-only page, `Up` / `Down` and `PageUp` / `PageDown` scroll that page, and `Enter`, `Esc`, or `Left` returns to the list on the entry just read, so walking several entries costs no retyped command; `Esc` at the list returns to the editor. An entry whose details cannot be read says so on its page instead of closing the list.
 
 ### Subscription sign-in
 
@@ -102,6 +117,10 @@ An approval request draws `Allow <tool>?` with the asker's reason, the logged ca
 | `prompt` | none | A first prompt submitted when the terminal is up |
 | `resume` | none | A persisted session id to continue instead of starting a new one |
 | `toolPreviewLines` | `8` | Collapsed tool-card body rows before `Ctrl+O` expands them |
+| `liveRefreshMs` | `1000` | Period of the redraw that advances the `turn` segment and the panel's elapsed values and re-reads a stale subagent listing |
+| `streamFadeSteps` | `5` | Brightness levels streamed assistant text climbs before it draws in the normal foreground |
+| `streamFadeStepMs` | `40` | How long one brightness level lasts, which is also the repaint period of the fading text |
+| `reducedMotion` | `false` | Draw streamed text at the normal foreground, with no fade and no repeating repaint |
 | `openBrowser` | `true` | Hand marked authorization pages to the local default browser |
 
 `prompt`, `resume`, and `openBrowser` come from the command line through the startup provider; the generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tui-app) is the exhaustive source for every accepted field.
@@ -122,7 +141,7 @@ The runner awaits the complete application (`ctx.get('loader')?.await()`) and bu
 
 ### Rendering model
 
-Durable facts come from the session log: `user/message` (own submissions are drawn once and their echo skipped by message id; a plugin notice is one dim row and other injected context is not drawn), `assistant/message` (which replaces the streamed block with the committed text and folds usage into the footer), `tool/call` and `tool/result` (drawn through the tool's `presentCall` and `presentResult` views when it declares them, with a raw-argument and raw-result fallback), `turn/end` notices, `session/title` (header), and `permission/preset` (footer). Live incrementality comes from `agent/assistant-stream` text and reasoning deltas. Session facts outside the log come from the same services the browser reads: `sessionTitle`, `permissionPresets`, `sessionQuery` for the picker and `/deliverables`, `sessionProjections` for the footer, `/status`, and `/outline`, `fileReferences` and `sessionReferenceResolver` for `@` completion, `attachments`, `skills`, `authorization`, `settings`, `subagents`, and the Loader's entries for `/plugins`. Modal prompts are process-local presentation and are never logged.
+Durable facts come from the session log: `user/message` (own submissions are drawn once and their echo skipped by message id; a plugin notice is one dim row and other injected context is not drawn), `assistant/message` (which replaces the streamed block with the committed text and folds usage into the footer), `tool/call` and `tool/result` (drawn through the tool's `presentCall` and `presentResult` views when it declares them, with a raw-argument and raw-result fallback), `turn/end` notices, `session/title` (header), `permission/preset` (footer), and `todo/write` under the enclosing `turn/start` (the turns one todo item's page reports; the list carries no per-item identity, so a reworded item counts as a new one). Live incrementality comes from `agent/assistant-stream` text and reasoning deltas. Session facts outside the log come from the same services the browser reads: `sessionTitle`, `permissionPresets`, `sessionQuery` for the picker, `/deliverables`, and subagent details, `sessionProjections` for the footer, `/status`, `/todos`, and `/outline`, `fileReferences` and `sessionReferenceResolver` for `@` completion, `attachments`, `skills`, `authorization`, `settings`, `subagents`, and the Loader's entries for `/plugins`. Modal prompts are process-local presentation and are never logged.
 
 ### Patch surface over base
 
@@ -139,18 +158,23 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/attach.ts`](src/attach.ts) | `/attach`: local files into image or file blocks through the attachment store |
 | [`src/export.ts`](src/export.ts) | `/export`: the session-log ZIP written through the export package's archive helpers |
 | [`src/blocks.ts`](src/blocks.ts) | Transcript components: user prompt, assistant reply, tool card, notice |
-| [`src/prompts.ts`](src/prompts.ts) | Approval, question, and picker prompts plus the modal queue |
+| [`src/fade.ts`](src/fade.ts) | The streamed-text fade: the tail tracker, the background-to-foreground ramp, and the recolor of rendered lines |
+| [`src/prompts.ts`](src/prompts.ts) | Approval, question, picker, and read-only detail prompts plus the modal queue |
 | [`src/transcript.ts`](src/transcript.ts) | Pure text folding of presentation views, usage, and turn-end reasons |
 | [`src/diff.ts`](src/diff.ts) | Line diff and hunk selection for diff cards |
 | [`src/style.ts`](src/style.ts) | The palette and the derived pi-tui themes |
 | [`src/completion.ts`](src/completion.ts) | Slash-command and `@`-reference completion for the editor |
-| [`src/status.ts`](src/status.ts) | Footer parts and the `/status` report over the projection seam; compaction and retry notices |
+| [`src/editor.ts`](src/editor.ts) | The prompt editor without pi-tui's drawn block cursor, and the DECSCUSR sequences for the terminal's own caret |
+| [`src/status.ts`](src/status.ts) | Projection-seam facts and the sections the `/status` report and the segment details share; compaction and retry notices |
+| [`src/footer.ts`](src/footer.ts) | The status bar: the ordered segments, each segment's detail rows, and the footer's two rendered lines |
+| [`src/subagent-panel.ts`](src/subagent-panel.ts) | The live subagent panel: one descendant listing plus sampled live facts become its rows, and the rows its text |
 | [`src/catalog.ts`](src/catalog.ts) | Rows for `/settings`, `/plugins`, `/subagents`, `/deliverables`, and `/outline` |
+| [`src/todos.ts`](src/todos.ts) | The todo list: the status glyphs, the picker rows, and one item's detail rows |
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers listeners on one Agent and holds no mutable relation another observer could contradict. |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | Rendering, keys, commands, and both seams over a fake terminal |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | Session, attachment, queue, skill, sign-in, `/login`, Shift+Tab effort cycling, export, reference, and effort commands over scripted services |
-| [`tests/panels.spec.ts`](tests/panels.spec.ts) | Status footer and report, catalog commands, command hints, and the approval detail |
+| [`tests/panels.spec.ts`](tests/panels.spec.ts) | Status footer and report, the navigable subagent and todo lists, catalog commands, command hints, and the approval detail |
 | [`tests/index.spec.ts`](tests/index.spec.ts) | Creation, resume paging, fork cut, session switching, quit flow, and failure reporting |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
 | [`../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts`](../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts) | The shipped profile through the real launcher with a keyless mock model |
@@ -201,6 +225,11 @@ These limits describe the terminal surface as shipped; they are not a general CL
 - **Browser-only pages stay in the browser** — workspace and directory pickers, open-in-app links, the trajectory ledger, and per-message like/dislike have no terminal counterpart; `/settings`, `/plugins`, `/subagents`, `/outline`, and the shared `/feedback` cover their facts as text, and subagent transcripts are read by switching to the child session.
 - **Deliverables are named, not opened** — `/deliverables` lists the presented paths; the browser previews the files.
 - **Terminal scrollback owns history** — the transcript is not searchable or foldable beyond tool cards; the browser surface owns richer navigation.
+- **The panel lists residency, not the tree** — a child joins it while its session record is resident in this process, so a subagent run by an out-of-process provider, which owns no session here, never appears; `/subagents` remains the way to every durable descendant.
+- **Residency is not work** — the listing's `activity: 'running'` says the child's record is resident, which is what the row's `resident` reports; whether the child is working is the separate `running` / `idle` word beside it, read from that child's Agent in this process.
+- **Rows behind the overflow row are not selectable** — the panel draws at most six rows and `Up` / `Down` wrap inside them; the children folded into `+<n> more` are reached through `/subagents`, which walks the complete descendant tree.
+- **The fade needs an answer from the terminal** — its ramp is built from the background color the terminal reports to the query sent at startup, so a terminal that stays silent, or that encodes neither truecolor nor 256 colors, gets the two-level faint mode instead; `NO_COLOR`, a disabled palette, `TERM=dumb`, and `reducedMotion` turn the effect off entirely.
+- **The terminal's own caret can flicker** — the editor draws no caret of its own and the app turns the terminal cursor on, which pi-tui then moves across the lines it repaints; a terminal that does not honor the synchronized-output sequences pi-tui wraps a frame in can show that movement.
 - **Runs through the `dsh` launcher** — starting the profile another way fails at startup, because only the launcher can request the process exit.
 
 <a id="dev-note"></a>

@@ -39,6 +39,38 @@ export function formatTokens(count: number): string {
   return `${(count / 1_000_000).toFixed(1)}M`
 }
 
+/**
+ * Compact elapsed time for the live counters: `0s`, `8s`, `1m12s`, `1h04m`,
+ * `26h07m`. Seconds are truncated rather than rounded, so a counter never
+ * reports a second that has not passed, and a negative input — a clock that
+ * moved backwards between two samples — reads `0s`. A unit under a larger one
+ * is padded to two digits so the text keeps its width while a counter runs,
+ * and past an hour the seconds are dropped. `formatDuration` in `status.ts`
+ * reports recorded model and tool times instead: tenths under a minute, and
+ * no hour unit.
+ * @param ms - elapsed milliseconds.
+ * @returns the formatted duration.
+ */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor(total / 60) % 60
+  const seconds = total % 60
+  if (hours > 0) return `${String(hours)}h${String(minutes).padStart(2, '0')}m`
+  if (minutes > 0) return `${String(minutes)}m${String(seconds).padStart(2, '0')}s`
+  return `${String(seconds)}s`
+}
+
+/**
+ * `YYYY-MM-DD HH:MM` in UTC: how this terminal dates a recorded moment, in
+ * the session picker, the subagent details, and the status bar alike.
+ * @param ms - a Unix timestamp in milliseconds.
+ * @returns the formatted timestamp.
+ */
+export function formatTimestamp(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
+}
+
 /** Cumulative usage across the session's committed assistant messages. */
 export interface UsageTotals {
   inputTokens: number

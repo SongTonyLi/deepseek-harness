@@ -116,19 +116,24 @@ describe('readStatusFacts', () => {
 })
 
 describe('footerStatus', () => {
-  it('shows one short part per present fact', () => {
+  it('tags one short part per present fact with the status-bar segment it becomes', () => {
     const facts: StatusFacts = {
       context: { used: 54_000, window: 128_000, percent: 42 },
       todos: { items: [{ content: 'a', status: 'completed' }, { content: 'b', status: 'pending' }], done: 1, active: 0, pending: 1 },
       goal: { phase: 'active', objective: 'ship it', round: 1, maxRounds: 8 },
       plan: { active: true, pending: false },
     }
-    expect(footerStatus(facts)).toEqual(['ctx 42%', 'todo 1/2', 'goal active', 'plan'])
+    expect(footerStatus(facts)).toEqual([
+      { id: 'context', label: 'ctx 42%' },
+      { id: 'todo', label: 'todo 1/2' },
+      { id: 'goal', label: 'goal active' },
+      { id: 'plan', label: 'plan' },
+    ])
     expect(footerStatus({})).toEqual([])
   })
 
   it('marks a pending plan switch and hides plan mode while off', () => {
-    expect(footerStatus({ plan: { active: false, pending: true } })).toEqual(['plan…'])
+    expect(footerStatus({ plan: { active: false, pending: true } })).toEqual([{ id: 'plan', label: 'plan…' }])
     expect(footerStatus({ plan: { active: false, pending: false } })).toEqual([])
   })
 })

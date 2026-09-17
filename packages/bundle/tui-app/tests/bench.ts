@@ -10,12 +10,25 @@ import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, type StreamChunk, type ContentBlock, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
-import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionEventType, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { Terminal } from '@earendil-works/pi-tui'
 import { TuiApp, type BoundSession, type SessionHost } from '../src/app.ts'
+import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
 import { createPalette } from '../src/style.ts'
+
+/**
+ * The clock every bench starts at, a fixed instant so an elapsed readout is
+ * the same on every run. Specs move it with `advance` or `tick`.
+ */
+export const BENCH_NOW = Date.UTC(2026, 1, 3, 14, 25, 0)
+
+/** Let the throttled renderer draw everything pending. */
+function settle(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 60))
+}
 
 /**
  * Provide the export services over one stored session: a read handle with a
@@ -39,6 +52,9 @@ export function exportStubs(ctx: Context, id: SessionId, missing = false): void 
   ctx.provide('attachments', {} as never)
 }
 
+/** The OSC 11 background-color query pi-tui writes, `ESC ] 11 ; ? BEL`. */
+const OSC11_BACKGROUND_QUERY = '\u001b]11;?\u0007'
+
 /** A terminal that records what the tree writes and lets tests type into it. */
 export class FakeTerminal implements Terminal {
   output = ''
@@ -48,6 +64,12 @@ export class FakeTerminal implements Terminal {
   kittyProtocolActive = false
   started = false
   stopped = false
+  /**
+   * Body this terminal answers an OSC 11 background-color query with, e.g.
+   * `rgb:0000/0000/0000`. Undefined answers nothing, which is the terminal
+   * that lets the query time out.
+   */
+  backgroundReply: string | undefined
   private onInput: ((data: string) => void) | undefined
   private onResize: (() => void) | undefined
 
@@ -67,6 +89,11 @@ export class FakeTerminal implements Terminal {
 
   write(data: string): void {
     this.output += data
+    // pi-tui registers the pending query before it writes it, so answering
+    // from inside the write is what a terminal that replies at once does.
+    if (this.backgroundReply !== undefined && data.includes(OSC11_BACKGROUND_QUERY)) {
+      this.type(`\u001b]11;${this.backgroundReply}\u0007`)
+    }
   }
 
   moveBy(): void {}
@@ -112,6 +139,11 @@ export const KEY = {
   ctrlS: '\u0013',
   up: '\u001b[A',
   down: '\u001b[B',
+  left: '\u001b[D',
+  right: '\u001b[C',
+  shiftUp: '\u001b[1;2A',
+  shiftDown: '\u001b[1;2B',
+  tab: '\t',
   shiftTab: '\u001b[Z',
   space: ' ',
 } as const
@@ -123,6 +155,22 @@ export interface AgentCalls {
   cancels: number
   /** The options of the last cancel, e.g. `{ keepInbox: true }`. */
   cancelOptions: unknown
+}
+
+/** One Agent the bench created under the bound session, for the subagent surfaces. */
+export interface BenchChild {
+  agent: Agent
+  session: Session
+  id: SessionId
+  /** Set this child's status and publish the transition, as the bound Agent's `setStatus` does. */
+  setStatus(status: 'idle' | 'running'): void
+  /**
+   * Append one log-only event to the child's own session, which reaches the
+   * app as a non-bound `session/event`.
+   * @param type - the event type; surface events, which take intent options, are out of scope.
+   * @param data - the event payload.
+   */
+  append(type: SessionEventType, data: unknown): void
 }
 
 export interface Bench {
@@ -141,8 +189,53 @@ export interface Bench {
   opened: { bound: BoundSession; disposed: number }[]
   /** Set the scripted Agent's status and publish the transition. */
   setStatus(status: 'idle' | 'running'): void
+  /**
+   * Create one Agent and Session under the bound session, as a subagent
+   * provider would: the durable header carries the parent, `origin`, and the
+   * delegation depth the listing reads.
+   * @param options - the child's label-free identity: its id and depth.
+   * @returns the child and the handles a spec drives it with.
+   */
+  createChild(options?: { id?: string; depth?: number; parent?: SessionId }): Promise<BenchChild>
+  /**
+   * Run one period of every tick the app armed at `delayMs`, moving the bench
+   * clock forward first. Nothing happens while no tick of that period is
+   * armed. The app arms at most one tick per purpose, each at its own
+   * configured period, so a period names the tick a spec drives.
+   * @param delayMs - the period to run, e.g. the live-refresh or the fade period.
+   * @param advanceMs - milliseconds to move the clock by; `delayMs` by default.
+   */
+  runTick(delayMs: number, advanceMs?: number): void
+  /**
+   * Run one period of the app's live-refresh interval, moving the bench clock
+   * forward first. Nothing happens while the app has the interval disarmed.
+   * @param advanceMs - milliseconds to move the clock by; one period by default.
+   */
+  tick(advanceMs?: number): void
+  /**
+   * Put the bench clock at one instant without running a period, for an
+   * elapsed readout measured against a time the session log recorded.
+   * @param ms - the Unix time in milliseconds the app now reads.
+   */
+  setNow(ms: number): void
+  /**
+   * Whether the app has a tick of one period armed right now.
+   * @param delayMs - the period; the live-refresh period by default.
+   * @returns true while that tick is armed.
+   */
+  tickArmed(delayMs?: number): boolean
+  /** The periods the app has armed right now, in the order it armed them. */
+  tickDelaysMs(): number[]
   /** Wait for the throttled renderer to draw pending changes. */
   settle(): Promise<void>
+  /**
+   * The text of one complete repaint. `terminal.text()` accumulates every
+   * frame ever written, so it can show that something was drawn but never
+   * that it stopped being drawn; this resizes the terminal, which redraws the
+   * whole screen, and returns only that frame.
+   * @returns the complete current frame.
+   */
+  screen(): Promise<string>
   /** Emit assistant stream frames for the Agent. */
   stream: {
     start(): void
@@ -176,6 +269,30 @@ export async function bench(options: {
   hostGate?: { release: () => void }
   /** Replace the real projection registry: `none` mounts nothing, an object is provided as the service. */
   projections?: 'none' | { snapshot(session: Session, keys: readonly string[]): unknown; onChanged(listener: (session: Session) => void): () => void }
+  /**
+   * Provide a subagent runtime whose `listDescendants` this callback answers.
+   * The app re-reads the listing on every reconcile, so a callback that
+   * returns different entries — or rejects — models a tree that changed or a
+   * service that failed. Absent leaves the service unmounted.
+   */
+  subagents?: (sessionId: SessionId) => Promise<readonly SubagentDescendantListEntry[]>
+  /** The live-refresh period the app is configured with. */
+  liveRefreshMs?: number
+  /** Brightness levels the fade is configured with. */
+  fadeSteps?: number
+  /** The fade period the app is configured with. */
+  fadeStepMs?: number
+  /** Ask for streamed text drawn with no ramp. */
+  reducedMotion?: boolean
+  /** The environment the fade capability is decided from; empty by default, which yields the two-level mode. */
+  env?: NodeJS.ProcessEnv
+  /**
+   * The body the fake terminal answers the app's OSC 11 background-color
+   * query with, e.g. `rgb:0000/0000/0000`. The default body does not parse as
+   * a color, which is how a terminal that cannot report its background
+   * behaves; `false` answers nothing at all, so the query runs to its timeout.
+   */
+  background?: string | false
   /** History the host attaches to a resumed or forked session. */
   openedHistory?: readonly SessionEvent[]
   /** Authorization-page handoff; omitted to model a remote or headless terminal. */
@@ -188,9 +305,17 @@ export async function bench(options: {
   else if (options.projections !== 'none') ctx.provide('sessionProjections', options.projections as never)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
+  if (options.subagents !== undefined) {
+    const listDescendants = options.subagents
+    ctx.provide('subagents', { listDescendants: (sessionId: SessionId) => listDescendants(sessionId) } as never)
+  }
   await options.before?.(ctx)
   const calls: AgentCalls = { followups: [], steers: [], cancels: 0, cancelOptions: undefined }
-  let status: 'idle' | 'running' = options.running === true ? 'running' : 'idle'
+  // Every Agent the host binds shares the status `setStatus` moves, so a spec
+  // that switches sessions keeps driving one scripted Agent; a child created
+  // with `createChild` carries its own.
+  let hostStatus: 'idle' | 'running' = options.running === true ? 'running' : 'idle'
+  const childStatuses = new Map<SessionId, 'idle' | 'running'>()
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
       const session = ctx.sessions.create(createOptions.sessionId, {
@@ -201,7 +326,7 @@ export async function bench(options: {
         options: createOptions.agentOptions ?? {},
         session,
         inbox: createInboxStub(),
-        get status() { return status },
+        get status() { return childStatuses.get(session.id) ?? hostStatus },
         ctx: ownerCtx,
         cancel: (_reason, options) => { calls.cancels += 1; calls.cancelOptions = options },
         runMaintenance: () => Promise.reject(new Error('not used')),
@@ -227,6 +352,7 @@ export async function bench(options: {
     ...options.unselected === true ? {} : { agentOptions: { provider: 'test-provider', model: 'test-model' } },
   })
   const terminal = new FakeTerminal()
+  if (options.background !== false) terminal.backgroundReply = options.background ?? 'not-a-color'
   const quits: BoundSession[] = []
   const hostCalls: string[] = []
   const opened: { bound: BoundSession; disposed: number }[] = []
@@ -261,6 +387,19 @@ export async function bench(options: {
     dispose: () => { disposed += 1; return Promise.resolve() },
   }
   opened.push({ bound: initial, get disposed() { return disposed } })
+  const liveRefreshMs = options.liveRefreshMs ?? 1000
+  const fadeStepMs = options.fadeStepMs ?? FADE_TICK_MS
+  let now = BENCH_NOW
+  // The bench holds every armed tick instead of a real timer, so a spec
+  // decides exactly when a period runs and for which tick.
+  const armed: { callback: () => void; delayMs: number }[] = []
+  const runTick = (delayMs: number, advanceMs: number = delayMs): void => {
+    now += advanceMs
+    // A callback can disarm itself or another tick, so the run walks a copy.
+    for (const entry of [...armed]) {
+      if (entry.delayMs === delayMs) entry.callback()
+    }
+  }
   const app = new TuiApp({
     ctx,
     host,
@@ -268,6 +407,20 @@ export async function bench(options: {
     terminal,
     palette: createPalette(options.color ?? false),
     toolPreviewLines: options.toolPreviewLines ?? 3,
+    liveRefreshMs,
+    fadeSteps: options.fadeSteps ?? FADE_STEPS,
+    fadeStepMs,
+    reducedMotion: options.reducedMotion ?? false,
+    env: options.env ?? {},
+    now: () => now,
+    tick: (callback, delayMs) => {
+      const entry = { callback, delayMs }
+      armed.push(entry)
+      return () => {
+        const at = armed.indexOf(entry)
+        if (at !== -1) armed.splice(at, 1)
+      }
+    },
     cwd: '/work',
     ...options.openUrl === undefined ? {} : { openUrl: options.openUrl },
     releaseInput: () => {},
@@ -279,6 +432,7 @@ export async function bench(options: {
   let revision = 0
   let index = 0
   let turn = 0
+  let childCount = 0
   const emit = (frame: AssistantStreamFrame): void => { agent.ctx.emit('agent/assistant-stream', { agent, frame }) }
   return {
     ctx,
@@ -292,10 +446,56 @@ export async function bench(options: {
     hostCalls,
     opened,
     setStatus(next) {
-      status = next
+      hostStatus = next
       agent.ctx.emit('agent/status', { agent, status: next })
     },
-    settle: () => new Promise(resolve => setTimeout(resolve, 60)),
+    async createChild(childOptions = {}) {
+      const id = (childOptions.id ?? `session-child-${String(++childCount)}`) as SessionId
+      childStatuses.set(id, 'idle')
+      const handle = await ctx.agents.create({
+        sessionId: id,
+        meta: {
+          cwd: '/work',
+          parentSession: childOptions.parent ?? agent.session.id,
+          origin: 'subagent',
+          delegationDepth: childOptions.depth ?? 1,
+        },
+      })
+      const child = handle.agent
+      return {
+        agent: child,
+        session: child.session,
+        id,
+        setStatus(next) {
+          childStatuses.set(id, next)
+          child.ctx.emit('agent/status', { agent: child, status: next })
+        },
+        append(type, data) {
+          // `append` takes surface intent options for surface event types;
+          // this helper carries the log-only lifecycle events instead.
+          const log = child.session as unknown as { append(type: string, data: unknown): void }
+          log.append(type, data)
+        },
+      }
+    },
+    runTick,
+    tick(advanceMs = liveRefreshMs) {
+      runTick(liveRefreshMs, advanceMs)
+    },
+    setNow(ms) {
+      now = ms
+    },
+    tickArmed: (delayMs = liveRefreshMs) => armed.some(entry => entry.delayMs === delayMs),
+    tickDelaysMs: () => armed.map(entry => entry.delayMs),
+    settle: () => settle(),
+    async screen() {
+      terminal.output = ''
+      // A width change redraws every line; a plain render only rewrites the
+      // lines that changed, which would keep a removed panel out of sight.
+      terminal.resize(terminal.columns === 100 ? 96 : 100)
+      await settle()
+      return terminal.text()
+    },
     stream: {
       start: () => { emit({ type: 'start', attemptId, revision: ++revision, turn: 1, step: 1 }) },
       chunk: (chunk) => { emit({ type: 'chunk', attemptId, revision: ++revision, index: index++, time: Date.now(), chunk }) },
