@@ -59,6 +59,7 @@ export const apply = ctx => globalThis.__tuiStartupApply(ctx)
     '  config:',
     '    prompt: !!js ctx.tuiStartup.prompt',
     '    resume: !!js ctx.tuiStartup.resume',
+    '    openBrowser: !!js ctx.tuiStartup.openBrowser',
     '- id: tui-app-startup',
     `  name: ${pathToFileURL(join(dir, 'startup.mjs')).href}`,
     '',
@@ -89,21 +90,21 @@ export const apply = ctx => globalThis.__tuiStartupApply(ctx)
 describe('tui command-line provider', () => {
   it('starts a new session with no arguments', async () => {
     const { values, observed } = await bootStartup([])
-    expect(values).toEqual({ prompt: undefined, resume: undefined })
-    expect(observed.runnerConfig).toEqual({ prompt: undefined, resume: undefined })
+    expect(values).toEqual({ prompt: undefined, resume: undefined, openBrowser: true })
+    expect(observed.runnerConfig).toEqual({ prompt: undefined, resume: undefined, openBrowser: true })
     expect(observed.exits).toEqual([])
   })
 
   it('joins the prompt positional and carries --resume into the runner config', async () => {
     const { values, observed } = await bootStartup(['--resume', 'session-abc', 'explain', 'this'])
-    expect(values).toEqual({ prompt: 'explain this', resume: 'session-abc' })
-    expect(observed.runnerConfig).toEqual({ prompt: 'explain this', resume: 'session-abc' })
+    expect(values).toEqual({ prompt: 'explain this', resume: 'session-abc', openBrowser: true })
+    expect(observed.runnerConfig).toEqual({ prompt: 'explain this', resume: 'session-abc', openBrowser: true })
     expect(observed.exits).toEqual([])
   })
 
-  it('treats a whitespace-only prompt as none', async () => {
-    const { values } = await bootStartup(['  '])
-    expect(values).toEqual({ prompt: undefined, resume: undefined })
+  it('treats a whitespace-only prompt as none and can disable browser handoff', async () => {
+    const { values } = await bootStartup(['--no-open', '  '])
+    expect(values).toEqual({ prompt: undefined, resume: undefined, openBrowser: false })
   })
 
   it('rejects a blank --resume value', async () => {
@@ -117,6 +118,7 @@ describe('tui command-line provider', () => {
     const { values, observed } = await bootStartup(['--help'])
     expect(observed.out).toContain('dsh --profile tui')
     expect(observed.out).toContain('--resume <session-id>')
+    expect(observed.out).toContain('--no-open')
     expect(values).toBeUndefined()
     expect(observed.runnerConfig).toBeUndefined()
     expect(observed.exits).toEqual([0])

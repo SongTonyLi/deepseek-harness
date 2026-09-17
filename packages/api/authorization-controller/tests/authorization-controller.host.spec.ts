@@ -181,13 +181,18 @@ describe('the authorization Remote namespace a configuration surface calls', () 
     const { ctx, controller } = await harness()
     const answered = vi.fn<(value: string) => void>()
     ctx.authorization.registerFlow(flow(ctx, async (session) => {
-      session.notify({ message: 'Open this page', url: 'https://auth.example/start', code: 'ABCD-1234' })
+      session.notify({
+        message: 'Open this page',
+        url: 'https://auth.example/start',
+        openInBrowser: true,
+        code: 'ABCD-1234',
+      })
       session.notify({ message: 'Waiting…' })
       answered(await session.prompt({ kind: 'text', message: 'Paste the code', placeholder: 'http://localhost:1455/auth/callback' }))
     }))
     const stream = open(controller, { key: KEY, method: 'oauth' })
     expect(await stream.next()).toEqual({
-      type: 'notice', message: 'Open this page', url: 'https://auth.example/start', code: 'ABCD-1234',
+      type: 'notice', message: 'Open this page', url: 'https://auth.example/start', openInBrowser: true, code: 'ABCD-1234',
     })
     expect(await stream.next()).toEqual({ type: 'notice', message: 'Waiting…' })
     const prompt = promptOf(await stream.next())

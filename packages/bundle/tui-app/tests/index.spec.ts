@@ -1,11 +1,12 @@
 /** The runner plugin: Agent creation or resume, the quit flow, and failure reporting. */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
@@ -14,7 +15,10 @@ import { apply, internals } from '../src/index.ts'
 import { FakeTerminal, KEY } from './bench.ts'
 
 const originalInternals = { ...internals }
-afterEach(() => { Object.assign(internals, originalInternals) })
+afterEach(() => {
+  Object.assign(internals, originalInternals)
+  vi.unstubAllEnvs()
+})
 
 interface Observed {
   terminal: FakeTerminal
@@ -100,6 +104,8 @@ async function bench(
   internals.releaseInput = () => { observed.order.push('release') }
   internals.stderr = { write: (chunk: string) => { observed.err += chunk; return true } }
   internals.color = false
+  internals.canOpenUrl = () => false
+  internals.openUrl = () => Promise.resolve()
   ctx.provide('appExit', (code: number) => { observed.order.push(`exit:${String(code)}`); observed.exits.push(code) })
   return { ctx, observed }
 }
@@ -116,12 +122,12 @@ async function settled(): Promise<void> {
 describe('tui runner', () => {
   it('refuses to mount without the launcher exit request', () => {
     const ctx = new Context()
-    expect(() => { apply(ctx, { toolPreviewLines: 8 }) }).toThrow('ctx.appExit')
+    expect(() => { apply(ctx, { toolPreviewLines: 8, openBrowser: true }) }).toThrow('ctx.appExit')
   })
 
   it('creates a fresh Agent with the default model, submits the prompt, and quits through flush and dispose', async () => {
     const { ctx, observed } = await bench()
-    apply(ctx, { toolPreviewLines: 8, prompt: 'first' })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true, prompt: 'first' })
     await settled()
     expect(observed.created).toHaveLength(1)
     expect(observed.created[0]?.meta).toEqual({ cwd: process.cwd() })
@@ -144,7 +150,7 @@ describe('tui runner', () => {
       data: createUserMessage({ content: [{ type: 'text', text: `prompt ${String(seq)}` }], source: { kind: 'user' } }),
     })) as never[]
     const { ctx, observed } = await bench({ history })
-    apply(ctx, { toolPreviewLines: 8, resume: 'session-old' })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true, resume: 'session-old' })
     await settled()
     expect(observed.order.slice(0, 2)).toEqual(['open:session-old:read', 'close'])
     expect(observed.resumed.map(options => options.resumeSessionId)).toEqual(['session-old'])
@@ -156,7 +162,7 @@ describe('tui runner', () => {
 
   it('fails loud when --resume has no persistence provider', async () => {
     const { ctx, observed } = await bench({ noPersistence: true })
-    apply(ctx, { toolPreviewLines: 8, resume: 'session-old' })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true, resume: 'session-old' })
     await settled()
     expect(observed.err).toContain('resuming a session needs a composed session persistence provider')
     expect(observed.exits).toEqual([1])
@@ -171,7 +177,7 @@ describe('tui runner', () => {
       at('turn/start', 3, { turn: 2 }),
     ]
     const { ctx, observed } = await bench({ observed: events })
-    apply(ctx, { toolPreviewLines: 8 })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     const first = observed.created[0]?.sessionId
     typeLine(observed.terminal, '/fork')
@@ -200,13 +206,13 @@ describe('tui runner', () => {
 
   it('refuses to fork without a query engine or a completed turn', async () => {
     const bare = await bench()
-    apply(bare.ctx, { toolPreviewLines: 8 })
+    apply(bare.ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     typeLine(bare.observed.terminal, '/fork')
     await settled()
     expect(bare.observed.terminal.text()).toContain('forked failed: forking a session needs a composed session query engine')
     const open = await bench({ observed: [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } } as never] })
-    apply(open.ctx, { toolPreviewLines: 8 })
+    apply(open.ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     typeLine(open.observed.terminal, '/fork')
     await settled()
@@ -218,7 +224,7 @@ describe('tui runner', () => {
       { type: 'turn/start', seq: 2, time: 1, data: { turn: 2 } },
       { type: 'turn/end', seq: 3, time: 1, data: { turn: 2, reason: { kind: 'completed' } } },
     ] as never[] })
-    apply(two.ctx, { toolPreviewLines: 8 })
+    apply(two.ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     typeLine(two.observed.terminal, '/fork 1')
     await settled()
@@ -228,9 +234,55 @@ describe('tui runner', () => {
     expect(two.observed.terminal.text()).toContain('has no completed turn 7')
   })
 
+  it('hands marked sign-in pages to the browser only for local desktop launches', async () => {
+    const provideAuth = (ctx: Context): void => {
+      ctx.provide('authorization', {
+        list: () => [{ key: 'codex', label: 'Codex', methods: [{ id: 'oauth', label: 'ChatGPT' }], inFlight: false }],
+        begin: (request: { interaction: { notify(notice: unknown): void } }) => {
+          request.interaction.notify({ message: 'open the page', url: 'https://auth.example', openInBrowser: true })
+          return Promise.resolve({ status: 'authorized' })
+        },
+      } as never)
+    }
+    const opened: string[] = []
+    // A launch with no SSH markers is the only case that receives the handoff.
+    vi.stubEnv('SSH_CONNECTION', '')
+    vi.stubEnv('SSH_TTY', '')
+    const local = await bench()
+    internals.canOpenUrl = () => true
+    internals.openUrl = (url) => { opened.push(url); return Promise.resolve() }
+    provideAuth(local.ctx)
+    apply(local.ctx, { toolPreviewLines: 8, openBrowser: true })
+    await settled()
+    typeLine(local.observed.terminal, '/login codex')
+    await settled()
+    expect(opened).toEqual(['https://auth.example'])
+
+    const ssh = await bench()
+    ssh.ctx.provide('launchEnvironment', createLaunchEnvironmentSnapshot([
+      { source: 'process', values: { SSH_CONNECTION: '10.0.0.1 1 10.0.0.2 22' } },
+    ]))
+    provideAuth(ssh.ctx)
+    apply(ssh.ctx, { toolPreviewLines: 8, openBrowser: true })
+    await settled()
+    typeLine(ssh.observed.terminal, '/login codex')
+    await settled()
+    expect(opened).toHaveLength(1)
+    expect(ssh.observed.terminal.text()).toContain('https://auth.example')
+
+    const disabled = await bench()
+    provideAuth(disabled.ctx)
+    apply(disabled.ctx, { toolPreviewLines: 8, openBrowser: false })
+    await settled()
+    typeLine(disabled.observed.terminal, '/login codex')
+    await settled()
+    expect(opened).toHaveLength(1)
+    expect(disabled.observed.terminal.text()).toContain('https://auth.example')
+  })
+
   it('reports an Agent creation failure and exits 1', async () => {
     const { ctx, observed } = await bench({ failCreate: true })
-    apply(ctx, { toolPreviewLines: 8 })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     expect(observed.err).toBe('dsh: factory refused\n')
     expect(observed.exits).toEqual([1])
@@ -239,7 +291,7 @@ describe('tui runner', () => {
 
   it('reports a failure during quit and exits 1', async () => {
     const { ctx, observed } = await bench()
-    apply(ctx, { toolPreviewLines: 8 })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     ctx.on('session/flush', () => { throw new Error('disk gone') })
     observed.terminal.type(KEY.ctrlD)
@@ -250,7 +302,7 @@ describe('tui runner', () => {
 
   it('renders a non-error failure reason', async () => {
     const { ctx, observed } = await bench()
-    apply(ctx, { toolPreviewLines: 8 })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     ctx.on('session/flush', () => { throw 'plain failure' })
     observed.terminal.type(KEY.ctrlD)
@@ -259,11 +311,15 @@ describe('tui runner', () => {
     expect(observed.exits).toEqual([1])
   })
 
+  it('detects desktop availability through the platform opener facts', () => {
+    expect(typeof originalInternals.canOpenUrl()).toBe('boolean')
+  })
+
   it('returns quietly when the tree was disposed before the services resolved', async () => {
     const ctx = new Context()
     let exits = 0
     ctx.provide('appExit', () => { exits += 1 })
-    apply(ctx, { toolPreviewLines: 8 })
+    apply(ctx, { toolPreviewLines: 8, openBrowser: true })
     await settled()
     expect(exits).toBe(0)
   })

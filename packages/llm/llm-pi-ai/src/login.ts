@@ -55,12 +55,14 @@ function relay(event: AuthEvent, session: AuthorizationSession): void {
       session.notify({
         message: event.instructions ?? 'Open this page to continue signing in.',
         url: event.url,
+        openInBrowser: true,
       })
       return
     case 'device_code':
       session.notify({
         message: 'Enter this code on the verification page to finish signing in.',
         url: event.verificationUri,
+        openInBrowser: true,
         code: event.userCode,
       })
       return

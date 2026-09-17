@@ -1,5 +1,5 @@
 ---
-description: "宿主原生命令与路径打开工具，提供无 shell 执行、取消、桌面探测与 WSL 路径交接。"
+description: "宿主原生命令、路径打开与默认浏览器 URL 交接工具，提供无 shell 执行、取消、桌面探测与凭据擦除。"
 kind: "package-library"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-`dsh-native-command` 无需 shell 即可运行 Host 可执行文件，并通过桌面打开 Host 文件系统路径。命令运行器捕获 utf8 输出、传播取消，并隐藏 Windows 瞬时控制台。路径打开器支持默认应用与文本编辑器意图、浏览器可渲染文档、WSL 转换与桌面可用性检查。它是库而非插件：没有 `ctx`、无状态、不发事件。
+`dsh-native-command` 无需 shell 即可运行 Host 可执行文件、通过桌面打开 Host 文件系统路径，并把 HTTP(S) URL 交给默认浏览器。命令运行器捕获 utf8 输出、传播取消，并隐藏 Windows 瞬时控制台。路径打开器支持默认应用与文本编辑器意图、浏览器可渲染文档、WSL 转换与桌面可用性检查。URL 打开器让 Harness 凭据不进入浏览器的环境。它是库而非插件：没有 `ctx`、无状态、不发事件。
 
 ## 目录
 
@@ -49,6 +49,10 @@ const { stdout, stderr } = await runNativeCommand('osascript', ['-e', script], s
 
 `revealNativePath(path, signal)` 在 Finder 或文件资源管理器中选中文件，包含 WSL 路径转换；在桌面 Linux 上通过 `xdg-open` 打开上层目录。`nativeFileManager()` 标识该操作，供 UI 根据 Host 选择文案；桌面是否可用仍由独立的 `canOpenNativePath()` 检查决定。调用方必须先授权绝对文件路径，再执行操作。平台分派由注入运行器的测试覆盖；原生桌面验证由对应平台负责。 Explorer 接收独立参数中的编码文件 URI。退出码 1 按已转交请求处理；取消、找不到可执行文件和其他退出码仍然报错。该确认不能证明桌面窗口已选中文件。
 
+### 在默认浏览器中打开 URL
+
+`openNativeUrl(url)` 把一个 HTTP(S) URL 交给操作系统的默认浏览器，并在启动任何进程前拒绝其他协议。URL 经由一个短生命周期的 Node 辅助进程传递，该进程运行受维护的 `open` 包且使用擦除后的环境，因此 API 密钥与 Harness 主目录等 Harness 凭据不会进入新启动的浏览器进程；在 Windows 上辅助进程会存活到 PowerShell 接受交接为止。返回的 promise 在操作系统启动器退出时结算，而不是在浏览器窗口关闭时；启动失败会以辅助进程 stderr 的首行拒绝，调用方因此可以回退到展示 URL。这是与文件系统路径打开器对应的 URL 能力——不要把 URL 传给 `openNativePath`，后者把参数当作文件系统路径处理。
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -66,6 +70,7 @@ const { stdout, stderr } = await runNativeCommand('osascript', ['-e', script], s
 | [`src/index.ts`](src/index.ts) | 命令运行器与路径打开器的公共导出 |
 | [`src/runner.ts`](src/runner.ts) | 无 shell 的 `execFile` 适配器 |
 | [`src/path-opener.ts`](src/path-opener.ts) | 桌面探测、打开意图、浏览器偏好与 WSL 转换 |
+| [`src/url-opener.ts`](src/url-opener.ts) | 面向 HTTP(S) URL 的凭据擦除默认浏览器交接 |
 | — | 不发布运行时不变式伴生入口；每次运行都是一次无状态的子进程往返，不拥有事件流或可变运行时数据；相关行为由单元测试保障。 |
 
 ### execFile 给了运行器什么

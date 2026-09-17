@@ -28,6 +28,8 @@ A signed-in provider shows **Signed in with a provider subscription** on its car
 
 Providers that ship a subscription login show these controls; the rest ask only for an API key, in the card's own field. A sign-in is stored in `$DSH_HOME/.credentials.yaml` alongside your keys, and refreshes itself.
 
+The terminal (`dsh tui`) signs in through two commands: configure the route with `/settings llm-pi-ai providers.openai-codex {}`, then `/login llm-pi-ai/openai-codex`. The sign-in page opens in the default browser while its address stays printed in the transcript; over SSH or with `dsh tui --no-open`, open that address yourself, and the device-code method works there too.
+
 ## Add a custom provider
 
 Choose **Add a custom provider** for a company gateway, self-hosted server, or provider absent from the installed catalog. Supply a lowercase Provider ID, base URL, API protocol, credential, and at least one model. The **API protocol** must be the one your gateway speaks, and the form offers three: `openai-completions` for OpenAI Chat Completions, `openai-responses` for the OpenAI Responses API, and `anthropic-messages` for the Anthropic Messages API. A provider speaks one protocol, so a gateway that serves two needs two providers.

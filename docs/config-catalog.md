@@ -3513,10 +3513,12 @@ export interface Config {
   resume?: string
   /** Collapsed tool-card body rows before `Ctrl+O` expands them. */
   toolPreviewLines: number
+  /** Permit local default-browser handoff for authorization pages. */
+  openBrowser: boolean
 }
 ```
 
-Source: [`packages/bundle/tui-app/src/index.ts:37`](../packages/bundle/tui-app/src/index.ts)
+Source: [`packages/bundle/tui-app/src/index.ts:39`](../packages/bundle/tui-app/src/index.ts)
 
 <a id="deepseek-aidsh-typert-loader"></a>
 
@@ -3611,7 +3613,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/bundle/web-app/src/index.ts:44`](../packages/bundle/web-app/src/index.ts)
+Source: [`packages/bundle/web-app/src/index.ts:43`](../packages/bundle/web-app/src/index.ts)
 
 <a id="deepseek-aidsh-web-fetch-http"></a>
 
