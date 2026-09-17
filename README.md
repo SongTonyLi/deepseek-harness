@@ -26,6 +26,23 @@ npx @deepseek-ai/dsh web
 
 The command starts the Web UI at `http://127.0.0.1:3080` by default and opens it in the default browser for a local launch. An SSH launch only prints the host URL because the SSH client or editor owns the local forwarded address. Pass `--no-open` to run the server without opening a browser. See [Web UI guide](docs/user/guide/index.md).
 
+### Run in the terminal
+
+To talk to the agent in the terminal you are already in, with no browser and no server:
+
+```sh
+npx @deepseek-ai/dsh tui
+```
+
+The command starts one multi-turn session: replies stream in place, tool calls become foldable cards, and approvals and questions appear above the input. A first prompt on the command line is submitted as soon as the terminal is up, `--resume <session-id>` continues a persisted session instead of starting a new one, and `--no-open` prints sign-in URLs instead of opening the default browser.
+
+```sh
+npx @deepseek-ai/dsh tui "explain this repository"
+npx @deepseek-ai/dsh tui --resume <session-id>
+```
+
+`Enter` sends, `Esc` stops the running turn, `Ctrl+O` expands every tool card, and `Ctrl+C` twice (or `Ctrl+D` on an empty input) quits and prints the resume command for the session. Type `/help` inside the terminal for the commands, among them `/model`, `/sessions`, `/attach`, and `/status`. See [terminal application](packages/bundle/tui-app/README.md).
+
 ### Run from source
 
 To run from a repository checkout:
@@ -38,7 +55,7 @@ pnpm run build
 pnpm dsh web
 ```
 
-`pnpm run build` prepares the repository artifacts. `pnpm dsh web` uses those built artifacts without rebuilding.
+`pnpm run build` prepares the repository artifacts. `pnpm dsh web` uses those built artifacts without rebuilding, and `pnpm dsh tui` starts the terminal session the same way.
 
 ## Community and support
 
