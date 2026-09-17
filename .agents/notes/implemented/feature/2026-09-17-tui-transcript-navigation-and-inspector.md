@@ -1,0 +1,67 @@
+# Agent Note: Terminal transcript navigation and the focused-section inspector
+
+Status: implemented
+
+English | [中文](2026-09-17-tui-transcript-navigation-and-inspector.zh.md)
+
+## Problem
+
+The keyboard reached the terminal's docked regions and stopped there: one entry key selected a status-bar segment, a second press selected a subagent row, and the conversation above the editor answered no key at all. A user who wanted the Markdown source behind a rendered reply, the arguments a collapsed tool card folded away, the whole of a result past the rows the card draws, or the reasoning of a message several turns back had the terminal's own scrollback and `Ctrl+O`, which expands every card at once. The transcript is also the one region this application cannot repaint at will: it draws into the terminal's native scrollback through pi-tui's `TuiMainScreen`, which falls back to a full redraw — and that redraw discards the scrollback — as soon as a line above the viewport changes. Marking the selected message where it sits was therefore a question about the renderer before it was a question about the keyboard.
+
+## Decision
+
+The regions stack top to bottom — the transcript's blocks, the subagent panel's rows while the panel is drawn, the status bar's segments — and two entry keys leave the editor: `Shift+Up` into the conversation above it, `Shift+Down` into the regions docked below it. `Shift+Up` lands on the newest block, on its last section; a session with nothing to inspect keeps the keyboard in the editor and says `nothing in the transcript to inspect yet`. `Shift+Down` lands on the panel's first row while the panel is drawn and on the bar's first segment otherwise.
+
+Inside every region but the editor the arrows are spatial. `Up` and `Down` move within a region and cross into the neighbouring one at its end — from the newest block into the panel or the bar, from the panel's first row back into the transcript — and never wrap, so the transcript's oldest block and the bar are the two ends of the stack. `Left` and `Right` move between the parts of the focused block and between the bar's segments, which keep their own wrap; the panel ignores them. `Enter` opens the focused section, row, or segment, and `Esc` returns to the editor from every region. Every other key is consumed by the region that holds focus, so a typed character cannot land in an editor the user is not looking at; `Ctrl+C` and `Ctrl+D` keep their global meaning and hand the keyboard back to the editor.
+
+The focused section is shown in two places. `InspectorPane` is docked between the modal slot and the editor and draws the section in full: a blank separator, the heading `3/12 · turn 2 · bash git status · result` in bold accent, the parts strip `‹ reasoning · reply ›` for a block that has more than one part, the section's own rows wrapped to the terminal width and folded at `focusPreviewLines` rows behind `… N more rows · Enter opens the page`, and the dim hint `↑ ↓ blocks · ← → parts · Enter page · Esc back`. The pane reads its view once per render rather than being pushed one, so a reply that is still streaming and a result that has just landed grow inside it with the frame that draws them, and it draws nothing at all while the keyboard is elsewhere.
+
+`Enter` opens the section as a `DetailPrompt` — the read-only scrollable page the list-then-details work defines — under the same heading and carrying the part's full rows, and leaving the page puts the keyboard back on the same section. The cursor is a block index and a part index, remembered across the page and across a trip through the editor, and settled against the blocks drawn right now before every key, so a transcript that grew a part or a block since the cursor was taken still holds it.
+
+The block itself is marked in place. While it holds the focus it wraps its content two columns narrower and prefixes every line with a gutter: dim `│ ` on the block's own lines and accent `┃ ` on the lines of the focused section, with a tool card's truncation marker on the block's gutter because it stands for rows both sections left out. The gutter is prepended after any fade recoloring, so the fade keeps matching the block's own text and the gutter's styling never enters that match.
+
+`src/navigation.ts` is plain data — no pi-tui, no palette, no clock: it filters the transcript container's children by a `navigable` marker, moves one `TranscriptCursor` over them, settles a remembered cursor against the current blocks, and builds the heading and the parts strip. `src/inspector.ts` holds the pure `renderInspector` and the one component that calls it per render; `src/screen.ts` holds the screen subclass described below. `focusPreviewLines` is a validated config field (`z.natural().min(1).default(12)`) threaded through `TuiAppDeps`, so a deployment that wants a taller inspector or more conversation on screen changes it from `cordis.yml`.
+
+## What a block exposes as sections
+
+Each of the three transcript components reports the source text it was given rather than the rendering it draws. `UserBlock` carries one `user` part with the submitted prompt. `AssistantBlock` carries a `reasoning` part while its reasoning is non-empty, then a `reply` part carrying the Markdown source. `ToolBlock` carries a `call` part — the headline and the argument rows, or `(no arguments)` when the model passed none — and, once the result lands, a `result` part carrying the untruncated result rows, or `(no output)` when the tool answered with nothing. Every block also carries the turn it was appended in, which the heading states, and a notice or a printed row carries no marker at all, so the keyboard skips it.
+
+## Highlighting inside the repaint window
+
+pi-tui's `TuiMainScreen` repaints differentially only the lines whose index is at or after `previousViewportTop`, which every frame leaves at `max(0, frameLines - terminal.rows)`. A change above that index takes the `firstChanged < prevViewportTop` branch of `@earendil-works/pi-tui/dist/tui-main-screen.js`, which calls `fullRender(true)` and writes `ESC[2J ESC[H ESC[3J`; the last of those three clears the terminal's scrollback, and the conversation the user was reading goes with it.
+
+`previousViewportTop` is a high-water mark: the differential path leaves it at `max(prevViewportTop, finalCursorRow - height + 1)` and the deleted-lines path carries it over unchanged, so a frame that shrinks — a closed page, an unmounted inspector, the spinner leaving at the end of a turn — never brings back the lines a taller frame put out of reach. The window a frame is judged against is therefore the higher of the renderer's own `previousViewportTop`, read through `captureRenderState()`, and the `frameLines - terminal.rows` that the frame just built will impose once it is written: the first term is what this write is judged against, and the second keeps the decision one frame ahead, so a block marked today is a block that can still be unmarked tomorrow. `repaintFloor(start, viewportTop)` in `src/screen.ts` turns that window into one block's own first repaintable line, and a block gains or loses the gutter only while that floor is 0.
+
+`GuardedMainScreen` in `src/screen.ts` extends `TuiMainScreen` with one hook: `render` builds the frame, hands that window and the width to a guard, and builds the frame again for each pass that reports a changed line, up to two passes — the second pass answers for the geometry the first one produced, because marking a block rewraps it two columns narrower. The application's guard is the only place that marks or unmarks a block. It walks the chat's children once over the frame just built, summing each child's rendered height to find where the focused block starts; it unmarks the marked block and marks the wanted one while the rule allows, records whether the wanted block ended up marked for the inspector to state, and hands every fading block its own first repaintable line on the same walk, so the fade stops where the renderer stops.
+
+Because marking happens nowhere else, a focused block that has scrolled above the window stays unmarked and the inspector heading appends a dim ` · off screen` instead. The invariant this buys is stated in the module's JSDoc and pinned by `tests/transcript-focus.spec.ts`: no gutter change makes the terminal receive `ESC[3J`, over a whole navigation scenario and across each region that leaves the frame under it. The renderer still redraws in full on its own account — a resize, or a frame that shrinks by more than the terminal's height — and those redraws are not the gutter's to avoid.
+
+## Alternatives considered
+
+**Open the transcript as a picker instead of walking it in place.** Rejected: a `PickPrompt` over the blocks covers the conversation while the user chooses from it, and a row in a list says nothing about where its message sits among the others. The inspector leaves the conversation on screen and makes the keys spatial, and the page a row would have opened is what `Enter` opens anyway.
+
+**Move the terminal to the alternate screen and scroll a `ScrollView`.** Rejected: the alternate screen gives up the terminal's own scrollback, wheel, and selection — how users read and quote a long session — in exchange for the freedom to repaint any line. The frame guard buys the in-place mark without giving any of that up.
+
+**Mark the focused block wherever it sits.** Rejected: a change above the viewport makes pi-tui redraw fully, and that redraw clears the scrollback, so walking back through a long conversation would erase it one block at a time. An unmarked block that is off screen costs one indicator; this alternative costs the conversation.
+
+**Read bare `Up` and `Down` in the editor to enter the transcript.** Rejected: pi-tui's editor claims the bare arrows for caret motion and prompt history, and `shift+up` / `shift+down` are the pair it leaves free — the pair the status bar already entered through. Bare arrows navigate only inside a region that owns the whole key stream.
+
+**Keep one entry key that cycles every region.** Rejected: with three regions in one cycle, reaching the bar means walking past two others, and a cycle's direction says nothing about where a region is drawn. Two keys that name a direction — up into the conversation, down into the regions docked under the editor — match the stack the arrows then walk.
+
+**Show the focused section in the inspector only, with no in-place mark.** Rejected: the inspector states which section is focused but not where that block sits in the conversation, which is what a user walking back through a session is looking for. The gutter answers that wherever the renderer can draw it, and the heading admits when it cannot.
+
+**Render the page's rows as Markdown.** Rejected: the transcript already draws the rendering, so the page's value is the source — the literal text the model wrote and the untruncated tool output — which is also what a user copies out of it.
+
+## Consequences
+
+- The editor's two entry keys name directions: `Shift+Up` is the conversation and `Shift+Down` is the docked regions, which replaces the single entry key [navigable terminal status bar](2026-09-16-tui-status-bar-navigation.md) defined and the cycle [live terminal subagent panel and elapsed counters](2026-09-17-tui-live-subagent-panel.md) extended.
+- The subagent panel's selection stops at its ends instead of wrapping, because `Up` at the first row and `Down` at the last row belong to the regions above and below it.
+- The inspector takes rows from the conversation while the keyboard is in the transcript, which is why its budget is a config field rather than a constant.
+- A focused block above the repaint window carries no mark on screen; the inspector is the only indicator that always shows, and it says when the block is the other kind.
+- A transcript component is navigable only when it carries the marker, the turn, its parts, and its highlight rendering; a new block kind that omits them is skipped by the keyboard without a diagnostic.
+- The page shows source text, so a reply's Markdown reads as the model wrote it — asterisks, fences, and tables — rather than as the transcript renders it.
+- `tests/navigation.spec.ts` pins the pure cursor, the headings, and the labels; `tests/inspector.spec.ts` pins the drawn pane; `tests/screen.spec.ts` pins the repaint window the screen hands its guard, across a frame that shrank, and its settle passes; `tests/blocks.spec.ts` pins each block's sections and gutter; `tests/transcript-focus.spec.ts` pins the whole keyboard over the fake terminal, including the streaming section, the session change, and the scrollback invariant.
+
+## Related decisions
+
+The terminal application and its pi-tui rendering are owned by [terminal surface as the shipped `tui` profile](../architecture/2026-09-15-terminal-surface-tui-app.md). `Enter` opens the page defined by [terminal list-then-details navigation](2026-09-16-tui-list-then-details-navigation.md); the two regions below the editor, their own keys, and what `Enter` does there belong to [navigable terminal status bar](2026-09-16-tui-status-bar-navigation.md) and [live terminal subagent panel and elapsed counters](2026-09-17-tui-live-subagent-panel.md). The fade the gutter is prepended after, and the second consumer of the repaint window this note's guard applies, come from [continuous terminal fade for streamed text and tool cards](2026-09-17-tui-continuous-fade.md).

@@ -254,6 +254,21 @@ export function toolResultLines(view: ToolResultView | undefined, content: reado
 }
 
 /**
+ * Cut rows to a maximum, naming what was left out on one trailing row. Every
+ * surface that shows part of something longer folds it this way - the collapsed
+ * tool card, an approval's call detail, the focused-section inspector - and each
+ * names the key that shows the rest.
+ * @param lines - the full rows.
+ * @param keep - rows kept ahead of the marker.
+ * @param marker - builds the trailing row from the number of rows left out.
+ * @returns the rows to draw; a copy of `lines` when they all fit.
+ */
+export function foldRows(lines: readonly string[], keep: number, marker: (hidden: number) => string): string[] {
+  if (lines.length <= keep) return [...lines]
+  return [...lines.slice(0, keep), marker(lines.length - keep)]
+}
+
+/**
  * Cut a card body to its collapsed preview.
  * @param lines - the full body rows.
  * @param previewLines - rows kept when collapsed.
@@ -261,7 +276,6 @@ export function toolResultLines(view: ToolResultView | undefined, content: reado
  * @returns the rows to draw, with a trailing count of hidden rows when cut.
  */
 export function previewLines(lines: readonly string[], previewLines: number, expanded: boolean): string[] {
-  if (expanded || lines.length <= previewLines) return [...lines]
-  const hidden = lines.length - previewLines
-  return [...lines.slice(0, previewLines), `… ${String(hidden)} more line${hidden === 1 ? '' : 's'} (Ctrl+O expands)`]
+  if (expanded) return [...lines]
+  return foldRows(lines, previewLines, hidden => `… ${String(hidden)} more line${hidden === 1 ? '' : 's'} (Ctrl+O expands)`)
 }

@@ -229,16 +229,16 @@ describe('footerSelectionIndex', () => {
 describe('renderFooter', () => {
   const built = buildFooterSegments(inputs({ usage: '↑10 ↓4 ctx 10' }))
 
-  it('joins every segment into one dim line and advertises the entry key under it', () => {
+  it('joins every segment into one dim line and advertises the entry keys under it', () => {
     const plain = renderFooter(built, { palette: createPalette(false), hints: 'Enter sends' })
-    expect(plain).toBe('deepseek/deepseek-chat · ↑10 ↓4 ctx 10 · /work\nEnter sends · Shift+↑ status bar')
+    expect(plain).toBe('deepseek/deepseek-chat · ↑10 ↓4 ctx 10 · /work\nEnter sends · Shift+↑ transcript · Shift+↓ status bar')
     const styled = renderFooter(built, { palette: createPalette(true), hints: 'Enter sends' })
     expect(styled.split('\n')[0]).toBe('\u001b[2mdeepseek/deepseek-chat · ↑10 ↓4 ctx 10 · /work\u001b[22m')
   })
 
   it('accents only the selected segment and replaces the hints with the navigation keys', () => {
     const plain = renderFooter(built, { palette: createPalette(false), selected: 1, hints: 'Enter sends' })
-    expect(plain).toBe('deepseek/deepseek-chat · ↑10 ↓4 ctx 10 · /work\n← → select · Enter details · Esc back')
+    expect(plain).toBe('deepseek/deepseek-chat · ↑10 ↓4 ctx 10 · /work\n← → select · ↑ ↓ regions · Enter details · Esc back')
     const styled = renderFooter(built, { palette: createPalette(true), selected: 1, hints: 'Enter sends' })
     const [bar] = styled.split('\n')
     expect(bar).toContain('\u001b[1m\u001b[36m↑10 ↓4 ctx 10\u001b[39m\u001b[22m')

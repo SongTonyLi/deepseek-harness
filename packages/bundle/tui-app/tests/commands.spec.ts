@@ -225,8 +225,8 @@ describe('attachments', () => {
       { type: 'text', text: 'look at these' },
     ])
     expect(test.terminal.text()).toContain('[file: notes.txt] [image: shot.png]')
-    // The hint line now ends with the key that focuses the status bar.
-    expect(test.terminal.text().trimEnd().endsWith('Ctrl+C twice quits · Shift+↑ status bar')).toBe(true)
+    // The hint line ends with the keys that leave the editor for the other regions.
+    expect(test.terminal.text().trimEnd().endsWith('Shift+↓ status bar')).toBe(true)
     expect(test.terminal.text().split('\n').filter(line => line.includes('/work')).at(-1)).not.toContain('attached')
     typeLine(test.terminal, `/attach ${join(dir, 'notes.txt')}`)
     await test.settle()

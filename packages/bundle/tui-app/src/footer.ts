@@ -116,10 +116,10 @@ const WORKSPACE_LABEL_WIDTH = 24
 const PATH_TAIL = /[/\\][^/\\]+[/\\][^/\\]+$/u
 
 /** The keys the focused bar answers, replacing the usual hints. */
-const FOCUS_HINTS = `← → select${SEPARATOR}Enter details${SEPARATOR}Esc back`
+const FOCUS_HINTS = `← → select${SEPARATOR}↑ ↓ regions${SEPARATOR}Enter details${SEPARATOR}Esc back`
 
-/** What the unfocused hints advertise as the way into the bar. */
-const ENTRY_HINT = 'Shift+↑ status bar'
+/** What the unfocused hints advertise as the two ways out of the editor. */
+const ENTRY_HINT = `Shift+↑ transcript${SEPARATOR}Shift+↓ status bar`
 
 /** The command that prints every projection section at once. */
 const STATUS_COMMAND_ROW = '/status prints all of these sections'

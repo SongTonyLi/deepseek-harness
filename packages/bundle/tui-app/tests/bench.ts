@@ -17,6 +17,7 @@ import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { Terminal } from '@earendil-works/pi-tui'
 import { TuiApp, type BoundSession, type SessionHost } from '../src/app.ts'
 import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
+import { FOCUS_PREVIEW_LINES } from '../src/inspector.ts'
 import { createPalette } from '../src/style.ts'
 
 /**
@@ -58,6 +59,12 @@ const OSC11_BACKGROUND_QUERY = '\u001b]11;?\u0007'
 /** A terminal that records what the tree writes and lets tests type into it. */
 export class FakeTerminal implements Terminal {
   output = ''
+  /**
+   * Everything the tree ever wrote, which nothing clears. `output` is the
+   * window a test reads and resets; an invariant that must hold over a whole
+   * scenario reads this instead.
+   */
+  written = ''
   title = ''
   columns = 100
   rows = 40
@@ -89,6 +96,7 @@ export class FakeTerminal implements Terminal {
 
   write(data: string): void {
     this.output += data
+    this.written += data
     // pi-tui registers the pending query before it writes it, so answering
     // from inside the write is what a terminal that replies at once does.
     if (this.backgroundReply !== undefined && data.includes(OSC11_BACKGROUND_QUERY)) {
@@ -114,9 +122,14 @@ export class FakeTerminal implements Terminal {
     this.onInput(data)
   }
 
-  /** Simulate a terminal resize. */
-  resize(columns: number): void {
+  /**
+   * Simulate a terminal resize.
+   * @param columns - the new width.
+   * @param rows - the new height; the current height when omitted.
+   */
+  resize(columns: number, rows: number = this.rows): void {
     this.columns = columns
+    this.rows = rows
     this.onResize?.()
   }
 
@@ -258,6 +271,8 @@ export async function bench(options: {
   history?: readonly SessionEvent[]
   initialPrompt?: string
   toolPreviewLines?: number
+  /** Rows of the focused section the docked inspector shows. */
+  focusPreviewLines?: number
   color?: boolean
   /** Start with the Agent already running. */
   running?: boolean
@@ -407,6 +422,7 @@ export async function bench(options: {
     terminal,
     palette: createPalette(options.color ?? false),
     toolPreviewLines: options.toolPreviewLines ?? 3,
+    focusPreviewLines: options.focusPreviewLines ?? FOCUS_PREVIEW_LINES,
     liveRefreshMs,
     fadeSteps: options.fadeSteps ?? FADE_STEPS,
     fadeStepMs,

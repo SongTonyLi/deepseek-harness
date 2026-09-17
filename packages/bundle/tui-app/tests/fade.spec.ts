@@ -1,14 +1,16 @@
-/** The streaming fade: the ramp, its three encodings, the tail state, and the ANSI-aware recolor over rendered lines. */
+/** The streaming fade: the ramp, its three encodings, the wall-clock tail state, the block clocks, and the recolor transforms. */
 
 import { describe, expect, it } from 'vitest'
 import type { RgbColor } from '@earendil-works/pi-tui'
 import {
-  FADE_FAST_WINDOW_TICKS,
+  BlockFadeClock,
   FADE_STEPS,
   FADE_TICK_MS,
+  FadeRegistry,
   FadeTracker,
   buildFadeRamp,
   fadeSgr,
+  recolorLines,
   recolorTail,
   resolveFadeCapability,
   type FadeStyle,
@@ -29,61 +31,84 @@ function sgrAt(age: number): string {
   return fadeSgr(COLOR, age)
 }
 
+/** Relative luminance of one ramp level, for the monotonicity checks. */
+function luminance(color: RgbColor): number {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
+}
+
+/**
+ * A clock the spec moves by hand, standing in for the application's wall clock.
+ * @returns the clock's reader and the mover that steps it.
+ */
+function clock(): { now: () => number; advance: (ms: number) => void } {
+  let ms = 1_000
+  return { now: () => ms, advance: (by: number) => { ms += by } }
+}
+
 describe('defaults', () => {
-  it('ships five brightness levels, a 40ms tick, and a ten-tick fast-stream window', () => {
-    expect(FADE_STEPS).toBe(5)
-    expect(FADE_TICK_MS).toBe(40)
-    expect(FADE_FAST_WINDOW_TICKS).toBe(10)
+  it('ships eight brightness levels, each lasting 33ms', () => {
+    expect(FADE_STEPS).toBe(8)
+    expect(FADE_TICK_MS).toBe(33)
   })
 })
 
 describe('buildFadeRamp', () => {
-  it('interpolates from the background towards the foreground in even steps', () => {
-    expect(buildFadeRamp({ r: 20, g: 20, b: 20 }, { r: 220, g: 220, b: 220 })).toEqual([
-      { r: 60, g: 60, b: 60 },
-      { r: 100, g: 100, b: 100 },
-      { r: 140, g: 140, b: 140 },
-      { r: 180, g: 180, b: 180 },
-      { r: 220, g: 220, b: 220 },
+  it('eases the levels with smoothstep and mixes them in linear light', () => {
+    // Level 1 of 4 sits at t = 0.25, smoothstep 0.15625 of the way from black
+    // to white in linear light, which encodes back to 110 on every channel.
+    expect(buildFadeRamp(BLACK, WHITE, 4)).toEqual([
+      { r: 110, g: 110, b: 110 },
+      { r: 188, g: 188, b: 188 },
+      { r: 237, g: 237, b: 237 },
+      { r: 255, g: 255, b: 255 },
     ])
   })
 
   it('mixes each channel on its own', () => {
-    expect(buildFadeRamp(BLACK, INK)).toEqual([
-      { r: 40, g: 20, b: 10 },
-      { r: 80, g: 40, b: 20 },
-      { r: 120, g: 60, b: 30 },
-      { r: 160, g: 80, b: 40 },
+    expect(buildFadeRamp(BLACK, INK, 4)).toEqual([
+      { r: 85, g: 39, b: 16 },
+      { r: 146, g: 71, b: 34 },
+      { r: 185, g: 92, b: 46 },
       { r: 200, g: 100, b: 50 },
     ])
   })
 
+  it('brightens every level over the one below it', () => {
+    const levels = buildFadeRamp(BLACK, INK).map(luminance)
+    expect(levels).toHaveLength(FADE_STEPS)
+    for (const [index, level] of levels.entries()) {
+      const previous = levels[index - 1]
+      if (previous !== undefined) expect(level).toBeGreaterThan(previous)
+    }
+  })
+
+  it('darkens every level towards a dark foreground over a light background', () => {
+    const levels = buildFadeRamp(WHITE, BLACK).map(luminance)
+    for (const [index, level] of levels.entries()) {
+      const previous = levels[index - 1]
+      if (previous !== undefined) expect(level).toBeLessThan(previous)
+    }
+  })
+
   it('ends at the foreground itself rather than a rounded interpolation of it', () => {
     const fractional: RgbColor = { r: 200.5, g: 100.5, b: 50.5 }
-    const ramp = buildFadeRamp(BLACK, fractional)
-    expect(ramp.at(-1)).toEqual(fractional)
-    expect(ramp.at(-1)).toEqual({ r: 200.5, g: 100.5, b: 50.5 })
+    expect(buildFadeRamp(BLACK, fractional).at(-1)).toEqual(fractional)
   })
 
   it('honours a non-default step count', () => {
-    expect(buildFadeRamp(BLACK, { r: 90, g: 60, b: 30 }, 3)).toEqual([
-      { r: 30, g: 20, b: 10 },
-      { r: 60, g: 40, b: 20 },
-      { r: 90, g: 60, b: 30 },
-    ])
-    expect(buildFadeRamp(BLACK, INK, 2)).toEqual([{ r: 100, g: 50, b: 25 }, INK])
+    expect(buildFadeRamp(BLACK, INK, 2)).toEqual([{ r: 146, g: 71, b: 34 }, INK])
   })
 })
 
 describe('fadeSgr', () => {
   it('writes 24-bit foreground bytes per ramp level', () => {
-    expect(sgrAt(0)).toBe('\u001b[38;2;40;20;10m')
-    expect(sgrAt(3)).toBe('\u001b[38;2;160;80;40m')
-    expect(sgrAt(4)).toBe('\u001b[38;2;200;100;50m')
+    expect(sgrAt(0)).toBe('\u001b[38;2;44;17;5m')
+    expect(sgrAt(3)).toBe('\u001b[38;2;146;71;34m')
+    expect(sgrAt(FADE_STEPS - 1)).toBe('\u001b[38;2;200;100;50m')
   })
 
   it('draws an age past the ramp at its last level', () => {
-    expect(sgrAt(9)).toBe(sgrAt(4))
+    expect(sgrAt(FADE_STEPS + 4)).toBe(sgrAt(FADE_STEPS - 1))
   })
 
   it('maps a level onto the 232..255 grayscale indices', () => {
@@ -152,7 +177,7 @@ describe('resolveFadeCapability', () => {
 
 describe('FadeTracker chunking', () => {
   it('splits a delta into words, each keeping the whitespace that follows it', () => {
-    const tracker = new FadeTracker()
+    const tracker = new FadeTracker({ now: clock().now })
     tracker.append('one two three')
     expect(tracker.spans()).toEqual([
       { text: 'one ', age: 0 },
@@ -161,11 +186,12 @@ describe('FadeTracker chunking', () => {
     ])
   })
 
-  it('holds a word open across deltas that split it, keeping the tick it first appeared', () => {
-    const tracker = new FadeTracker()
+  it('holds a word open across deltas that split it, keeping the moment it first appeared', () => {
+    const time = clock()
+    const tracker = new FadeTracker({ stepMs: 10, now: time.now })
     tracker.append('Hel')
     expect(tracker.spans()).toEqual([{ text: 'Hel', age: 0 }])
-    tracker.tick()
+    time.advance(10)
     tracker.append('lo wor')
     expect(tracker.spans()).toEqual([
       { text: 'Hello ', age: 1 },
@@ -179,9 +205,10 @@ describe('FadeTracker chunking', () => {
   })
 
   it('closes a word that ends on whitespace, so the next delta starts a new chunk', () => {
-    const tracker = new FadeTracker()
+    const time = clock()
+    const tracker = new FadeTracker({ stepMs: 10, now: time.now })
     tracker.append('done ')
-    tracker.tick()
+    time.advance(10)
     tracker.append('next')
     expect(tracker.spans()).toEqual([
       { text: 'done ', age: 1 },
@@ -190,7 +217,7 @@ describe('FadeTracker chunking', () => {
   })
 
   it('carries a whitespace-only delta into the word that follows it', () => {
-    const tracker = new FadeTracker()
+    const tracker = new FadeTracker({ now: clock().now })
     tracker.append('  ')
     expect(tracker.spans()).toEqual([{ text: '  ', age: 0 }])
     tracker.append('hi')
@@ -198,13 +225,13 @@ describe('FadeTracker chunking', () => {
   })
 
   it('ignores an empty delta', () => {
-    const tracker = new FadeTracker()
+    const tracker = new FadeTracker({ now: clock().now })
     tracker.append('')
     expect(tracker.spans()).toEqual([])
   })
 
   it('splits a newline like any other boundary', () => {
-    const tracker = new FadeTracker()
+    const tracker = new FadeTracker({ now: clock().now })
     tracker.append('first\n\nsecond')
     expect(tracker.spans()).toEqual([
       { text: 'first\n\n', age: 0 },
@@ -213,53 +240,81 @@ describe('FadeTracker chunking', () => {
   })
 })
 
-describe('FadeTracker tail membership', () => {
-  it('ages every chunk one level per tick and drops it at the step count', () => {
-    const tracker = new FadeTracker()
+describe('FadeTracker wall-clock ages', () => {
+  it('reads every chunk at the level its own elapsed time asks for', () => {
+    const time = clock()
+    const tracker = new FadeTracker({ stepMs: 20, now: time.now })
+    tracker.append('early ')
+    time.advance(20)
+    tracker.append('late ')
+    time.advance(20)
+    // One instant, two levels: the words appeared 20 ms apart and stay a level apart.
+    expect(tracker.spans()).toEqual([
+      { text: 'early ', age: 2 },
+      { text: 'late ', age: 1 },
+    ])
+  })
+
+  it('brightens a chunk between two periods, so a delta-driven render draws the level the clock reached', () => {
+    const time = clock()
+    const tracker = new FadeTracker({ stepMs: 20, now: time.now })
+    tracker.append('word ')
+    time.advance(30)
+    expect(tracker.spans()).toEqual([{ text: 'word ', age: 1 }])
+    time.advance(10)
+    expect(tracker.spans()).toEqual([{ text: 'word ', age: 2 }])
+  })
+
+  it('drops a chunk from the tail once the whole fade has elapsed', () => {
+    const time = clock()
+    const tracker = new FadeTracker({ steps: 4, stepMs: 20, now: time.now })
     tracker.append('alpha ')
-    for (let age = 1; age < FADE_STEPS; age += 1) {
-      tracker.tick()
-      expect(tracker.spans()).toEqual([{ text: 'alpha ', age }])
-    }
+    time.advance(20 * 3)
+    expect(tracker.tick()).toBe(false)
+    expect(tracker.spans()).toEqual([{ text: 'alpha ', age: 3 }])
+    time.advance(20)
     tracker.tick()
     expect(tracker.spans()).toEqual([])
   })
 
   it('asks for a repaint only while a chunk still draws below the last level', () => {
-    const tracker = new FadeTracker({ steps: 3 })
+    const time = clock()
+    const tracker = new FadeTracker({ steps: 3, stepMs: 20, now: time.now })
     tracker.append('word ')
     expect(tracker.needsRepaint()).toBe(true)
     expect(tracker.tick()).toBe(true)
+    time.advance(20)
     expect(tracker.needsRepaint()).toBe(true)
-    expect(tracker.tick()).toBe(true)
-    expect(tracker.spans()).toEqual([{ text: 'word ', age: 2 }])
+    time.advance(20)
     expect(tracker.needsRepaint()).toBe(false)
     expect(tracker.tick()).toBe(false)
-    expect(tracker.spans()).toEqual([])
   })
 
   it('needs no repaint with an empty tail', () => {
-    const tracker = new FadeTracker()
+    const tracker = new FadeTracker({ now: clock().now })
     expect(tracker.needsRepaint()).toBe(false)
     expect(tracker.tick()).toBe(false)
   })
 
   it('starts a fresh chunk once an open word has left the tail', () => {
-    const tracker = new FadeTracker({ steps: 2 })
+    const time = clock()
+    const tracker = new FadeTracker({ steps: 2, stepMs: 20, now: time.now })
     tracker.append('abc')
-    tracker.tick()
+    time.advance(20)
     expect(tracker.spans()).toEqual([{ text: 'abc', age: 1 }])
+    time.advance(20)
     tracker.tick()
     expect(tracker.spans()).toEqual([])
     tracker.append('def')
     expect(tracker.spans()).toEqual([{ text: 'def', age: 0 }])
   })
 
-  it('keeps chunks of one tick together and ages a later one apart', () => {
-    const tracker = new FadeTracker()
+  it('keeps chunks of one instant together and ages a later one apart', () => {
+    const time = clock()
+    const tracker = new FadeTracker({ stepMs: 20, now: time.now })
     tracker.append('one ')
     tracker.append('two ')
-    tracker.tick()
+    time.advance(20)
     tracker.append('three ')
     expect(tracker.spans()).toEqual([
       { text: 'one ', age: 1 },
@@ -269,55 +324,9 @@ describe('FadeTracker tail membership', () => {
   })
 })
 
-describe('FadeTracker fast streams', () => {
-  it('turns the effect off once every tick of the window has received a chunk', () => {
-    const tracker = new FadeTracker({ fastWindowTicks: 3 })
-    for (let tick = 0; tick < 3; tick += 1) {
-      tracker.append(`chunk${tick} `)
-      tracker.tick()
-    }
-    expect(tracker.spans()).toHaveLength(3)
-    tracker.append('sustained ')
-    expect(tracker.spans()).toEqual([])
-    expect(tracker.needsRepaint()).toBe(false)
-  })
-
-  it('keeps the effect off while the rate holds', () => {
-    const tracker = new FadeTracker({ fastWindowTicks: 2 })
-    for (let tick = 0; tick < 4; tick += 1) {
-      tracker.append('fast ')
-      tracker.tick()
-    }
-    tracker.append('still fast ')
-    expect(tracker.spans()).toEqual([])
-  })
-
-  it('fades again after one tick without an arrival', () => {
-    const tracker = new FadeTracker({ fastWindowTicks: 3 })
-    for (let tick = 0; tick < 4; tick += 1) {
-      tracker.append('fast ')
-      tracker.tick()
-    }
-    tracker.tick()
-    tracker.append('slow ')
-    expect(tracker.spans()).toEqual([{ text: 'slow ', age: 0 }])
-  })
-
-  it('leaves a partly-faded tail alone at the moment it turns off, so nothing darkens', () => {
-    const tracker = new FadeTracker({ fastWindowTicks: 2 })
-    tracker.append('early ')
-    tracker.tick()
-    tracker.append('later ')
-    tracker.tick()
-    expect(tracker.spans()).toHaveLength(2)
-    tracker.append('burst ')
-    expect(tracker.spans()).toEqual([])
-  })
-})
-
 describe('FadeTracker flush', () => {
   it('drops the whole tail and tracks again from the next delta', () => {
-    const tracker = new FadeTracker()
+    const tracker = new FadeTracker({ now: clock().now })
     tracker.append('hello ')
     tracker.append('world')
     expect(tracker.spans()).toHaveLength(2)
@@ -329,11 +338,104 @@ describe('FadeTracker flush', () => {
   })
 
   it('does not rejoin the word that was open when the tail was flushed', () => {
-    const tracker = new FadeTracker()
+    const tracker = new FadeTracker({ now: clock().now })
     tracker.append('par')
     tracker.flush()
     tracker.append('tial')
     expect(tracker.spans()).toEqual([{ text: 'tial', age: 0 }])
+  })
+})
+
+describe('BlockFadeClock', () => {
+  it('reports the level the elapsed time asks for', () => {
+    const time = clock()
+    const fade = new BlockFadeClock({ bornAt: time.now(), stepMs: 20, steps: 4, now: time.now })
+    expect(fade.age()).toBe(0)
+    time.advance(20)
+    expect(fade.age()).toBe(1)
+    time.advance(30)
+    expect(fade.age()).toBe(2)
+  })
+
+  it('withholds the last level, so the block settles into the colors it rendered itself', () => {
+    const time = clock()
+    const fade = new BlockFadeClock({ bornAt: time.now(), stepMs: 20, steps: 4, now: time.now })
+    expect(fade.needsRepaint()).toBe(true)
+    time.advance(20 * 3)
+    expect(fade.age()).toBeUndefined()
+    expect(fade.needsRepaint()).toBe(false)
+  })
+})
+
+describe('FadeRegistry', () => {
+  /**
+   * A member that reports what the spec last set on it.
+   * @param moving - whether it starts out still brightening.
+   * @returns the member, with its flag open for the spec to move.
+   */
+  function member(moving: boolean): { needsRepaint(): boolean; moving: boolean } {
+    return { moving, needsRepaint() { return this.moving } }
+  }
+
+  it('needs a repaint while any member still moves', () => {
+    const registry = new FadeRegistry()
+    expect(registry.needsRepaint()).toBe(false)
+    registry.add(member(false))
+    expect(registry.needsRepaint()).toBe(false)
+    registry.add(member(true))
+    expect(registry.needsRepaint()).toBe(true)
+  })
+
+  it('forgets the members that settled and keeps the ones that have not', () => {
+    const registry = new FadeRegistry()
+    const first = member(true)
+    const second = member(true)
+    registry.add(first)
+    registry.add(second)
+    first.moving = false
+    registry.tick()
+    expect(registry.needsRepaint()).toBe(true)
+    second.moving = false
+    registry.tick()
+    // Both are forgotten, so neither is followed if it reports movement again.
+    second.moving = true
+    expect(registry.needsRepaint()).toBe(false)
+  })
+
+  it('forgets every member when the terminal draws another session', () => {
+    const registry = new FadeRegistry()
+    registry.add(member(true))
+    registry.clear()
+    expect(registry.needsRepaint()).toBe(false)
+  })
+})
+
+describe('recolorLines', () => {
+  it('opens the level and re-asserts it after every sequence the line already carries', () => {
+    const line = '\u001b[33m\u25cf\u001b[39m \u001b[1mbash\u001b[22m'
+    expect(recolorLines([line], 0, COLOR)).toEqual([
+      `${sgrAt(0)}\u001b[33m${sgrAt(0)}\u25cf\u001b[39m${sgrAt(0)} \u001b[1m${sgrAt(0)}bash\u001b[22m${sgrAt(0)}\u001b[39m`,
+    ])
+  })
+
+  it('leaves empty lines alone, so the blank rows around a card are never repainted', () => {
+    expect(recolorLines(['', 'body', ''], 1, COLOR)).toEqual(['', `${sgrAt(1)}body\u001b[39m`, ''])
+  })
+
+  it('returns copies when the style writes nothing for this level', () => {
+    const lines = ['a card row']
+    expect(recolorLines(lines, 0, { capability: 'none', ramp: COLOR.ramp })).toEqual(lines)
+    expect(recolorLines(lines, 4, DIM_STYLE)).toEqual(lines)
+    expect(recolorLines(lines, 4, DIM_STYLE)).not.toBe(lines)
+  })
+
+  it('leaves the lines before the first repaintable one in the colors they were drawn in', () => {
+    expect(recolorLines(['above', 'inside'], 0, COLOR, 1)).toEqual(['above', `${sgrAt(0)}inside\u001b[39m`])
+    expect(recolorLines(['above', 'inside'], 0, COLOR, 2)).toEqual(['above', 'inside'])
+  })
+
+  it('ends the two-level mode with the sequence that restores intensity', () => {
+    expect(recolorLines(['row'], 0, DIM_STYLE)).toEqual(['\u001b[2mrow\u001b[22m'])
   })
 })
 
@@ -441,23 +543,25 @@ describe('recolorTail restore', () => {
 })
 
 describe('tracker and transform together', () => {
-  it('brightens the trailing edge one tick at a time and settles it byte-identically', () => {
-    const tracker = new FadeTracker({ steps: 3 })
-    const ramp = buildFadeRamp(BLACK, WHITE, 3)
-    const style: FadeStyle = { capability: 'truecolor', ramp }
+  it('brightens the trailing edge as time passes and settles it byte-identically', () => {
+    const time = clock()
+    const tracker = new FadeTracker({ steps: 3, stepMs: 20, now: time.now })
+    const style: FadeStyle = { capability: 'truecolor', ramp: buildFadeRamp(BLACK, WHITE, 3) }
     const lines = ['the quick brown fox']
     tracker.append('the quick brown ')
-    tracker.tick()
+    time.advance(20)
     tracker.append('fox')
     expect(recolorTail(lines, tracker.spans(), style)).toEqual([
       `${fadeSgr(style, 1)}the quick brown ${fadeSgr(style, 0)}fox\u001b[39m`,
     ])
-    tracker.tick()
+    time.advance(20)
     expect(recolorTail(lines, tracker.spans(), style)).toEqual([
       `${fadeSgr(style, 2)}the quick brown ${fadeSgr(style, 1)}fox\u001b[39m`,
     ])
+    time.advance(20)
     tracker.tick()
     expect(tracker.spans()).toEqual([{ text: 'fox', age: 2 }])
+    time.advance(20)
     tracker.tick()
     expect(tracker.spans()).toEqual([])
     expect(recolorTail(lines, tracker.spans(), style)).toEqual(lines)

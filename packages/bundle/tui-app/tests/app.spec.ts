@@ -537,25 +537,26 @@ describe('the status bar', () => {
     })
   }
 
-  it('advertises the entry key while the editor keeps focus', async () => {
+  it('advertises both entry keys while the editor keeps focus', async () => {
     const test = await bench()
     await test.settle()
-    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    expect(test.terminal.text()).toContain('Shift+↑ transcript')
+    expect(test.terminal.text()).toContain('Shift+↓ status bar')
     expect(test.terminal.text()).not.toContain('← → select')
   })
 
-  it('takes focus on Shift+Up, swaps the hints, and keeps typed keys out of the editor', async () => {
+  it('takes focus on Shift+Down, swaps the hints, and keeps typed keys out of the editor', async () => {
     const test = await bench()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('← → select · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
     for (const char of 'zzz') test.terminal.type(char)
     test.terminal.type(KEY.ctrlO)
     await test.settle()
     expect(test.calls.followups).toHaveLength(0)
     test.terminal.type(KEY.escape)
     await test.settle()
-    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    expect(test.terminal.text()).toContain('Shift+↑ transcript')
     typeLine(test.terminal, 'hello')
     await test.settle()
     // The keys pressed at the bar never reached the editor, so the prompt is exactly what was typed after Esc.
@@ -564,7 +565,7 @@ describe('the status bar', () => {
 
   it('leaves a running turn alone while Esc returns focus to the editor', async () => {
     const test = await bench({ running: true })
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.escape)
     await test.settle()
     expect(test.calls.cancels).toBe(0)
@@ -575,7 +576,7 @@ describe('the status bar', () => {
 
   it('moves the selection with Left, Right, and Tab, wrapping at both ends', async () => {
     const test = await benchWithContext()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.tab)
     test.terminal.type(KEY.enter)
     await test.settle()
@@ -611,7 +612,7 @@ describe('the status bar', () => {
     test.terminal.type(KEY.shiftTab)
     await test.settle()
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.shiftTab)
     await test.settle()
     // At the bar the same key moves the selection instead, leaving the effort in force.
@@ -623,49 +624,53 @@ describe('the status bar', () => {
 
   it('prints the details of the selected segment and keeps the bar focused', async () => {
     const test = await bench()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.enter)
     await test.settle()
     const screen = test.terminal.text()
     expect(screen).toContain('provider: test-provider')
     expect(screen).toContain('reasoning effort: the model\'s own default')
     expect(screen).toContain('/model picks the provider and model for the next request')
-    expect(test.terminal.text()).toContain('← → select · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
   })
 
-  it('closes the docked cycle at the editor when no subagent panel is drawn', async () => {
+  it('keeps the bar when neither an empty transcript nor an undrawn panel can take the keyboard', async () => {
     const test = await bench()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.shiftUp)
     await test.settle()
-    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
-    // Shift+Down at the editor has no panel to reach, so the editor keeps it.
-    test.terminal.type(KEY.shiftDown)
+    expect(test.terminal.text()).toContain('nothing in the transcript to inspect yet')
+    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
+    // Up leaves the bar for the panel, and there is none drawn either.
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.down)
+    await test.settle()
+    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
+    test.terminal.type(KEY.escape)
     typeLine(test.terminal, 'hello')
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'hello' }]])
   })
 
-  it('returns focus to the editor on Shift+Down', async () => {
-    const test = await bench()
-    test.terminal.type(KEY.shiftUp)
+  it('returns the selection to the first segment on Shift+Down', async () => {
+    const test = await benchWithContext()
     test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
-    typeLine(test.terminal, 'back to typing')
-    await test.settle()
-    expect(test.calls.followups).toHaveLength(1)
+    expect(test.terminal.text()).toContain('model: test-model')
   })
 
   it('keeps Ctrl+C and Ctrl+D global and hands focus back to the editor', async () => {
     const test = await bench()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
-    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    expect(test.terminal.text()).toContain('Shift+↑ transcript')
     const quitting = await bench()
-    quitting.terminal.type(KEY.shiftUp)
+    quitting.terminal.type(KEY.shiftDown)
     quitting.terminal.type(KEY.ctrlD)
     await quitting.settle()
     expect(quitting.quits).toHaveLength(1)
@@ -673,7 +678,7 @@ describe('the status bar', () => {
 
   it('gives the keyboard to the editor after a modal opened while the bar held it', async () => {
     const test = await bench()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     await test.settle()
     const answered = test.ctx.waterfall(
       'approval/request',
@@ -685,7 +690,7 @@ describe('the status bar', () => {
     test.terminal.type(KEY.enter)
     await expect(answered).resolves.toBe('allowed-once')
     await test.settle()
-    expect(test.terminal.text()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    expect(test.terminal.text()).toContain('Shift+↑ transcript')
     typeLine(test.terminal, 'after the modal')
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'after the modal' }]])
@@ -695,7 +700,7 @@ describe('the status bar', () => {
     const test = await bench()
     test.appendAssistant([{ type: 'text', text: 'done' }], { usage: { inputTokens: 10, outputTokens: 4 } })
     await test.settle()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
@@ -704,7 +709,7 @@ describe('the status bar', () => {
     test.terminal.type(KEY.escape)
     typeLine(test.terminal, '/new')
     await test.settle()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('model: opened-model')
@@ -750,7 +755,7 @@ describe('the running-turn counter', () => {
     await test.settle()
     // The bar holds the model segment first; the turn segment follows the
     // permission one, which no bench profile composes.
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()

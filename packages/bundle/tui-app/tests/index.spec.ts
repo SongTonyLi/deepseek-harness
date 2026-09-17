@@ -128,9 +128,10 @@ async function settled(): Promise<void> {
 function config(overrides: Partial<Config> = {}): Config {
   return {
     toolPreviewLines: 8,
+    focusPreviewLines: 12,
     liveRefreshMs: 1000,
-    streamFadeSteps: 5,
-    streamFadeStepMs: 40,
+    streamFadeSteps: 8,
+    streamFadeStepMs: 33,
     reducedMotion: false,
     openBrowser: true,
     ...overrides,
@@ -374,9 +375,10 @@ describe('the presentation tunables', () => {
   it('default to the shipped terminal settings', () => {
     expect(validate({})).toEqual({
       toolPreviewLines: 8,
+      focusPreviewLines: 12,
       liveRefreshMs: 1000,
-      streamFadeSteps: 5,
-      streamFadeStepMs: 40,
+      streamFadeSteps: 8,
+      streamFadeStepMs: 33,
       reducedMotion: false,
       openBrowser: true,
     })

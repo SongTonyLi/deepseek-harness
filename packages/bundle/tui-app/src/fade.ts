@@ -2,8 +2,9 @@
  * Streaming token fade-in for the assistant transcript: the tail state that
  * follows freshly streamed words, the background-to-foreground color ramp they
  * brighten along, the SGR encoding of one ramp level under each terminal
- * capability, and the ANSI-aware transform that recolors the tail inside lines
- * a component already rendered.
+ * capability, the ANSI-aware transform that recolors the tail inside lines a
+ * component already rendered, and the whole-line transform and clocks that
+ * fade a block in as a unit.
  *
  * Rendering contract. Nothing here writes to a terminal, emits a
  * cursor-movement sequence, or tracks a screen row or column. This terminal
@@ -15,6 +16,10 @@
  * text comes back byte-identical, so the framework leaves it alone and only
  * the tail's lines reach the terminal. That is how "repaint the tail region,
  * never the full viewport" holds in this application.
+ *
+ * How far up a block either transform may reach is the caller's decision, and
+ * `./screen.ts` owns the rule it follows: both take a first repaintable line
+ * and hand every line above it back untouched.
  *
  * Colors are inputs. The application reads `bg` from pi-tui's
  * `queryTerminalBackgroundColor({ timeoutMs })` on the TUI, or from
@@ -37,16 +42,10 @@ import { sliceByColumn, stripTerminalSequences, visibleWidth, type RgbColor } fr
  * Fewer than two levels leaves no visible ramp, so the application's config
  * field should require at least 2.
  */
-export const FADE_STEPS = 5
+export const FADE_STEPS = 8
 
-/** Repaint period in milliseconds: one tick per period, about 25 frames per second. */
-export const FADE_TICK_MS = 40
-
-/**
- * Consecutive ticks the fast-stream test looks back over. At
- * {@link FADE_TICK_MS} this window is 400 ms.
- */
-export const FADE_FAST_WINDOW_TICKS = 10
+/** Duration of one brightness level in milliseconds, and so the repaint period of fading text: about 30 frames per second. */
+export const FADE_TICK_MS = 33
 
 /** Control Sequence Introducer. */
 const CSI = '\u001b['
@@ -85,6 +84,21 @@ const LUMINANCE = { r: 0.2126, g: 0.7152, b: 0.0722 }
 /** Largest value one color channel encodes. */
 const CHANNEL_MAX = 255
 
+/** Encoded sRGB value below which the transfer function is the linear segment. */
+const SRGB_LINEAR_CUT = 0.04045
+
+/** Linear intensity below which the sRGB transfer function is the linear segment. */
+const LINEAR_SRGB_CUT = 0.0031308
+
+/** Slope of the sRGB transfer function's linear segment. */
+const SRGB_LINEAR_SLOPE = 12.92
+
+/** Offset of the sRGB transfer function's power segment. */
+const SRGB_OFFSET = 0.055
+
+/** Exponent of the sRGB transfer function's power segment. */
+const SRGB_GAMMA = 2.4
+
 /**
  * Grapheme segmenter for the reverse column walk. pi-tui keeps its own
  * segmenter private, so this module holds one; grapheme segmentation does not
@@ -114,7 +128,7 @@ export interface FadeStyle {
 export interface FadeSpan {
   /** The text appended for this chunk, before markdown rendering. */
   text: string
-  /** Ticks since the chunk arrived. */
+  /** Brightness levels the chunk has climbed since it became visible. */
   age: number
 }
 
@@ -151,10 +165,14 @@ export function resolveFadeCapability(input: FadeCapabilityInput): FadeCapabilit
 }
 
 /**
- * Build the brightness ramp a chunk climbs, `ramp[k] = lerp(bg, fg, (k + 1) /
- * steps)` in sRGB with each channel rounded to a byte. The last level is a
- * copy of `fg` rather than a computed value, so settled text and the last
- * faded frame carry identical color.
+ * Build the brightness ramp a chunk climbs: level `k` sits at
+ * `t = (k + 1) / steps` of the way from `bg` to `fg`, eased by the smoothstep
+ * `t * t * (3 - 2 * t)` and interpolated with each channel in linear light.
+ * Both shape the ramp against what the eye reads rather than what the byte
+ * says: sRGB bytes are gamma-encoded, so mixing them directly bunches the
+ * visible change into the dark end, and an even ramp of levels arrives with a
+ * hard start and stop. The last level is a copy of `fg` rather than a computed
+ * value, so settled text and the last faded frame carry identical color.
  * @param bg - the terminal background color.
  * @param fg - the normal foreground color.
  * @param steps - brightness levels; defaults to {@link FADE_STEPS}.
@@ -163,26 +181,50 @@ export function resolveFadeCapability(input: FadeCapabilityInput): FadeCapabilit
 export function buildFadeRamp(bg: RgbColor, fg: RgbColor, steps: number = FADE_STEPS): RgbColor[] {
   return Array.from({ length: steps }, (_unused, level) => {
     if (level === steps - 1) return { r: fg.r, g: fg.g, b: fg.b }
-    const ratio = (level + 1) / steps
-    return { r: mix(bg.r, fg.r, ratio), g: mix(bg.g, fg.g, ratio), b: mix(bg.b, fg.b, ratio) }
+    const position = (level + 1) / steps
+    const eased = position * position * (3 - 2 * position)
+    return { r: mix(bg.r, fg.r, eased), g: mix(bg.g, fg.g, eased), b: mix(bg.b, fg.b, eased) }
   })
 }
 
 /**
- * Interpolate one channel.
- * @param from - the background channel.
- * @param to - the foreground channel.
+ * Interpolate one channel in linear light.
+ * @param from - the background channel, sRGB-encoded.
+ * @param to - the foreground channel, sRGB-encoded.
  * @param ratio - position between them, 0 at `from` and 1 at `to`.
- * @returns the channel value rounded to a byte.
+ * @returns the sRGB-encoded channel value rounded to a byte.
  */
 function mix(from: number, to: number, ratio: number): number {
-  return Math.round(from + (to - from) * ratio)
+  const linear = toLinear(from)
+  return toSrgb(linear + (toLinear(to) - linear) * ratio)
+}
+
+/**
+ * Decode one sRGB channel to linear light, by the sRGB transfer function.
+ * @param value - the channel byte.
+ * @returns the linear intensity in 0..1.
+ */
+function toLinear(value: number): number {
+  const encoded = value / CHANNEL_MAX
+  return encoded <= SRGB_LINEAR_CUT ? encoded / SRGB_LINEAR_SLOPE : ((encoded + SRGB_OFFSET) / (1 + SRGB_OFFSET)) ** SRGB_GAMMA
+}
+
+/**
+ * Encode linear light back to an sRGB channel byte.
+ * @param value - the linear intensity in 0..1.
+ * @returns the channel byte.
+ */
+function toSrgb(value: number): number {
+  const encoded = value <= LINEAR_SRGB_CUT
+    ? SRGB_LINEAR_SLOPE * value
+    : (1 + SRGB_OFFSET) * value ** (1 / SRGB_GAMMA) - SRGB_OFFSET
+  return Math.round(encoded * CHANNEL_MAX)
 }
 
 /**
  * The SGR sequence one age draws under.
  * @param style - the capability and the ramp.
- * @param age - ticks since the chunk arrived; ages past the ramp draw its last level.
+ * @param age - the brightness level; levels past the ramp draw its last one.
  * @returns the sequence to open the run with, or the empty string when the
  * chunk draws as the component rendered it, which is also what an empty ramp
  * yields under a color capability.
@@ -234,49 +276,92 @@ function restoreFor(capability: FadeCapability): string {
   return capability === 'dim' ? RESET_INTENSITY : RESET_FOREGROUND
 }
 
-/** One chunk of streamed text and the tick it arrived on. */
+/** Every SGR sequence, the sequences a block's own palette styling writes. */
+const SGR_SEQUENCE = /\u001b\[[0-9;]*m/g
+
+/**
+ * Draw whole rendered lines at one brightness level, for a block that fades in
+ * as a unit rather than word by word.
+ *
+ * The level is opened at the start of the line and reasserted after every SGR
+ * the line already carries, so the palette colors inside a card - the status
+ * glyph, the dim body rule, the bold tool name - are overridden while the card
+ * fades and come back on their own once it settles. Each line ends with the
+ * sequence that undoes what the level set - the terminal's own foreground, or
+ * its normal intensity in the two-level mode - so the level never leaks past
+ * the line it was applied to. Empty lines come back byte-identical, so
+ * the renderer leaves the blank rows around a card alone.
+ * @param lines - the rendered lines of the block.
+ * @param age - the brightness level to draw them at.
+ * @param style - the capability and the ramp.
+ * @param from - first line the level is applied to; the lines before it come
+ * back byte-identical, which is how a caller keeps rows the renderer can no
+ * longer repaint out of the fade.
+ * @returns the lines at that level; copies when the style writes no sequence
+ * for this age, which is what the `none` capability and a settled age yield.
+ */
+export function recolorLines(lines: readonly string[], age: number, style: FadeStyle, from = 0): string[] {
+  const sgr = fadeSgr(style, age)
+  if (sgr === '') return [...lines]
+  const restore = restoreFor(style.capability)
+  return lines.map((line, index) => index < from || line === ''
+    ? line
+    : `${sgr}${line.replace(SGR_SEQUENCE, match => match + sgr)}${restore}`)
+}
+
+/** One chunk of streamed text and the instant it became visible. */
 interface FadeChunk {
   /** Text appended for this chunk; a word plus the whitespace that follows it. */
   text: string
-  /** Tick index at arrival. */
-  born: number
+  /** Wall-clock time the chunk became visible, in milliseconds. */
+  bornAt: number
 }
 
 /** Settings a {@link FadeTracker} is built with. */
 export interface FadeTrackerOptions {
   /** Brightness levels, and the age at which a chunk leaves the tail. Defaults to {@link FADE_STEPS}. */
   steps?: number
-  /** Consecutive arrival ticks that disable the effect. Defaults to {@link FADE_FAST_WINDOW_TICKS}. */
-  fastWindowTicks?: number
+  /** How long one brightness level lasts, in milliseconds. Defaults to {@link FADE_TICK_MS}. */
+  stepMs?: number
+  /**
+   * The wall clock ages are measured against.
+   * @returns the current time in milliseconds.
+   */
+  now: () => number
 }
 
 /**
- * The tail of one streaming assistant message: the chunks young enough to be
- * recolored, advanced one tick at a time.
+ * The tail of one streaming region - the visible text or the reasoning of one
+ * message: the chunks young enough to be recolored, each ageing on the wall
+ * clock from the moment it became visible.
  *
  * Deltas are split at word boundaries, which reads more smoothly than raw
  * token edges. A delta that ends mid-word leaves that word open, and the next
  * delta extends it rather than starting a second chunk, so the word keeps the
- * tick it first became visible on.
+ * moment it first became visible.
  *
- * Fast streams. While each of the last {@link FADE_FAST_WINDOW_TICKS}
- * completed ticks received at least one chunk, the stream outruns the ramp and
- * the effect turns off: the arriving chunk is not tracked and the whole tail is
- * flushed, so nothing already on screen darkens. The decision is recoverable:
- * one tick without an arrival ends it, and chunks appended afterwards fade
- * again. Recovery only affects new chunks, so it never re-darkens settled text.
+ * Ages are read, never counted. A chunk's age is the elapsed time since it
+ * became visible divided by `stepMs`, computed at the moment a render asks for
+ * it, so a render triggered by a delta between two fade periods draws every
+ * word at its own level and words do not move in lockstep. That is what makes
+ * the trailing edge continuous rather than banded.
+ *
+ * Arrival rate changes the tail's length, never its depth: whatever the rate,
+ * a chunk is at the foreground `steps * stepMs` after it appeared, so a fast
+ * stream leaves a longer trail of brightening words and never a darker or a
+ * lasting one. The tail is bounded in time, so it stays on at any rate.
  */
 export class FadeTracker {
   private readonly steps: number
-  private readonly fastWindowTicks: number
-  private now = 0
+  private readonly stepMs: number
+  private readonly now: () => number
   private chunks: FadeChunk[] = []
   private openChunk: FadeChunk | undefined = undefined
-  private readonly arrivals = new Set<number>()
 
-  constructor(options?: FadeTrackerOptions) {
-    this.steps = options?.steps ?? FADE_STEPS
-    this.fastWindowTicks = options?.fastWindowTicks ?? FADE_FAST_WINDOW_TICKS
+  constructor(options: FadeTrackerOptions) {
+    this.steps = options.steps ?? FADE_STEPS
+    this.stepMs = options.stepMs ?? FADE_TICK_MS
+    this.now = options.now
   }
 
   /**
@@ -285,41 +370,36 @@ export class FadeTracker {
    */
   append(delta: string): void {
     if (delta === '') return
-    this.arrivals.add(this.now)
-    if (this.isFastStream()) {
-      this.flush()
-      return
-    }
+    const at = this.now()
     const open = this.openChunk
     const text = open === undefined ? delta : open.text + delta
-    const born = open === undefined ? this.now : open.born
+    const bornAt = open === undefined ? at : open.bornAt
     if (open !== undefined) this.chunks.pop()
     this.openChunk = undefined
     const words = text.match(/\s*\S+\s*/g)
     if (words === null) {
-      this.openChunk = { text, born }
+      this.openChunk = { text, bornAt }
       this.chunks.push(this.openChunk)
       return
     }
     for (const [index, word] of words.entries()) {
-      this.chunks.push({ text: word, born: index === 0 ? born : this.now })
+      this.chunks.push({ text: word, bornAt: index === 0 ? bornAt : at })
     }
     if (!/\s$/.test(text)) this.openChunk = this.chunks.at(-1)
   }
 
   /**
-   * Advance one tick and drop the chunks that reached `steps`.
-   * @returns whether this tick changed a chunk's color, and so needs a repaint.
+   * Drop the chunks that reached the step count, which the application runs
+   * once per fade period so a settled chunk stops being matched against the
+   * rendered lines.
+   * @returns whether a chunk still draws below the last brightness level, and
+   * so whether the tail keeps moving after this period.
    */
   tick(): boolean {
-    const changing = this.needsRepaint()
-    this.now += 1
-    this.chunks = this.chunks.filter(chunk => this.now - chunk.born < this.steps)
+    const moving = this.needsRepaint()
+    this.chunks = this.chunks.filter(chunk => this.ageOf(chunk) < this.steps)
     if (this.openChunk !== undefined && !this.chunks.includes(this.openChunk)) this.openChunk = undefined
-    for (const arrival of this.arrivals) {
-      if (arrival < this.now - this.fastWindowTicks) this.arrivals.delete(arrival)
-    }
-    return changing
+    return moving
   }
 
   /**
@@ -328,22 +408,22 @@ export class FadeTracker {
    * is the only reason to keep ticking.
    */
   needsRepaint(): boolean {
-    return this.chunks.some(chunk => this.now - chunk.born < this.steps - 1)
+    return this.chunks.some(chunk => this.ageOf(chunk) < this.steps - 1)
   }
 
   /**
    * The tail {@link recolorTail} recolors.
-   * @returns one span per tracked chunk, oldest first, each with its current age.
+   * @returns one span per tracked chunk, oldest first, each with the age it
+   * carries at this instant.
    */
   spans(): FadeSpan[] {
-    return this.chunks.map(chunk => ({ text: chunk.text, age: this.now - chunk.born }))
+    return this.chunks.map(chunk => ({ text: chunk.text, age: this.ageOf(chunk) }))
   }
 
   /**
    * Drop the whole tail so every chunk drawn so far renders at the foreground,
    * and start tracking again from the next delta. The application calls this on
-   * a terminal width change and at stream end. The fast-stream window is kept:
-   * a resize says nothing about the arrival rate.
+   * a terminal width change and at stream end.
    */
   flush(): void {
     this.chunks = []
@@ -351,15 +431,108 @@ export class FadeTracker {
   }
 
   /**
-   * The fast-stream test.
-   * @returns true while every completed tick of the window received at least one chunk.
+   * The brightness level one chunk draws at right now.
+   * @param chunk - the tracked chunk.
+   * @returns levels elapsed since it became visible, 0 for a chunk younger than one level.
    */
-  private isFastStream(): boolean {
-    let covered = 0
-    for (let tick = this.now - this.fastWindowTicks; tick < this.now; tick += 1) {
-      if (this.arrivals.has(tick)) covered += 1
+  private ageOf(chunk: FadeChunk): number {
+    return Math.floor((this.now() - chunk.bornAt) / this.stepMs)
+  }
+}
+
+/** Settings a {@link BlockFadeClock} is built with. */
+export interface BlockFadeClockOptions {
+  /** Wall-clock time the block became visible, in milliseconds. */
+  bornAt: number
+  /** How long one brightness level lasts, in milliseconds. */
+  stepMs: number
+  /** Brightness levels the block climbs. */
+  steps: number
+  /**
+   * The wall clock the age is measured against.
+   * @returns the current time in milliseconds.
+   */
+  now: () => number
+}
+
+/**
+ * The age of one whole block that fades in as a unit - a tool card's rows,
+ * which arrive complete rather than word by word.
+ *
+ * The last level is withheld the way the word tail withholds it: that level is
+ * an assumed foreground, so a block one level below the end is handed back to
+ * the terminal's own colors instead, and nothing jumps color as it settles.
+ */
+export class BlockFadeClock {
+  constructor(private readonly options: BlockFadeClockOptions) {}
+
+  /**
+   * The brightness level the block draws at right now.
+   * @returns the level, or undefined once the block reached the last drawn
+   * level and renders in the colors the component itself produced.
+   */
+  age(): number | undefined {
+    const { bornAt, stepMs, steps, now } = this.options
+    const age = Math.floor((now() - bornAt) / stepMs)
+    return age < steps - 1 ? age : undefined
+  }
+
+  /**
+   * Whether this block still draws below the last brightness level.
+   * @returns true while {@link BlockFadeClock.age} yields a level.
+   */
+  needsRepaint(): boolean {
+    return this.age() !== undefined
+  }
+}
+
+/** What {@link FadeRegistry} keeps: anything that reports whether it is still moving. */
+export interface RegisteredFade {
+  /**
+   * Whether this fade still draws below the last brightness level.
+   * @returns true while it keeps moving.
+   */
+  needsRepaint(): boolean
+}
+
+/**
+ * The block fades running right now. The application arms its repaint while
+ * any member still moves, so the registry holds only members that have not
+ * settled: {@link FadeRegistry.tick} drops the settled ones once per period,
+ * and a session change clears the whole set.
+ */
+export class FadeRegistry {
+  private readonly members = new Set<RegisteredFade>()
+
+  /**
+   * Track one fade until it settles.
+   * @param fade - the fade to follow.
+   */
+  add(fade: RegisteredFade): void {
+    this.members.add(fade)
+  }
+
+  /**
+   * Whether any tracked fade still moves.
+   * @returns true while one of them needs another repaint.
+   */
+  needsRepaint(): boolean {
+    for (const member of this.members) {
+      if (member.needsRepaint()) return true
     }
-    return covered >= this.fastWindowTicks
+    return false
+  }
+
+  /** Forget the fades that settled, so a long session accumulates none of them. */
+  tick(): void {
+    for (const member of this.members) {
+      if (!member.needsRepaint()) this.members.delete(member)
+    }
+  }
+
+  /** Forget every tracked fade, which the application does when it draws another session. */
+  clear(): void {
+    this.members.clear()
   }
 }
 
@@ -409,10 +582,13 @@ interface LineRun {
  * @param lines - the rendered lines of the streaming block, newest text last.
  * @param spans - the tail from {@link FadeTracker.spans}, oldest first.
  * @param style - the capability and the ramp.
+ * @param from - first line the tail may recolor; the lines before it come back
+ * byte-identical, which is how a caller keeps rows the renderer can no longer
+ * repaint out of the fade.
  * @returns the lines with the tail recolored; lines the tail does not cover
  * are returned byte-identical, so the renderer leaves them alone.
  */
-export function recolorTail(lines: readonly string[], spans: readonly FadeSpan[], style: FadeStyle): string[] {
+export function recolorTail(lines: readonly string[], spans: readonly FadeSpan[], style: FadeStyle, from = 0): string[] {
   if (style.capability === 'none' || spans.length === 0 || lines.length === 0) return [...lines]
   const cells = cellsFromEnd(lines)
   const runs: LineRun[] = []
@@ -430,7 +606,7 @@ export function recolorTail(lines: readonly string[], spans: readonly FadeSpan[]
   }
   const restore = restoreFor(style.capability)
   return lines.map((text, index) => {
-    const lineRuns = byLine.get(index)
+    const lineRuns = index < from ? undefined : byLine.get(index)
     return lineRuns === undefined ? text : paintLine(text, lineRuns, restore)
   })
 }
