@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-tui-bar-caret-and-stream-fade.md
-2026-09-17-tui-bar-caret-and-stream-fade.md: 5d746881ccdabffe39dfbe5c5b7e6d24d26b3b22
-2026-09-17-tui-bar-caret-and-stream-fade.zh.md: 29e11104d06141e655be6843fd95ec15438895ae
+2026-09-17-tui-bar-caret-and-stream-fade.md: f2c7ad97052ba5b6938c630b0c24c5baf64ea8c5
+2026-09-17-tui-bar-caret-and-stream-fade.zh.md: a4bd746cc134e0bb79c7f1e94a2c3591fb70aaba

@@ -120,34 +120,28 @@ describe('the live subagent panel', () => {
     expect(await test.screen()).toContain('resident · running · 6s')
   })
 
-  it('walks the docked regions with Shift+Up and Shift+Down and always returns on Esc', async () => {
+  it('walks the docked regions with Shift+Down, Up, and Down, and always returns on Esc', async () => {
     const test = await bench({ subagents: () => Promise.resolve([entry('session-kid')] as never) })
     const kid = await test.createChild({ id: 'session-kid' })
     await reconcile(test, kid)
 
-    test.terminal.type(KEY.shiftUp)
-    await test.settle()
-    expect(test.terminal.text()).toContain('← → select · Enter details · Esc back')
-    test.terminal.type(KEY.shiftUp)
-    await test.settle()
-    expect(test.terminal.text()).toContain('↑ ↓ select · Enter details · Esc back')
-    // Once more closes the cycle at the editor.
-    test.terminal.type(KEY.shiftUp)
-    await test.settle()
-    expect(await test.screen()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
-
-    // Backwards: the editor reaches the panel, and the panel the bar.
+    // Shift+Down at the editor reaches the panel, because one is drawn.
     test.terminal.type(KEY.shiftDown)
     await test.settle()
     expect(test.terminal.text()).toContain('↑ ↓ select · Enter details · Esc back')
+    // Down past the panel's last row reaches the bar, and Up comes back.
+    test.terminal.type(KEY.down)
+    await test.settle()
+    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
+    test.terminal.type(KEY.up)
+    await test.settle()
+    expect(test.terminal.text()).toContain('↑ ↓ select · Enter details · Esc back')
+    // Shift+Down from the panel jumps straight to the bar.
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('← → select · Enter details · Esc back')
-    test.terminal.type(KEY.shiftDown)
-    await test.settle()
+    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
 
-    // Esc from the panel returns to the editor, and typing lands there.
-    test.terminal.type(KEY.shiftDown)
+    // Esc from the bar returns to the editor, and typing lands there.
     test.terminal.type(KEY.escape)
     await test.settle()
     for (const char of 'hello') test.terminal.type(char)
@@ -168,7 +162,7 @@ describe('the live subagent panel', () => {
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
-    expect(await test.screen()).toContain('Ctrl+C twice quits · Shift+↑ status bar')
+    expect(await test.screen()).toContain('Shift+↑ transcript')
   })
 
   it('returns focus to the editor when the panel it held goes away', async () => {
@@ -227,11 +221,11 @@ describe('the live subagent panel', () => {
     expect(test.terminal.text()).toContain('workspace: /work/session-kid')
     test.terminal.type(KEY.enter)
     await test.settle()
-    // Up from the first row wraps to the last one.
+    // Up from the first row leaves the panel for the transcript instead of
+    // wrapping, and this session has nothing navigable in it yet.
     test.terminal.type(KEY.up)
-    test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text().split('workspace: /work/session-other')).toHaveLength(3)
+    expect(test.terminal.text()).toContain('nothing in the transcript to inspect yet')
   })
 
   it('opens nothing for a row the listing could not read', async () => {

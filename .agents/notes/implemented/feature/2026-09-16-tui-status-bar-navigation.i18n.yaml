@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-16-tui-status-bar-navigation.md
-2026-09-16-tui-status-bar-navigation.md: 9b26d12853de5da456a033630b344e1e73ace928
-2026-09-16-tui-status-bar-navigation.zh.md: 999a8d50b8018e1c4647ac717bf5d5d10fd5c7d0
+2026-09-16-tui-status-bar-navigation.md: 7fa7aca5904c559373a4b6f789fd7175cbe80992
+2026-09-16-tui-status-bar-navigation.zh.md: 81df03c11ab928310bce6e60bc7fe7cb8308454f

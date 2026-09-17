@@ -27,6 +27,7 @@ import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import { TuiApp, type BoundSession, type SessionHost } from './app.ts'
 import { FADE_STEPS, FADE_TICK_MS } from './fade.ts'
+import { FOCUS_PREVIEW_LINES } from './inspector.ts'
 import { colorEnabled, createPalette } from './style.ts'
 import { describeFailure } from './transcript.ts'
 
@@ -45,6 +46,14 @@ export interface Config {
   /** Collapsed tool-card body rows before `Ctrl+O` expands them. */
   toolPreviewLines: number
   /**
+   * Rows of the focused transcript section the docked inspector shows before
+   * `Enter` opens the whole of it as a scrollable page. `Shift+Up` puts the
+   * keyboard on the newest block and the inspector draws the section it holds;
+   * a taller budget reads more of a long reply or tool result at once and
+   * leaves less of the conversation itself on screen.
+   */
+  focusPreviewLines: number
+  /**
    * Period in milliseconds of the terminal's one repeating redraw: it
    * advances the running-turn counter in the status bar and the per-child
    * counters in the subagent panel, and re-reads the subagent listing a live
@@ -56,27 +65,31 @@ export interface Config {
    */
   liveRefreshMs: number
   /**
-   * Brightness levels streamed assistant text climbs through before it draws
-   * in the terminal's normal foreground: it enters near the terminal
-   * background and brightens one level per {@link Config.streamFadeStepMs},
-   * so the whole fade lasts `streamFadeSteps * streamFadeStepMs` and leaves
-   * that much text dimmed behind the stream head. Two levels is the shortest
-   * ramp that still shows; more levels spread the same period over a softer
-   * trailing edge. Text that has settled is never dimmed again.
+   * Brightness levels streamed assistant text, streamed reasoning, and a tool
+   * card climb through before they draw in the colors the terminal itself
+   * gives them: each enters near the terminal background and brightens one
+   * level per {@link Config.streamFadeStepMs}, so one word, one reasoning
+   * word, or one card reaches its settled color `streamFadeSteps *
+   * streamFadeStepMs` after it appeared. Each word carries the moment it
+   * appeared, so a fast stream leaves a longer trail of brightening words and
+   * never a darker one. Two levels is the shortest ramp that still shows; more
+   * levels spread the same period over a softer trailing edge. Text that has
+   * settled is never dimmed again.
    */
   streamFadeSteps: number
   /**
    * How long one brightness level lasts, in milliseconds, which is also the
    * repaint period of the fading text. The terminal arms this repaint only
-   * while streamed text is still brightening and disarms it as soon as the
-   * last chunk settles, so an idle session runs no timer. A shorter period
-   * draws a smoother fade at the cost of more redraws.
+   * while a word or a card still draws below the last level and disarms it as
+   * soon as the last one settles, so an idle session runs no timer. A shorter
+   * period draws a smoother fade at the cost of more redraws.
    */
   streamFadeStepMs: number
   /**
-   * Draw streamed assistant text at the normal foreground as it arrives, with
-   * no brightness ramp and no repeating repaint, for users who do not want
-   * text that changes after it is drawn.
+   * Draw streamed assistant text, streamed reasoning, and tool cards at the
+   * colors they render in as they arrive, with no brightness ramp and no
+   * repeating repaint, for users who do not want text that changes after it is
+   * drawn.
    */
   reducedMotion: boolean
   /** Permit local default-browser handoff for authorization pages. */
@@ -87,6 +100,7 @@ export const Config: z<Config> = z.object({
   prompt: z.string(),
   resume: z.string(),
   toolPreviewLines: z.natural().min(1).default(8),
+  focusPreviewLines: z.natural().min(1).default(FOCUS_PREVIEW_LINES),
   liveRefreshMs: z.natural().min(100).default(1000),
   streamFadeSteps: z.natural().min(2).default(FADE_STEPS),
   streamFadeStepMs: z.natural().min(16).default(FADE_TICK_MS),
@@ -268,6 +282,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     terminal: host.createTerminal(),
     palette: createPalette(host.color),
     toolPreviewLines: config.toolPreviewLines,
+    focusPreviewLines: config.focusPreviewLines,
     liveRefreshMs: config.liveRefreshMs,
     fadeSteps: config.streamFadeSteps,
     fadeStepMs: config.streamFadeStepMs,

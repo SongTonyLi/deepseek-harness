@@ -3360,6 +3360,14 @@ export interface Config {
   /** Collapsed tool-card body rows before `Ctrl+O` expands them. */
   toolPreviewLines: number
   /**
+   * Rows of the focused transcript section the docked inspector shows before
+   * `Enter` opens the whole of it as a scrollable page. `Shift+Up` puts the
+   * keyboard on the newest block and the inspector draws the section it holds;
+   * a taller budget reads more of a long reply or tool result at once and
+   * leaves less of the conversation itself on screen.
+   */
+  focusPreviewLines: number
+  /**
    * Period in milliseconds of the terminal's one repeating redraw: it
    * advances the running-turn counter in the status bar and the per-child
    * counters in the subagent panel, and re-reads the subagent listing a live
@@ -3371,27 +3379,31 @@ export interface Config {
    */
   liveRefreshMs: number
   /**
-   * Brightness levels streamed assistant text climbs through before it draws
-   * in the terminal's normal foreground: it enters near the terminal
-   * background and brightens one level per {@link Config.streamFadeStepMs},
-   * so the whole fade lasts `streamFadeSteps * streamFadeStepMs` and leaves
-   * that much text dimmed behind the stream head. Two levels is the shortest
-   * ramp that still shows; more levels spread the same period over a softer
-   * trailing edge. Text that has settled is never dimmed again.
+   * Brightness levels streamed assistant text, streamed reasoning, and a tool
+   * card climb through before they draw in the colors the terminal itself
+   * gives them: each enters near the terminal background and brightens one
+   * level per {@link Config.streamFadeStepMs}, so one word, one reasoning
+   * word, or one card reaches its settled color `streamFadeSteps *
+   * streamFadeStepMs` after it appeared. Each word carries the moment it
+   * appeared, so a fast stream leaves a longer trail of brightening words and
+   * never a darker one. Two levels is the shortest ramp that still shows; more
+   * levels spread the same period over a softer trailing edge. Text that has
+   * settled is never dimmed again.
    */
   streamFadeSteps: number
   /**
    * How long one brightness level lasts, in milliseconds, which is also the
    * repaint period of the fading text. The terminal arms this repaint only
-   * while streamed text is still brightening and disarms it as soon as the
-   * last chunk settles, so an idle session runs no timer. A shorter period
-   * draws a smoother fade at the cost of more redraws.
+   * while a word or a card still draws below the last level and disarms it as
+   * soon as the last one settles, so an idle session runs no timer. A shorter
+   * period draws a smoother fade at the cost of more redraws.
    */
   streamFadeStepMs: number
   /**
-   * Draw streamed assistant text at the normal foreground as it arrives, with
-   * no brightness ramp and no repeating repaint, for users who do not want
-   * text that changes after it is drawn.
+   * Draw streamed assistant text, streamed reasoning, and tool cards at the
+   * colors they render in as they arrive, with no brightness ramp and no
+   * repeating repaint, for users who do not want text that changes after it is
+   * drawn.
    */
   reducedMotion: boolean
   /** Permit local default-browser handoff for authorization pages. */
@@ -3399,7 +3411,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/bundle/tui-app/src/index.ts:40`](../packages/bundle/tui-app/src/index.ts)
+来源：[`packages/bundle/tui-app/src/index.ts:41`](../packages/bundle/tui-app/src/index.ts)
 
 <a id="deepseek-aidsh-typert-loader"></a>
 

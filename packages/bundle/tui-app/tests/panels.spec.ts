@@ -338,7 +338,7 @@ describe('todo list', () => {
     await test.settle()
     expect(test.terminal.text()).toContain('todo 1/3')
     // The bar holds the model segment first; the todo segment is the next one.
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
@@ -430,7 +430,7 @@ describe('todo list', () => {
         onChanged: () => () => {},
       },
     })
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()

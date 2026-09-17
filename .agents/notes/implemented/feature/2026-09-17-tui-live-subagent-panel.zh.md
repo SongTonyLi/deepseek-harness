@@ -54,12 +54,12 @@ Status: implemented
 
 ## Consequences
 
-- 终端有了第三个停靠区域。`Shift+Up` 现在走编辑器 → 状态栏 → 面板 → 编辑器，`Shift+Down` 反向走回，`Esc` 始终返回编辑器，而编辑器自己的 `Shift+Down` 只在未绘制面板时保留。该循环中双区域的那一半归[可导航的终端状态栏](2026-09-16-tui-status-bar-navigation.zh.md)所有。
+- 终端有了停靠在编辑器下方的第二个区域。编辑器中的 `Shift+Down` 在面板绘制期间落在面板的第一行，否则落在状态栏；`Up` 与 `Down` 走查面板的各行，并在两端离开面板前往上方或下方的区域；`Esc` 始终返回编辑器。状态栏自身的按键归[可导航的终端状态栏](2026-09-16-tui-status-bar-navigation.zh.md)所有，方向键所走查的那个堆叠归[终端对话记录导航与聚焦小节检视区](2026-09-17-tui-transcript-navigation-and-inspector.zh.md)所有。
 - 没有 subagent 运行时、或没有常驻子会话的 profile 不绘制面板，也不为它装上定时器；没有计时与用量投影的 profile 绘制不含这些列的行，而不是留出空白。
 - 面板是带有明确盲区的实时视图：进程外子会话与已结束的子会话都不在其中，`/subagents` 是这两者的答案。
 - 六行是本表层的呈现常量，而不是配置字段，且溢出行之后的各行不可选中。
-- `tests/subagent-panel.spec.ts` 固定各行、已用时间的取舍、诊断行与溢出；`tests/subagents.spec.ts` 在伪终端上固定成员关系、焦点循环、`Enter`、每个 tick 至多一次列表读取的约束、失败行、定时器的装上与卸下，以及各种不出现的情形。
+- `tests/subagent-panel.spec.ts` 固定各行、已用时间的取舍、诊断行与溢出；`tests/subagents.spec.ts` 在伪终端上固定成员关系、到达与离开面板的按键、`Enter`、每个 tick 至多一次列表读取的约束、失败行、定时器的装上与卸下，以及各种不出现的情形。
 
 ## Related decisions
 
-终端应用、其页脚事实以及它读取的 `/subagents` 列表归属于[终端界面作为随附 `tui` profile](../architecture/2026-09-15-terminal-surface-tui-app.zh.md)。面板的 `Enter` 打开的是[终端先列表后详情的导航](2026-09-16-tui-list-then-details-navigation.zh.md)所定义的页面，焦点循环则扩展了[可导航的终端状态栏](2026-09-16-tui-status-bar-navigation.zh.md)。编辑器持有键盘时显示的光标，以及与本 tick 共处一个终端的第二个 tick，来自[终端竖条光标与流式文本淡入](2026-09-17-tui-bar-caret-and-stream-fade.zh.md)。
+终端应用、其页脚事实以及它读取的 `/subagents` 列表归属于[终端界面作为随附 `tui` profile](../architecture/2026-09-15-terminal-surface-tui-app.zh.md)。面板的 `Enter` 打开的是[终端先列表后详情的导航](2026-09-16-tui-list-then-details-navigation.zh.md)所定义的页面；键盘经由[终端对话记录导航与聚焦小节检视区](2026-09-17-tui-transcript-navigation-and-inspector.zh.md)所定义的堆叠到达它，而与之并列的区域归[可导航的终端状态栏](2026-09-16-tui-status-bar-navigation.zh.md)所有。编辑器持有键盘时显示的光标，以及与本 tick 共处一个终端的第二个 tick，来自[终端竖条光标与流式文本淡入](2026-09-17-tui-bar-caret-and-stream-fade.zh.md)。

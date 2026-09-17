@@ -9,6 +9,7 @@ import { Input, Markdown, SelectList, Text, decodeKittyPrintable, fuzzyFilter, m
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { planReviewOptions, type AskUserQuestionAnswerItem, type AskUserQuestionItem, type AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
 import { markdownTheme, selectListTheme, type Palette } from './style.ts'
+import { foldRows } from './transcript.ts'
 
 /** Rows a select list shows before scrolling. */
 const SELECT_MAX_VISIBLE = 8
@@ -16,15 +17,12 @@ const SELECT_MAX_VISIBLE = 8
 const APPROVAL_DETAIL_MAX_ROWS = 12
 
 /**
- * Cut detail rows to `max`, replacing the rest with a count.
- * @param lines - the full rows.
- * @param max - rows kept.
- * @returns the rows to draw, with a trailing count of hidden rows when cut.
+ * The trailing row an approval's folded call detail carries.
+ * @param hidden - rows left out.
+ * @returns the marker row.
  */
-function foldRows(lines: readonly string[], max: number): string[] {
-  if (lines.length <= max) return [...lines]
-  const hidden = lines.length - max
-  return [...lines.slice(0, max), `… ${String(hidden)} more line${hidden === 1 ? '' : 's'}`]
+function approvalFoldMarker(hidden: number): string {
+  return `… ${String(hidden)} more line${hidden === 1 ? '' : 's'}`
 }
 
 /** A prompt that settles with a value once the user answers or the asker withdraws it. */
@@ -157,7 +155,7 @@ export class ApprovalPrompt extends ListPrompt<ApprovalOutcome> {
     super(
       palette,
       reason === undefined ? title : `${title}\n${palette.dim(reason)}`,
-      foldRows(detail, APPROVAL_DETAIL_MAX_ROWS),
+      foldRows(detail, APPROVAL_DETAIL_MAX_ROWS, approvalFoldMarker),
       [
         { value: 'allowed-once', label: 'Allow once', description: 'run this call' },
         { value: 'rejected', label: 'Reject', description: 'the tool call fails and the model is told' },

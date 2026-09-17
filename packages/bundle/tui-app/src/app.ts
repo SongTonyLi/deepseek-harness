@@ -6,7 +6,10 @@
  * the editor it keeps two docked regions the keyboard can take over — the
  * subagent panel and the status bar — and one repeating tick advances their
  * elapsed counters and re-reads a stale subagent listing. A second tick, at
- * its own period, brightens the text of the message streaming right now.
+ * its own period, brightens the text of the message streaming right now and
+ * the tool cards that just landed, each only as far up the frame as the
+ * renderer repaints without discarding the terminal's scrollback
+ * (`./screen.ts`).
  * @module @deepseek-ai/dsh-tui-app/app
  */
 
@@ -15,7 +18,6 @@ import {
   Container,
   Loader,
   Text,
-  TuiMainScreen,
   matchesKey,
   type RgbColor,
   type SelectListLayoutOptions,
@@ -62,12 +64,27 @@ import {
   subagentDetail,
   type SubagentChoice,
 } from './catalog.ts'
-import { AssistantBlock, NoticeBlock, ToolBlock, UserBlock, type BlockTheme } from './blocks.ts'
+import { AssistantBlock, NoticeBlock, ToolBlock, UserBlock, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { exportSessionZip } from './export.ts'
-import { FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
+import { BlockFadeClock, FadeRegistry, FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
+import { InspectorPane, type InspectorView } from './inspector.ts'
+import {
+  clampCursor,
+  enterNewest,
+  isSectionSource,
+  moveBlock,
+  movePart,
+  navigableBlocks,
+  partLabels,
+  sectionHeading,
+  type SectionKind,
+  type SectionPart,
+  type SectionSource,
+  type TranscriptCursor,
+} from './navigation.ts'
 import {
   FIRST_FOOTER_SEGMENT,
   buildFooterSegments,
@@ -77,6 +94,7 @@ import {
   type FooterSegmentId,
 } from './footer.ts'
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
+import { GuardedMainScreen, repaintFloor } from './screen.ts'
 import { describeSession, listSessionChoices } from './sessions.ts'
 import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
 import {
@@ -157,8 +175,31 @@ function assumedForeground(background: RgbColor): RgbColor {
   return luminance < DARK_BACKGROUND_LUMINANCE ? LIGHT_FOREGROUND : DARK_FOREGROUND
 }
 
-/** Which docked region owns the keyboard. */
-type FocusRegion = 'editor' | 'bar' | 'panel'
+/**
+ * Which region owns the keyboard. They stack top to bottom - the transcript
+ * blocks, then the subagent panel's rows while it is drawn, then the status
+ * bar's segments - and `Up` and `Down` walk that stack from whichever one the
+ * editor was left through.
+ */
+type FocusRegion = 'editor' | 'transcript' | 'panel' | 'bar'
+
+/** The block that carries the focus gutter right now, and which of its sections is accented. */
+interface HeldSection {
+  block: SectionSource
+  part: SectionKind
+}
+
+/** The transcript cursor read against the blocks drawn right now. */
+interface FocusedSection {
+  /** The cursor, settled inside the current blocks. */
+  cursor: TranscriptCursor
+  /** The blocks it was settled against. */
+  blocks: readonly SectionSource[]
+  /** The block the cursor names. */
+  block: SectionSource
+  /** The section inside that block. */
+  part: SectionPart
+}
 
 /** One Agent the terminal drives, with the facts the host resolved for it. */
 export interface BoundSession {
@@ -197,13 +238,15 @@ export interface TuiAppDeps {
   palette: Palette
   /** Collapsed tool-card body rows. */
   toolPreviewLines: number
+  /** Rows of the focused transcript section the docked inspector shows. */
+  focusPreviewLines: number
   /** Period of the live-refresh tick, in milliseconds. */
   liveRefreshMs: number
-  /** Brightness levels streamed text climbs; the oldest visible level is `fadeSteps - 1`. */
+  /** Brightness levels streamed text and tool cards climb; the oldest visible level is `fadeSteps - 1`. */
   fadeSteps: number
-  /** Period of the fade tick, in milliseconds: one brightness level per tick. */
+  /** How long one brightness level lasts, in milliseconds, which is also the fade repaint period. */
   fadeStepMs: number
-  /** Draw streamed text at the normal foreground with no ramp and no fade tick. */
+  /** Draw streamed text and tool cards in their own colors, with no ramp and no fade tick. */
   reducedMotion: boolean
   /**
    * Process environment the fade capability is decided from (`NO_COLOR`,
@@ -221,9 +264,9 @@ export interface TuiAppDeps {
    * Start one repeating tick. The app arms at most one per purpose and only
    * while that purpose needs it: the live refresh while a turn is running, a
    * listed child is timing an open turn, or the listing is stale, and the
-   * fade while streamed text is still brightening. The production source
-   * registers each interval as an effect of the plugin fiber; tests
-   * substitute a source they step by hand.
+   * fade while streamed text or a tool card is still brightening. The
+   * production source registers each interval as an effect of the plugin
+   * fiber; tests substitute a source they step by hand.
    * @param callback - runs once per period.
    * @param delayMs - the period.
    * @returns the disposer that stops this tick.
@@ -322,12 +365,14 @@ type EffortLookup =
 
 /** The interactive terminal application; one instance per process. */
 export class TuiApp {
-  private readonly tui: TuiMainScreen
+  private readonly tui: GuardedMainScreen
   private readonly header: Text
   private readonly chat = new Container()
   private readonly statusSlot = new Container()
   private readonly loader: Loader
   private readonly modalSlot = new Container()
+  /** Draws the focused transcript section, and nothing at all while the keyboard is elsewhere. */
+  private readonly inspector: InspectorPane
   private readonly editor: BarCursorEditor
   /** Holds {@link panel} exactly while the bound session has subagent rows. */
   private readonly panelSlot = new Container()
@@ -350,8 +395,16 @@ export class TuiApp {
   private readonly home = homedir()
   /** The segments of the last footer draw, in bar order. */
   private segments: readonly FooterSegment[] = []
-  /** Which docked region owns the keyboard. */
+  /** Which region owns the keyboard. */
   private focus: FocusRegion = 'editor'
+  /**
+   * Where the transcript focus sits, kept across a page and a return to the
+   * editor. A cursor the current transcript cannot place names nothing, which
+   * is what a session change leaves behind.
+   */
+  private cursor: TranscriptCursor | undefined
+  /** The section drawn with the focus gutter right now; set only by {@link TuiApp.settleFrame}. */
+  private highlighted: HeldSection | undefined
   /** The segment the status bar holds; read only while the bar has focus. */
   private barSelection: FooterSegmentId = FIRST_FOOTER_SEGMENT
   /** The descendant listing the last reconcile produced, in pre-order. */
@@ -370,8 +423,14 @@ export class TuiApp {
   private ticker: (() => void) | undefined
   /** Disposer of the fade tick while it is armed. */
   private fadeTicker: (() => void) | undefined
-  /** The tail of the message streaming right now; absent between messages. */
-  private fadeTail: FadeTracker | undefined
+  /** The visible-text tail of the message streaming right now; absent between messages. */
+  private textTail: FadeTracker | undefined
+  /** The reasoning tail of the message streaming right now; absent between messages. */
+  private reasoningTail: FadeTracker | undefined
+  /** The card fades running right now; each drops itself once it settles. */
+  private readonly blockFades = new FadeRegistry()
+  /** Set while {@link TuiApp.bind} replays a session's history, which draws its cards settled. */
+  private replaying = false
   /** Whether this terminal draws a ramp at all, decided once at start. */
   private fading = false
   /** How streamed text is drawn; `none` until the background query settles. */
@@ -397,8 +456,9 @@ export class TuiApp {
     // of its own, so the terminal's own cursor is the caret. Setting it here
     // rather than through `setShowHardwareCursor` keeps the constructor from
     // requesting a render before the tree has children.
-    this.tui = new TuiMainScreen(deps.terminal, true)
+    this.tui = new GuardedMainScreen(deps.terminal, true, (viewportTop, width) => this.settleFrame(viewportTop, width))
     this.header = new Text('', 0, 0)
+    this.inspector = new InspectorPane(() => this.inspectorView(), { palette, previewLines: deps.focusPreviewLines })
     this.loader = new Loader(this.tui, palette.accent, palette.dim, 'thinking')
     // pi-tui starts the spinner interval in the constructor; it runs only while mounted.
     this.loader.stop()
@@ -411,9 +471,8 @@ export class TuiApp {
     this.panel = new Text('', 0, 0)
     this.footer = new Text('', 0, 0)
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
-    for (const child of [this.header, this.chat, this.statusSlot, this.modalSlot, this.editor, this.panelSlot, this.footer]) {
-      this.tui.addChild(child)
-    }
+    const tree = [this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.editor, this.panelSlot, this.footer]
+    for (const child of tree) this.tui.addChild(child)
   }
 
   private get agent(): Agent {
@@ -474,10 +533,11 @@ export class TuiApp {
   }
 
   /**
-   * Decide whether streamed text fades at all, once per run, from the
-   * palette, the environment, and the reduced-motion preference. A terminal
-   * that draws no ramp tracks no tail and arms no fade tick, so streaming
-   * costs there exactly what it did before the effect existed.
+   * Decide whether streamed text and tool cards fade at all, once per run,
+   * from the palette, the environment, and the reduced-motion preference. A
+   * terminal that draws no ramp tracks no tail, attaches no card fade, and
+   * arms no fade tick, so streaming costs there exactly what it does with the
+   * effect switched off.
    */
   private startFade(): void {
     const capability = resolveFadeCapability({
@@ -528,6 +588,10 @@ export class TuiApp {
   /** Draw `next` as the terminal's session: clear the transcript and replay its history. */
   private bind(next: BoundSession): void {
     this.bound = next
+    // The blocks the transcript focus names are about to be discarded, so the
+    // keyboard goes back to the editor and the focus gutter with it.
+    this.focusEditor()
+    this.highlighted = undefined
     this.chat.clear()
     this.toolBlocks.clear()
     this.toolArguments.clear()
@@ -537,6 +601,7 @@ export class TuiApp {
     this.turnStartedAt = undefined
     this.streaming = undefined
     this.endFade()
+    this.blockFades.clear()
     this.usage = EMPTY_USAGE
     this.pending = []
     this.subagentEntries = []
@@ -544,7 +609,11 @@ export class TuiApp {
     this.listingFailure = undefined
     this.subagentsStale = false
     this.setWorking(next.agent.status === 'running')
+    // Replayed history describes what the session already did, so its cards
+    // are drawn settled however long ago they were logged.
+    this.replaying = true
     for (const event of next.history) this.onSessionEvent(next.agent.session, event)
+    this.replaying = false
     this.refreshHeader()
     this.refreshFooter()
     this.refreshSubagentPanel()
@@ -1061,15 +1130,15 @@ export class TuiApp {
     }
     if (this.focus === 'bar') return this.onStatusBarKey(data)
     if (this.focus === 'panel') return this.onPanelKey(data)
+    if (this.focus === 'transcript') return this.onTranscriptKey(data)
+    // The regions stack above and below the editor: Shift+Up leaves it for the
+    // conversation, Shift+Down for the regions docked under it.
     if (matchesKey(data, 'shift+up')) {
-      this.focusBar()
+      this.focusTranscript()
       return { consume: true }
     }
-    // The docked cycle runs editor → bar → panel → editor, so the editor's
-    // step backwards is the panel; with no panel drawn the key is the
-    // editor's own.
-    if (matchesKey(data, 'shift+down') && this.panelView.rows.length > 0) {
-      this.focusRegion('panel')
+    if (matchesKey(data, 'shift+down')) {
+      this.focusBelowEditor()
       return { consume: true }
     }
     if (matchesKey(data, 'escape') && !this.editor.isShowingAutocomplete()) {
@@ -1100,20 +1169,42 @@ export class TuiApp {
   }
 
   /**
+   * Answer the keys every non-editor region answers the same way: `Escape`
+   * hands the keyboard back to the editor, `Shift+Up` names the conversation,
+   * and `Shift+Down` the status bar.
+   * @param data - the raw key bytes.
+   * @returns the consume marker when the key named a region, `undefined` when the focused region owns the key.
+   */
+  private onRegionKey(data: string): { consume: true } | undefined {
+    if (matchesKey(data, 'escape')) {
+      this.focusEditor()
+      return { consume: true }
+    }
+    if (matchesKey(data, 'shift+up')) {
+      this.focusTranscript()
+      return { consume: true }
+    }
+    if (matchesKey(data, 'shift+down')) {
+      this.focusBar()
+      return { consume: true }
+    }
+    return undefined
+  }
+
+  /**
    * Answer one key while the status bar holds focus. Every key is consumed
    * here, so nothing typed at the bar reaches the editor.
    * @param data - the raw key bytes.
    * @returns the consume marker the input listener returns.
    */
   private onStatusBarKey(data: string): { consume: true } {
-    if (matchesKey(data, 'escape') || matchesKey(data, 'shift+down')) {
-      this.focusEditor()
-      return { consume: true }
-    }
-    if (matchesKey(data, 'shift+up')) {
-      // Forward through the docked cycle: the panel when it is drawn, the
-      // editor when it is not.
-      this.focusRegion(this.panelView.rows.length > 0 ? 'panel' : 'editor')
+    const region = this.onRegionKey(data)
+    if (region !== undefined) return region
+    if (matchesKey(data, 'up')) {
+      // The bar is the bottom of the stack, so Up leaves it for the panel when
+      // one is drawn and for the conversation otherwise.
+      if (this.panelView.rows.length > 0) this.focusPanel(this.panelView.rows.length - 1)
+      else this.focusTranscript()
       return { consume: true }
     }
     if (matchesKey(data, 'left') || matchesKey(data, 'shift+tab')) {
@@ -1129,6 +1220,46 @@ export class TuiApp {
   }
 
   /**
+   * Answer one key while the transcript holds focus. Every key is consumed
+   * here, so nothing typed while reading the conversation reaches the editor;
+   * `Ctrl+C` and `Ctrl+D` never reach this far and keep their global meaning.
+   * @param data - the raw key bytes.
+   * @returns the consume marker the input listener returns.
+   */
+  private onTranscriptKey(data: string): { consume: true } {
+    const region = this.onRegionKey(data)
+    if (region !== undefined) return region
+    const section = this.focusedSection()
+    /* v8 ignore next 5 -- only a session change empties the transcript, and it hands the keyboard back first */
+    if (section === undefined) {
+      // Nothing left to select: the editor takes the keyboard back.
+      this.focusEditor()
+      return { consume: true }
+    }
+    const { cursor, blocks } = section
+    if (matchesKey(data, 'up')) {
+      this.moveCursor(moveBlock(cursor, -1, blocks))
+      return { consume: true }
+    }
+    if (matchesKey(data, 'down')) {
+      // Past the newest block the stack continues under the editor.
+      if (cursor.block === blocks.length - 1) this.focusBelowEditor()
+      else this.moveCursor(moveBlock(cursor, 1, blocks))
+      return { consume: true }
+    }
+    if (matchesKey(data, 'left')) {
+      this.moveCursor(movePart(cursor, -1, blocks))
+      return { consume: true }
+    }
+    if (matchesKey(data, 'right')) {
+      this.moveCursor(movePart(cursor, 1, blocks))
+      return { consume: true }
+    }
+    if (matchesKey(data, 'enter')) this.openSection(section)
+    return { consume: true }
+  }
+
+  /**
    * Answer one key while the subagent panel holds focus. Every key is
    * consumed here; `Ctrl+C` and `Ctrl+D` never reach this far, keeping their
    * global meaning.
@@ -1136,20 +1267,17 @@ export class TuiApp {
    * @returns the consume marker the input listener returns.
    */
   private onPanelKey(data: string): { consume: true } {
-    if (matchesKey(data, 'escape') || matchesKey(data, 'shift+up')) {
-      this.focusEditor()
-      return { consume: true }
-    }
-    if (matchesKey(data, 'shift+down')) {
-      this.focusBar()
-      return { consume: true }
-    }
+    const region = this.onRegionKey(data)
+    if (region !== undefined) return region
     if (matchesKey(data, 'up')) {
-      this.movePanel(-1)
+      // Above the first row the stack continues in the conversation.
+      if (this.panelSelectionIndex(this.panelView.rows) === 0) this.focusTranscript()
+      else this.movePanel(-1)
       return { consume: true }
     }
     if (matchesKey(data, 'down')) {
-      this.movePanel(1)
+      if (this.panelSelectionIndex(this.panelView.rows) === this.panelView.rows.length - 1) this.focusBar()
+      else this.movePanel(1)
       return { consume: true }
     }
     if (matchesKey(data, 'enter')) this.navigate('subagent details', () => this.openPanelRow())
@@ -1197,16 +1325,15 @@ export class TuiApp {
   }
 
   /**
-   * Move the panel's selection, wrapping at both ends of the drawn rows. The
+   * Move the panel's selection, stopping at both ends of the drawn rows. The
    * rows behind a `+<n> more` row are not selectable; `/subagents` walks the
    * complete tree.
    * @param step - 1 for the next row, -1 for the previous one.
    */
   private movePanel(step: number): void {
     const rows = this.panelView.rows
-    const count = rows.length
-    const next = rows[(this.panelSelectionIndex(rows) + step + count) % count]
-    /* v8 ignore next -- the wrapped index stays inside the panel's own rows */
+    const next = rows[Math.max(0, Math.min(this.panelSelectionIndex(rows) + step, rows.length - 1))]
+    /* v8 ignore next -- the clamped index stays inside the panel's own rows */
     if (next !== undefined) this.panelSelection = next.id
     this.refreshSubagentPanel()
   }
@@ -1217,14 +1344,106 @@ export class TuiApp {
     this.focusRegion('bar')
   }
 
+  /**
+   * Give the keyboard to the subagent panel on one of its rows.
+   * @param index - the row the selection lands on.
+   */
+  private focusPanel(index: number): void {
+    this.panelSelection = this.panelView.rows[index]?.id
+    this.focusRegion('panel')
+  }
+
+  /**
+   * Give the keyboard to the region under the editor: the subagent panel's
+   * first row while the panel is drawn, and the status bar otherwise.
+   */
+  private focusBelowEditor(): void {
+    if (this.panelView.rows.length > 0) this.focusPanel(0)
+    else this.focusBar()
+  }
+
+  /**
+   * Give the keyboard to the transcript on its newest block. A session with
+   * nothing to inspect yet says so and leaves the keyboard where it was.
+   */
+  private focusTranscript(): void {
+    const cursor = enterNewest(navigableBlocks(this.chat.children))
+    if (cursor === undefined) {
+      this.notice('nothing in the transcript to inspect yet')
+      return
+    }
+    this.cursor = cursor
+    this.focusRegion('transcript')
+    this.tui.requestRender()
+  }
+
+  /**
+   * Put the transcript focus on another section.
+   * @param cursor - where the focus moves to.
+   */
+  private moveCursor(cursor: TranscriptCursor): void {
+    this.cursor = cursor
+    this.tui.requestRender()
+  }
+
+  /**
+   * Read the remembered cursor against the transcript as it is drawn right
+   * now: it grew parts and blocks since the cursor was taken, and a session
+   * change replaced the blocks it named altogether. The cursor itself is left
+   * alone, so a page and a trip through the editor come back to the same
+   * section; {@link TuiApp.focusTranscript} replaces it.
+   * @returns the section the cursor names, or undefined when the transcript
+   * has nothing to hold it.
+   */
+  private focusedSection(): FocusedSection | undefined {
+    const blocks = navigableBlocks(this.chat.children)
+    const cursor = this.cursor === undefined ? undefined : clampCursor(this.cursor, blocks)
+    if (cursor === undefined) return undefined
+    const block = blocks[cursor.block]
+    const part = block?.parts()[cursor.part]
+    /* v8 ignore next -- clampCursor settles on a block that carries the part it names */
+    if (block === undefined || part === undefined) return undefined
+    return { cursor, blocks, block, part }
+  }
+
+  /**
+   * Open the focused section as a read-only page and come back to it.
+   * @param section - the focused section.
+   */
+  private openSection(section: FocusedSection): void {
+    const { cursor, blocks } = section
+    const prompt = new DetailPrompt(this.deps.palette, sectionHeading(cursor, blocks), section.part.rows)
+    this.navigate('section', async () => {
+      await this.showModal(prompt)
+      this.focusRegion('transcript')
+    })
+  }
+
+  /**
+   * The focused section as the docked inspector draws it.
+   * @returns the view, or undefined while the keyboard is not in the
+   * transcript, which draws no inspector at all.
+   */
+  private inspectorView(): InspectorView | undefined {
+    const section = this.focusedSection()
+    if (section === undefined || this.focus !== 'transcript') return undefined
+    const { cursor, blocks } = section
+    return {
+      heading: sectionHeading(cursor, blocks),
+      parts: partLabels(cursor, blocks),
+      rows: section.part.rows,
+      highlighted: this.highlighted !== undefined,
+    }
+  }
+
   /** Hand the keyboard back to the editor; a no-op while the editor already has it. */
   private focusEditor(): void {
     this.focusRegion('editor')
   }
 
   /**
-   * Move the keyboard between the docked regions and redraw both of them, so
-   * the region losing focus stops drawing its selection.
+   * Move the keyboard between the regions and redraw the docked ones, so the
+   * region losing focus stops drawing its selection.
    * @param region - the region that takes the keyboard.
    */
   private focusRegion(region: FocusRegion): void {
@@ -1241,7 +1460,7 @@ export class TuiApp {
   private setFocus(region: FocusRegion): void {
     this.focus = region
     // pi-tui accepts a null focus, so the editor stops drawing its cursor
-    // while a docked region owns the keyboard.
+    // while another region owns the keyboard.
     this.tui.setFocus(region === 'editor' ? this.editor : null)
     this.refreshFooter()
   }
@@ -1284,7 +1503,7 @@ export class TuiApp {
     })
     this.submittedIds.add(message.id)
     const shown = attachments.length === 0 ? text : `${text}\n${attachments.map(attachment => `[${attachment.block.type}: ${attachment.name}]`).join(' ')}`
-    this.chat.addChild(new UserBlock(this.theme, shown))
+    this.chat.addChild(new UserBlock(this.theme, shown, this.turn))
     if (agent.status !== 'running') {
       agent.followup(message)
     } else if (mode === 'steer') {
@@ -1397,8 +1616,9 @@ export class TuiApp {
       '@ completes paths and sessions (workspace, ../, ~/, absolute) · / completes commands',
       'Esc stops the running turn · Ctrl+O expands or collapses tool output',
       'Shift+Tab cycles the current model\'s reasoning effort for the next request',
-      'Shift+Up focuses the status bar: ← → select a fact, Enter shows its details, Esc returns to the input',
-      'Shift+Up again focuses the subagent panel while it is drawn: ↑ ↓ select a child, Enter shows its session',
+      'Shift+Up focuses the transcript, Shift+Down the subagent panel or the status bar',
+      'Then ↑ ↓ move between blocks, panel rows, and the bar; ← → move between a block\'s parts or the bar\'s segments',
+      'Enter opens the focused section or segment, Esc returns to the input',
       'Ctrl+C clears the input (twice quits) · Ctrl+D on an empty input quits',
     ]
     this.chat.addChild(new Text([...rows, '', ...keys.map(palette.dim)].join('\n'), 0, 1))
@@ -1873,7 +2093,7 @@ export class TuiApp {
 
   private streamingBlock(): AssistantBlock {
     if (this.streaming === undefined) {
-      this.streaming = new AssistantBlock(this.theme)
+      this.streaming = new AssistantBlock(this.theme, this.turn)
       this.chat.addChild(this.streaming)
     }
     return this.streaming
@@ -1889,48 +2109,110 @@ export class TuiApp {
     const block = this.streamingBlock()
     block.appendText(delta)
     if (!this.fading) return
-    if (this.fadeTail === undefined) {
-      this.fadeTail = new FadeTracker({ steps: this.deps.fadeSteps })
-      block.setFade({
-        spans: () => this.fadeTail?.spans() ?? [],
-        style: () => this.fadeStyle,
-        steps: this.deps.fadeSteps,
-        flush: () => { this.flushFade() },
-      })
+    if (this.textTail === undefined) {
+      this.textTail = this.createTail()
+      block.setFade(this.tailRender(() => this.textTail))
     }
-    this.fadeTail.append(delta)
+    this.textTail.append(delta)
     this.updateFadeTicker()
   }
 
   /**
-   * Settle what the current block has drawn and stop tracking it: the tail
-   * goes, so its text renders at the terminal's foreground from the next
-   * render on, and no fade tick stays armed between messages.
+   * Take one reasoning delta, which fades in on its own tail: the reasoning
+   * and the visible text of one message stream at different times and each
+   * brightens from the moment its own words appeared.
+   * @param delta - the streamed reasoning delta.
+   */
+  private appendStreamedReasoning(delta: string): void {
+    const block = this.streamingBlock()
+    block.appendReasoning(delta)
+    if (!this.fading) return
+    if (this.reasoningTail === undefined) {
+      this.reasoningTail = this.createTail()
+      block.setReasoningFade(this.tailRender(() => this.reasoningTail))
+    }
+    this.reasoningTail.append(delta)
+    this.updateFadeTicker()
+  }
+
+  /**
+   * Start tracking one streaming region against the application's clock.
+   * @returns the tail deltas are appended to.
+   */
+  private createTail(): FadeTracker {
+    return new FadeTracker({
+      steps: this.deps.fadeSteps,
+      stepMs: this.deps.fadeStepMs,
+      now: () => this.deps.now(),
+    })
+  }
+
+  /**
+   * The live view of one tail the streaming block reads per render.
+   * @param tail - reads the field the tail is held in, so a render after the
+   * message settled sees the empty tail rather than the one it was given.
+   * @returns the spans, the drawing settings, and the width-change flush.
+   */
+  private tailRender(tail: () => FadeTracker | undefined): FadeRender {
+    return {
+      spans: () => tail()?.spans() ?? [],
+      style: () => this.fadeStyle,
+      steps: this.deps.fadeSteps,
+      flush: () => { this.flushFade() },
+    }
+  }
+
+  /**
+   * Fade one group of a card's rows in from the terminal background, from the
+   * instant the log carried them. A terminal that draws no ramp and a session
+   * being replayed fade nothing.
+   * @param attach - hands the fade to the block that draws those rows.
+   */
+  private fadeBlock(attach: (fade: BlockFade) => void): void {
+    if (!this.fading || this.replaying) return
+    const clock = new BlockFadeClock({
+      bornAt: this.deps.now(),
+      stepMs: this.deps.fadeStepMs,
+      steps: this.deps.fadeSteps,
+      now: () => this.deps.now(),
+    })
+    this.blockFades.add(clock)
+    attach({ age: () => clock.age(), style: () => this.fadeStyle })
+    this.updateFadeTicker()
+  }
+
+  /**
+   * Settle what the current message has drawn and stop tracking it: both
+   * tails go, so their text renders at the terminal's foreground from the next
+   * render on. Card fades are left to expire on their own clock, because a
+   * card that landed at the end of a turn keeps brightening after it.
    */
   private endFade(): void {
-    this.fadeTail = undefined
+    this.textTail = undefined
+    this.reasoningTail = undefined
     this.updateFadeTicker()
   }
 
   /**
-   * Settle what is drawn while the message keeps streaming, which the block
-   * asks for after a width change. The tracker stays, so what it knows about
-   * the arrival rate survives a resize and only the tail is dropped.
+   * Settle what is drawn while the message keeps streaming, which a block asks
+   * for after a width change: the columns either tail was matched against no
+   * longer describe the rewrapped lines.
    */
   private flushFade(): void {
-    this.fadeTail?.flush()
+    this.textTail?.flush()
+    this.reasoningTail?.flush()
     this.updateFadeTicker()
   }
 
   /**
-   * Arm the fade tick while a chunk is still below the last brightness level
-   * and disarm it otherwise, so a session that is not streaming runs no fade
-   * timer. Exactly one runs at a time, and a stopped app runs none.
+   * Arm the fade tick while streamed text or a card still draws below the last
+   * brightness level and disarm it otherwise, so a session that is not
+   * streaming runs no fade timer. Exactly one runs at a time, and a stopped
+   * app runs none.
    */
   private updateFadeTicker(): void {
-    const tail = this.fadeTail
-    if (!this.stopped && tail !== undefined && tail.needsRepaint()) {
-      this.fadeTicker ??= this.deps.tick(() => { this.onFadeTick(tail) }, this.deps.fadeStepMs)
+    if (!this.stopped && this.fadesMoving()) {
+      this.fadeTicker ??= this.deps.tick(() => { this.onFadeTick() }, this.deps.fadeStepMs)
       return
     }
     const ticker = this.fadeTicker
@@ -1940,14 +2222,72 @@ export class TuiApp {
   }
 
   /**
-   * One fade period over the tail the tick was armed for. Every change to the
-   * tail runs {@link TuiApp.updateFadeTicker} again, so an armed period always
-   * holds that same tail and always moves a chunk's color; the render request
-   * redraws the lines it moved, and the disarm check follows the ageing.
-   * @param tail - the tail this tick was armed for.
+   * Whether anything the application fades still draws below the last
+   * brightness level.
+   * @returns true while a tail or a card fade keeps changing what is drawn.
    */
-  private onFadeTick(tail: FadeTracker): void {
-    tail.tick()
+  private fadesMoving(): boolean {
+    return this.textTail?.needsRepaint() === true
+      || this.reasoningTail?.needsRepaint() === true
+      || this.blockFades.needsRepaint()
+  }
+
+  /**
+   * Apply everything the frame's geometry decides, on the frame that was just
+   * built and before it is written.
+   *
+   * Two effects redraw lines a component already produced and are therefore
+   * held to the renderer's repaint window ({@link GuardedMainScreen}): a
+   * running fade, which is told each block's own first repaintable line, and
+   * the focus gutter, which a block gains or loses only while its first line
+   * lies inside the window. A focused block above the window simply stays
+   * unmarked, and the inspector reports that instead.
+   * @param viewportTop - the frame's first repaintable line.
+   * @param width - the width it was built at.
+   * @returns whether anything changed a line, so the frame is built again
+   * before it is written.
+   */
+  private settleFrame(viewportTop: number, width: number): boolean {
+    const section = this.focusedSection()
+    const wanted: HeldSection | undefined = section !== undefined && this.focus === 'transcript'
+      ? { block: section.block, part: section.part.kind }
+      : undefined
+    const fades = this.fadesMoving()
+    if (!fades && wanted === undefined && this.highlighted === undefined) return false
+    // The walk reads the frame that was just built, so applying one change
+    // cannot move the line another change is judged against.
+    let start = this.header.render(width).length
+    let wantedStart: number | undefined
+    let changed = false
+    for (const child of this.chat.children) {
+      if (isSectionSource(child) && child === wanted?.block) wantedStart = start
+      if (fades && (child instanceof AssistantBlock || child instanceof ToolBlock)) {
+        if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
+      }
+      start += child.render(width).length
+    }
+    // A block that carries the mark right now was inside the window when this
+    // guard put it there, and the window the guard is handed already covers
+    // what this frame will impose, so taking the mark off again is repaintable.
+    const target = wantedStart !== undefined && repaintFloor(wantedStart, viewportTop) === 0 ? wanted : undefined
+    const current = this.highlighted
+    if (current?.block === target?.block && current?.part === target?.part) return changed
+    current?.block.setHighlight(undefined)
+    target?.block.setHighlight(target.part)
+    this.highlighted = target
+    return true
+  }
+
+  /**
+   * One fade period: every tracked fade drops what settled since the last one,
+   * the render request redraws the levels the clock moved, and the disarm
+   * check follows. Ages come from the clock, so this period repaints the
+   * levels the elapsed time asks for however long the period itself ran.
+   */
+  private onFadeTick(): void {
+    this.textTail?.tick()
+    this.reasoningTail?.tick()
+    this.blockFades.tick()
     this.tui.requestRender()
     this.updateFadeTicker()
   }
@@ -1965,7 +2305,7 @@ export class TuiApp {
             if (chunk.text !== '') this.appendStreamedText(chunk.text)
             break
           case 'reasoning-delta':
-            if (chunk.text !== '') this.streamingBlock().appendReasoning(chunk.text)
+            if (chunk.text !== '') this.appendStreamedReasoning(chunk.text)
             break
           case 'tool-call-delta':
             if (chunk.name !== undefined) this.loader.setMessage(`calling ${chunk.name}`)
@@ -2035,10 +2375,11 @@ export class TuiApp {
         const { callId, name, arguments: argumentsJson } = event.data
         const args = parseArguments(argumentsJson)
         this.toolArguments.set(callId, args)
-        const block = new ToolBlock(this.theme, name, toolCallText(argumentsJson, this.presentCall(name, args)))
+        const block = new ToolBlock(this.theme, name, toolCallText(argumentsJson, this.presentCall(name, args)), this.turn)
         block.setExpanded(this.toolsExpanded)
         this.toolBlocks.set(callId, block)
         this.chat.addChild(block)
+        this.fadeBlock((fade) => { block.setFade(fade) })
         break
       }
       case 'tool/result': {
@@ -2048,6 +2389,7 @@ export class TuiApp {
         const isError = result.isError === true
         const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
         block.setResult(toolResultLines(view, result.content), isError)
+        this.fadeBlock((fade) => { block.setResultFade(fade) })
         this.loader.setMessage('thinking')
         break
       }
@@ -2105,7 +2447,7 @@ export class TuiApp {
     if (source.kind === 'user') {
       if (this.submittedIds.has(message.id)) return
       const attachments = message.content.filter(block => block.type !== 'text').map(block => `[${block.type}]`)
-      this.chat.addChild(new UserBlock(this.theme, [contentText(message.content), ...attachments].filter(part => part !== '').join('\n')))
+      this.chat.addChild(new UserBlock(this.theme, [contentText(message.content), ...attachments].filter(part => part !== '').join('\n'), this.turn))
       return
     }
     // Injected context (instructions, catalogs, runtime snapshots) is model-facing
