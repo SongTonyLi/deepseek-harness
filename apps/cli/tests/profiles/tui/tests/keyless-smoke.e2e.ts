@@ -2,6 +2,12 @@
  * The shipped tui profile through the real `dsh` launcher: a keyless mock
  * model drives the production shell tool, the terminal renders the turn, the
  * session persists on quit, and `--resume` redraws it in a second process.
+ *
+ * The launch is pinned to the built `lib` bundles. In `src` mode the launcher
+ * loads the profile's rows through its installation route (built `lib/`) while
+ * tsx maps the imports inside them to `src/`, so the tui composition ends up
+ * with two copies of `@deepseek-ai/dsh-tools` and the agent loop's scheduler
+ * symbol misses the tools instance; the shipped profile is a built artifact.
  */
 
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -16,7 +22,6 @@ const PROCESS_TIMEOUT_MS = 60_000
 const TEST_TIMEOUT_MS = PROCESS_TIMEOUT_MS * 2 + 15_000
 const binScript = fileURLToPath(new URL('../../../../src/bin.ts', import.meta.url))
 const configPath = fileURLToPath(new URL('./fixtures/cli.patch.yml', import.meta.url))
-const tsconfigPath = fileURLToPath(new URL('../../../../../../tsconfig.json', import.meta.url))
 const CTRL_D = '\u0004'
 
 /** Drop CSI, OSC, and APC sequences so assertions read the rendered words. */
@@ -46,8 +51,7 @@ async function runUntil(cwd: string, args: readonly string[], marker: string): P
   const launch = resolveExampleLaunch({
     srcBin: binScript,
     configArgs: ['--profile', 'tui', '--patch', configPath, ...args],
-    tsconfigPath,
-    sourceImport: 'tsx/esm',
+    mode: 'lib',
     env: {
       DSH_HOME: join(cwd, '.dsh'),
       DSH_AGENTS_HOME: join(cwd, '.agents'),
