@@ -12,7 +12,7 @@
  * @module @deepseek-ai/dsh-tui-app/inspector
  */
 
-import { wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
 import type { PartLabel } from './navigation.ts'
 import type { Palette } from './style.ts'
 import { foldRows } from './transcript.ts'
@@ -31,6 +31,9 @@ const OFF_SCREEN = ' · off screen'
 
 /** The keys the inspector answers, drawn dim under its rows. */
 const HINT = '↑ ↓ blocks · ← → parts · Enter page · Esc back'
+
+/** What ends a line the width cut short; one column, so the mark itself fits. */
+const ELLIPSIS = '…'
 
 /** The focused section as the inspector draws it. */
 export interface InspectorView {
@@ -58,20 +61,39 @@ export interface InspectorRender {
  * Draw the focused section.
  * @param view - the section to show.
  * @param render - the palette, the row budget, and the width.
- * @returns the inspector's lines: a blank separator, the heading, the parts
- * strip when the block has more than one part, the folded rows, and the hints.
+ * @returns the inspector's lines, none wider than `width`: a blank separator,
+ * the heading, the parts strip when the block has more than one part, the
+ * folded rows, and the hints.
  */
 export function renderInspector(view: InspectorView, render: InspectorRender): string[] {
-  const { palette, width } = render
-  const suffix = view.highlighted ? '' : palette.dim(OFF_SCREEN)
-  const lines = ['', `${palette.bold(palette.accent(view.heading))}${suffix}`]
+  const { palette } = render
+  const width = Math.max(1, render.width)
+  const lines = ['', heading(view, palette, width)]
   // One part is its own block: the strip would offer nothing to move to.
   if (view.parts.length > 1) lines.push(partsStrip(view.parts, palette))
-  const wrapped = view.rows.flatMap(row => wrapTextWithAnsi(row, Math.max(1, width)))
+  const wrapped = view.rows.flatMap(row => wrapTextWithAnsi(row, width))
   lines.push(...foldRows(wrapped, render.previewLines, hidden =>
     palette.dim(`… ${String(hidden)} more row${hidden === 1 ? '' : 's'} · Enter opens the page`)))
   lines.push(palette.dim(HINT))
-  return lines
+  // pi-tui refuses a frame holding a line wider than the terminal. The rows
+  // are wrapped above; every line the inspector composes itself is cut here.
+  return lines.map(line => truncateToWidth(line, width, ELLIPSIS))
+}
+
+/**
+ * The heading line. A tool title can run past any terminal, so the subject is
+ * cut first and the off-screen mark stays whole: where the marked block went
+ * must never be what the width hides.
+ * @param view - the section to show.
+ * @param palette - the palette the heading is styled with.
+ * @param width - the width the line must fit; at least 1.
+ * @returns the heading, with the mark when the block is not on screen.
+ */
+function heading(view: InspectorView, palette: Palette, width: number): string {
+  const subject = palette.bold(palette.accent(view.heading))
+  if (view.highlighted) return subject
+  const suffix = palette.dim(OFF_SCREEN)
+  return `${truncateToWidth(subject, Math.max(1, width - visibleWidth(suffix)), ELLIPSIS)}${suffix}`
 }
 
 /**

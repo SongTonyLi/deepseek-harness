@@ -1,10 +1,14 @@
 /** The docked inspector's rendering of the focused transcript section. */
 
+import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it } from 'vitest'
 import { InspectorPane, renderInspector, type InspectorView } from '../src/inspector.ts'
 import { createPalette } from '../src/style.ts'
 
-const plain = { palette: createPalette(false), previewLines: 3, width: 20 }
+const plain = { palette: createPalette(false), previewLines: 3, width: 60 }
+
+/** A line without the resets truncation wraps around its ellipsis. */
+const bare = (line: string | undefined): string => (line ?? '').replaceAll('\u001b[0m', '')
 
 /**
  * A focused section as the inspector receives it.
@@ -46,14 +50,27 @@ describe('renderInspector', () => {
     expect(single[2]).toBe('done')
   })
 
+  it('cuts a heading the width cannot hold and keeps the off-screen mark whole', () => {
+    const wide = view({
+      heading: '44/44 · turn 1 · grep Grep ^(<<<<<<<|=======|>>>>>>>) in /repo (*.{md,ts}) · result',
+      highlighted: false,
+    })
+    const lines = renderInspector(wide, { ...plain, width: 40 })
+    expect(bare(lines[1])).toBe('44/44 · turn 1 · grep Grep… · off screen')
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(40)
+    expect(bare(renderInspector(view({ ...wide, highlighted: true }), { ...plain, width: 40 })[1]))
+      .toBe('44/44 · turn 1 · grep Grep ^(<<<<<<<|==…')
+  })
+
+  it('cuts the strip, the fold marker, and the keys on a narrow terminal', () => {
+    const narrow = renderInspector(view({ rows: ['a', 'b', 'c', 'd', 'e'] }), { ...plain, width: 12 })
+    expect(narrow.map(bare)).toEqual(['', '2/3 · turn …', '‹ reasoning…', 'a', 'b', 'c', '… 2 more ro…', '↑ ↓ blocks …'])
+    for (const line of narrow) expect(visibleWidth(line)).toBeLessThanOrEqual(12)
+  })
+
   it('wraps the rows and names how many the page would add', () => {
-    const long = renderInspector(view({ rows: ['one two three four five six seven', 'tail'] }), plain)
-    expect(long.slice(3)).toEqual([
-      'one two three four',
-      'five six seven',
-      'tail',
-      '↑ ↓ blocks · ← → parts · Enter page · Esc back',
-    ])
+    const long = renderInspector(view({ rows: ['one two three four five six seven', 'tail'] }), { ...plain, width: 20 })
+    expect(long.slice(3, -1)).toEqual(['one two three four', 'five six seven', 'tail'])
     const cut = renderInspector(view({ rows: ['a', 'b', 'c', 'd', 'e'] }), plain)
     expect(cut.slice(3)).toEqual(['a', 'b', 'c', '… 2 more rows · Enter opens the page', '↑ ↓ blocks · ← → parts · Enter page · Esc back'])
     const one = renderInspector(view({ rows: ['a', 'b', 'c', 'd'] }), plain)
