@@ -110,9 +110,10 @@ describe('tui profile keyless smoke', () => {
 
       const second = await runUntil(cwd, ['--resume', sessionId], 'CLI tool round trip complete')
       expect(second.exitCode, `stderr:\n${second.stderr}\nstdout:\n${second.stdout}`).toBe(0)
-      // The resumed header carries the generated title with the id, and the footer the session's permission preset.
+      // The resumed header carries the generated title with the id; the
+      // unfocused footer keeps the model id on its one key-facts line.
       expect(second.stdout).toContain(`prove the tool path (${sessionId})`)
-      expect(second.stdout).toContain('permission danger-full-access')
+      expect(second.stdout).toContain('cli-mock/cli-mock')
       expect(second.stdout).toContain('› prove the tool path')
       expect(second.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(second.stderr).toContain(`--resume ${sessionId}`)

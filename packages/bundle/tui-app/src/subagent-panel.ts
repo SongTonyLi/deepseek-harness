@@ -10,8 +10,9 @@
  * entry always draws, because a candidate the listing could not interpret is
  * a live problem rather than a settled child.
  *
- * Everything here is pure — no Context, no services, no clock: the current
- * time arrives as an input.
+ * Unfocused the panel is one summary line; focused it is the heading, the
+ * drawn rows, overflow, and hints. Everything here is pure — no Context, no
+ * services, no clock: the current time arrives as an input.
  * @module @deepseek-ai/dsh-tui-app/subagent-panel
  */
 
@@ -150,18 +151,25 @@ export function subagentPanelView(inputs: SubagentPanelInputs): SubagentPanelVie
 }
 
 /**
- * Render the panel: a heading counting the listed children, one line per
- * drawn row, the overflow count, and the last listing failure. The whole
- * panel is dim while the keyboard is elsewhere; the selected row is accented
- * while the panel holds it.
+ * Render the panel. Unfocused it is one dim summary line — the listed count
+ * and the first child's key label. Focused it is the heading with navigation
+ * keys, one line per drawn row, the overflow count, and the last listing
+ * failure. The selected row is accented while the panel holds the keyboard.
  * @param view - the rows one draw produced.
  * @param render - the palette, the selected row, and the listing failure.
- * @returns the panel text, one line per row.
+ * @returns the panel text, one line when unfocused and one line per row when focused.
  */
 export function renderSubagentPanel(view: SubagentPanelView, render: SubagentPanelRender): string {
   const { palette, selected } = render
   const total = view.rows.length + view.hidden
-  const heading = `subagents${SEPARATOR}${String(total)} listed${selected === undefined ? '' : `${SEPARATOR}${FOCUS_HINTS}`}`
+  if (selected === undefined) {
+    const first = view.rows[0]?.text.trimStart().split(SEPARATOR)[0]
+    const parts = [`subagents${SEPARATOR}${String(total)} listed`]
+    if (first) parts.push(first)
+    if (render.failure !== undefined) parts.push(`listing failed: ${render.failure}`)
+    return palette.dim(parts.join(SEPARATOR))
+  }
+  const heading = `subagents${SEPARATOR}${String(total)} listed${SEPARATOR}${FOCUS_HINTS}`
   const lines = [palette.dim(heading)]
   for (const [index, row] of view.rows.entries()) {
     lines.push(index === selected ? palette.bold(palette.accent(row.text)) : palette.dim(row.text))

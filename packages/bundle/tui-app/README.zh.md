@@ -40,11 +40,11 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 ### 屏幕布局
 
-页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。流式文字会淡入，而且每个词各走各的时钟：一个词以接近终端背景色的亮度出现，并经 `streamFadeSteps` 级亮度、每级 `streamFadeStepMs` 提亮到它最终稳定的颜色，因此流得更快只会留下更长的一串正在提亮的词，而不会更暗。同一套淡入也覆盖流式推理（它稳定在自身绘制所用的暗色前景）与工具卡片：卡片的表头与调用行在调用被记录时淡入，结果行在工具应答时淡入；从持久化历史重绘的卡片不带淡入，已经稳定下来的文字也不会再被调暗。对话记录下方依次是 agent 工作时的旋转指示、任何打开的提示、编辑器、子 agent 面板，以及页脚：一行分段状态栏，其下是一行按键提示。编辑器的光标是终端自身的闪烁竖条：应用在启动时请求这一形状，退出时把你的默认形状还回去，而状态栏或面板持有键盘期间完全不绘制光标。每个分段只在其事实存在时出现——模型与推理强度、权限预设、正在进行轮次的已用时间、累计 token 用量、上下文窗口百分比、来自投影接缝的 todo、目标与计划模式标记、workspace 路径（过长时以 `~` 与 `…/` 缩短）、待发送附件数量——`Shift+Down` 把焦点移入状态栏以查看某个分段的详情。压缩与模型请求重试以通知形式出现，与浏览器标记承载的事实相同。
+页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。流式回复文字会淡入，而且每个词各走各的时钟：一个词以接近终端背景色的亮度出现，并经 `streamFadeSteps` 次、每次 `streamFadeStepMs` 提亮到它最终稳定的颜色，因此流得更快只会留下更长的一串正在提亮的词，而不会更暗。流式推理与工具卡片在同一时长内浮出：它们以抬高的颜色出现，再退回到稳定时的暗色斜体或调色板颜色；从持久化历史重绘的卡片不带淡入，已经稳定下来的文字也不会再被调暗。对话记录下方依次是 agent 工作时的旋转指示、任何打开的提示、编辑器、子 agent 面板，以及页脚：未聚焦时是一行关键事实的状态栏。编辑器的光标是终端自身的闪烁竖条：应用在启动时请求这一形状，退出时把你的默认形状还回去，而状态栏或面板持有键盘期间完全不绘制光标。模型、推理强度（选择把推理交给模型时标为 `effort default`）以及 workspace 路径（过长时以 `~` 与 `…/` 缩短）始终出现；其余分段只在其事实存在时出现——权限预设、正在进行轮次的已用时间、累计 token 用量、上下文窗口百分比、来自投影接缝的 todo、目标与计划模式标记、待发送附件数量——`Shift+Down` 展开状态栏并使所选分段留在屏幕上。压缩与模型请求重试以通知形式出现，与浏览器标记承载的事实相同。
 
 键盘在对话记录中移动时，编辑器正上方停靠着一个检视面板。它写出当前聚焦小节的名称——它在可导航块中的位置、所属轮次，以及这是哪一种小节，例如 `3/12 · turn 2 · bash git status · result`——在块含多个部分时把这些部分绘制成形如 `‹ reasoning · reply ›` 的一条选择行，把该小节自身的源文本行截到 `focusPreviewLines` 行并在其下写出 `… <n> more rows · Enter opens the page`，最后以一行暗色文字列出它所应答的按键。被聚焦的块也会在原地被标记：一条两列宽的标记条，在块的其他行旁为暗色、在被聚焦小节自身的行旁为强调色，标记绘制期间该块的内容按窄两列换行。这个标记只能落在 pi-tui 仍以差分方式重绘的行上——也就是它写出的上一帧的最后 `rows` 行，这条边界只会被更高的帧抬高、不会被更矮的帧降低——因为改动其上方的任何一行都会清空终端的回滚区；已经滚过该位置的块不带标记条，其检视面板标题改为写出 `off screen`；淡入中的各行抵达这一边界时，会在写出该帧的同一帧内被结算为最终颜色，因此回滚区里不会留下暗色文字。
 
-子 agent 面板在绑定会话之下有常驻的子 agent 会话、或列表中带有无法读取的候选者时绘制。其标题统计所列出的条目，每一行给出该子会话的层级缩进、其标签或 id、其模式（`one-shot` 或 `continuable`）、`resident`、其 agent 处于 `running` 还是 `idle`、其已用时间——进行中轮次的用时，否则是已结束轮次的合计——以及其 token 用量，以本进程对该子会话的可见程度与已组合的投影所能提供的为限。最多绘制六行，其下是 `+<n> more · /subagents lists them all`；列表无法解读的候选者绘制为 `unreadable: <reason>` 且打不开任何页面，读取失败的列表则保留上一次成功读取产生的各行，并在其下写出 `listing failed: <reason>`。面板随其最后一行一同消失。
+子 agent 面板在绑定会话之下有常驻的子 agent 会话、或列表中带有无法读取的候选者时绘制。未聚焦时它是一行摘要，含列出的数量与第一个子会话的关键标签；聚焦时其标题统计所列出的条目，每一行给出该子会话的层级缩进、其标签或 id、其模式（`one-shot` 或 `continuable`）、`resident`、其 agent 处于 `running` 还是 `idle`、其已用时间——进行中轮次的用时，否则是已结束轮次的合计——以及其 token 用量，以本进程对该子会话的可见程度与已组合的投影所能提供的为限。最多绘制六行，其下是 `+<n> more · /subagents lists them all`；列表无法解读的候选者绘制为 `unreadable: <reason>` 且打不开任何页面，读取失败的列表则保留上一次成功读取产生的各行，并在其下写出 `listing failed: <reason>`。面板随其最后一行一同消失。
 
 ### 按键与命令
 
@@ -64,7 +64,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 对话记录、子 agent 面板与状态栏按此顺序自上而下排布，`Up` / `Down` 走遍整个序列且在两端都不环绕。对话记录持有焦点时，`Up` / `Down` 在块之间移动——你的提示、assistant 消息与工具卡片，通知与打印出的报告会被跳过——`Left` / `Right` 在块的各部分之间移动，也就是一条消息的推理与回复、一次工具调用的调用与结果，`Enter` 把当前聚焦的部分作为只读页面打开、其中带有该部分的完整各行，离开后回到同一部分，`Esc` 把焦点交还编辑器。各部分承载的是块自身的源文本，因此一条回复读到的是模型写下的 Markdown，而不是其上方绘制出的渲染结果。除 `Ctrl+C` 与 `Ctrl+D` 外，其他按键都在此被消费；切换会话会把焦点交回编辑器，尚无可查看内容的会话对 `Shift+Up` 回以 `nothing in the transcript to inspect yet` 并把键盘留在编辑器。
 
-状态栏持有焦点时，`Left` / `Right` 与 `Tab` / `Shift+Tab` 在分段之间移动并在两端环绕，`Up` 在面板已绘制时离开状态栏前往面板的最后一行、否则前往对话记录，`Enter` 打开所选分段且状态栏保持焦点，`Esc` 把焦点交还编辑器。状态栏持有焦点期间其他按键不会到达编辑器；`Ctrl+C` 与 `Ctrl+D` 保持其一贯含义，并把焦点交还编辑器。
+状态栏持有焦点时，`Left` / `Right`、`Shift+Left` / `Shift+Right` 与 `Tab` / `Shift+Tab` 在分段之间移动并在两端环绕，`Up` 在面板已绘制时离开状态栏前往面板的最后一行、否则前往对话记录，`Enter` 打开所选分段且状态栏保持焦点，`Esc` 把焦点交还编辑器。状态栏持有焦点期间其他按键不会到达编辑器；`Ctrl+C` 与 `Ctrl+D` 保持其一贯含义，并把焦点交还编辑器。
 
 子 agent 面板持有焦点时，`Up` / `Down` 移动选择，并在其两端继续进入相邻区域——在第一行按 `Up` 到达对话记录，在最后一行按 `Down` 到达状态栏——`Enter` 把该子会话的详情作为只读页面打开、离开后回到面板的同一行，`Esc` 把焦点交还编辑器。除 `Ctrl+C` 与 `Ctrl+D` 外，其他按键同样在此被消费；面板的最后一行离开时，它也会把键盘交还编辑器。
 
@@ -124,8 +124,8 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `toolPreviewLines` | `8` | `Ctrl+O` 展开前折叠的工具卡片正文行数 |
 | `focusPreviewLines` | `12` | `Enter` 完整打开之前，停靠的检视面板为聚焦小节显示的行数 |
 | `liveRefreshMs` | `1000` | 重绘周期：推进 `turn` 分段与面板中的已用时间，并重新读取已过期的子 agent 列表 |
-| `streamFadeSteps` | `8` | 一个流式词、一个推理词或一张工具卡片在以其稳定颜色绘制之前经过的亮度级数 |
-| `streamFadeStepMs` | `33` | 每级亮度持续多久，因此一个词在出现后 `streamFadeSteps × streamFadeStepMs` 稳定下来；这也是淡入的重绘周期 |
+| `streamFadeSteps` | `8` | 一次淡入或浮出持续多少拍：回复文字淡入，推理与工具卡片浮出，时长为 `streamFadeSteps × streamFadeStepMs` |
+| `streamFadeStepMs` | `33` | 一拍淡入或浮出的时长，也是仍在变化时的重绘周期；总时长为 `streamFadeSteps × streamFadeStepMs` |
 | `reducedMotion` | `false` | 以稳定颜色绘制流式文本、流式推理与工具卡片，不做淡入，也不重复重绘 |
 | `openBrowser` | `true` | 把被标记的授权页面交给本地默认浏览器 |
 
@@ -167,7 +167,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/navigation.ts`](src/navigation.ts) | 把对话记录看作各个小节、走遍它们的光标，以及检视面板的标题 |
 | [`src/inspector.ts`](src/inspector.ts) | 停靠的检视面板：聚焦小节的标题、各部分选择行、折叠后的各行，及其挂载的组件 |
 | [`src/screen.ts`](src/screen.ts) | 在构建一帧与写出该帧之间带若干次结算的主屏幕、每次结算所依据的重绘窗口，以及每个块的重绘下界 |
-| [`src/fade.ts`](src/fade.ts) | 流式文本淡入：基于挂钟的尾部追踪器、块淡入时钟与注册表、感知均匀的亮度级别，以及对已渲染行的重新着色 |
+| [`src/fade.ts`](src/fade.ts) | 流式文本淡入与浮出：基于挂钟的尾部追踪器、块时钟与注册表、淡入亮度级别、浮出混合，以及对已渲染行的重新着色 |
 | [`src/prompts.ts`](src/prompts.ts) | 审批、提问、选择器与只读详情提示以及模态队列 |
 | [`src/transcript.ts`](src/transcript.ts) | 呈现视图、用量与轮次结束原因的纯文本折叠 |
 | [`src/diff.ts`](src/diff.ts) | diff 卡片的行 diff 与 hunk 选择 |
@@ -175,8 +175,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/completion.ts`](src/completion.ts) | 编辑器的斜杠命令与 `@` 引用补全 |
 | [`src/editor.ts`](src/editor.ts) | 去掉 pi-tui 自绘块状光标的提示编辑器，以及终端自身光标所用的 DECSCUSR 序列 |
 | [`src/status.ts`](src/status.ts) | 投影接缝的事实，以及 `/status` 报告与分段详情共享的小节；压缩与重试通知 |
-| [`src/footer.ts`](src/footer.ts) | 状态栏：有序的各分段、每个分段的详情行，以及页脚渲染出的两行 |
-| [`src/subagent-panel.ts`](src/subagent-panel.ts) | 实时子 agent 面板：一次后代列表加上采样到的实时事实构成其各行，各行再构成其文本 |
+| [`src/footer.ts`](src/footer.ts) | 状态栏：有序的各分段、每个分段的详情行、未聚焦时的一行关键事实，以及聚焦时的滑动窗口 |
+| [`src/subagent-panel.ts`](src/subagent-panel.ts) | 实时子 agent 面板：一次后代列表加上采样到的实时事实构成其各行、未聚焦时的摘要行，以及聚焦时的列表 |
 | [`src/catalog.ts`](src/catalog.ts) | `/settings`、`/plugins`、`/subagents`、`/deliverables`、`/changes` 与 `/outline` 的行，以及 `/plugins` 的管理动作 |
 | [`src/todos.ts`](src/todos.ts) | todo 列表：状态符号、选择器行与单个条目的详情行 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |

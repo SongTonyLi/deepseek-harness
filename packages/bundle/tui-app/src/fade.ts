@@ -1,10 +1,10 @@
 /**
- * Streaming token fade-in for the assistant transcript: the tail state that
- * follows freshly streamed words, the background-to-foreground color ramp they
- * brighten along, the SGR encoding of one ramp level under each terminal
- * capability, the ANSI-aware transform that recolors the tail inside lines a
- * component already rendered, and the whole-line transform and clocks that
- * fade a block in as a unit.
+ * Streaming token fade for the assistant transcript: the tail state that
+ * follows freshly streamed words, the background-to-foreground color ramp
+ * visible reply text brightens along, the SGR encoding of one ramp level
+ * under each terminal capability, the ANSI-aware transform that recolors a
+ * tail inside lines a component already rendered, and the whole-line
+ * transform and clocks that float a block out as a unit.
  *
  * Rendering contract. Nothing here writes to a terminal, emits a
  * cursor-movement sequence, or tracks a screen row or column. This terminal
@@ -27,6 +27,11 @@
  * pi-tui's `RgbColor`. When that query resolves `undefined` no ramp can be
  * built, so the application passes `capability: 'dim'` with an empty ramp and
  * gets the two-level mode.
+ *
+ * Visible reply text fades in along {@link buildFadeRamp}. Streamed reasoning
+ * and tool cards float out: they start at a lifted mix toward the assumed
+ * foreground and recede to the colors the component already drew, and the
+ * last frame is those original bytes.
  *
  * No value here is read from configuration or the environment at module load:
  * `steps`, the tick period, and every capability input are parameters, so the
@@ -84,6 +89,12 @@ const LUMINANCE = { r: 0.2126, g: 0.7152, b: 0.0722 }
 /** Largest value one color channel encodes. */
 const CHANNEL_MAX = 255
 
+/** Channel scale SGR faint applies when a float-out reads a dim run. */
+const DIM_CHANNEL = 0.5
+
+/** How far a float-out lifts a color that is already brighter than `fg` toward white. */
+const LIFT_TOWARD_WHITE = 0.5
+
 /** Encoded sRGB value below which the transfer function is the linear segment. */
 const SRGB_LINEAR_CUT = 0.04045
 
@@ -128,9 +139,16 @@ export interface FadeStyle {
 export interface FadeSpan {
   /** The text appended for this chunk, before markdown rendering. */
   text: string
-  /** Brightness levels the chunk has climbed since it became visible. */
+  /**
+   * Elapsed time since the chunk became visible, in units of `stepMs`.
+   * Reply-text fade-in floors this onto a ramp slot; float-out mixes with the
+   * fractional value.
+   */
   age: number
 }
+
+/** Whether {@link recolorTail} climbs the fade-in ramp or recedes toward settled colors. */
+export type RecolorMode = 'in' | 'out'
 
 /** Everything the capability decision reads. */
 export interface FadeCapabilityInput {
@@ -200,6 +218,23 @@ function mix(from: number, to: number, ratio: number): number {
 }
 
 /**
+ * Mix `from` toward `to` with the same smoothstep-in-linear-light interpolation
+ * {@link buildFadeRamp} uses. Positions at or below 0 and at or above 1 return
+ * that endpoint's bytes, so a float-out's last computed mix can match the
+ * settled color it recedes toward.
+ * @param from - the color at t = 0.
+ * @param to - the color at t = 1.
+ * @param t - position along the mix; values outside 0..1 clamp to an endpoint.
+ * @returns the mixed sRGB color.
+ */
+export function mixFadeColor(from: RgbColor, to: RgbColor, t: number): RgbColor {
+  if (t <= 0) return { r: from.r, g: from.g, b: from.b }
+  if (t >= 1) return { r: to.r, g: to.g, b: to.b }
+  const eased = t * t * (3 - 2 * t)
+  return { r: mix(from.r, to.r, eased), g: mix(from.g, to.g, eased), b: mix(from.b, to.b, eased) }
+}
+
+/**
  * Decode one sRGB channel to linear light, by the sRGB transfer function.
  * @param value - the channel byte.
  * @returns the linear intensity in 0..1.
@@ -232,7 +267,7 @@ function toSrgb(value: number): number {
 export function fadeSgr(style: FadeStyle, age: number): string {
   if (style.capability === 'none') return ''
   if (style.capability === 'dim') return age < DIM_AGES ? DIM : ''
-  const level = style.ramp[Math.max(0, Math.min(age, style.ramp.length - 1))]
+  const level = style.ramp[Math.max(0, Math.min(Math.floor(age), style.ramp.length - 1))]
   if (level === undefined) return ''
   return style.capability === 'truecolor' ? truecolorSgr(level) : grayscaleSgr(level)
 }
@@ -280,33 +315,286 @@ function restoreFor(capability: FadeCapability): string {
 const SGR_SEQUENCE = /\u001b\[[0-9;]*m/g
 
 /**
- * Draw whole rendered lines at one brightness level, for a block that fades in
- * as a unit rather than word by word.
+ * Draw whole rendered lines as a float-out: each SGR run starts at a lifted
+ * mix toward the assumed foreground and recedes to the run's own settled
+ * color. At `age >= ramp.length` the lines come back byte-identical, so the
+ * palette sequences win without a snap. The two-level mode overlays faint for
+ * the whole flight; the caller stops invoking this once the clock settles.
  *
- * The level is opened at the start of the line and reasserted after every SGR
- * the line already carries, so the palette colors inside a card - the status
- * glyph, the dim body rule, the bold tool name - are overridden while the card
- * fades and come back on their own once it settles. Each line ends with the
- * sequence that undoes what the level set - the terminal's own foreground, or
- * its normal intensity in the two-level mode - so the level never leaks past
- * the line it was applied to. Empty lines come back byte-identical, so
- * the renderer leaves the blank rows around a card alone.
+ * The mix is opened after every SGR the line already carries, so the status
+ * glyph, the dim body rule, and the bold tool name each recede toward their
+ * own color. Each line ends with the sequence that undoes the overlay, so the
+ * mix never leaks past the line it was applied to. Empty lines come back
+ * byte-identical, so the renderer leaves the blank rows around a card alone.
  * @param lines - the rendered lines of the block.
- * @param age - the brightness level to draw them at.
- * @param style - the capability and the ramp.
- * @param from - first line the level is applied to; the lines before it come
+ * @param age - elapsed time in units of `stepMs`; `ramp.length` is t = 1.
+ * @param style - the capability and the ramp whose last level is the assumed foreground.
+ * @param from - first line the mix is applied to; the lines before it come
  * back byte-identical, which is how a caller keeps rows the renderer can no
  * longer repaint out of the fade.
- * @returns the lines at that level; copies when the style writes no sequence
- * for this age, which is what the `none` capability and a settled age yield.
+ * @returns the lines at that mix; copies when the style writes no sequence,
+ * which is what the `none` capability and a settled age yield.
  */
 export function recolorLines(lines: readonly string[], age: number, style: FadeStyle, from = 0): string[] {
-  const sgr = fadeSgr(style, age)
-  if (sgr === '') return [...lines]
-  const restore = restoreFor(style.capability)
-  return lines.map((line, index) => index < from || line === ''
-    ? line
-    : `${sgr}${line.replace(SGR_SEQUENCE, match => match + sgr)}${restore}`)
+  const capability = style.capability
+  if (capability === 'none') return [...lines]
+  if (capability === 'dim') {
+    return lines.map((line, index) => index < from || line === '' ? line : `${DIM}${line}${RESET_INTENSITY}`)
+  }
+  const steps = style.ramp.length
+  const fg = style.ramp[steps - 1]
+  if (fg === undefined || age >= steps) return [...lines]
+  const t = age / steps
+  return lines.map((line, index) => index < from || line === '' ? line : floatOutLine(line, t, capability, fg))
+}
+
+/** Assumed terminal white, used only to lift a settled color that is already brighter than `fg`. */
+const WHITE_RGB: RgbColor = { r: CHANNEL_MAX, g: CHANNEL_MAX, b: CHANNEL_MAX }
+
+/** xterm 16-color palette, indices 0..15. */
+const ANSI16: readonly RgbColor[] = [
+  { r: 0, g: 0, b: 0 },
+  { r: 205, g: 0, b: 0 },
+  { r: 0, g: 205, b: 0 },
+  { r: 205, g: 205, b: 0 },
+  { r: 0, g: 0, b: 238 },
+  { r: 205, g: 0, b: 205 },
+  { r: 0, g: 205, b: 205 },
+  { r: 229, g: 229, b: 229 },
+  { r: 127, g: 127, b: 127 },
+  { r: 255, g: 0, b: 0 },
+  { r: 0, g: 255, b: 0 },
+  { r: 255, g: 255, b: 0 },
+  { r: 92, g: 92, b: 255 },
+  { r: 255, g: 0, b: 255 },
+  { r: 0, g: 255, b: 255 },
+  { r: 255, g: 255, b: 255 },
+]
+
+/** Foreground a float-out reads off a run of palette SGR. */
+interface FgState {
+  /** Explicit foreground, or undefined for the terminal default. */
+  color: RgbColor | undefined
+  /** Whether SGR 2 is in force. */
+  dim: boolean
+}
+
+/**
+ * Relative luminance of one sRGB color, using the same weights as the grayscale encoder.
+ * @param color - the color.
+ * @returns the weighted sum of the channels.
+ */
+function colorLuminance(color: RgbColor): number {
+  return LUMINANCE.r * color.r + LUMINANCE.g * color.g + LUMINANCE.b * color.b
+}
+
+/**
+ * The color a float-out starts from: the assumed foreground when that is
+ * brighter than the settle, otherwise a mix toward white.
+ * @param settled - the run's color at t = 1.
+ * @param fg - the assumed terminal foreground.
+ * @returns the lifted color at t = 0.
+ */
+function liftColor(settled: RgbColor, fg: RgbColor): RgbColor {
+  return colorLuminance(fg) >= colorLuminance(settled) ? fg : mixFadeColor(settled, WHITE_RGB, LIFT_TOWARD_WHITE)
+}
+
+/**
+ * Apply SGR faint as a channel scale, matching what a dim palette run looks like.
+ * @param color - the undimmed RGB.
+ * @returns the dimmed RGB.
+ */
+function dimColor(color: RgbColor): RgbColor {
+  return {
+    r: Math.round(color.r * DIM_CHANNEL),
+    g: Math.round(color.g * DIM_CHANNEL),
+    b: Math.round(color.b * DIM_CHANNEL),
+  }
+}
+
+/**
+ * The RGB a run settles at, given the SGR in force and the assumed default foreground.
+ * @param state - the SGR foreground and dim flag.
+ * @param fg - the assumed default foreground.
+ * @returns the settled color the mix recedes toward.
+ */
+function settledRgb(state: FgState, fg: RgbColor): RgbColor {
+  const base = state.color ?? fg
+  return state.dim ? dimColor(base) : base
+}
+
+/**
+ * Encode one mixed color under a color capability.
+ * @param capability - `truecolor` or `ansi256`.
+ * @param color - the mixed RGB.
+ * @returns the SGR sequence, or empty when the capability cannot encode a mix.
+ */
+function encodeMix(capability: 'truecolor' | 'ansi256', color: RgbColor): string {
+  return capability === 'truecolor' ? truecolorSgr(color) : `${CSI}38;5;${String(nearestAnsi256(color))}m`
+}
+
+/**
+ * Rebuild one card row as a per-run float-out mix.
+ * @param line - the rendered line.
+ * @param t - 0 at lift, 1 at settle.
+ * @param capability - how the mix is encoded.
+ * @param fg - the assumed default foreground.
+ * @returns the line with each run overlaid, closed by {@link RESET_FOREGROUND}.
+ */
+function floatOutLine(line: string, t: number, capability: 'truecolor' | 'ansi256', fg: RgbColor): string {
+  let out = ''
+  let last = 0
+  const state: FgState = { color: undefined, dim: false }
+  for (const match of line.matchAll(SGR_SEQUENCE)) {
+    const start = match.index
+    if (start > last) out += paintSegment(line.slice(last, start), state, t, capability, fg)
+    applySgr(state, match[0])
+    out += match[0]
+    last = start + match[0].length
+  }
+  if (last < line.length) out += paintSegment(line.slice(last), state, t, capability, fg)
+  return `${out}${RESET_FOREGROUND}`
+}
+
+/**
+ * Overlay one text run with the float-out mix for the SGR in force.
+ * @param text - the run's characters, with no SGR.
+ * @param state - the SGR in force.
+ * @param t - 0 at lift, 1 at settle.
+ * @param capability - how the mix is encoded.
+ * @param fg - the assumed default foreground.
+ * @returns the run prefixed by intensity-reset and the mixed color.
+ */
+function paintSegment(text: string, state: FgState, t: number, capability: 'truecolor' | 'ansi256', fg: RgbColor): string {
+  const settled = settledRgb(state, fg)
+  const mixed = mixFadeColor(liftColor(settled, fg), settled, t)
+  return `${RESET_INTENSITY}${encodeMix(capability, mixed)}${text}`
+}
+
+/**
+ * The float-out sequence one reasoning span draws under, toward dimmed `fg`.
+ * @param style - the capability and the ramp.
+ * @param age - elapsed time in units of `stepMs`.
+ * @returns the sequence, or empty once `age` reaches the ramp length.
+ */
+function floatOutSpanSgr(style: FadeStyle, age: number): string {
+  if (style.capability === 'dim') return DIM
+  if (style.capability !== 'truecolor' && style.capability !== 'ansi256') return ''
+  const steps = style.ramp.length
+  const fg = style.ramp[steps - 1]
+  if (fg === undefined || age >= steps) return ''
+  const settled = dimColor(fg)
+  const mixed = mixFadeColor(liftColor(settled, fg), settled, age / steps)
+  return `${RESET_INTENSITY}${encodeMix(style.capability, mixed)}`
+}
+
+/**
+ * Apply one SGR sequence to the float-out foreground state.
+ * @param state - the state to update.
+ * @param sequence - a CSI SGR including the trailing `m`.
+ */
+function applySgr(state: FgState, sequence: string): void {
+  const body = sequence.slice(2, -1)
+  const parts = body === '' ? [0] : body.split(';').map(part => part === '' ? 0 : Number(part))
+  for (let index = 0; index < parts.length; index += 1) {
+    const code = colorParam(parts, index)
+    if (code === 0) {
+      state.color = undefined
+      state.dim = false
+    } else if (code === 2) {
+      state.dim = true
+    } else if (code === 22) {
+      state.dim = false
+    } else if (code === 39) {
+      state.color = undefined
+    } else if (code >= 30 && code <= 37) {
+      state.color = ANSI16[code - 30]
+    } else if (code >= 90 && code <= 97) {
+      state.color = ANSI16[code - 90 + 8]
+    } else if (code === 38) {
+      const read = readExtendedColor(parts, index)
+      state.color = read.color
+      index += read.skip
+    } else if (code === 48) {
+      index += readExtendedColor(parts, index).skip
+    }
+  }
+}
+
+/**
+ * Consume an ITU T.416 extended color (`38`/`48` plus `2;R;G;B` or `5;N`).
+ * @param parts - the SGR parameter list.
+ * @param index - index of the `38` or `48` code.
+ * @returns the RGB for a foreground read, and how many following parameters were consumed.
+ */
+function readExtendedColor(parts: readonly number[], index: number): { color: RgbColor | undefined; skip: number } {
+  const mode = parts[index + 1]
+  if (mode === 2) {
+    return {
+      color: {
+        r: channel(colorParam(parts, index + 2)),
+        g: channel(colorParam(parts, index + 3)),
+        b: channel(colorParam(parts, index + 4)),
+      },
+      skip: 4,
+    }
+  }
+  if (mode === 5) return { color: ansi256Rgb(colorParam(parts, index + 2)), skip: 2 }
+  return { color: undefined, skip: mode === undefined ? 0 : 1 }
+}
+
+/**
+ * Read one SGR numeric parameter, defaulting a missing slot to 0.
+ * @param parts - the SGR parameter list.
+ * @param index - the slot to read.
+ * @returns the parameter, or 0 when it is absent.
+ */
+function colorParam(parts: readonly number[], index: number): number {
+  return parts[index] ?? 0
+}
+
+/**
+ * RGB for one xterm 256-color index.
+ * @param index - 0..255.
+ * @returns the palette color, clamped onto the table.
+ */
+function ansi256Rgb(index: number): RgbColor {
+  const n = Math.max(0, Math.min(255, Math.floor(index)))
+  if (n < 16) {
+    const color = ANSI16[n]
+    /* v8 ignore next -- ANSI16 has 16 entries and n is already clamped to 0..15 */
+    if (color === undefined) return { r: 0, g: 0, b: 0 }
+    return color
+  }
+  if (n >= GRAY_FIRST_INDEX) {
+    const value = GRAY_FIRST_VALUE + (n - GRAY_FIRST_INDEX) * GRAY_VALUE_STEP
+    return { r: value, g: value, b: value }
+  }
+  const cube = n - 16
+  const r = Math.floor(cube / 36)
+  const g = Math.floor((cube % 36) / 6)
+  const b = cube % 6
+  const level = (step: number): number => step === 0 ? 0 : 55 + step * 40
+  return { r: level(r), g: level(g), b: level(b) }
+}
+
+/**
+ * Nearest xterm 256-color index to one RGB, by squared channel distance.
+ * @param color - the mixed RGB.
+ * @returns an index in 0..255.
+ */
+function nearestAnsi256(color: RgbColor): number {
+  let best = 0
+  let bestDist = Infinity
+  for (let n = 0; n < 256; n += 1) {
+    const candidate = ansi256Rgb(n)
+    const dist = (candidate.r - color.r) ** 2 + (candidate.g - color.g) ** 2 + (candidate.b - color.b) ** 2
+    if (dist < bestDist) {
+      bestDist = dist
+      best = n
+    }
+  }
+  return best
 }
 
 /** One chunk of streamed text and the instant it became visible. */
@@ -343,8 +631,8 @@ export interface FadeTrackerOptions {
  * Ages are read, never counted. A chunk's age is the elapsed time since it
  * became visible divided by `stepMs`, computed at the moment a render asks for
  * it, so a render triggered by a delta between two fade periods draws every
- * word at its own level and words do not move in lockstep. That is what makes
- * the trailing edge continuous rather than banded.
+ * word at its own mix and words do not move in lockstep. Fade-in floors that
+ * age onto a ramp slot; float-out uses the fractional value.
  *
  * Arrival rate changes the tail's length, never its depth: whatever the rate,
  * a chunk is at the foreground `steps * stepMs` after it appeared, so a fast
@@ -392,7 +680,7 @@ export class FadeTracker {
    * Drop the chunks that reached the step count, which the application runs
    * once per fade period so a settled chunk stops being matched against the
    * rendered lines.
-   * @returns whether a chunk still draws below the last brightness level, and
+   * @returns whether a chunk is still younger than `steps * stepMs`, and
    * so whether the tail keeps moving after this period.
    */
   tick(): boolean {
@@ -404,11 +692,10 @@ export class FadeTracker {
 
   /**
    * Whether the current frame still differs from the settled rendering.
-   * @returns true while a tracked chunk draws below the last ramp level, which
-   * is the only reason to keep ticking.
+   * @returns true while a tracked chunk is younger than `steps * stepMs`.
    */
   needsRepaint(): boolean {
-    return this.chunks.some(chunk => this.ageOf(chunk) < this.steps - 1)
+    return this.chunks.some(chunk => this.ageOf(chunk) < this.steps)
   }
 
   /**
@@ -431,12 +718,12 @@ export class FadeTracker {
   }
 
   /**
-   * The brightness level one chunk draws at right now.
+   * The brightness age one chunk draws at right now.
    * @param chunk - the tracked chunk.
-   * @returns levels elapsed since it became visible, 0 for a chunk younger than one level.
+   * @returns elapsed time since it became visible, in units of `stepMs`.
    */
   private ageOf(chunk: FadeChunk): number {
-    return Math.floor((this.now() - chunk.bornAt) / this.stepMs)
+    return (this.now() - chunk.bornAt) / this.stepMs
   }
 }
 
@@ -446,7 +733,7 @@ export interface BlockFadeClockOptions {
   bornAt: number
   /** How long one brightness level lasts, in milliseconds. */
   stepMs: number
-  /** Brightness levels the block climbs. */
+  /** Brightness levels that set the fade duration as `steps * stepMs`. */
   steps: number
   /**
    * The wall clock the age is measured against.
@@ -456,30 +743,39 @@ export interface BlockFadeClockOptions {
 }
 
 /**
- * The age of one whole block that fades in as a unit - a tool card's rows,
+ * The age of one whole block that floats out as a unit - a tool card's rows,
  * which arrive complete rather than word by word.
  *
- * The last level is withheld the way the word tail withholds it: that level is
- * an assumed foreground, so a block one level below the end is handed back to
- * the terminal's own colors instead, and nothing jumps color as it settles.
+ * Progress is `elapsed / (steps * stepMs)`, eased by the same smoothstep the
+ * ramp uses. {@link BlockFadeClock.age} stays defined until that progress
+ * reaches 1, so the last overlay frame can sit near the settled colors and
+ * the next frame is the component's own bytes.
  */
 export class BlockFadeClock {
   constructor(private readonly options: BlockFadeClockOptions) {}
 
   /**
-   * The brightness level the block draws at right now.
-   * @returns the level, or undefined once the block reached the last drawn
-   * level and renders in the colors the component itself produced.
+   * How far through the float-out this block is.
+   * @returns 0 at birth, 1 at or after `steps * stepMs`.
    */
-  age(): number | undefined {
+  progress(): number {
     const { bornAt, stepMs, steps, now } = this.options
-    const age = Math.floor((now() - bornAt) / stepMs)
-    return age < steps - 1 ? age : undefined
+    return Math.min(1, Math.max(0, (now() - bornAt) / (steps * stepMs)))
   }
 
   /**
-   * Whether this block still draws below the last brightness level.
-   * @returns true while {@link BlockFadeClock.age} yields a level.
+   * The fractional age the block draws at right now, in units of `stepMs`.
+   * @returns `progress * steps`, or undefined once progress has reached 1 and
+   * the block renders in the colors the component itself produced.
+   */
+  age(): number | undefined {
+    const t = this.progress()
+    return t >= 1 ? undefined : t * this.options.steps
+  }
+
+  /**
+   * Whether this block still draws below the settled colors.
+   * @returns true while {@link BlockFadeClock.age} yields a value.
    */
   needsRepaint(): boolean {
     return this.age() !== undefined
@@ -489,7 +785,7 @@ export class BlockFadeClock {
 /** What {@link FadeRegistry} keeps: anything that reports whether it is still moving. */
 export interface RegisteredFade {
   /**
-   * Whether this fade still draws below the last brightness level.
+   * Whether this fade still differs from its settled rendering.
    * @returns true while it keeps moving.
    */
   needsRepaint(): boolean
@@ -575,27 +871,38 @@ interface LineRun {
  *
  * Styling inside a recolored run survives. The run reasserts the sequences in
  * force at its start, so an enclosing bold or italic continues across it; an
- * enclosing foreground color reasserted there wins over the ramp, and that run
- * simply does not fade. Each recolored line ends with `ESC[39m` (or `ESC[22m`
- * in the two-level mode, which also ends bold) after the line's own closing
- * sequences, so the recolor never leaks past the line it was applied to.
+ * enclosing foreground color reasserted there wins over the fade-in ramp, and
+ * that run simply does not fade. Each recolored line ends with `ESC[39m` (or
+ * `ESC[22m` in the two-level mode, which also ends bold) after the line's own
+ * closing sequences, so the recolor never leaks past the line it was applied
+ * to. Float-out resets intensity before the mixed color so a dim wrapper does
+ * not stack on the overlay, and at t >= 1 the original lines come back
+ * unchanged.
  * @param lines - the rendered lines of the streaming block, newest text last.
  * @param spans - the tail from {@link FadeTracker.spans}, oldest first.
  * @param style - the capability and the ramp.
  * @param from - first line the tail may recolor; the lines before it come back
  * byte-identical, which is how a caller keeps rows the renderer can no longer
  * repaint out of the fade.
+ * @param mode - `in` climbs {@link buildFadeRamp}; `out` recedes toward the
+ * dim foreground reasoning settles in. Defaults to `in`.
  * @returns the lines with the tail recolored; lines the tail does not cover
  * are returned byte-identical, so the renderer leaves them alone.
  */
-export function recolorTail(lines: readonly string[], spans: readonly FadeSpan[], style: FadeStyle, from = 0): string[] {
-  if (style.capability === 'none' || spans.length === 0 || lines.length === 0) return [...lines]
+export function recolorTail(
+  lines: readonly string[],
+  spans: readonly FadeSpan[],
+  style: FadeStyle,
+  from = 0,
+  mode: RecolorMode = 'in',
+): string[] {
+  if (spans.length === 0 || lines.length === 0) return [...lines]
   const cells = cellsFromEnd(lines)
   const runs: LineRun[] = []
   for (const span of [...spans].reverse()) {
     const covered = consumeSpan(cells, span.text)
     if (covered === undefined) break
-    const sgr = fadeSgr(style, span.age)
+    const sgr = mode === 'out' ? floatOutSpanSgr(style, span.age) : fadeSgr(style, span.age)
     if (sgr !== '') collectRuns(runs, covered, sgr)
   }
   const byLine = new Map<number, LineRun[]>()

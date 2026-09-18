@@ -329,7 +329,7 @@ describe('the in-place gutter after the frame shrank', () => {
 
     test.setStatus('idle')
     await test.settle()
-    test.terminal.type(KEY.up)
+    for (let index = 0; index < 8; index += 1) test.terminal.type(KEY.up)
     await test.settle()
     expect(test.terminal.text()).toContain('off screen')
     expect(test.terminal.written.slice(before)).not.toContain(CLEAR_SCROLLBACK)

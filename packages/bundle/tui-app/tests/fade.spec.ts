@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { RgbColor } from '@earendil-works/pi-tui'
+import { AssistantBlock } from '../src/blocks.ts'
 import {
   BlockFadeClock,
   FADE_STEPS,
@@ -10,11 +11,13 @@ import {
   FadeTracker,
   buildFadeRamp,
   fadeSgr,
+  mixFadeColor,
   recolorLines,
   recolorTail,
   resolveFadeCapability,
   type FadeStyle,
 } from '../src/fade.ts'
+import { createPalette } from '../src/style.ts'
 
 const BLACK: RgbColor = { r: 0, g: 0, b: 0 }
 const WHITE: RgbColor = { r: 255, g: 255, b: 255 }
@@ -35,6 +38,21 @@ function sgrAt(age: number): string {
 function luminance(color: RgbColor): number {
   return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
 }
+
+/** Truecolor foregrounds a recolor overlay wrote. */
+function fadeRgbs(text: string): RgbColor[] {
+  return [...text.matchAll(/\u001b\[38;2;(\d+);(\d+);(\d+)m/g)].map(([, r, g, b]) => ({
+    r: Number(r),
+    g: Number(g),
+    b: Number(b),
+  }))
+}
+
+/** A palette-colored card glyph, as ToolBlock draws the status mark. */
+const YELLOW_GLYPH = '\u001b[33m\u25cf\u001b[39m'
+
+/** Dim italic reasoning, as AssistantBlock wraps streamed reasoning. */
+const DIM_REASONING = '\u001b[2m\u001b[3mhello world\u001b[23m\u001b[22m'
 
 /**
  * A clock the spec moves by hand, standing in for the application's wall clock.
@@ -100,11 +118,30 @@ describe('buildFadeRamp', () => {
   })
 })
 
+describe('mixFadeColor', () => {
+  it('returns the endpoints exactly and eases the interior with smoothstep in linear light', () => {
+    expect(mixFadeColor(BLACK, WHITE, 0)).toEqual(BLACK)
+    expect(mixFadeColor(BLACK, WHITE, 1)).toEqual(WHITE)
+    // t = 0.25, smoothstep 0.15625 of the way from black to white in linear light.
+    expect(mixFadeColor(BLACK, WHITE, 0.25)).toEqual({ r: 110, g: 110, b: 110 })
+  })
+
+  it('clamps a position outside 0..1 onto the nearer endpoint', () => {
+    expect(mixFadeColor(BLACK, INK, -1)).toEqual(BLACK)
+    expect(mixFadeColor(BLACK, INK, 2)).toEqual(INK)
+  })
+})
+
 describe('fadeSgr', () => {
   it('writes 24-bit foreground bytes per ramp level', () => {
     expect(sgrAt(0)).toBe('\u001b[38;2;44;17;5m')
     expect(sgrAt(3)).toBe('\u001b[38;2;146;71;34m')
     expect(sgrAt(FADE_STEPS - 1)).toBe('\u001b[38;2;200;100;50m')
+  })
+
+  it('floors a fractional age onto a ramp slot so reply text keeps integer fade-in levels', () => {
+    expect(fadeSgr(COLOR, 0.9)).toBe(sgrAt(0))
+    expect(fadeSgr(COLOR, 3.2)).toBe(sgrAt(3))
   })
 
   it('draws an age past the ramp at its last level', () => {
@@ -255,12 +292,12 @@ describe('FadeTracker wall-clock ages', () => {
     ])
   })
 
-  it('brightens a chunk between two periods, so a delta-driven render draws the level the clock reached', () => {
+  it('brightens a chunk between two periods, so a delta-driven render draws the fractional age the clock reached', () => {
     const time = clock()
     const tracker = new FadeTracker({ stepMs: 20, now: time.now })
     tracker.append('word ')
     time.advance(30)
-    expect(tracker.spans()).toEqual([{ text: 'word ', age: 1 }])
+    expect(tracker.spans()).toEqual([{ text: 'word ', age: 1.5 }])
     time.advance(10)
     expect(tracker.spans()).toEqual([{ text: 'word ', age: 2 }])
   })
@@ -270,19 +307,21 @@ describe('FadeTracker wall-clock ages', () => {
     const tracker = new FadeTracker({ steps: 4, stepMs: 20, now: time.now })
     tracker.append('alpha ')
     time.advance(20 * 3)
-    expect(tracker.tick()).toBe(false)
+    expect(tracker.tick()).toBe(true)
     expect(tracker.spans()).toEqual([{ text: 'alpha ', age: 3 }])
     time.advance(20)
-    tracker.tick()
+    expect(tracker.tick()).toBe(false)
     expect(tracker.spans()).toEqual([])
   })
 
-  it('asks for a repaint only while a chunk still draws below the last level', () => {
+  it('asks for a repaint until the chunk has used the full steps * stepMs duration', () => {
     const time = clock()
     const tracker = new FadeTracker({ steps: 3, stepMs: 20, now: time.now })
     tracker.append('word ')
     expect(tracker.needsRepaint()).toBe(true)
     expect(tracker.tick()).toBe(true)
+    time.advance(20)
+    expect(tracker.needsRepaint()).toBe(true)
     time.advance(20)
     expect(tracker.needsRepaint()).toBe(true)
     time.advance(20)
@@ -347,22 +386,35 @@ describe('FadeTracker flush', () => {
 })
 
 describe('BlockFadeClock', () => {
-  it('reports the level the elapsed time asks for', () => {
+  it('reports a fractional age from elapsed time over the full duration', () => {
     const time = clock()
     const fade = new BlockFadeClock({ bornAt: time.now(), stepMs: 20, steps: 4, now: time.now })
     expect(fade.age()).toBe(0)
-    time.advance(20)
+    expect(fade.progress()).toBe(0)
+    time.advance(10)
+    expect(fade.age()).toBe(0.5)
+    expect(fade.progress()).toBe(0.125)
+    time.advance(10)
     expect(fade.age()).toBe(1)
     time.advance(30)
-    expect(fade.age()).toBe(2)
+    expect(fade.age()).toBe(2.5)
+    expect(fade.progress()).toBe(0.625)
+    const early = new BlockFadeClock({ bornAt: time.now() + 40, stepMs: 20, steps: 4, now: time.now })
+    expect(early.progress()).toBe(0)
+    expect(early.age()).toBe(0)
   })
 
-  it('withholds the last level, so the block settles into the colors it rendered itself', () => {
+  it('settles at t >= 1 so the block draws in the colors it rendered itself', () => {
     const time = clock()
     const fade = new BlockFadeClock({ bornAt: time.now(), stepMs: 20, steps: 4, now: time.now })
     expect(fade.needsRepaint()).toBe(true)
-    time.advance(20 * 3)
+    time.advance(20 * 4 - 1)
+    expect(fade.age()).toBeCloseTo(3.95, 5)
+    expect(fade.progress()).toBeCloseTo(0.9875, 5)
+    expect(fade.needsRepaint()).toBe(true)
+    time.advance(1)
     expect(fade.age()).toBeUndefined()
+    expect(fade.progress()).toBe(1)
     expect(fade.needsRepaint()).toBe(false)
   })
 })
@@ -411,31 +463,106 @@ describe('FadeRegistry', () => {
 })
 
 describe('recolorLines', () => {
-  it('opens the level and re-asserts it after every sequence the line already carries', () => {
-    const line = '\u001b[33m\u25cf\u001b[39m \u001b[1mbash\u001b[22m'
-    expect(recolorLines([line], 0, COLOR)).toEqual([
-      `${sgrAt(0)}\u001b[33m${sgrAt(0)}\u25cf\u001b[39m${sgrAt(0)} \u001b[1m${sgrAt(0)}bash\u001b[22m${sgrAt(0)}\u001b[39m`,
-    ])
+  it('floats each run from a lifted color toward the palette color it settles in', () => {
+    const painted = recolorLines([YELLOW_GLYPH], 0, COLOR)
+    const colors = fadeRgbs(painted[0] ?? '')
+    expect(colors.length).toBeGreaterThan(0)
+    expect(luminance(colors[0] ?? BLACK)).toBeGreaterThan(luminance(INK))
+    expect(painted[0]).toContain('\u001b[33m')
+    expect(painted[0]?.endsWith('\u001b[39m')).toBe(true)
+  })
+
+  it('recedes continuously rather than snapping between fade-in ramp slots', () => {
+    const luma = (age: number): number => luminance(fadeRgbs(recolorLines([YELLOW_GLYPH], age, COLOR)[0] ?? '')[0] ?? BLACK)
+    expect(luma(1)).toBeGreaterThan(luma(3))
+    expect(luma(3)).toBeGreaterThan(luma(5))
+    expect(recolorLines([YELLOW_GLYPH], 3, COLOR)[0]).not.toContain(sgrAt(0))
+    expect(recolorLines([YELLOW_GLYPH], 3, COLOR)[0]).not.toContain(sgrAt(1))
+  })
+
+  it('returns the original lines at t >= 1, byte-identical to the unfaded component output', () => {
+    expect(recolorLines([YELLOW_GLYPH], COLOR.ramp.length, COLOR)).toEqual([YELLOW_GLYPH])
+    expect(recolorLines([YELLOW_GLYPH], COLOR.ramp.length + 2, COLOR)).toEqual([YELLOW_GLYPH])
+  })
+
+  it('keeps the last overlay near the settled palette color rather than leaping to the fade-in background', () => {
+    const start = fadeRgbs(recolorLines([YELLOW_GLYPH], 0, COLOR)[0] ?? '')[0] ?? BLACK
+    const almost = fadeRgbs(recolorLines([YELLOW_GLYPH], COLOR.ramp.length - 0.1, COLOR)[0] ?? '')[0] ?? BLACK
+    const settled = recolorLines([YELLOW_GLYPH], COLOR.ramp.length, COLOR)
+    expect(settled).toEqual([YELLOW_GLYPH])
+    expect(luminance(almost)).toBeLessThan(luminance(start))
+    expect(luminance(almost)).toBeGreaterThan(luminance(COLOR.ramp[0] ?? BLACK) + 40)
   })
 
   it('leaves empty lines alone, so the blank rows around a card are never repainted', () => {
-    expect(recolorLines(['', 'body', ''], 1, COLOR)).toEqual(['', `${sgrAt(1)}body\u001b[39m`, ''])
+    const painted = recolorLines(['', YELLOW_GLYPH, ''], 1, COLOR)
+    expect(painted[0]).toBe('')
+    expect(painted[2]).toBe('')
+    expect(fadeRgbs(painted[1] ?? '').length).toBeGreaterThan(0)
   })
 
-  it('returns copies when the style writes nothing for this level', () => {
+  it('returns copies when the style writes nothing', () => {
     const lines = ['a card row']
     expect(recolorLines(lines, 0, { capability: 'none', ramp: COLOR.ramp })).toEqual(lines)
-    expect(recolorLines(lines, 4, DIM_STYLE)).toEqual(lines)
-    expect(recolorLines(lines, 4, DIM_STYLE)).not.toBe(lines)
+    expect(recolorLines(lines, 0, { capability: 'none', ramp: COLOR.ramp })).not.toBe(lines)
+    expect(recolorLines(lines, 0, { capability: 'truecolor', ramp: [] })).toEqual(lines)
   })
 
   it('leaves the lines before the first repaintable one in the colors they were drawn in', () => {
-    expect(recolorLines(['above', 'inside'], 0, COLOR, 1)).toEqual(['above', `${sgrAt(0)}inside\u001b[39m`])
-    expect(recolorLines(['above', 'inside'], 0, COLOR, 2)).toEqual(['above', 'inside'])
+    const painted = recolorLines(['above', YELLOW_GLYPH], 0, COLOR, 1)
+    expect(painted[0]).toBe('above')
+    expect(fadeRgbs(painted[1] ?? '').length).toBeGreaterThan(0)
+    expect(recolorLines(['above', YELLOW_GLYPH], 0, COLOR, 2)).toEqual(['above', YELLOW_GLYPH])
   })
 
-  it('ends the two-level mode with the sequence that restores intensity', () => {
+  it('keeps the two-level overlay on for the whole flight, then the caller hands off to settled bytes', () => {
     expect(recolorLines(['row'], 0, DIM_STYLE)).toEqual(['\u001b[2mrow\u001b[22m'])
+    expect(recolorLines(['row'], 7, DIM_STYLE)).toEqual(['\u001b[2mrow\u001b[22m'])
+    expect(recolorLines(['', 'row', ''], 0, DIM_STYLE)).toEqual(['', '\u001b[2mrow\u001b[22m', ''])
+    expect(recolorLines(['above', 'row'], 0, DIM_STYLE, 1)).toEqual(['above', '\u001b[2mrow\u001b[22m'])
+  })
+
+  it('reads 256-color, truecolor, and default-foreground runs as their settled RGB', () => {
+    const indexed = recolorLines(['\u001b[38;5;196mred\u001b[39m'], 0, COLOR)
+    expect(fadeRgbs(indexed[0] ?? '').length).toBeGreaterThan(0)
+    const direct = recolorLines(['\u001b[38;2;10;20;30mdirect\u001b[39m'], 0, COLOR)
+    const last = fadeRgbs(recolorLines(['\u001b[38;2;10;20;30mdirect\u001b[39m'], 7.9, COLOR)[0] ?? '')[0]
+    expect(last?.r).toBeLessThan((fadeRgbs(direct[0] ?? '')[0]?.r ?? 0) + 1)
+    expect(last?.r).toBeGreaterThan(8)
+    const dimmed = recolorLines(['\u001b[2mbody\u001b[22m'], 0, COLOR)
+    expect(luminance(fadeRgbs(dimmed[0] ?? '')[0] ?? BLACK)).toBeGreaterThan(luminance(INK) - 1)
+    const bright = recolorLines(['\u001b[91mhi\u001b[39m'], 0, COLOR)
+    expect(fadeRgbs(bright[0] ?? '').length).toBeGreaterThan(0)
+    const reset = recolorLines(['\u001b[31mred\u001b[0mplain'], 7.9, COLOR)
+    expect(reset[0]).toContain('plain')
+    const grayIndexed = recolorLines(['\u001b[38;5;240mgray\u001b[39m'], 0, COLOR)
+    expect(fadeRgbs(grayIndexed[0] ?? '').length).toBeGreaterThan(0)
+    const sixteen = recolorLines(['\u001b[38;5;1mansi\u001b[39m'], 0, COLOR)
+    expect(fadeRgbs(sixteen[0] ?? '').length).toBeGreaterThan(0)
+    const background = recolorLines(['\u001b[48;2;1;2;3m\u001b[31mred\u001b[39m'], 0, COLOR)
+    expect(fadeRgbs(background[0] ?? '').length).toBeGreaterThan(0)
+    const cube = recolorLines(['\u001b[38;5;208morange\u001b[39m'], 0, COLOR)
+    expect(fadeRgbs(cube[0] ?? '').length).toBeGreaterThan(0)
+    const dimOff = recolorLines(['\u001b[2m\u001b[22mbody'], 0, COLOR)
+    expect(dimOff[0]).toContain('body')
+    expect(fadeRgbs(recolorLines(['plain'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[mreset'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[38mloose\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[38;2mshort\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[38;9mother\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[48;5;0m\u001b[32mgreen\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[48;9m\u001b[32mgreen\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[38;5mclip\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[1;32mgreen\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+    expect(fadeRgbs(recolorLines(['\u001b[;31mred\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+  })
+
+  it('encodes a float-out mix as a 256-color index, not a fade-in gray slot', () => {
+    const gray: FadeStyle = { capability: 'ansi256', ramp: buildFadeRamp(BLACK, WHITE) }
+    const painted = recolorLines([YELLOW_GLYPH], 0, gray)[0] ?? ''
+    expect(painted).toMatch(/\u001b\[38;5;\d+m/)
+    expect(painted).not.toContain('\u001b[38;2;')
+    expect(recolorLines([YELLOW_GLYPH], gray.ramp.length, gray)).toEqual([YELLOW_GLYPH])
   })
 })
 
@@ -513,9 +640,37 @@ describe('recolorTail', () => {
     expect(recolorTail([], [{ text: 'world', age: 0 }], COLOR)).toEqual([])
   })
 
-  it('leaves the columns of an age the two-level mode no longer dims alone', () => {
-    const spans = [{ text: 'aa ', age: 3 }, { text: 'bb', age: 0 }]
-    expect(recolorTail(['aa bb'], spans, DIM_STYLE)).toEqual(['aa \u001b[2mbb\u001b[22m'])
+  it('floors a fractional age onto the fade-in ramp so reply text keeps integer slots', () => {
+    expect(recolorTail(['hello world'], [{ text: 'world', age: 0.9 }], COLOR)).toEqual([
+      `hello ${sgrAt(0)}world\u001b[39m`,
+    ])
+  })
+})
+
+describe('recolorTail float-out', () => {
+  it('starts brighter than the dim settle and recedes, then returns the original dim italic bytes', () => {
+    const young = recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], COLOR, 0, 'out')
+    const mid = recolorTail([DIM_REASONING], [{ text: 'world', age: 4 }], COLOR, 0, 'out')
+    const last = recolorTail([DIM_REASONING], [{ text: 'world', age: 7.9 }], COLOR, 0, 'out')
+    const done = recolorTail([DIM_REASONING], [{ text: 'world', age: 8 }], COLOR, 0, 'out')
+    const youngLuma = luminance(fadeRgbs(young[0] ?? '')[0] ?? BLACK)
+    const midLuma = luminance(fadeRgbs(mid[0] ?? '')[0] ?? BLACK)
+    const lastLuma = luminance(fadeRgbs(last[0] ?? '')[0] ?? BLACK)
+    expect(youngLuma).toBeGreaterThan(midLuma)
+    expect(midLuma).toBeGreaterThan(lastLuma)
+    expect(lastLuma).toBeGreaterThan(luminance(COLOR.ramp[0] ?? BLACK) + 20)
+    expect(done).toEqual([DIM_REASONING])
+  })
+
+  it('keeps the two-level overlay on the tail for the whole flight, then the caller drops the spans', () => {
+    const young = recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], DIM_STYLE, 0, 'out')
+    expect(young[0]).toContain('\u001b[2m')
+    expect(young).not.toEqual([DIM_REASONING])
+    expect(recolorTail([DIM_REASONING], [], DIM_STYLE, 0, 'out')).toEqual([DIM_REASONING])
+    expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], { capability: 'none', ramp: COLOR.ramp }, 0, 'out')).toEqual([DIM_REASONING])
+    expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], { capability: 'truecolor', ramp: [] }, 0, 'out')).toEqual([DIM_REASONING])
+    expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 8 }], { capability: 'ansi256', ramp: COLOR.ramp }, 0, 'out')).toEqual([DIM_REASONING])
+    expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], { capability: 'ansi256', ramp: COLOR.ramp }, 0, 'out')[0]).toMatch(/\u001b\[38;5;\d+m/)
   })
 })
 
@@ -565,5 +720,37 @@ describe('tracker and transform together', () => {
     tracker.tick()
     expect(tracker.spans()).toEqual([])
     expect(recolorTail(lines, tracker.spans(), style)).toEqual(lines)
+  })
+
+  it('reports no change from a floor once reasoning has receded past the duration', () => {
+    const block = new AssistantBlock({ palette: createPalette(false), toolPreviewLines: 2 }, 1)
+    block.appendReasoning('thinking hard')
+    block.setReasoningFade({
+      spans: () => [{ text: 'hard', age: 5 }],
+      style: () => DIM_STYLE,
+      steps: 5,
+      flush: () => {},
+    })
+    expect(block.setRepaintFloor(2)).toBe(false)
+  })
+
+  it('floats a card clock out without a settle snap: t >= 1 is the original lines', () => {
+    const time = clock()
+    const fade = new BlockFadeClock({ bornAt: time.now(), stepMs: 20, steps: 4, now: time.now })
+    const startAge = fade.age()
+    expect(startAge).toBe(0)
+    const start = recolorLines([YELLOW_GLYPH], startAge ?? 0, COLOR)
+    time.advance(20 * 4 - 1)
+    const almostAge = fade.age()
+    expect(almostAge).toBeDefined()
+    const almost = recolorLines([YELLOW_GLYPH], almostAge ?? 0, COLOR)
+    time.advance(1)
+    expect(fade.age()).toBeUndefined()
+    expect(recolorLines([YELLOW_GLYPH], COLOR.ramp.length, COLOR)).toEqual([YELLOW_GLYPH])
+    const startLuma = luminance(fadeRgbs(start[0] ?? '')[0] ?? BLACK)
+    const almostLuma = luminance(fadeRgbs(almost[0] ?? '')[0] ?? BLACK)
+    expect(almostLuma).toBeLessThan(startLuma)
+    expect(almostLuma).toBeGreaterThan(luminance(COLOR.ramp[0] ?? BLACK) + 40)
+    expect(almost).not.toEqual([YELLOW_GLYPH])
   })
 })

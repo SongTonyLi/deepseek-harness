@@ -51,7 +51,6 @@ describe('TuiApp', () => {
     expect(test.calls.followups).toHaveLength(1)
     expect(test.calls.steers).toHaveLength(0)
     expect(test.terminal.text()).toContain('queued for the next turn')
-    expect(test.terminal.text()).toContain('Enter queues for the next turn · Ctrl+S steers')
     for (const char of 'right now') test.terminal.type(char)
     test.terminal.type(KEY.ctrlS)
     await test.settle()
@@ -89,7 +88,10 @@ describe('TuiApp', () => {
     const screen = test.terminal.text()
     expect(screen).toContain('final thought')
     expect(screen).toContain('Hello there')
-    expect(screen).toContain('↑1.2k ↓34 ctx 1.2k')
+    expect(screen).toContain('+1')
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(test.terminal.text()).toContain('↑1.2k ↓34 ctx 1.2k')
   })
 
   it('drops an abandoned attempt that streamed nothing and keeps one that did', async () => {
@@ -537,11 +539,12 @@ describe('the status bar', () => {
     })
   }
 
-  it('advertises both entry keys while the editor keeps focus', async () => {
+  it('advertises the status-bar entry key on the one unfocused footer line', async () => {
     const test = await bench()
     await test.settle()
-    expect(test.terminal.text()).toContain('Shift+↑ transcript')
-    expect(test.terminal.text()).toContain('Shift+↓ status bar')
+    expect(test.terminal.text()).toContain('Shift+↓')
+    expect(test.terminal.text()).not.toContain('Shift+↑ transcript')
+    expect(test.terminal.text()).not.toContain('Enter sends')
     expect(test.terminal.text()).not.toContain('← → select')
   })
 
@@ -556,7 +559,7 @@ describe('the status bar', () => {
     expect(test.calls.followups).toHaveLength(0)
     test.terminal.type(KEY.escape)
     await test.settle()
-    expect(test.terminal.text()).toContain('Shift+↑ transcript')
+    expect(test.terminal.text()).toContain('Shift+↓')
     typeLine(test.terminal, 'hello')
     await test.settle()
     // The keys pressed at the bar never reached the editor, so the prompt is exactly what was typed after Esc.
@@ -580,6 +583,10 @@ describe('the status bar', () => {
     test.terminal.type(KEY.tab)
     test.terminal.type(KEY.enter)
     await test.settle()
+    expect(test.terminal.text()).toContain('reasoning effort: the model\'s own default')
+    test.terminal.type(KEY.tab)
+    test.terminal.type(KEY.enter)
+    await test.settle()
     expect(test.terminal.text()).toContain('context: ~54k / 128k (42%)')
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
@@ -592,13 +599,11 @@ describe('the status bar', () => {
     expect(test.terminal.text()).toContain('model: test-model')
     // And before the first one it wraps to the workspace again.
     test.terminal.type(KEY.left)
-    test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text().split('workspace: /work')).toHaveLength(3)
+    expect(await test.screen()).toContain('workspace: /work · ← → select')
     test.terminal.type(KEY.shiftTab)
-    test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text().split('context: ~54k / 128k (42%)')).toHaveLength(3)
+    expect(await test.screen()).toContain('context: ~54k / 128k (42%) · ← → select')
   })
 
   it('cycles the reasoning effort with Shift+Tab only while the editor has focus', async () => {
@@ -619,6 +624,7 @@ describe('the status bar', () => {
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
     test.terminal.type(KEY.enter)
     await test.settle()
+    // Backward from the model wraps to the last segment, not the effort one.
     expect(test.terminal.text()).toContain('workspace: /work')
   })
 
@@ -668,7 +674,7 @@ describe('the status bar', () => {
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
-    expect(test.terminal.text()).toContain('Shift+↑ transcript')
+    expect(test.terminal.text()).toContain('Shift+↓')
     const quitting = await bench()
     quitting.terminal.type(KEY.shiftDown)
     quitting.terminal.type(KEY.ctrlD)
@@ -690,7 +696,7 @@ describe('the status bar', () => {
     test.terminal.type(KEY.enter)
     await expect(answered).resolves.toBe('allowed-once')
     await test.settle()
-    expect(test.terminal.text()).toContain('Shift+↑ transcript')
+    expect(test.terminal.text()).toContain('Shift+↓')
     typeLine(test.terminal, 'after the modal')
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'after the modal' }]])
@@ -701,6 +707,7 @@ describe('the status bar', () => {
     test.appendAssistant([{ type: 'text', text: 'done' }], { usage: { inputTokens: 10, outputTokens: 4 } })
     await test.settle()
     test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
@@ -713,6 +720,65 @@ describe('the status bar', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('model: opened-model')
+  })
+
+  it('moves one segment on Shift+Right from the model onto effort, including the default', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftRight)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('reasoning effort: the model\'s own default')
+    expect(test.terminal.text()).toContain('Shift+Tab cycles it')
+    expect(test.terminal.text()).not.toContain('provider: test-provider')
+    expect(test.terminal.text()).not.toContain('workspace: /work')
+  })
+
+  it('lands Shift+Right on the effort in force after Shift+Tab cycles it', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
+        } as never)
+      },
+    })
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftRight)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('reasoning effort: low')
+    expect(test.terminal.text()).toContain('Shift+Tab cycles it')
+    expect(test.terminal.text()).not.toContain('provider: test-provider')
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+  })
+
+  it('treats a Shift+Right sequence as one move, and wraps Shift+Left the same as Left', async () => {
+    const test = await benchWithContext()
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftRight)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('reasoning effort: the model\'s own default')
+    expect(test.terminal.text()).toContain('Shift+Tab cycles it')
+    expect(test.terminal.text()).not.toContain('context: ~54k / 128k (42%)')
+    test.terminal.type(KEY.shiftLeft)
+    test.terminal.type(KEY.shiftLeft)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workspace: /work')
+  })
+
+  it('leaves Shift+Right with the editor while the editor has the keyboard', async () => {
+    const test = await bench()
+    for (const char of 'ab') test.terminal.type(char)
+    test.terminal.type(KEY.shiftRight)
+    await test.settle()
+    expect(test.terminal.text()).not.toContain('← → select')
+    typeLine(test.terminal, '')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'ab' }]])
   })
 })
 
@@ -753,9 +819,9 @@ describe('the running-turn counter', () => {
     startTurn(test, 4, 72_000)
     test.agent.inbox.append('next-turn', createUserMessage({ content: [{ type: 'text', text: 'later' }], source: { kind: 'user' } }))
     await test.settle()
-    // The bar holds the model segment first; the turn segment follows the
-    // permission one, which no bench profile composes.
+    // The bar holds the model segment first; effort is always next, then turn.
     test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
