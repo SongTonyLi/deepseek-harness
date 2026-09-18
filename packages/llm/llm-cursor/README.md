@@ -82,7 +82,7 @@ Attribution headers required by `LlmAdapter` go on every HTTP/2 request, with Cu
 
 #### What the model sees
 
-One rebuilt Cursor `AgentRunRequest`: the system prompt as a root blob, completed turns (user text plus assistant text, thinking, and MCP tool calls with results), the current user action, requested model id, and MCP tool definitions with `providerIdentifier: dsh`. Images are not sent as Cursor selected images. Native Cursor workspace tools are not offered.
+One rebuilt Cursor `AgentRunRequest`: the system prompt as a root blob, completed turns (user text plus assistant text, thinking, and MCP tool calls with results), the current user action, requested model id, and MCP tool definitions with `providerIdentifier: dsh`. Consecutive user-role messages with no assistant between them — the human prompt plus runtime-context snapshots, skill catalogs, and other injected user messages — join in order into that turn's user text, because a Run has one `userMessageAction`. Images are not sent as Cursor selected images. Native Cursor workspace tools are not offered.
 
 #### Token effect
 

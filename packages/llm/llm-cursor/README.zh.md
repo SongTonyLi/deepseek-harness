@@ -82,7 +82,7 @@ DSH 的每一步模型调用是一次新的 HTTP/2 Connect `Run`，由 harness �
 
 #### 模型看见什么
 
-一次重建的 Cursor `AgentRunRequest`：作为根 blob 的系统提示、已完成的轮次（用户文本加上助手文本、thinking，以及带结果的 MCP 工具调用）、当前用户动作、请求的模型 id，以及 `providerIdentifier: dsh` 的 MCP 工具定义。图片不会作为 Cursor 选中图片发送。不提供原生 Cursor 工作区工具。
+一次重建的 Cursor `AgentRunRequest`：作为根 blob 的系统提示、已完成的轮次（用户文本加上助手文本、thinking，以及带结果的 MCP 工具调用）、当前用户动作、请求的模型 id，以及 `providerIdentifier: dsh` 的 MCP 工具定义。中间没有助手回复的连续 user 角色消息——人类提示加上运行时上下文快照、技能目录和其他注入的用户消息——按顺序拼进该轮的用户文本，因为一次 Run 只有一个 `userMessageAction`。图片不会作为 Cursor 选中图片发送。不提供原生 Cursor 工作区工具。
 
 #### Token 影响
 

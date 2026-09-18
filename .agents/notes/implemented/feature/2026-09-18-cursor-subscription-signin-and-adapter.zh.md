@@ -28,6 +28,8 @@ harness 已能通过 `dsh-authorization` 登录 pi-ai 目录中的订阅（ChatG
 
 DSH 的每一步模型调用是一次 HTTP/2 Connect `AgentService/Run`。适配器把 harness 历史、系统提示与工具映射为 MCP 工具定义，再把文本、thinking、用量与 MCP 工具调用映射为 `StreamChunk`。一次 MCP 工具调用结束该流；DSH 在本地执行工具，下一步是新的 Run。Cursor 原生工作区 exec（`read`、`shell` 及同类）在链路上拒绝，以免该轮停住。pi-cursor 的会话 journal、挂起的 bridge 以及原生工具执行不在范围内。
 
+一次 Cursor Run 只有一个当前 `userMessageAction`。loop 在人类提示之后追加的 harness `user/message` 事件——运行时上下文快照、技能目录、技能指令正文、会话引用上下文——是连续的 user 角色消息。`conversationFromOptions` 按顺序把这些无助手步骤的轮次拼进该动作，并在已完成轮次内同样拼接连续的用户消息，这样注入的上下文就不能替换提示。
+
 `LlmAdapter` 要求的归属头出现在每一次 HTTP/2 请求上。挂载时注册捆绑的回退模型；存在令牌后 `GetUsableModels` 替换它们，缓存在 `$DSH_HOME` 下。
 
 ### Web and TUI surfaces
