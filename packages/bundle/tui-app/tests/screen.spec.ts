@@ -24,7 +24,7 @@ class Counted implements Component {
  * @param guard - the guard the screen settles each frame through.
  * @returns the screen, its terminal, and its child.
  */
-function screenWith(rows: number, guard: (viewportTop: number, width: number) => boolean): {
+function screenWith(rows: number, guard: (viewportTop: number, width: number, frameLines: number) => boolean): {
   screen: GuardedMainScreen
   terminal: FakeTerminal
   child: Counted
@@ -87,6 +87,27 @@ describe('GuardedMainScreen', () => {
     child.lines = Array.from({ length: 32 }, (_, index) => `line ${String(index)}`)
     screen.renderNow()
     expect(tops).toEqual([22])
+  })
+
+  it('hands the guard the frame\'s own length, which is what places an overlay', () => {
+    const seen: number[] = []
+    const { screen, child } = screenWith(10, (_viewportTop, _width, frameLines) => {
+      seen.push(frameLines)
+      return false
+    })
+    child.lines = Array.from({ length: 32 }, (_, index) => `line ${String(index)}`)
+    screen.renderNow()
+    child.lines = ['one line']
+    screen.renderNow()
+    expect(seen).toEqual([32, 1])
+  })
+
+  it('never clears the screen when the frame shrinks, which is what lets an overlay pad it', () => {
+    const { screen } = screenWith(10, () => false)
+    // pi-tui's shrink path would write ESC[2J ESC[H ESC[3J and take the
+    // terminal's scrollback with it; the reader pads the frame to the
+    // terminal height and back on every open and close.
+    expect(screen.getClearOnShrink()).toBe(false)
   })
 
   it('keeps the boundary the renderer already imposed after the frame shrank again', () => {

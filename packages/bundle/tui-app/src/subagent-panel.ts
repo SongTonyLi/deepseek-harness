@@ -16,8 +16,12 @@
  * @module @deepseek-ai/dsh-tui-app/subagent-panel
  */
 
+import { visibleWidth } from '@earendil-works/pi-tui'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
+import { fitLegend } from './frame.ts'
+import { HINTS } from './keys.ts'
+import { pulse, type MotionLevel } from './motion.ts'
 import type { Palette } from './style.ts'
 import { formatElapsed, formatTokens } from './transcript.ts'
 
@@ -36,8 +40,16 @@ const DEPTH_INDENT = '  '
 /** What separates two facts inside one row, and two parts of the heading. */
 const SEPARATOR = ' · '
 
-/** The keys the focused panel answers, appended to its heading. */
-const FOCUS_HINTS = `↑ ↓ select${SEPARATOR}Enter details${SEPARATOR}Esc back`
+/**
+ * The keys the focused panel answers, appended to its heading, in the steps
+ * the width chooses between. The key model owns the text, so `/help` and the
+ * panel name the same keys.
+ * @param room - columns the heading has left after its counts.
+ * @returns the widest step that fits, and the shortest one when none does.
+ */
+function focusHints(room: number): string {
+  return fitLegend(HINTS.panel, room)
+}
 
 /** The live facts one panel draw sampled for one listed child. */
 export interface SubagentLiveFacts {
@@ -93,6 +105,18 @@ export interface SubagentPanelRender {
   palette: Palette
   /** Index of the selected row; absent while the panel does not hold the keyboard. */
   selected?: number
+  /**
+   * How far above its settled drawing the selected row is lifted right now,
+   * which is what makes the keyboard landing here visible; omitted and `0`
+   * both draw the settled row. The lift never changes the row count.
+   */
+  level?: MotionLevel
+  /**
+   * Terminal columns the focused heading fits its legend into. A heading
+   * wider than the terminal wraps, and a docked row the panel adds that way
+   * raises the renderer's repaint boundary for good.
+   */
+  width: number
   /** Why the last listing failed, drawn as one line under the rows. */
   failure?: string
 }
@@ -154,9 +178,10 @@ export function subagentPanelView(inputs: SubagentPanelInputs): SubagentPanelVie
  * Render the panel. Unfocused it is one dim summary line — the listed count
  * and the first child's key label. Focused it is the heading with navigation
  * keys, one line per drawn row, the overflow count, and the last listing
- * failure. The selected row is accented while the panel holds the keyboard.
+ * failure. The selected row is accented while the panel holds the keyboard,
+ * and lifted above that accent while a landing is still moving.
  * @param view - the rows one draw produced.
- * @param render - the palette, the selected row, and the listing failure.
+ * @param render - the palette, the selected row, its lift, the width, and the listing failure.
  * @returns the panel text, one line when unfocused and one line per row when focused.
  */
 export function renderSubagentPanel(view: SubagentPanelView, render: SubagentPanelRender): string {
@@ -169,10 +194,11 @@ export function renderSubagentPanel(view: SubagentPanelView, render: SubagentPan
     if (render.failure !== undefined) parts.push(`listing failed: ${render.failure}`)
     return palette.dim(parts.join(SEPARATOR))
   }
-  const heading = `subagents${SEPARATOR}${String(total)} listed${SEPARATOR}${FOCUS_HINTS}`
+  const counts = `subagents${SEPARATOR}${String(total)} listed`
+  const heading = `${counts}${SEPARATOR}${focusHints(render.width - visibleWidth(counts) - visibleWidth(SEPARATOR))}`
   const lines = [palette.dim(heading)]
   for (const [index, row] of view.rows.entries()) {
-    lines.push(index === selected ? palette.bold(palette.accent(row.text)) : palette.dim(row.text))
+    lines.push(index === selected ? pulse(palette, palette.accent(row.text), render.level ?? 0) : palette.dim(row.text))
   }
   if (view.hidden > 0) lines.push(palette.dim(`+${String(view.hidden)} more${SEPARATOR}/subagents lists them all`))
   if (render.failure !== undefined) lines.push(palette.dim(`listing failed: ${render.failure}`))

@@ -6,6 +6,9 @@ import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
 import { createPalette } from '../src/style.ts'
 import { SUBAGENT_PANEL_MAX_ROWS, renderSubagentPanel, subagentPanelView } from '../src/subagent-panel.ts'
 
+/** A terminal wide enough for the heading's widest legend step. */
+const WIDE = 100
+
 /** One descendant listing entry, as the subagent runtime answers with. */
 function entry(id: string, extra: Record<string, unknown> = {}): unknown {
   return {
@@ -105,11 +108,11 @@ describe('the live subagent panel', () => {
     expect(unfocused).toContain('subagents · 3 listed')
     expect(unfocused.split('\n').find(line => line.includes('subagents ·'))?.trim())
       .toBe('subagents · 3 listed · session-kid')
-    expect(unfocused).not.toContain('↑ ↓ select')
+    expect(unfocused).not.toContain('↑↓ children')
     test.terminal.type(KEY.shiftDown)
     const screen = await test.screen()
     expect(screen).toContain('subagents · 3 listed')
-    expect(screen).toContain('↑ ↓ select · Enter details · Esc back')
+    expect(screen).toContain('↑↓ children · Enter details · Tab regions · Esc input')
     expect(panelRow(screen, 'session-kid')).toBe('session-kid · one-shot · resident · running · 1m12s · ↑1.2k ↓300')
     expect(panelRow(screen, 'reviewer')).toBe('reviewer · continuable · resident · idle · 8s · ↑1.2k ↓300')
     expect(panelRow(screen, 'session-broken')).toBe('session-broken · unreadable: corrupt')
@@ -140,18 +143,19 @@ describe('the live subagent panel', () => {
     // Shift+Down at the editor reaches the panel, because one is drawn.
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑ ↓ select · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
     // Down past the panel's last row reaches the bar, and Up comes back.
     test.terminal.type(KEY.down)
     await test.settle()
-    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
     test.terminal.type(KEY.up)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑ ↓ select · Enter details · Esc back')
-    // Shift+Down from the panel jumps straight to the bar.
-    test.terminal.type(KEY.shiftDown)
+    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    // Tab walks the regions, so the bar is one press away whatever row the
+    // panel's selection sits on.
+    test.terminal.type(KEY.tab)
     await test.settle()
-    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
 
     // Esc from the bar returns to the editor, and typing lands there.
     test.terminal.type(KEY.escape)
@@ -162,15 +166,18 @@ describe('the live subagent panel', () => {
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'hello' }]])
   })
 
-  it('keeps every other key to itself and gives the keyboard back on Ctrl+C', async () => {
+  it('sends a printable key back to the editor and gives the keyboard back on Ctrl+C', async () => {
     const test = await bench({ subagents: () => Promise.resolve([entry('session-kid')] as never) })
     const kid = await test.createChild({ id: 'session-kid' })
     await reconcile(test, kid)
     test.terminal.type(KEY.shiftDown)
+    // A printable key hands the keyboard back and lands at the caret, so it is
+    // in the editor and still unsent; Ctrl+O stays with the panel.
     for (const char of 'zzz') test.terminal.type(char)
     test.terminal.type(KEY.ctrlO)
     await test.settle()
     expect(test.calls.followups).toHaveLength(0)
+    expect(await test.screen()).toContain('Shift+↓')
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
@@ -184,7 +191,7 @@ describe('the live subagent panel', () => {
     await reconcile(test, kid)
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑ ↓ select · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
     listed = []
     kid.setStatus('idle')
     test.tick()
@@ -193,6 +200,36 @@ describe('the live subagent panel', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'after' }]])
+  })
+
+  it('leaves the keyboard with an open reader when the panel it was opened from goes away', async () => {
+    let listed: unknown[] = [entry('session-kid')]
+    const test = await bench({ subagents: () => Promise.resolve(listed as never) })
+    for (const char of 'read the spec') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    const kid = await test.createChild({ id: 'session-kid' })
+    await reconcile(test, kid)
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    expect(test.terminal.text()).toContain(' ● READER ')
+
+    listed = []
+    kid.setStatus('idle')
+    test.tick()
+    await test.settle()
+    // The panel handed its keyboard back, but the reader owns the key stream
+    // until it closes: a printable key reaches the reader, not the editor.
+    for (const char of 'zzz') test.terminal.type(char)
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READER ')
+    test.terminal.type(KEY.escape)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    for (const char of 'after') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content).at(-1)).toEqual([{ type: 'text', text: 'after' }])
   })
 
   it('moves the selection with Up and Down, opens one session, and comes back to the panel', async () => {
@@ -226,18 +263,86 @@ describe('the live subagent panel', () => {
     // Leaving the page hands the keyboard back to the panel on the same row.
     test.terminal.type(KEY.escape)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑ ↓ select · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
     test.terminal.type(KEY.up)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('workspace: /work/session-kid')
     test.terminal.type(KEY.enter)
     await test.settle()
-    // Up from the first row leaves the panel for the transcript instead of
-    // wrapping, and this session has nothing navigable in it yet.
+    // Up from the first row leaves the panel for the editor, which is drawn
+    // directly above it, instead of wrapping.
     test.terminal.type(KEY.up)
     await test.settle()
-    expect(test.terminal.text()).toContain('nothing in the transcript to inspect yet')
+    expect(await test.screen()).not.toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    for (const char of 'typed') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'typed' }]])
+  })
+
+  it('reaches the first and last row with the Shift arrows, Home, End, and the page keys', async () => {
+    const test = await bench({
+      subagents: () => Promise.resolve([
+        entry('session-kid'),
+        entry('session-other'),
+        entry('session-third'),
+      ] as never),
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          observeSession: (id: string) => Promise.resolve({
+            header: { id, createdAt: BENCH_NOW, cwd: `/work/${id}` },
+            events: [],
+            projections: { asOfSeq: 1, values: { title: `${id} title`, turnOutline: [] } },
+            [Symbol.dispose]: () => {},
+          }),
+        } as never)
+      },
+    })
+    const kid = await test.createChild({ id: 'session-kid' })
+    await test.createChild({ id: 'session-other' })
+    await test.createChild({ id: 'session-third' })
+    await reconcile(test, kid)
+
+    /** Open the selected row's details, read which child it names, and return to the panel. */
+    const selected = async (): Promise<string> => {
+      test.terminal.type(KEY.enter)
+      await test.settle()
+      const line = test.terminal.text().split('\n').findLast(row => row.includes('workspace: /work/'))?.trim() ?? ''
+      test.terminal.type(KEY.escape)
+      await test.settle()
+      return line
+    }
+
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.end)
+    await test.settle()
+    expect(await selected()).toBe('workspace: /work/session-third')
+    test.terminal.type(KEY.home)
+    await test.settle()
+    expect(await selected()).toBe('workspace: /work/session-kid')
+    test.terminal.type(KEY.pageDown)
+    await test.settle()
+    expect(await selected()).toBe('workspace: /work/session-third')
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(await selected()).toBe('workspace: /work/session-kid')
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(await selected()).toBe('workspace: /work/session-third')
+    test.terminal.type(KEY.pageUp)
+    await test.settle()
+    expect(await selected()).toBe('workspace: /work/session-kid')
+
+    // Down at the last row reaches the bar, and Up there comes back to the
+    // row the bar sits directly under: the panel's last one.
+    test.terminal.type(KEY.end)
+    test.terminal.type(KEY.down)
+    await test.settle()
+    expect(await test.screen()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    test.terminal.type(KEY.up)
+    await test.settle()
+    expect(await selected()).toBe('workspace: /work/session-third')
   })
 
   it('opens nothing for a row the listing could not read', async () => {
@@ -510,15 +615,15 @@ describe('renderSubagentPanel', () => {
       facts: new Map(),
       now: BENCH_NOW,
     })
-    expect(renderSubagentPanel(view, { palette })).toBe('subagents · 2 listed · session-kid')
-    expect(renderSubagentPanel({ rows: [], hidden: 0, ticking: false }, { palette })).toBe('subagents · 0 listed')
+    expect(renderSubagentPanel(view, { palette, width: WIDE })).toBe('subagents · 2 listed · session-kid')
+    expect(renderSubagentPanel({ rows: [], hidden: 0, ticking: false }, { palette, width: WIDE })).toBe('subagents · 0 listed')
   })
 
   it('draws the rows, overflow, hints, and listing failure while it holds the keyboard', () => {
     const entries = Array.from({ length: SUBAGENT_PANEL_MAX_ROWS + 1 }, (_, index) => listed(`session-${String(index)}`))
     const view = subagentPanelView({ entries, facts: new Map(), now: BENCH_NOW })
-    const drawn = renderSubagentPanel(view, { palette, selected: 0, failure: 'the listing timed out' })
-    expect(drawn.split('\n')[0]).toContain('↑ ↓ select · Enter details · Esc back')
+    const drawn = renderSubagentPanel(view, { palette, selected: 0, width: WIDE, failure: 'the listing timed out' })
+    expect(drawn.split('\n')[0]).toContain('↑↓ children · Enter details · Tab regions · Esc input')
     expect(drawn).toContain('session-0 · one-shot · resident · idle')
     expect(drawn).toContain('+1 more · /subagents lists them all')
     expect(drawn).toContain('listing failed: the listing timed out')

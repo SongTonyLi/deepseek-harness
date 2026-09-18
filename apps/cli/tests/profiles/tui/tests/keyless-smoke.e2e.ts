@@ -1,7 +1,8 @@
 /**
  * The shipped tui profile through the real `dsh` launcher: a keyless mock
  * model drives the production shell tool, the terminal renders the turn, the
- * session persists on quit, and `--resume` redraws it in a second process.
+ * keyboard walks it and reads it full screen, the session persists on quit,
+ * and `--resume` redraws it in a second process.
  *
  * The launch is pinned to the built `lib` bundles. In `src` mode the launcher
  * loads the profile's rows through its installation route (built `lib/`) while
@@ -23,6 +24,18 @@ const TEST_TIMEOUT_MS = PROCESS_TIMEOUT_MS * 2 + 15_000
 const binScript = fileURLToPath(new URL('../../../../src/bin.ts', import.meta.url))
 const configPath = fileURLToPath(new URL('./fixtures/cli.patch.yml', import.meta.url))
 const CTRL_D = '\u0004'
+const CTRL_G = '\u0007'
+const SHIFT_UP = '\u001b[1;2A'
+const ESCAPE = '\u001b'
+
+/**
+ * How long one step waits for its own marker before the run quits anyway. It
+ * is re-armed whenever a step advances, so a slow launch or a slow turn costs
+ * the following steps nothing; only a marker that never arrives spends it. The
+ * assertions then report which step the terminal did not reach, instead of the
+ * process timeout reporting nothing.
+ */
+const STEP_TIMEOUT_MS = 30_000
 
 /** Drop CSI, OSC, and APC sequences so assertions read the rendered words. */
 function plain(output: string): string {
@@ -43,11 +56,20 @@ interface Run {
   exitCode: number | undefined
 }
 
+/** One scripted step: wait for `marker` on stdout, then send `keys`. */
+interface Step {
+  /** The rendered words the step waits for, searched after the previous step's own. */
+  marker: string
+  /** The bytes to send once it appears; empty waits for the marker alone. */
+  keys: string
+}
+
 /**
- * Start the tui profile in `cwd`, wait until `marker` appears on stdout, then
- * send Ctrl+D on the empty editor so the app saves and exits.
+ * Start the tui profile in `cwd`, drive the scripted keys as each step's
+ * marker is rendered, and send Ctrl+D on the empty editor so the app saves and
+ * exits.
  */
-async function runUntil(cwd: string, args: readonly string[], marker: string): Promise<Run> {
+async function runScript(cwd: string, args: readonly string[], steps: readonly Step[]): Promise<Run> {
   const launch = resolveExampleLaunch({
     srcBin: binScript,
     configArgs: ['--profile', 'tui', '--patch', configPath, ...args],
@@ -74,29 +96,68 @@ async function runUntil(cwd: string, args: readonly string[], marker: string): P
     reject: false,
     stripFinalNewline: false,
   })
+  const send = (keys: string): void => {
+    const stdin = child.stdin
+    if (stdin !== undefined && stdin.writable) stdin.write(keys)
+  }
+  let quit = false
+  let deadline: NodeJS.Timeout | undefined
+  const finish = (): void => {
+    if (deadline !== undefined) clearTimeout(deadline)
+    deadline = undefined
+    if (quit) return
+    quit = true
+    send(CTRL_D)
+  }
+  /** Give the step that is now waiting its own window, replacing the previous one's. */
+  const armStep = (): void => {
+    if (deadline !== undefined) clearTimeout(deadline)
+    deadline = setTimeout(finish, STEP_TIMEOUT_MS)
+    deadline.unref()
+  }
+  armStep()
   let seen = ''
-  let sent = false
+  let step = 0
+  let from = 0
   child.stdout?.on('data', (chunk: Buffer) => {
     seen += chunk.toString()
-    if (!sent && plain(seen).includes(marker)) {
-      sent = true
-      child.stdin?.write(CTRL_D)
+    const text = plain(seen)
+    while (step < steps.length) {
+      const next = steps[step] as Step
+      const at = text.indexOf(next.marker, from)
+      if (at < 0) return
+      from = at + next.marker.length
+      step += 1
+      send(next.keys)
+      armStep()
     }
+    finish()
   })
-  const result = await child
-  const stdout = plain(streamText(result.stdout))
-  const stderr = streamText(result.stderr)
-  if (result.timedOut) {
-    throw new Error(`tui smoke did not exit within ${String(PROCESS_TIMEOUT_MS / 1_000)}s. stdout:\n${stdout}\nstderr:\n${stderr}`)
+  try {
+    const result = await child
+    const stdout = plain(streamText(result.stdout))
+    const stderr = streamText(result.stderr)
+    if (result.timedOut) {
+      throw new Error(`tui smoke did not exit within ${String(PROCESS_TIMEOUT_MS / 1_000)}s. stdout:\n${stdout}\nstderr:\n${stderr}`)
+    }
+    return { stdout, stderr, exitCode: result.exitCode }
+  } finally {
+    if (deadline !== undefined) clearTimeout(deadline)
   }
-  return { stdout, stderr, exitCode: result.exitCode }
 }
 
 describe('tui profile keyless smoke', () => {
-  it('runs a tool turn in the terminal, saves the session on Ctrl+D, and resumes it', async () => {
+  it('runs a tool turn in the terminal, walks and reads it, saves the session on Ctrl+D, and resumes it', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-smoke-'))
     try {
-      const first = await runUntil(cwd, ['prove the tool path'], 'CLI tool round trip complete')
+      // The keyboard enters the conversation on the newest section, reads it
+      // full screen, and comes back before the session is saved.
+      const first = await runScript(cwd, ['prove the tool path'], [
+        { marker: 'CLI tool round trip complete', keys: SHIFT_UP },
+        { marker: ' ● READ ', keys: CTRL_G },
+        { marker: ' ● READER ', keys: ESCAPE },
+        { marker: ' ● READ ', keys: '' },
+      ])
       expect(first.exitCode, `stderr:\n${first.stderr}\nstdout:\n${first.stdout}`).toBe(0)
       expect(first.stdout).toContain('› prove the tool path')
       expect(first.stdout).toContain('Inspecting the task before the tool call.')
@@ -104,11 +165,25 @@ describe('tui profile keyless smoke', () => {
       expect(first.stdout).toContain('CLI_TOOL_ROUND_TRIP')
       expect(first.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(first.stdout).toContain('cli-mock/cli-mock')
+      // Read mode is docked chrome with its own legend; the reader is the
+      // full-screen overlay over the same conversation.
+      expect(first.stdout).toContain(' ● READ ')
+      expect(first.stdout).toContain('Esc input')
+      expect(first.stdout).toContain(' ● READER ')
+      // It opened on the section the walk held, so the pane owns the keyboard
+      // and the readout states where that section sits in the session.
+      expect(first.stdout).toContain('Enter pins · Esc back')
+      expect(first.stdout).toMatch(/turn \d+\/\d+ · section \d+\/\d+ · row \d+\/\d+/u)
+      // The reader closed back onto the section it was opened from.
+      const reader = first.stdout.indexOf(' ● READER ')
+      expect(first.stdout.indexOf(' ● READ ', reader)).toBeGreaterThan(reader)
       const saved = /--resume (session-[\w-]+)/u.exec(first.stderr)
       expect(saved, first.stderr).not.toBeNull()
       const sessionId = saved![1]!
 
-      const second = await runUntil(cwd, ['--resume', sessionId], 'CLI tool round trip complete')
+      const second = await runScript(cwd, ['--resume', sessionId], [
+        { marker: 'CLI tool round trip complete', keys: '' },
+      ])
       expect(second.exitCode, `stderr:\n${second.stderr}\nstdout:\n${second.stdout}`).toBe(0)
       // The resumed header carries the generated title with the id; the
       // unfocused footer keeps the model id on its one key-facts line.

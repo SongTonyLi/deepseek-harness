@@ -1,5 +1,5 @@
 ---
-description: "Interactive terminal mode for dsh: talk to the agent in your terminal with streamed replies, tool cards, keyboard navigation over the conversation, approvals, questions, slash commands, @-references, attachments, and session switching."
+description: "Interactive terminal mode for dsh: talk to the agent in your terminal with streamed replies, tool cards, keyboard navigation over the conversation, a full-screen reader for turns side by side, approvals, questions, slash commands, @-references, attachments, and session switching."
 kind: "package-bundle"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in the terminal you are in, with no browser-hosted application and no server. Replies stream, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, `/attach` adds images and files, and `/`-commands share the Web registry. Arrow keys walk the conversation through a docked inspector. Sessions persist: `/sessions`, `/new`, and `/fork` switch between them, `/export` writes the browser's ZIP, and `--resume` continues one later. It runs `dsh web`'s model, tools, and safety defaults, one session at a time.
+`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in your terminal, with no browser and no server. Replies stream, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, and `/`-commands share the Web registry. Arrow keys walk the conversation through a docked inspector; `Ctrl+G` reads it full screen, turns side by side. Sessions persist: `/sessions`, `/new`, and `/fork` switch between them, `/export` writes the browser's ZIP, and `--resume` continues one later. It runs `dsh web`'s model, tools, and safety defaults, one session at a time.
 
 ## Table of Contents
 
@@ -40,33 +40,108 @@ On quit the app prints `dsh: session <id> saved; resume with: dsh --profile tui 
 
 ### The screen
 
-The header names the session by its title once one is generated or set, with the id beside it. The transcript grows in the terminal's own scrollback: your prompts start with `›` (attachments listed under them), assistant reasoning is dim above the Markdown reply, and each tool call is a card with a status glyph, the tool name, the presenter headline, and a body folded to `toolPreviewLines` rows. A nonempty system prompt and each injected context — instructions, catalogs, snapshots, notices, relays, and recalls — draw as a dim `⬡` row that includes the full model-facing text, with each snapshot contribution named above its own rows; an empty system prompt and a compaction replacement are omitted. Streamed reply text fades in and every word keeps its own clock: a word enters near the terminal's background color and brightens to the color it settles in over `streamFadeSteps` ticks of `streamFadeStepMs` each, so a fast stream leaves a longer trail of brightening words rather than a darker one. Streamed reasoning and a tool card float out over the same duration: they appear at a lifted color and recede to the dim italic or palette colors they settle in; a card redrawn from persisted history carries no fade, and text that has settled is never dimmed again. Below the transcript sit a spinner while the agent works, any open prompt, the editor, the subagent panel, and the footer: a status bar that, unfocused, is one line of key facts. The editor's caret is the terminal's own blinking bar: the app asks for that shape at start, gives your default back on quit, and draws no caret at all while the status bar or the panel holds the keyboard. The model, effort (`effort default` when the selection leaves reasoning to the model), and workspace path (shortened with `~` and `…/` when long) are always present; every other segment appears only when its fact exists — the permission preset, the running turn's elapsed time, cumulative token usage, the context window percentage, todo and goal and plan-mode markers from the projection seam, and the count of pending attachments — and `Shift+Down` expands the bar around the selected segment so that segment stays on screen. Compaction and model-request retries appear as notices, the same facts the browser's markers carry.
+The header names the session by its title once one is generated or set, with the id beside it. The transcript grows in the terminal's own scrollback: your prompts start with `›` (attachments listed under them), assistant reasoning is dim above the Markdown reply, and each tool call is a card with a status glyph, the tool name, the presenter headline, and a body folded to `toolPreviewLines` rows. A nonempty system prompt and each injected context — instructions, catalogs, snapshots, notices, relays, and recalls — draw as a dim `⬡` title over the first `contextPreviewLines` rows of their model-facing text, with each snapshot contribution named above its own rows; an empty system prompt and a compaction replacement are omitted. A tool card and a context block that carry more rows than they draw end on one marker: `… <n> more rows · Space expands` while the conversation's focus holds that block, and `… <n> more rows · Ctrl+O expands` otherwise. Streamed reply text fades in and every word keeps its own clock: a word enters near the terminal's background color and brightens to the color it settles in over `streamFadeSteps` ticks of `streamFadeStepMs` each, so a fast stream leaves a longer trail of brightening words rather than a darker one. Streamed reasoning and a tool card float out over the same duration: they appear at a lifted color and recede to the dim italic or palette colors they settle in; a card redrawn from persisted history carries no fade, and text that has settled is never dimmed again.
 
-While the keyboard walks the conversation an inspector is docked directly above the editor. It names the focused section — its position among the navigable blocks, the turn it belongs to, and what the section is, such as `3/12 · turn 2 · bash git status · result` — draws the block's parts as a numbered wrapping strip like `← 1 reasoning · 2 reply →` when it has more than one, shows the section's own source rows — every row of a system prompt or injected context, otherwise cut to `focusPreviewLines` with `… <n> more rows · Enter opens the page` under them, and ends with a dim line of the keys it answers. The focused block is also marked where it stands, with a two-column gutter that is dim beside the block's other lines and accented beside the focused section's own, and its content wraps two columns narrower while the mark is drawn. That mark reaches only the lines pi-tui still repaints differentially — the last `rows` lines of the last frame it wrote, a boundary a taller frame raises and a shorter one never lowers — because changing anything above them would clear the terminal's scrollback; a block that has scrolled past that point keeps no gutter and its inspector heading reads `off screen` instead, and a fade whose rows reach that edge settles them to their final colors in the frame that writes them, so nothing stays dim in the scrollback.
+Below the transcript sit a spinner while the agent works, any open prompt, the editor, the subagent panel, and the footer: a status bar that, unfocused, is one line built from both ends inward. The editor's caret is the terminal's own blinking bar: the app asks for that shape at start, gives your default back on quit, and draws no caret at all while the status bar or the panel holds the keyboard. The model is anchored at the left edge and is never dropped — past 20 columns it falls back to the bare model name, and only a label still too wide for that is ellipsized — and the two keys that leave the input are anchored at the right edge as `Shift+↑ read · Shift+↓ status`, narrowing to `Shift+↑↓ nav` and dropped below 40 columns. The key facts fill whatever middle is left, in bar order: effort (`effort default` when the selection leaves reasoning to the model), the running turn's elapsed time, the context window percentage, the todo counts, and the workspace path (shortened with `~` and `…/` when long). Every segment that middle cannot hold folds into a trailing `+N`, together with the segments the unfocused line never draws — the permission preset, cumulative token usage, the goal and plan-mode markers from the projection seam, and the count of pending attachments. Compaction and model-request retries appear as notices, the same facts the browser's markers carry.
 
-The subagent panel is drawn while a subagent session under the bound one is resident, or the listing carries a candidate it could not read. Unfocused it is one summary line with the listed count and the first child's key label; focused, its heading counts what it lists, and each row gives the child's depth indent, its label or id, its mode (`one-shot` or `continuable`), `resident`, whether its agent is `running` or `idle`, its elapsed time — the open turn's, else the total its settled turns took — and its token usage, as far as this process's own view of that child and the composed projections carry them. Six rows are drawn at most, with `+<n> more · /subagents lists them all` under them; a candidate the listing could not interpret draws as `unreadable: <reason>` and opens nothing, and a failed listing keeps the rows the last good one produced with `listing failed: <reason>` beneath. The panel disappears with its last row.
+While the keyboard walks the conversation a framed inspector is docked directly above the editor, and the frame is the mode: it is drawn exactly while the conversation holds the keyboard. Its top rule carries an inverse ` ● READ ` chip and the focused section's heading — the section's position among the navigable blocks, the turn it belongs to, and what the section is — as in `╭ ● READ ─ 3/12 · turn 2 · bash git status · result ─╮`. Under it the block's parts draw as a numbered wrapping strip like `← 1 call · [2 result] →` when the block has more than one, the held label bracketed as well as accented so the selection is legible with no color at all; then the section's own source rows, each prefixed with `│ ` and wrapped two columns narrower, folded at `focusPreviewLines` for every section kind — a system prompt and an injected context included — with `… <n> more rows · Ctrl+G reads it` under them. The bottom rule carries the keys the conversation answers, `↑↓ sections · ←→ parts · Space folds · Ctrl+G reader · Esc input`, narrowed to `↑↓ ←→ · Space folds · Esc input` and then to `Esc input` as the terminal loses columns.
+
+The focused block is also marked where it stands, with a two-column gutter that is dim beside the block's other lines and accented beside the focused section's own — or beside the fold marker, when the fold left that section out of the drawn rows entirely — and its content wraps two columns narrower while the mark is drawn. That mark reaches only the lines pi-tui still repaints differentially — the last `rows` lines of the last frame it wrote, a window a taller frame raises and a shorter one never lowers — because changing anything above them would clear the terminal's scrollback. A block that has scrolled past that point keeps no gutter, the inspector heading appends ` · off screen`, and the frame's own rules draw dim instead of accent, so the frame itself reports that the mark cannot be drawn where the block stands. A fade whose rows reach that edge settles them to their final colors in the frame that writes them, so nothing stays dim in the scrollback.
+
+`Ctrl+G` from any region, `Enter` on a conversation section, and `/turns` read the conversation full screen. The reader is an overlay composited into the viewport, so it costs the conversation no line and leaves the repaint window where it was. Its top rule carries a ` ● READER ` chip, `turn <n> of <total>`, and the transcript position; a left rail lists one row per turn — `▸` on the held one, the turn number, the first line of its prompt, and right-aligned markers, `⬡<n>` injected context blocks, `✻` any reasoning, `¶` any reply, `⚒<n>` tool calls — so turns are comparable at a glance; the pane beside it stacks the held turn's sections under `── <label> · turn <n> ` headers, the held section bold with an accent `▌` down every one of its rows. Rows are never folded there: the reader is where the full model-facing text of a system prompt, an injected snapshot, a long reply, or a tool result is read. `Enter` in the sections pins the held one into a second pane, so two sections from different prompts sit side by side, and `Enter` on the pinned section unpins it; below `readerMinColumns` the pin is still recorded, one pane is drawn, and the legend reads `compare needs <n> columns`. `/` opens a query line in place of the legend and narrows the rail to the turns whose prompt or text matches, with the readout reading `<kept>/<total> turns`; otherwise the legend rule reports `turn 3/12 · section 2/9 · row 14/212` at its right, which no width drops. Below 60 columns the body draws one column at a time, and below 24 columns or 8 rows it draws one dim line, `terminal too small for the reader (needs 24×8)`, and answers only `Esc`, `Ctrl+G`, and `Ctrl+C`. It re-reads the conversation on every render, so a streaming reply grows inside it, a landing tool result appears, and a new turn joins the rail; a resize re-anchors on the section being read rather than on a row number; an approval or a question steps it aside for that prompt's lifetime; and a session switch takes it down with the notice `the transcript changed · reader closed`.
+
+Transient key feedback floats as a dim framed line in the top-right corner of the viewport: `press Esc again to stop turn <n>`, `press Ctrl+C again to quit`, `nothing in the transcript to read yet`, and `above the repaint window · opened in the reader`. It holds at full strength for `toastMs`, fades out, costs the conversation no row of its own, and takes no keyboard; where the renderer can no longer repaint the top of the viewport it is printed into the conversation instead, which keeps it. Facts worth keeping are notices in the conversation: `stopping the turn…`, `wait for the session switch to finish`, and every command result.
+
+Motion reaches past streamed text, and every effect rides the same fade tick. The keyboard landing on the conversation, the subagent panel, or the status bar lifts that surface's frame, its chip, and the mark it holds for six ticks; a step of the conversation walk lifts the newly focused gutter for three; a step along the bar lifts the selected label for four; the reader grows into place over six ticks and shrinks away over four, drawn from its bottom rule up so no line it draws ever slides. No lift changes how many lines anything draws, and `reducedMotion` — like `NO_COLOR`, a disabled palette, and `TERM=dumb` — turns every one of them off and arms no repaint for them.
+
+The subagent panel is drawn while a subagent session under the bound one is resident, or the listing carries a candidate it could not read. Unfocused it is one summary line with the listed count and the first child's key label; focused, its heading counts what it lists and ends on the keys it answers, `↑↓ children · Enter details · Tab regions · Esc input`, narrowed to `↑↓ children · Esc input` and then to `Esc input` on a terminal that cannot hold them, and each row gives the child's depth indent, its label or id, its mode (`one-shot` or `continuable`), `resident`, whether its agent is `running` or `idle`, its elapsed time — the open turn's, else the total its settled turns took — and its token usage, as far as this process's own view of that child and the composed projections carry them. Six rows are drawn at most, with `+<n> more · /subagents lists them all` under them; a candidate the listing could not interpret draws as `unreadable: <reason>` and opens nothing, and a failed listing keeps the rows the last good one produced with `listing failed: <reason>` beneath. The panel disappears with its last row.
 
 ### Keys and commands
+
+The conversation, the input, the subagent panel, and the status bar stack in the order the screen draws them, and `Up` / `Down` walk that stack through the input: `Down` at the newest section, `Up` on the panel's first row, and `Up` on the status bar with no panel drawn all land at the caret. `Tab` and `Shift+Tab` walk the regions that are drawn, wrapping at both ends. A printable key pressed in any of them returns to the input and types there, so a sentence started while reading lands where it was aimed; `Space` in the conversation is the one exception, and folds the marked tool card or context block. `Ctrl+G` and `Ctrl+O` mean the same thing in every one of those regions, and `Ctrl+C` and `Ctrl+D` return the keyboard to the input before they act. A prompt and the reader own their whole key stream instead, and answer `Ctrl+C` by giving the keyboard back.
+
+While the input has the keyboard:
 
 | Key | Effect |
 |---|---|
 | `Enter` | Send the editor text; while a turn runs it is queued for the next turn |
-| `Ctrl+S` | While a turn runs, steer the editor text into the running turn's next step |
 | `Shift+Enter` | Insert a newline |
-| `Shift+Tab` | While the editor has focus, cycle the current model's reasoning effort for the next request |
+| `Ctrl+S` | While a turn runs, steer the editor text into the running turn's next step |
 | `Up` / `Down` | Recall earlier prompts |
-| `Shift+Up` | From the editor, panel, or bar, focus the conversation on its newest section; while the conversation has focus, walk to the previous section |
-| `Shift+Down` | From the editor, focus the subagent panel's first row while it is drawn, and the status bar otherwise; from the panel, jump to the bar; while the conversation has focus, walk to the next section |
-| `Esc` | Stop the running turn; queued messages stay queued |
-| `Ctrl+O` | Expand or collapse every tool card |
+| `Tab` | Take the completion the editor offers |
+| `Shift+Tab` | Cycle the current model's reasoning effort for the next request |
+| `Shift+Up` | Focus the conversation on the section the walk stopped at; a first entry, and the entry after a session switch, land on the newest section |
+| `Shift+Down` | Focus the subagent panel's first row while it is drawn, and the status bar otherwise |
+| `Ctrl+G` | Read the conversation full screen, on its newest section |
+| `Ctrl+O` | Expand or collapse every tool card and context row |
+| `Esc` | Arm the stop and say so; a second press while that line is on screen stops the running turn, and queued messages stay queued |
 | `Ctrl+C` | Clear the editor; a second press within 600 ms quits |
 | `Ctrl+D` | Quit when the editor is empty |
 
-The conversation, the subagent panel, and the status bar stack in that order, and `Up` / `Down` walk the whole stack without wrapping at either end. While the conversation has focus, `Up` / `Down` and `Shift+Up` / `Shift+Down` walk every section in reading order — a system prompt, injected context (each snapshot contribution as its own part), the reasoning and the reply of a message, the call and the result of a tool, and your prompts, with turn-end notices and printed reports skipped — `Left` / `Right` move between a block's parts without leaving the block, `Enter` opens the focused part as a read-only page carrying its full rows and comes back to the same part, and `Esc` returns focus to the editor. The rows a part carries are the block's own source text, so a reply reads as the Markdown the model wrote rather than the rendering drawn above. A message that streamed reasoning and then called a tool exposes that reasoning as its only section until visible text arrives, so the walk does not land on a blank reply. Every other key is consumed there, apart from `Ctrl+C` and `Ctrl+D`; a session switch drops the focus back to the editor, and a session with nothing to inspect yet answers `Shift+Up` with `nothing in the transcript to inspect yet` and leaves the keyboard in the editor.
+An `Esc` that only handed the keyboard back — leaving a region, closing a page, a picker, or the reader — opens a 750 ms window in which an `Esc` reaching the input does nothing at all, so a habitual double press stops no turn. With no turn running, `Esc` closes the completion list while one is open and is silent otherwise. A session with nothing to read yet answers `Shift+Up` and `Ctrl+G` with `nothing in the transcript to read yet` and leaves the keyboard in the input.
 
-While the status bar has focus, `Left` / `Right`, `Shift+Left` / `Shift+Right`, and `Tab` / `Shift+Tab` move between segments and wrap at both ends, the second line expands the selected segment's most important details, `Up` leaves the bar for the subagent panel's last row while it is drawn and for the conversation otherwise, `Enter` opens the selected segment while the bar keeps focus, and `Esc` returns focus to the editor. No other key reaches the editor while the bar has focus; `Ctrl+C` and `Ctrl+D` keep their usual meaning and return focus to the editor.
+While the conversation has the keyboard:
 
-While the subagent panel has focus, `Up` / `Down` move the selection and continue into the neighboring regions at its ends — `Up` on the first row reaches the conversation and `Down` on the last row the status bar — `Enter` opens that child's session details as a read-only page and comes back to the panel on the same row, and `Esc` returns focus to the editor. Every other key is consumed there as well, apart from `Ctrl+C` and `Ctrl+D`; the panel also hands the keyboard back to the editor when its last row leaves.
+| Key | Effect |
+|---|---|
+| `Up` / `Down` | The previous / next section; `Down` at the newest section lands in the input |
+| `Shift+Up` / `Shift+Down` | The previous / next block, on that block's first section |
+| `PageUp` / `PageDown` | The previous / next turn, on that turn's first section |
+| `Home` / `End` | The oldest / newest section |
+| `Left` / `Right` | The previous / next part of the held block, stopping at its ends |
+| `Shift+Left` / `Shift+Right` | The first / last part of the held block |
+| `Space` | Fold or unfold the marked tool card or context block; a block the renderer can no longer rewrite opens in the reader instead, under the line `above the repaint window · opened in the reader` |
+| `Enter` | Read this section full screen |
+| `Tab` / `Shift+Tab` | The next / previous region that is drawn |
+| `Esc` | Return to the input |
+| Any other printable key | Return to the input and type the character at the caret |
+
+The walk covers every section in reading order — a system prompt, injected context (each snapshot contribution as its own part), the reasoning and the reply of a message, the call and the result of a tool, and your prompts, with turn-end notices and printed reports skipped. The rows a part carries are the block's own source text, so a reply reads as the Markdown the model wrote rather than the rendering drawn above. A message that streamed reasoning and then called a tool exposes that reasoning as its only section until visible text arrives, so the walk does not land on a blank reply. A session switch drops the keyboard back into the input and forgets the section the walk stopped at.
+
+While the subagent panel has the keyboard:
+
+| Key | Effect |
+|---|---|
+| `Up` / `Down` | The previous / next row; `Up` on the first row lands in the input and `Down` on the last row on the status bar |
+| `Shift+Up` / `Shift+Down`, `Home` / `End`, `PageUp` / `PageDown` | The first / last row |
+| `Enter` | Open that child's session details as a read-only page, returning to the panel on the same row |
+| `Tab` / `Shift+Tab` | The next / previous region that is drawn |
+| `Esc` | Return to the input |
+| Any printable key | Return to the input and type the character at the caret |
+
+The panel also hands the keyboard back to the input when its last row leaves.
+
+While the status bar has the keyboard:
+
+| Key | Effect |
+|---|---|
+| `Left` / `Right` | The previous / next segment, wrapping at both ends |
+| `Shift+Left` / `Shift+Right`, `Home` / `End`, `PageUp` / `PageDown` | The first / last segment |
+| `Shift+Up` / `Shift+Down` | The conversation on the section the walk stopped at, and the bar's own first segment |
+| `Up` | The subagent panel's last row while it is drawn, and the input otherwise |
+| `Enter` | Open the selected segment while the bar keeps the keyboard |
+| `Tab` / `Shift+Tab` | The next / previous region that is drawn |
+| `Esc` | Return to the input |
+| Any printable key | Return to the input and type the character at the caret |
+
+While the reader is open:
+
+| Key | Effect |
+|---|---|
+| `Up` / `Down` | In the rail, the previous / next turn; in the sections, the previous / next section, scrolled into view |
+| `Shift+Up` / `Shift+Down` | In the sections, scroll one row and leave the selection where it is |
+| `PageUp` / `PageDown` | A page of turns, or a page of rows with one row of overlap |
+| `Home` / `End` | The first / last turn, or the first / last section of the held turn |
+| `Right` | From the rail, the held turn's sections; in the sections, the next section |
+| `Left` | Return to the rail |
+| `Tab` / `Shift+Tab` | From the rail, `Tab` opens its sections; in the sections, both return to the rail |
+| `1`…`9` | In the sections, the numbered section of the held turn |
+| `Enter` | From the rail, open the turn's sections; in the sections, pin the held section beside the walk, or unpin the pinned one |
+| `/` | In the rail, open the turn filter: printable keys extend the query, `Backspace` drops one character, `Ctrl+U` clears it, `Enter` keeps the narrowed rail and closes the line, and `Esc` clears a non-empty query and then closes the line |
+| `Esc` | Unpin the pinned section, on a narrow terminal return from the sections to the rail, and otherwise close the reader and return to the conversation on the section last read |
+| `Ctrl+G`, `Ctrl+C` | Close the reader and return to the input |
+
+Every other key reaching the reader is consumed, and closing it opens the same 750 ms handoff window, so no number of consecutive `Esc` presses reaches the input's stop.
 
 Every focused segment expands its most important facts on the second line. `Enter` prints those facts into the transcript for every segment except `todo`, stating what they are and what changes them: the model segment names `/model`, the effort segment `Shift+Tab`, and the permission segment its preset, the `turn` segment — drawn as `turn <elapsed>` between the permission and usage segments, and only while a turn runs — gives the turn number, its start time, its elapsed time, and the queued-message counts, while the usage, context, goal, and plan segments print the matching sections of the `/status` report, the workspace segment the full path, and the attachments segment the pending attachments. The `todo` segment expands the counts by status and the item being worked on, or the next pending item when none is in progress, and `Enter` opens the agent's todo list, the same list `/todos` opens.
 
@@ -74,7 +149,7 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 
 | Command | Effect |
 |---|---|
-| `/help` | List commands and keys |
+| `/help` | List the commands, and the keys each focus state answers |
 | `/model` | Pick the model (type to filter the rows), then its reasoning effort when the model declares more than one, for the next request; `/model <provider>/<model>` selects directly and `/model save` stores the current selection as the default |
 | `/sessions` | Pick another persisted session and switch to it |
 | `/new` | Start a new session |
@@ -94,7 +169,8 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/subagents` | Browse the subagent sessions under this session; `Enter` opens one session's details |
 | `/settings [ns [path value]]` | List namespaces, show one, or set one field; `/settings reset <ns>` restores defaults |
 | `/plugins` | The composed plugins with enablement and lifecycle phase; `/plugins bundles` lists the profile's bundles, `/plugins enable <id>` and `/plugins disable <id>` switch a plugin entry or a bundle, `/plugins add <spec>` installs a bundle, `/plugins remove <name>` removes one |
-| `/tools` | Expand or collapse every tool card, like `Ctrl+O` |
+| `/tools` | Expand or collapse every tool card and context row, like `Ctrl+O` |
+| `/turns` | Read the conversation full screen, turns side by side, like `Ctrl+G` |
 | `/quit`, `/exit` | Save the session and exit |
 
 Every other `/name` line goes to the shared command registry, so `/compact`, `/permission`, `/goal`, and plugin commands work as they do in the browser.
@@ -121,12 +197,15 @@ An approval request draws `Allow <tool>?` with the asker's reason, the logged ca
 |---|---|---|
 | `prompt` | none | A first prompt submitted when the terminal is up |
 | `resume` | none | A persisted session id to continue instead of starting a new one |
-| `toolPreviewLines` | `8` | Collapsed tool-card body rows before `Ctrl+O` expands them |
-| `focusPreviewLines` | `12` | Rows of the focused section the docked inspector shows before `Enter` opens the whole of it |
+| `toolPreviewLines` | `8` | Collapsed tool-card body rows before `Space` on the marked card, or `Ctrl+O`, expands them |
+| `contextPreviewLines` | `4` | Rows a system prompt or an injected `⬡` context block draws before `Space` on the marked block, or `Ctrl+O`, expands it |
+| `focusPreviewLines` | `12` | Rows of the focused section the docked inspector shows before its fold marker sends the rest to the reader, for every section kind |
+| `readerMinColumns` | `80` | Columns the reader needs before it draws two sections side by side; below it the pin is still recorded and its legend reads `compare needs <n> columns` |
+| `toastMs` | `2000` | How long a transient key-feedback line holds at full strength before it fades out, which is also the window in which a second `Esc` stops the running turn |
 | `liveRefreshMs` | `1000` | Period of the redraw that advances the `turn` segment and the panel's elapsed values and re-reads a stale subagent listing |
 | `streamFadeSteps` | `8` | How many ticks a fade lasts: reply text fades in, reasoning and tool cards float out, over `streamFadeSteps × streamFadeStepMs` |
-| `streamFadeStepMs` | `33` | One fade tick, and the repaint period while anything is still fading; duration is `streamFadeSteps × streamFadeStepMs` |
-| `reducedMotion` | `false` | Draw streamed text, streamed reasoning, and tool cards in their settled colors, with no fade and no repeating repaint |
+| `streamFadeStepMs` | `33` | One fade tick, and the repaint period while anything is still moving; duration is `streamFadeSteps × streamFadeStepMs` |
+| `reducedMotion` | `false` | Draw streamed text, streamed reasoning, tool cards, and the chrome in their settled colors, with no fade, no lift, no reader reveal, and no repeating repaint |
 | `openBrowser` | `true` | Hand marked authorization pages to the local default browser |
 
 `prompt`, `resume`, and `openBrowser` come from the command line through the startup provider; the generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tui-app) is the exhaustive source for every accepted field.
@@ -159,33 +238,45 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 |---|---|
 | [`src/index.ts`](src/index.ts) | The `tui-app` plugin: the session host (create, resume, fork), history read, quit flow, exit mapping |
 | [`src/startup.ts`](src/startup.ts) | The `tui-app-startup` provider: prompt positional, `--resume`, `--no-open`, and `--help` |
-| [`src/app.ts`](src/app.ts) | The terminal application: layout, keys, commands, session binding, seams, log and stream folding |
+| [`src/app.ts`](src/app.ts) | The terminal application: layout, the key router, commands, session binding, seams, log and stream folding, the stop arm, and the overlays it mounts |
+| [`src/keys.ts`](src/keys.ts) | The key model: the focus regions, what one press means in each, the legends they degrade through, the entry keys, the `/help` lines, and the handoff window |
 | [`src/sessions.ts`](src/sessions.ts) | The `/sessions` list over the query engine and its picker rows |
 | [`src/attach.ts`](src/attach.ts) | `/attach`: local files into image or file blocks through the attachment store |
 | [`src/export.ts`](src/export.ts) | `/export`: the session-log ZIP written through the export package's archive helpers |
-| [`src/blocks.ts`](src/blocks.ts) | Transcript components: user prompt, assistant reply, tool card, system prompt and injected context, notice; the navigable blocks expose their sections and draw the focus gutter |
+| [`src/blocks.ts`](src/blocks.ts) | Transcript components: user prompt, assistant reply, tool card, system prompt and injected context, notice; the navigable blocks expose their sections and draw the focus gutter, and the foldable ones carry the marker both fold keys name |
 | [`src/context.ts`](src/context.ts) | Project logged system prompts and injected user messages into transcript sections |
-| [`src/navigation.ts`](src/navigation.ts) | The transcript as sections, the cursor that walks them, and the inspector heading |
-| [`src/inspector.ts`](src/inspector.ts) | The docked inspector: the focused section's heading, numbered wrapping parts strip, rows, and its mounted component |
+| [`src/navigation.ts`](src/navigation.ts) | The transcript as sections, the cursor that walks them along four axes, the turns those sections group into, and the inspector heading |
+| [`src/inspector.ts`](src/inspector.ts) | The docked inspector: the framed pane with its mode chip, the section heading, the numbered wrapping parts strip, the folded rows, and its mounted component |
+| [`src/frame.ts`](src/frame.ts) | Pure box drawing: the rounded rules, the inverse mode chip, body rows, and the legend step a width holds |
+| [`src/reader.ts`](src/reader.ts) | The reader as plain data: its state, the intents keys become, its geometry, and the lines it draws |
+| [`src/reader-overlay.ts`](src/reader-overlay.ts) | The mounted reader pane: its key map, its reveal, and where it leaves the keyboard |
 | [`src/screen.ts`](src/screen.ts) | The main screen with the settle passes between building a frame and writing it, the repaint window each pass is judged against, and the per-block repaint floor |
 | [`src/fade.ts`](src/fade.ts) | The streamed-text fade: the wall-clock tail tracker, the block-fade clock and registry, the fade-in ramp, the float-out mix, and the recolor of rendered lines |
+| [`src/motion.ts`](src/motion.ts) | The chrome motion clock and the three-level lift its call sites draw with: the landing, the section step, the bar walk, and the reader's reveal |
 | [`src/prompts.ts`](src/prompts.ts) | Approval, question, picker, and read-only detail prompts plus the modal queue |
-| [`src/transcript.ts`](src/transcript.ts) | Pure text folding of presentation views, usage, and turn-end reasons |
+| [`src/toast.ts`](src/toast.ts) | The transient key-feedback line: its overlay, its clock, and the lines it carries |
+| [`src/transcript.ts`](src/transcript.ts) | Pure text folding of presentation views, usage, and turn-end reasons, and the one fold grammar every marker is written in |
 | [`src/diff.ts`](src/diff.ts) | Line diff and hunk selection for diff cards |
 | [`src/style.ts`](src/style.ts) | The palette and the derived pi-tui themes |
 | [`src/completion.ts`](src/completion.ts) | Slash-command and `@`-reference completion for the editor |
 | [`src/editor.ts`](src/editor.ts) | The prompt editor without pi-tui's drawn block cursor, and the DECSCUSR sequences for the terminal's own caret |
 | [`src/status.ts`](src/status.ts) | Projection-seam facts and the sections the `/status` report and the segment details share; compaction and retry notices |
-| [`src/footer.ts`](src/footer.ts) | The status bar: the ordered segments, each segment's detail rows, the one-line unfocused facts, and the focused sliding window |
+| [`src/footer.ts`](src/footer.ts) | The status bar: the ordered segments, each segment's detail rows, the unfocused line built from both ends, and the focused sliding window |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | The live subagent panel: one descendant listing plus sampled live facts become its rows, the unfocused summary line, and the focused listing |
 | [`src/catalog.ts`](src/catalog.ts) | Rows for `/settings`, `/plugins`, `/subagents`, `/deliverables`, `/changes`, and `/outline`, and the `/plugins` management verbs |
 | [`src/todos.ts`](src/todos.ts) | The todo list: the status glyphs, the picker rows, and one item's detail rows |
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers listeners on one Agent and holds no mutable relation another observer could contradict. |
-| [`tests/app.spec.ts`](tests/app.spec.ts) | Rendering, keys, commands, and both seams over a fake terminal |
+| [`tests/app.spec.ts`](tests/app.spec.ts) | Rendering, keys, commands, the stop arm, and both seams over a fake terminal |
+| [`tests/keys.spec.ts`](tests/keys.spec.ts) | What each region claims for a key, the legend steps, and the text one press types |
+| [`tests/frame.spec.ts`](tests/frame.spec.ts) | The rules, the chip, the body rows, and the legend a width holds |
+| [`tests/motion.spec.ts`](tests/motion.spec.ts) | The motion clock's levels, its repaint demand, and the lift each level draws |
+| [`tests/toast.spec.ts`](tests/toast.spec.ts) | The transient line's box, its hold, its fade, and its early settlement |
+| [`tests/reader.spec.ts`](tests/reader.spec.ts) | The reader's geometry, its state machine, its filter, and the rows it returns |
+| [`tests/reader-overlay.spec.ts`](tests/reader-overlay.spec.ts) | The mounted pane: its key map, its reveal, its re-anchoring, and its exit |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | Session, attachment, queue, skill, sign-in, `/login`, Shift+Tab effort cycling, export, reference, and effort commands over scripted services |
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | Status footer and report, the navigable subagent and todo lists, catalog commands, command hints, and the approval detail |
-| [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | Walking the conversation, the region stack, the inspector, and the in-place gutter inside the repaint window |
+| [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | Walking the conversation, the region stack, the inspector, the reader over a live session, and the in-place gutter inside the repaint window |
 | [`tests/context.spec.ts`](tests/context.spec.ts) | Projection of system prompts and injected context into transcript sections |
 | [`tests/index.spec.ts`](tests/index.spec.ts) | Creation, resume paging, fork cut, session switching, quit flow, and failure reporting |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
@@ -236,13 +327,16 @@ These limits describe the terminal surface as shipped; they are not a general CL
 - **Approvals are one-shot** — the prompt offers allow once or reject, matching the approval seam's vocabulary; there is no remembered grant.
 - **Browser-only pages stay in the browser** — workspace and directory pickers, open-in-app links, the trajectory ledger, and per-message like/dislike have no terminal counterpart; `/settings`, `/plugins`, `/subagents`, `/outline`, and the shared `/feedback` cover their facts as text, and subagent transcripts are read by switching to the child session.
 - **Deliverables are named, not opened** — `/deliverables` lists the presented paths and `/changes` shows line comparisons; the browser previews the files.
-- **Terminal scrollback owns history** — the keyboard walks every block and part of the conversation, including system prompts and injected context drawn in full, but there is no search and nothing else folds beyond tool cards; the browser surface owns richer navigation.
-- **A focused block that scrolled away is marked only in the inspector** — pi-tui repaints differentially just the last `rows` lines of the last frame it wrote and clears the terminal's scrollback to change anything above them, so a block further back gains no gutter and the inspector heading says `off screen`; a page that filled the terminal raises that boundary for good, so the block it was opened from can read `off screen` once the page closes, and its section still reads in the inspector and on the page `Enter` opens.
-- **The page shows source text** — `Enter` on an assistant reply opens the Markdown the model wrote, not the rendering the transcript draws, so tables and headings read as their source.
+- **Terminal scrollback owns history** — the keyboard walks every block and part of the conversation, tool cards and context blocks fold, and the reader's `/` filter narrows this session's turns; searching the text of a turn, and the history of other sessions, belong to the browser surface.
+- **A focused block that scrolled away is marked only in the inspector** — pi-tui repaints differentially just the last `rows` lines of the last frame it wrote and clears the terminal's scrollback to change anything above them, so a block further back gains no gutter, the inspector heading says `off screen`, its frame goes dim, and `Space` on it opens the reader rather than rewriting it; `Ctrl+O` is the one key that does rewrite those lines, and on a conversation taller than the terminal it makes pi-tui redraw in full.
+- **A frame that shrank leaves the top of the viewport out of reach** — the repaint window rises with the tallest frame written so far and never falls, so after read mode closes or the spinner leaves, the reader draws that many rows short of full screen with the conversation showing above it, and a transient line is printed into the conversation instead of floating; both recover as the conversation grows.
+- **The reader covers the input while it sinks** — `Esc`, `Ctrl+G`, and `Ctrl+C` hand the keyboard back at once and the pane then shrinks away over four fade ticks, 132 ms at the default, during which the terminal's caret is hidden; any key that moves the keyboard, and any prompt or session change, takes the pane down immediately.
+- **The reader shows source text** — an assistant reply reads as the Markdown the model wrote, not the rendering the transcript draws, so tables and headings read as their source.
 - **The panel lists residency, not the tree** — a child joins it while its session record is resident in this process, so a subagent run by an out-of-process provider, which owns no session here, never appears; `/subagents` remains the way to every durable descendant.
 - **Residency is not work** — the listing's `activity: 'running'` says the child's record is resident, which is what the row's `resident` reports; whether the child is working is the separate `running` / `idle` word beside it, read from that child's Agent in this process.
 - **Rows behind the overflow row are not selectable** — the panel draws at most six rows and `Up` / `Down` leave it at their ends; the children folded into `+<n> more` are reached through `/subagents`, which walks the complete descendant tree.
-- **The fade needs an answer from the terminal** — its ramp is built from the background color the terminal reports to the query sent at startup, so a terminal that stays silent, or that encodes neither truecolor nor 256 colors, gets the two-level faint mode instead; `NO_COLOR`, a disabled palette, `TERM=dumb`, and `reducedMotion` turn the effect off entirely.
+- **The panel's text is built at the width of its last refresh** — a terminal resized while the panel is drawn keeps the heading legend and the row text that width chose until the next listing update, selection move, or live redraw rebuilds them.
+- **The fade needs an answer from the terminal** — its ramp is built from the background color the terminal reports to the query sent at startup, so a terminal that stays silent, or that encodes neither truecolor nor 256 colors, gets the two-level faint mode instead; `NO_COLOR`, a disabled palette, `TERM=dumb`, and `reducedMotion` turn every fade and every chrome lift off entirely, and a transient line then disappears at the end of its hold instead of fading out.
 - **The terminal's own caret can flicker** — the editor draws no caret of its own and the app turns the terminal cursor on, which pi-tui then moves across the lines it repaints; a terminal that does not honor the synchronized-output sequences pi-tui wraps a frame in can show that movement.
 - **Runs through the `dsh` launcher** — starting the profile another way fails at startup, because only the launcher can request the process exit.
 

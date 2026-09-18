@@ -1,6 +1,6 @@
 /** The status bar's segments, their details, the workspace label, and the footer lines. */
 
-import { visibleWidth } from '@earendil-works/pi-tui'
+import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it } from 'vitest'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -15,6 +15,7 @@ import {
   type FooterSegment,
   type FooterTurn,
 } from '../src/footer.ts'
+import type { MotionLevel } from '../src/motion.ts'
 import type { StatusFacts } from '../src/status.ts'
 import { createPalette } from '../src/style.ts'
 
@@ -263,19 +264,46 @@ describe('renderFooter', () => {
   const palette = createPalette(false)
   const usage = buildFooterSegments(inputs({ usage: '↑10 ↓4 ctx 10' }))
 
-  it('draws one unfocused line of key facts, folds the rest, and keeps the entry hint on that line', () => {
+  it('builds the unfocused line from both ends: the model left, the entry keys right, the facts between', () => {
     const lines = renderFooter(usage, { palette, width: WIDE })
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toBe('deepseek/deepseek-chat · effort default · /work · +1 · Shift+↓')
+    const [line = ''] = lines
+    expect(line.startsWith('deepseek-chat · effort default · /work · +1')).toBe(true)
+    expect(line.endsWith('Shift+↑ read · Shift+↓ status')).toBe(true)
+    expect(visibleWidth(line)).toBe(WIDE)
     const styled = renderFooter(usage, { palette: createPalette(true), width: WIDE })
     expect(styled).toHaveLength(1)
     expect(styled[0]).toContain('\u001b[2m')
     expect(styled[0]).not.toContain('\n')
   })
 
+  it('reserves both entry keys while the width can spare them, then degrades, then drops them', () => {
+    const built = buildFooterSegments(crowded())
+    const at = (width: number): string => renderFooter(built, { palette, width })[0] ?? ''
+    expect(at(95)).toContain('Shift+↑ read · Shift+↓ status')
+    expect(at(60)).toContain('Shift+↑↓ nav')
+    expect(at(60)).not.toContain('Shift+↑ read')
+    expect(at(36)).not.toContain('Shift+')
+    // The keys are reserved before any fact, so the facts fold instead.
+    expect(at(60)).toContain('deepseek-chat')
+    expect(at(60)).toMatch(/\+\d/u)
+    for (const width of [95, 60, 36]) expect(visibleWidth(at(width))).toBeLessThanOrEqual(width)
+  })
+
+  it('drops the provider from a wide model label before it ellipsizes the model itself', () => {
+    const wide = buildFooterSegments(inputs({ selection: { provider: 'openai-codex-preview', model: 'gpt-5.6-sol' } }))
+    expect(renderFooter(wide, { palette, width: WIDE })[0]?.startsWith('gpt-5.6-sol · ')).toBe(true)
+    const huge = buildFooterSegments(inputs({ selection: { provider: 'openai', model: 'gpt'.padEnd(30, '-') } }))
+    const [line = ''] = renderFooter(huge, { palette, width: WIDE })
+    const label = (line.split(' · ')[0] ?? '').replaceAll('\u001b[0m', '')
+    expect(label.startsWith('gpt---')).toBe(true)
+    expect(label.endsWith('…')).toBe(true)
+    expect(visibleWidth(label)).toBe(20)
+  })
+
   it('keeps model, effort, a running turn, context, todo, and workspace on the unfocused line', () => {
     const [line] = renderFooter(buildFooterSegments(crowded()), { palette, width: WIDE })
-    expect(line).toContain('deepseek/deepseek-chat')
+    expect(line).toContain('deepseek-chat')
     expect(line).toContain('effort high')
     expect(line).toContain('turn 1m12s')
     expect(line).toContain('ctx 42%')
@@ -289,27 +317,55 @@ describe('renderFooter', () => {
     expect(line).not.toContain('↑1.2k')
     expect(line).not.toContain('Enter sends')
     expect(line).not.toContain('Shift+↑ transcript')
-    expect(line).not.toContain('← → select')
+    expect(line).not.toContain('←→ segments')
   })
 
   it('omits the overflow token when nothing is folded', () => {
-    const [line] = renderFooter(buildFooterSegments(inputs()), { palette, width: WIDE })
-    expect(line).toBe('deepseek/deepseek-chat · effort default · /work · Shift+↓')
+    const [line = ''] = renderFooter(buildFooterSegments(inputs()), { palette, width: WIDE })
+    expect(line.startsWith('deepseek-chat · effort default · /work')).toBe(true)
     expect(line).not.toMatch(/\+\d/u)
   })
 
-  it('accents only the selected segment, windows to width, and expands it on the second line', () => {
+  it('brackets and accents the selected segment, and expands it on the second line', () => {
     const lines = renderFooter(usage, { palette, selected: 1, width: WIDE })
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toBe('deepseek/deepseek-chat · effort default · ↑10 ↓4 ctx 10 · /work')
-    expect(lines[1]).toBe('reasoning effort: the model\'s own default · ← → select · ↑ ↓ regions · Enter details · Esc back')
+    expect(lines[0]).toBe('deepseek-chat · [effort default] · ↑10 ↓4 ctx 10 · /work')
+    expect(lines[1]).toBe('reasoning effort: the model\'s own default · ←→ segments · Enter details · Tab regions · Esc input')
     const styled = renderFooter(usage, { palette: createPalette(true), selected: 1, width: WIDE })
     const [bar, expansion] = styled
-    expect(bar).toContain('\u001b[1m\u001b[36meffort default\u001b[39m\u001b[22m')
-    expect(bar).toContain('\u001b[2mdeepseek/deepseek-chat\u001b[22m')
+    expect(bar).toContain('\u001b[36m[effort default]\u001b[39m')
+    expect(bar).toContain('\u001b[2mdeepseek-chat\u001b[22m')
     expect(bar).toContain('\u001b[2m/work\u001b[22m')
     expect(expansion).toContain('reasoning effort: the model\'s own default')
-    expect(expansion).toContain('← → select')
+    expect(expansion).toContain('←→ segments')
+  })
+
+  it('lifts the selected label while a walk is still moving and settles back onto the accent', () => {
+    const styled = createPalette(true)
+    const at = (level: MotionLevel): string => renderFooter(usage, { palette: styled, selected: 1, level, width: WIDE })[0] ?? ''
+    // The peak is the one moment the bar draws bold; the settled label is the
+    // plain accent, whatever the terminal's motion setting.
+    expect(at(2)).toContain('\u001b[1m\u001b[36m\u001b[36m[effort default]')
+    expect(at(1)).toContain('\u001b[36m\u001b[36m[effort default]')
+    expect(at(0)).toBe(renderFooter(usage, { palette: styled, selected: 1, width: WIDE })[0])
+    expect(at(0)).not.toContain('\u001b[1m')
+    // A lift never changes how much of the bar is drawn.
+    for (const level of [0, 1, 2] as MotionLevel[]) {
+      expect(visibleWidth(at(level))).toBe(visibleWidth(at(0)))
+      expect(renderFooter(usage, { palette: styled, selected: 1, level, width: WIDE })).toHaveLength(2)
+    }
+  })
+
+  it('keeps the model anchored while the walk slides the window past it', () => {
+    const built = buildFooterSegments(crowded())
+    for (let selected = 1; selected <= 4; selected += 1) {
+      const [line = ''] = renderFooter(built, { palette, selected, width: 40 })
+      expect(line).toContain('deepseek-chat')
+      expect(visibleWidth(line)).toBeLessThanOrEqual(40)
+    }
+    // A window cut on either side says so where it was cut.
+    expect(renderFooter(built, { palette, selected: 4, width: 40 })[0]).toContain('‹')
+    expect(renderFooter(built, { palette, selected: 1, width: 40 })[0]).toContain('›')
   })
 
   it('keeps the selected segment in a sliding window that fits the terminal', () => {
@@ -317,14 +373,30 @@ describe('renderFooter', () => {
     const last = built.length - 1
     const lines = renderFooter(built, { palette, selected: last, width: 36 })
     expect(lines[0]).toContain('1 attached')
-    expect(lines[0]).not.toContain('deepseek/deepseek-chat')
+    expect(lines[0]).toContain('deepseek-chat')
     expect(lines[0]).not.toContain('effort high')
     expect(visibleWidth(lines[0] ?? '')).toBeLessThanOrEqual(36)
     expect(visibleWidth(lines[1] ?? '')).toBeLessThanOrEqual(36)
     const first = renderFooter(built, { palette, selected: 0, width: 36 })
-    expect(first[0]).toContain('deepseek/deepseek-chat')
+    expect(first[0]).toContain('[deepseek-chat]')
     expect(first[0]).not.toContain('1 attached')
     expect(visibleWidth(first[0] ?? '')).toBeLessThanOrEqual(36)
+  })
+
+  // The brackets are what names the selected segment without color, so the
+  // label's own text is what a window too narrow for it gives up.
+  it('cuts the selected label inside its brackets rather than past them', () => {
+    const built = buildFooterSegments(crowded())
+    const effort = footerSelectionIndex(built, 'effort')
+    const at = (width: number): string => stripTerminalSequences(renderFooter(built, { palette, selected: effort, width })[0] ?? '')
+    for (const width of [40, 30, 26, 22]) {
+      expect(at(width)).toContain('deepseek-chat')
+      expect(at(width)).toMatch(/\[[^[\]]+\]/u)
+      expect(visibleWidth(at(width))).toBeLessThanOrEqual(width)
+    }
+    expect(at(40)).toContain('[effort high]')
+    expect(at(26)).toContain('[effor…]')
+    expect(at(22)).toContain('[e…]')
   })
 
   it('never draws a line wider than the terminal, even when one label exceeds it', () => {
@@ -339,10 +411,25 @@ describe('renderFooter', () => {
     }
   })
 
+  it('ellipsizes an anchor that carries no shorter form of its own', () => {
+    const long: FooterSegment = { id: 'workspace', label: '/srv/builds/nightly/checkout', detail: { kind: 'rows', rows: ['x'] } }
+    const [line = ''] = renderFooter([long], { palette, width: WIDE })
+    const label = line.replaceAll('\u001b[0m', '').split('  ')[0] ?? ''
+    expect(label.endsWith('…')).toBe(true)
+    expect(visibleWidth(label)).toBe(20)
+  })
+
+  it('names the entry keys even on a bar that carries no segment at all', () => {
+    const [line = ''] = renderFooter([], { palette, width: 60 })
+    expect(line.trimStart()).toBe('Shift+↑↓ nav')
+    expect(visibleWidth(line)).toBe(60)
+  })
+
   it('fits an empty segment list and keeps every line inside the width', () => {
     const lines = renderFooter([], { palette: createPalette(false), selected: 0, width: 40 })
     expect(lines).toHaveLength(2)
-    expect(lines[1]).toContain('← → select')
+    expect(lines[0]).toBe('')
+    expect(lines[1]).toContain('←→ segments')
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(40)
   })
 
@@ -364,8 +451,8 @@ describe('renderFooter', () => {
     const todo = footerSelectionIndex(built, 'todo')
     const [, expansion] = renderFooter(built, { palette, selected: todo, width: WIDE })
     expect(expansion).toContain('todos: 1 done · 1 active · 1 pending · write the data layer')
-    expect(expansion).not.toContain('todo 1/3 · ← → select')
-    expect(expansion).toContain('← → select')
+    expect(expansion).not.toContain('todo 1/3 · ←→ segments')
+    expect(expansion).toContain('←→ segments')
   })
 })
 
@@ -376,11 +463,11 @@ describe('FooterBar', () => {
     const bar = new FooterBar(() => ({ segments: built, render: { palette: createPalette(false), selected } }))
     bar.invalidate()
     const wide = bar.render(WIDE)
-    expect(wide[0]).toContain('deepseek/deepseek-chat')
+    expect(wide[0]).toContain('1 attached')
     selected = built.length - 1
     const narrow = bar.render(36)
     expect(narrow[0]).toContain('1 attached')
-    expect(narrow[0]).not.toContain('deepseek/deepseek-chat')
+    expect(narrow[0]).not.toContain('goal active')
     expect(visibleWidth(narrow[0] ?? '')).toBeLessThanOrEqual(36)
   })
 })

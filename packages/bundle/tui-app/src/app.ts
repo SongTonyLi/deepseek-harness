@@ -19,6 +19,8 @@ import {
   Loader,
   Text,
   matchesKey,
+  visibleWidth,
+  type OverlayHandle,
   type RgbColor,
   type SelectListLayoutOptions,
   type Terminal,
@@ -72,7 +74,7 @@ import {
   subagentDetail,
   type SubagentChoice,
 } from './catalog.ts'
-import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
@@ -81,16 +83,36 @@ import { exportSessionZip } from './export.ts'
 import { BlockFadeClock, FadeRegistry, FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
 import { InspectorPane, type InspectorView } from './inspector.ts'
 import {
+  ESCAPE_HANDOFF_MS,
+  FOCUS_REGIONS,
+  KEY_LINES,
+  REGION_LABELS,
+  resolveKey,
+  type FocusRegion,
+  type KeyAction,
+  type MoveAxis,
+} from './keys.ts'
+import {
+  LANDING_TICKS,
+  Motion,
+  READER_CLOSE_TICKS,
+  READER_OPEN_TICKS,
+  SEGMENT_TICKS,
+  STEP_TICKS,
+  type MotionLevel,
+} from './motion.ts'
+import {
   clampCursor,
-  enterNewest,
   isSectionSource,
-  moveSection,
-  movePart,
+  lastSection,
+  moveTranscriptCursor,
   navigableBlocks,
   partLabels,
   sectionHeading,
+  type MoveTarget,
   type SectionPart,
   type SectionSource,
+  type TranscriptAxis,
   type TranscriptCursor,
 } from './navigation.ts'
 import {
@@ -102,6 +124,8 @@ import {
   type FooterSegmentId,
 } from './footer.ts'
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
+import { READER_HINTS } from './reader.ts'
+import { ReaderPane, type ReaderExit } from './reader-overlay.ts'
 import { GuardedMainScreen, repaintFloor } from './screen.ts'
 import { describeSession, listSessionChoices } from './sessions.ts'
 import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
@@ -113,6 +137,16 @@ import {
   type SubagentPanelView,
 } from './subagent-panel.ts'
 import { listTodoChoices, todoDetail, type TodoTransition } from './todos.ts'
+import {
+  ABOVE_WINDOW_TOAST,
+  NOTHING_TO_READ_TOAST,
+  QUIT_TOAST,
+  ToastClock,
+  ToastPane,
+  stopTurnToast,
+  toastDrawable,
+  toastOverlay,
+} from './toast.ts'
 import { editorTheme, type Palette } from './style.ts'
 import {
   EMPTY_USAGE,
@@ -130,6 +164,21 @@ import {
 
 /** A second Ctrl+C inside this window quits. */
 const QUIT_DOUBLE_PRESS_MS = 600
+
+/** What the transcript is told when a session switch took the conversation the reader was showing. */
+const READER_GONE = 'the transcript changed · reader closed'
+
+/**
+ * How the reader is mounted: the whole viewport, anchored at its bottom edge.
+ *
+ * pi-tui composites an overlay into the last `terminal.rows` lines of the
+ * frame, so anchoring at the bottom puts the pane's first line exactly on the
+ * frame's last repaintable line whatever the frame's own length is - and the
+ * pane draws one line fewer for every viewport line the renderer can no
+ * longer repaint ({@link TuiApp.viewportFloor}), so opening the reader never
+ * rewrites a line above the window.
+ */
+const READER_OVERLAY = { width: '100%', maxHeight: '100%', anchor: 'bottom-left' } as const
 
 /**
  * Row layout of the todo picker: the label column grows with the widest todo
@@ -183,19 +232,70 @@ function assumedForeground(background: RgbColor): RgbColor {
   return luminance < DARK_BACKGROUND_LUMINANCE ? LIGHT_FOREGROUND : DARK_FOREGROUND
 }
 
+/** A region drawn around the editor, which is where the keyboard returns from. */
+type DockedRegion = Exclude<FocusRegion, 'editor'>
+
 /**
- * Which region owns the keyboard. They stack top to bottom - the transcript
- * blocks, then the subagent panel's rows while it is drawn, then the status
- * bar's segments - and `Up` and `Down` walk that stack from whichever one the
- * editor was left through.
+ * Where one step along the status bar's segments lands: one either way,
+ * wrapping at both ends, or straight to an end.
+ * @param to - which way the key steps.
+ * @param index - where the selection sits now.
+ * @param count - how many segments the bar draws; at least 1.
+ * @returns the index to select.
  */
-type FocusRegion = 'editor' | 'transcript' | 'panel' | 'bar'
+function barTarget(to: MoveTarget, index: number, count: number): number {
+  switch (to) {
+    case 'previous':
+      return (index - 1 + count) % count
+    case 'next':
+      return (index + 1) % count
+    case 'first':
+      return 0
+    case 'last':
+      return count - 1
+    /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+    default:
+      return assertNever(to, 'tui move target')
+  }
+}
+
+/** What `/help` calls the reader, the one focus state outside the docked stack. */
+const READER_LABEL = 'reader'
+
+/** Columns between a focus state's name and the keys it answers. */
+const HELP_LABEL_GAP = 2
+
+/**
+ * The key lines `/help` prints: one row per focus state in the order the
+ * screen stacks them, the reader last, with a state's further lines under a
+ * blank name column. The text of every line is the legend its own surface
+ * draws.
+ * @returns the lines, unstyled.
+ */
+function helpKeyLines(): string[] {
+  const states: readonly (readonly [string, readonly string[]])[] = [
+    ...FOCUS_REGIONS.map(region => [REGION_LABELS[region], KEY_LINES[region]] as const),
+    [READER_LABEL, [READER_HINTS.rail[0], READER_HINTS.pane[0]]],
+  ]
+  const column = Math.max(...states.map(([label]) => visibleWidth(label))) + HELP_LABEL_GAP
+  return states.flatMap(([label, lines]) =>
+    lines.map((line, index) => `${(index === 0 ? label : '').padEnd(column)}${line}`))
+}
 
 /** The block that carries the focus gutter right now, and which of its sections is accented. */
 interface HeldSection {
   block: SectionSource
   part: number
+  /** How far above its settled accent that section's mark was last drawn. */
+  level: MotionLevel
 }
+
+/** What one chrome motion lifts. */
+type MotionScope =
+  /** The whole surface that just took the keyboard: its frame rules, its chip, and the mark it holds. */
+  | 'landing'
+  /** The mark alone: the focus gutter, the selected segment, the selected row. */
+  | 'selection'
 
 /** The transcript cursor read against the blocks drawn right now. */
 interface FocusedSection {
@@ -246,8 +346,18 @@ export interface TuiAppDeps {
   palette: Palette
   /** Collapsed tool-card body rows. */
   toolPreviewLines: number
+  /** Collapsed body rows of a system prompt or an injected context block. */
+  contextPreviewLines: number
   /** Rows of the focused transcript section the docked inspector shows. */
   focusPreviewLines: number
+  /** Columns the reader needs before it draws two sections side by side. */
+  readerMinColumns: number
+  /**
+   * How long one transient key-feedback line holds at full strength before it
+   * fades out, in milliseconds. It is also the window a second `Escape` stops
+   * the running turn in: the arm lasts exactly as long as the line is drawn.
+   */
+  toastMs: number
   /** Period of the live-refresh tick, in milliseconds. */
   liveRefreshMs: number
   /** Brightness levels streamed text and tool cards climb; the oldest visible level is `fadeSteps - 1`. */
@@ -318,7 +428,8 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter shows one session\'s details)' },
   { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
   { name: 'plugins', description: 'List the composed plugins (/plugins bundles, /plugins enable|disable <id>, /plugins add <spec>, /plugins remove <name>)' },
-  { name: 'tools', description: 'Expand or collapse every tool card' },
+  { name: 'tools', description: 'Expand or collapse every tool card and context row' },
+  { name: 'turns', description: 'Read the conversation full screen, turns side by side (Ctrl+G)' },
   { name: 'quit', description: 'Save the session and exit' },
   { name: 'exit', description: 'Same as /quit' },
 ]
@@ -410,8 +521,8 @@ export class TuiApp {
   private focus: FocusRegion = 'editor'
   /**
    * Where the transcript focus sits, kept across a page and a return to the
-   * editor. A cursor the current transcript cannot place names nothing, which
-   * is what a session change leaves behind.
+   * editor so `Shift+Up` comes back to the section the walk was left on. A
+   * session switch clears it with the blocks it named.
    */
   private cursor: TranscriptCursor | undefined
   /** The section drawn with the focus gutter right now; set only by {@link TuiApp.settleFrame}. */
@@ -440,6 +551,36 @@ export class TuiApp {
   private reasoningTail: FadeTracker | undefined
   /** The card fades running right now; each drops itself once it settles. */
   private readonly blockFades = new FadeRegistry()
+  /**
+   * The chrome motions running right now. It is consulted whatever the
+   * terminal draws, because a transient line has to come down again even on a
+   * terminal that fades nothing.
+   */
+  private readonly motions = new FadeRegistry()
+  /** The transient line on screen right now, with the clock that takes it down. */
+  private toast: { handle: OverlayHandle; clock: ToastClock } | undefined
+  /** The chrome motion running right now, and how much of the focused surface it lifts. */
+  private chrome: { motion: Motion; scope: MotionScope } | undefined
+  /** The lift the subagent panel's text was last built with, which only a repaint changes. */
+  private panelLift: MotionLevel = 0
+  /** The reader on screen right now, while one is open. */
+  private reader: { handle: OverlayHandle; pane: ReaderPane } | undefined
+  /** The motion growing the open reader into place; settled or absent draws it whole. */
+  private readerOpening: Motion | undefined
+  /** The reader shrinking away, still mounted until its motion settles. */
+  private readerClosing: { handle: OverlayHandle; motion: Motion } | undefined
+  /** Prompts shown or waiting on the modal queue, which the reader steps aside for. */
+  private queuedModals = 0
+  /** Until when an `Escape` that reaches the editor does nothing at all. */
+  private escapeQuietUntil = 0
+  /** Until when a second editor `Escape` stops the running turn. */
+  private stopArmedUntil = 0
+  /**
+   * How many of the viewport's own first lines the renderer can no longer
+   * repaint, from the last frame the guard settled. An overlay composites
+   * into those lines, so this is what decides where one can be drawn.
+   */
+  private viewportFloor = 0
   /** Set while {@link TuiApp.bind} replays a session's history, which draws its cards settled. */
   private replaying = false
   /** Whether this terminal draws a ramp at all, decided once at start. */
@@ -448,6 +589,7 @@ export class TuiApp {
   private fadeStyle: FadeStyle = NO_FADE
   private bound: BoundSession
   private streaming: AssistantBlock | undefined
+  /** Whether the fold keys left every foldable block open; one appended later follows it. */
   private toolsExpanded = false
   /** Set while a session switch awaits the host, so input cannot target the session being left. */
   private switching = false
@@ -462,12 +604,14 @@ export class TuiApp {
   constructor(private readonly deps: TuiAppDeps) {
     const palette = deps.palette
     this.bound = deps.initial
-    this.theme = { palette, toolPreviewLines: deps.toolPreviewLines }
+    this.theme = { palette, toolPreviewLines: deps.toolPreviewLines, contextPreviewLines: deps.contextPreviewLines }
     // The second parameter is `showHardwareCursor`: the editor draws no block
     // of its own, so the terminal's own cursor is the caret. Setting it here
     // rather than through `setShowHardwareCursor` keeps the constructor from
     // requesting a render before the tree has children.
-    this.tui = new GuardedMainScreen(deps.terminal, true, (viewportTop, width) => this.settleFrame(viewportTop, width))
+    this.tui = new GuardedMainScreen(deps.terminal, true, (viewportTop, width, frameLines) => {
+      return this.settleFrame(viewportTop, width, frameLines)
+    })
     this.header = new Text('', 0, 0)
     this.inspector = new InspectorPane(() => this.inspectorView(), { palette, previewLines: deps.focusPreviewLines })
     this.loader = new Loader(this.tui, palette.accent, palette.dim, 'thinking')
@@ -484,7 +628,9 @@ export class TuiApp {
       segments: this.segments,
       render: {
         palette: this.deps.palette,
-        ...this.focus === 'bar' ? { selected: footerSelectionIndex(this.segments, this.barSelection) } : {},
+        ...this.focus === 'bar'
+          ? { selected: footerSelectionIndex(this.segments, this.barSelection), level: this.markLift() }
+          : {},
       },
     }))
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
@@ -591,6 +737,8 @@ export class TuiApp {
     this.updateFadeTicker()
     for (const dispose of this.disposers.splice(0)) dispose()
     this.modals.withdrawActive()
+    this.dropReader()
+    this.hideToast()
     this.loader.stop()
     // The shell that regains the terminal keeps whatever caret shape it was
     // left with, so the application gives the terminal's own shape back.
@@ -606,9 +754,17 @@ export class TuiApp {
   private bind(next: BoundSession): void {
     this.bound = next
     // The blocks the transcript focus names are about to be discarded, so the
-    // keyboard goes back to the editor and the focus gutter with it.
+    // keyboard goes back to the editor and the focus gutter with it, and the
+    // remembered section goes with the session that held it: the next
+    // `Shift+Up` enters the new transcript on its newest section. A reader
+    // reading those same blocks comes down before the keyboard is placed: a
+    // replayed history refills the transcript, so nothing else would take the
+    // reader off a conversation it was never opened on, and it would keep the
+    // key stream. The new transcript says so once it is drawn.
+    const reading = this.dropReader()
     this.focusEditor()
     this.highlighted = undefined
+    this.cursor = undefined
     this.chat.clear()
     this.toolBlocks.clear()
     this.toolArguments.clear()
@@ -632,6 +788,7 @@ export class TuiApp {
     this.replaying = true
     for (const event of next.history) this.onSessionEvent(next.agent.session, event)
     this.replaying = false
+    if (reading) this.notice(READER_GONE)
     this.refreshHeader()
     this.refreshFooter()
     this.refreshSubagentPanel()
@@ -646,7 +803,7 @@ export class TuiApp {
    */
   private async switchSession(open: () => Promise<BoundSession>, verb: string): Promise<void> {
     if (this.agent.status === 'running') {
-      this.notice('stop the running turn (Esc) before switching sessions', 'error')
+      this.notice('stop the running turn (Esc twice) before switching sessions', 'error')
       return
     }
     this.switching = true
@@ -795,13 +952,18 @@ export class TuiApp {
       this.panelSelection = undefined
       if (this.focus === 'panel') this.setFocus('editor')
       if (mounted) this.panelSlot.removeChild(this.panel)
+      // A panel with no row draws no mark, so it holds no lift either; the
+      // fade tick compares against this to know when to build the text again.
+      this.panelLift = 0
     } else {
       if (!mounted) this.panelSlot.addChild(this.panel)
       const selected = this.panelSelectionIndex(view.rows)
       this.panelSelection = view.rows[selected]?.id
+      this.panelLift = this.panelLiftNow()
       this.panel.setText(renderSubagentPanel(view, {
         palette: this.deps.palette,
-        ...this.focus === 'panel' ? { selected } : {},
+        width: this.deps.terminal.columns,
+        ...this.focus === 'panel' ? { selected, level: this.panelLift } : {},
         ...this.listingFailure === undefined ? {} : { failure: this.listingFailure },
       }))
     }
@@ -966,8 +1128,33 @@ export class TuiApp {
    * @returns the prompt's settled value.
    */
   private showModal<T>(prompt: ModalPrompt<T>, signal?: AbortSignal): Promise<T> {
-    this.focusEditor()
-    return this.modals.run(prompt, signal)
+    // A seam the agent is blocked on is never buried: the reader steps aside
+    // for as long as any prompt is waiting on the queue and comes back with
+    // the keyboard once the last one settles. The count is what makes that
+    // "any": the queue shows the next prompt after this one settled, and a
+    // reader put back between the two would cover it. It is read again at
+    // each step, so a reader that closed under a prompt is not brought back
+    // from the dead.
+    this.queuedModals += 1
+    this.finishReaderClose()
+    this.hideReader(true)
+    if (this.reader === undefined) this.focusEditor()
+    // Settling hands the keyboard back, so the press that closed the prompt
+    // must not reach the editor's own Escape.
+    return this.modals.run(prompt, signal).finally(() => {
+      this.queuedModals -= 1
+      this.armEscapeHandoff()
+      if (this.queuedModals === 0) this.hideReader(false)
+    })
+  }
+
+  /**
+   * Take the reader off the screen for as long as something else needs it, or
+   * put it back.
+   * @param hidden - whether the reader steps aside.
+   */
+  private hideReader(hidden: boolean): void {
+    this.reader?.handle.setHidden(hidden)
   }
 
   /**
@@ -1172,12 +1359,40 @@ export class TuiApp {
 
   // ── keyboard ────────────────────────────────────────────────────────────
 
+  /**
+   * Answer one key press.
+   *
+   * A visible prompt owns the whole key stream; `Ctrl+C` and `Ctrl+D` keep
+   * their global meaning wherever the keyboard is; everything else is what
+   * {@link resolveKey} makes of the key in the region that holds it.
+   *
+   * A reader that is still shrinking away goes first, before the key is read:
+   * pi-tui hands the key stream back to an overlay it still holds a focus
+   * restore for, so a key this listener leaves to the editor would reach the
+   * pane instead of the caret.
+   * @param data - the raw key bytes.
+   * @returns the consume marker, or undefined for the keys pi-tui's own
+   * editor answers.
+   */
   private onKey(data: string): { consume: true } | undefined {
+    this.finishReaderClose()
     if (this.modals.isActive()) {
       if (!matchesKey(data, 'ctrl+c')) return undefined
       this.modals.withdrawActive()
       return { consume: true }
     }
+    // The reader owns its whole key stream the same way: every key reaches
+    // the focused overlay, and `Ctrl+C` alone brings the keyboard back here.
+    if (this.reader !== undefined) {
+      if (!matchesKey(data, 'ctrl+c')) return undefined
+      this.reader.pane.withdraw()
+      return { consume: true }
+    }
+    // An armed stop lasts exactly as long as its own line is on screen, so
+    // any other key the editor takes - Ctrl+C and Ctrl+D included, which put
+    // a line of their own up - takes that line down and disarms with it. Only
+    // the editor ever holds an arm.
+    if (this.focus === 'editor' && !matchesKey(data, 'escape')) this.disarmStop()
     // Ctrl+C and Ctrl+D keep their global meaning at the status bar, and give
     // the keyboard back to the editor on the way.
     if (matchesKey(data, 'ctrl+c')) {
@@ -1189,7 +1404,7 @@ export class TuiApp {
       }
       this.lastCtrlC = now
       this.editor.setText('')
-      this.notice('press Ctrl+C again to quit')
+      this.showToast(QUIT_TOAST)
       return { consume: true }
     }
     if (matchesKey(data, 'ctrl+d')) {
@@ -1197,168 +1412,343 @@ export class TuiApp {
       if (this.editor.getText() === '') this.stop()
       return { consume: true }
     }
-    if (this.focus === 'bar') return this.onStatusBarKey(data)
-    if (this.focus === 'panel') return this.onPanelKey(data)
-    if (this.focus === 'transcript') return this.onTranscriptKey(data)
-    // The regions stack above and below the editor: Shift+Up leaves it for the
-    // conversation, Shift+Down for the regions docked under it.
-    if (matchesKey(data, 'shift+up')) {
-      this.focusTranscript()
-      return { consume: true }
-    }
-    if (matchesKey(data, 'shift+down')) {
-      this.focusBelowEditor()
-      return { consume: true }
-    }
-    if (matchesKey(data, 'escape') && !this.editor.isShowingAutocomplete()) {
-      if (this.agent.status === 'running') {
-        this.agent.cancel({ kind: 'user' }, { keepInbox: true })
-        const queued = this.agent.inbox.nextTurn.length + this.agent.inbox.nextStep.length
-        this.notice(queued === 0 ? 'stopping the turn…' : `stopping the turn… ${String(queued)} queued message(s) stay queued`)
+    const action = resolveKey(this.focus, data)
+    // A docked region consumes every key it sees; only `type` puts one back
+    // into the editor, at the caret and with the keyboard.
+    if (action === undefined) return this.focus === 'editor' ? undefined : { consume: true }
+    return this.onAction(action, data)
+  }
+
+  /**
+   * Apply one resolved key action.
+   * @param action - what the key named where the keyboard is.
+   * @param data - the raw key bytes, which a typing action hands to the editor.
+   * @returns the consume marker, or undefined for the one key the editor's
+   * open autocomplete answers itself.
+   */
+  private onAction(action: KeyAction, data: string): { consume: true } | undefined {
+    switch (action.kind) {
+      case 'focus':
+        if (action.region === 'transcript') this.focusTranscript()
+        else this.focusBar()
+        return { consume: true }
+      case 'leave':
+        if (action.direction === 'down') this.focusBelowEditor()
+        else this.focusAboveBar()
+        return { consume: true }
+      case 'cycle':
+        this.cycleRegion(action.step)
+        return { consume: true }
+      case 'move':
+        this.moveBy(action.axis, action.to)
+        return { consume: true }
+      case 'open':
+        this.openFocused()
+        return { consume: true }
+      case 'fold':
+        // The transcript keeps `Space` for the held block, so a leading space
+        // never reaches the editor from a walk.
+        this.foldFocused()
+        return { consume: true }
+      case 'fold-all':
+        this.toggleFolding()
+        return { consume: true }
+      case 'reader': {
+        // From the conversation the reader opens on the section the walk
+        // holds; from everywhere else on the newest one.
+        const held = this.focus === 'transcript' ? this.focusedSection() : undefined
+        this.openReader(held?.cursor)
+        return { consume: true }
       }
-      return { consume: true }
+      case 'escape':
+        return this.onEscape()
+      case 'steer':
+        this.onSubmit(this.editor.getText(), 'steer')
+        return { consume: true }
+      case 'effort':
+        this.effortCycle = this.effortCycle.then(
+          () => this.cycleEffort(),
+          /* v8 ignore next -- cycleEffort handles its own failures; this recovers a rejected chain */
+          () => this.cycleEffort(),
+        )
+        return { consume: true }
+      case 'type':
+        this.focusEditor()
+        // The application consumed the key, so pi-tui draws nothing for it.
+        this.editor.handleInput(data)
+        this.tui.requestRender()
+        return { consume: true }
+      /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+      default:
+        return assertNever(action, 'tui key action')
     }
-    if (matchesKey(data, 'ctrl+s')) {
-      this.onSubmit(this.editor.getText(), 'steer')
-      return { consume: true }
-    }
-    if (matchesKey(data, 'ctrl+o')) {
-      this.toggleTools()
-      return { consume: true }
-    }
-    if (matchesKey(data, 'shift+tab')) {
-      this.effortCycle = this.effortCycle.then(
-        () => this.cycleEffort(),
-        /* v8 ignore next -- cycleEffort handles its own failures; this recovers a rejected chain */
-        () => this.cycleEffort(),
-      )
-      return { consume: true }
-    }
-    return undefined
   }
 
   /**
-   * Answer the keys every non-editor region answers the same way: `Escape`
-   * hands the keyboard back to the editor, `Shift+Up` names the conversation,
-   * and `Shift+Down` the status bar. The transcript reads those two shift
-   * arrows as a walk instead, so this helper is for the bar and the panel.
-   * @param data - the raw key bytes.
-   * @returns the consume marker when the key named a region, `undefined` when the focused region owns the key.
+   * Answer `Escape`.
+   *
+   * From a docked region it hands the keyboard back to the editor and starts
+   * the handoff window, so a second press landing in the editor does nothing
+   * at all: leaving a region, a page, or a picker can never stop a running
+   * turn. In the editor it arms the stop and says so, and only a second press
+   * while that line is still on screen stops the turn.
+   * @returns the consume marker, or undefined while the editor's open
+   * autocomplete answers the key itself.
    */
-  private onRegionKey(data: string): { consume: true } | undefined {
-    if (matchesKey(data, 'escape')) {
+  private onEscape(): { consume: true } | undefined {
+    if (this.focus !== 'editor') {
       this.focusEditor()
+      this.armEscapeHandoff()
       return { consume: true }
     }
-    if (matchesKey(data, 'shift+up')) {
-      this.focusTranscript()
+    const now = this.deps.now()
+    if (now < this.escapeQuietUntil) return { consume: true }
+    if (this.editor.isShowingAutocomplete()) return undefined
+    if (this.agent.status !== 'running') return { consume: true }
+    if (now >= this.stopArmedUntil) {
+      this.stopArmedUntil = now + this.showToast(stopTurnToast(this.turn))
       return { consume: true }
     }
-    if (matchesKey(data, 'shift+down')) {
-      this.focusBar()
-      return { consume: true }
-    }
-    return undefined
-  }
-
-  /**
-   * Answer one key while the status bar holds focus. Every key is consumed
-   * here, so nothing typed at the bar reaches the editor. `Shift+Left` and
-   * `Shift+Right` move between segments the same way as `Left` and `Right`.
-   * @param data - the raw key bytes.
-   * @returns the consume marker the input listener returns.
-   */
-  private onStatusBarKey(data: string): { consume: true } {
-    const region = this.onRegionKey(data)
-    if (region !== undefined) return region
-    if (matchesKey(data, 'up')) {
-      // The bar is the bottom of the stack, so Up leaves it for the panel when
-      // one is drawn and for the conversation otherwise.
-      if (this.panelView.rows.length > 0) this.focusPanel(this.panelView.rows.length - 1)
-      else this.focusTranscript()
-      return { consume: true }
-    }
-    if (matchesKey(data, 'left') || matchesKey(data, 'shift+left') || matchesKey(data, 'shift+tab')) {
-      this.moveStatusBar(-1)
-      return { consume: true }
-    }
-    if (matchesKey(data, 'right') || matchesKey(data, 'shift+right') || matchesKey(data, 'tab')) {
-      this.moveStatusBar(1)
-      return { consume: true }
-    }
-    if (matchesKey(data, 'enter')) this.openSegment(this.barSelection)
+    this.disarmStop()
+    this.agent.cancel({ kind: 'user' }, { keepInbox: true })
+    const queued = this.agent.inbox.nextTurn.length + this.agent.inbox.nextStep.length
+    this.notice(queued === 0 ? 'stopping the turn…' : `stopping the turn… ${String(queued)} queued message(s) stay queued`)
     return { consume: true }
   }
 
+  /** Start the window in which an `Escape` reaching the editor does nothing at all. */
+  private armEscapeHandoff(): void {
+    this.escapeQuietUntil = this.deps.now() + ESCAPE_HANDOFF_MS
+  }
+
+  /** Disarm the stop and take the line that armed it down. */
+  private disarmStop(): void {
+    this.stopArmedUntil = 0
+    this.hideToast()
+  }
+
   /**
-   * Answer one key while the transcript holds focus. Every key is consumed
-   * here, so nothing typed while reading the conversation reaches the editor;
-   * `Ctrl+C` and `Ctrl+D` never reach this far and keep their global meaning.
-   * `Up` / `Down` and `Shift+Up` / `Shift+Down` walk every section in reading
-   * order; `Shift+Up` from the editor still enters on the newest section, and
-   * `Shift+Down` from the editor still names the regions under it.
-   * @param data - the raw key bytes.
-   * @returns the consume marker the input listener returns.
+   * Show one transient line over the conversation, replacing whichever line
+   * is up.
+   *
+   * It normally costs the frame no rows: pi-tui composites an overlay into
+   * the viewport after the tree rendered, so nothing already drawn moves and
+   * the renderer's repaint boundary stays where it was. Where the renderer
+   * can no longer repaint that part of the viewport the line is printed into
+   * the conversation instead, which costs a row and keeps it: a line that says
+   * which key stops a turn is worth more than its own disappearance.
+   * @param text - what the line says.
+   * @returns how long the line answers for, in milliseconds - the time it is
+   * drawn when it floats, and the same window when the conversation kept it.
    */
-  private onTranscriptKey(data: string): { consume: true } {
-    if (matchesKey(data, 'escape')) {
-      this.focusEditor()
-      return { consume: true }
+  private showToast(text: string): number {
+    this.hideToast()
+    // Settle the frame first: the line goes onto the frame the keys that led
+    // here leave behind, not the one before it.
+    this.tui.renderNow()
+    if (!toastDrawable(this.viewportFloor)) {
+      // The viewport's top is out of the renderer's reach, and rewriting a
+      // line above it would cost the terminal's whole scrollback. The
+      // conversation takes the line instead, where appending is always safe.
+      this.notice(text)
+      return this.deps.toastMs
     }
+    const clock = new ToastClock({
+      shownAt: this.deps.now(),
+      holdMs: this.deps.toastMs,
+      steps: this.deps.fadeSteps,
+      stepMs: this.deps.fadeStepMs,
+      fading: this.fading && this.fadeStyle.capability !== 'none',
+      now: () => this.deps.now(),
+    })
+    const pane = new ToastPane(text, {
+      palette: this.deps.palette,
+      age: () => clock.age(),
+      style: () => this.fadeStyle,
+    })
+    this.toast = { handle: this.tui.showOverlay(pane, toastOverlay(text, () => toastDrawable(this.viewportFloor))), clock }
+    this.motions.add(clock)
+    this.updateFadeTicker()
+    return clock.lifetimeMs()
+  }
+
+  /** Take the transient line down, if one is up. */
+  private hideToast(): void {
+    const toast = this.toast
+    if (toast === undefined) return
+    toast.handle.hide()
+    // The clock settles with the line it timed, so the fade tick a line that
+    // is no longer drawn was holding up disarms here rather than at the end
+    // of a flight nothing can see.
+    toast.clock.settle()
+    this.toast = undefined
+    this.updateFadeTicker()
+  }
+
+  /**
+   * Read the transcript full screen.
+   *
+   * The reader is an overlay, so it costs the conversation no line and the
+   * renderer's repaint boundary stays where it was. The frame is settled
+   * first, so the pane knows how much of the viewport the renderer can still
+   * repaint before it decides how tall to draw.
+   * @param at - the section to open on; the newest one when omitted.
+   */
+  private openReader(at?: TranscriptCursor): void {
+    const blocks = navigableBlocks(this.chat.children)
+    const cursor = at ?? lastSection(blocks)
+    if (cursor === undefined) {
+      this.showToast(NOTHING_TO_READ_TOAST)
+      return
+    }
+    this.finishReaderClose()
+    this.tui.renderNow()
+    this.readerOpening = this.startMotion(READER_OPEN_TICKS)
+    const pane = new ReaderPane({
+      palette: this.deps.palette,
+      blocks: () => navigableBlocks(this.chat.children),
+      rows: () => Math.max(1, this.deps.terminal.rows - this.viewportFloor),
+      minColumns: this.deps.readerMinColumns,
+      cursor,
+      reveal: () => this.readerReveal(),
+    })
+    this.reader = { handle: this.tui.showOverlay(pane, READER_OVERLAY), pane }
+    this.tui.requestRender()
+    void pane.settled.then((exit) => { this.closeReader(exit) })
+  }
+
+  /**
+   * Take the reader down and put the keyboard where it left it.
+   * @param exit - the section last read and the region that takes over.
+   */
+  private closeReader(exit: ReaderExit): void {
+    const open = this.reader
+    if (open === undefined) return
+    this.reader = undefined
+    this.readerOpening = undefined
+    this.cursor = exit.cursor
+    // `focusRegion` returns early for the region the app already records, and
+    // the reader left that record alone, so the caret state is set outright.
+    this.setFocus(exit.target)
+    this.refreshSubagentPanel()
+    this.armEscapeHandoff()
+    // The pane answers no key from here on, so it can shrink away after the
+    // keyboard has already gone back; a terminal that runs no motion drops it
+    // at once.
+    const motion = this.startMotion(READER_CLOSE_TICKS)
+    if (motion === undefined) open.handle.hide()
+    else this.readerClosing = { handle: open.handle, motion }
+    this.tui.requestRender()
+  }
+
+  /**
+   * Take the reader down from outside, for a terminal that is stopping or a
+   * conversation that is being replaced. The application's own record goes
+   * first, so the pane's settlement moves no focus and puts no cursor of a
+   * transcript that is gone back on the walk.
+   * @returns whether a reader was open, so the caller can report that it came down.
+   */
+  private dropReader(): boolean {
+    this.finishReaderClose()
+    const open = this.reader
+    if (open === undefined) return false
+    this.reader = undefined
+    open.handle.hide()
+    open.pane.withdraw()
+    return true
+  }
+
+  /**
+   * Step the selection of the region that holds the keyboard.
+   * @param axis - what the key steps along; each axis belongs to one region.
+   * @param to - which way along it.
+   */
+  private moveBy(axis: MoveAxis, to: MoveTarget): void {
+    switch (axis) {
+      case 'section':
+      case 'block':
+      case 'turn':
+      case 'part':
+        this.moveTranscript(axis, to)
+        return
+      case 'row':
+        this.movePanelBy(to)
+        return
+      case 'segment':
+        this.moveStatusBar(to)
+        return
+      /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+      default:
+        assertNever(axis, 'tui move axis')
+    }
+  }
+
+  /**
+   * Walk the transcript focus along one axis. Past the newest section the
+   * walk continues in the editor, which is drawn directly under the
+   * conversation; the oldest section is the end of the walk, and a part,
+   * block, or turn step stays in the transcript at both ends.
+   * @param axis - what the key steps along.
+   * @param to - which way along it.
+   */
+  private moveTranscript(axis: TranscriptAxis, to: MoveTarget): void {
     const section = this.focusedSection()
     /* v8 ignore next 5 -- only a session change empties the transcript, and it hands the keyboard back first */
     if (section === undefined) {
       // Nothing left to select: the editor takes the keyboard back.
       this.focusEditor()
-      return { consume: true }
+      return
     }
     const { cursor, blocks } = section
-    if (matchesKey(data, 'up') || matchesKey(data, 'shift+up')) {
-      this.moveCursor(moveSection(cursor, -1, blocks))
-      return { consume: true }
-    }
-    if (matchesKey(data, 'down') || matchesKey(data, 'shift+down')) {
-      // Past the newest section the stack continues under the editor.
-      const next = moveSection(cursor, 1, blocks)
-      if (next.block === cursor.block && next.part === cursor.part) this.focusBelowEditor()
-      else this.moveCursor(next)
-      return { consume: true }
-    }
-    if (matchesKey(data, 'left')) {
-      this.moveCursor(movePart(cursor, -1, blocks))
-      return { consume: true }
-    }
-    if (matchesKey(data, 'right')) {
-      this.moveCursor(movePart(cursor, 1, blocks))
-      return { consume: true }
-    }
-    if (matchesKey(data, 'enter')) this.openSection(section)
-    return { consume: true }
+    const next = moveTranscriptCursor(cursor, axis, to, blocks)
+    const held = next.block === cursor.block && next.part === cursor.part
+    if (axis === 'section' && to === 'next' && held) this.focusEditor()
+    else this.moveCursor(next)
   }
 
   /**
-   * Answer one key while the subagent panel holds focus. Every key is
-   * consumed here; `Ctrl+C` and `Ctrl+D` never reach this far, keeping their
-   * global meaning.
-   * @param data - the raw key bytes.
-   * @returns the consume marker the input listener returns.
+   * Walk the subagent panel's selection. Above the first row the walk
+   * continues in the editor, below the last one at the status bar.
+   * @param to - which way along the drawn rows.
    */
-  private onPanelKey(data: string): { consume: true } {
-    const region = this.onRegionKey(data)
-    if (region !== undefined) return region
-    if (matchesKey(data, 'up')) {
-      // Above the first row the stack continues in the conversation.
-      if (this.panelSelectionIndex(this.panelView.rows) === 0) this.focusTranscript()
-      else this.movePanel(-1)
-      return { consume: true }
+  private movePanelBy(to: MoveTarget): void {
+    const rows = this.panelView.rows
+    const index = this.panelSelectionIndex(rows)
+    switch (to) {
+      case 'previous':
+        if (index === 0) this.focusEditor()
+        else this.selectPanelRow(index - 1)
+        return
+      case 'next':
+        if (index === rows.length - 1) this.focusBar()
+        else this.selectPanelRow(index + 1)
+        return
+      case 'first':
+        this.selectPanelRow(0)
+        return
+      case 'last':
+        this.selectPanelRow(rows.length - 1)
+        return
+      /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+      default:
+        assertNever(to, 'tui move target')
     }
-    if (matchesKey(data, 'down')) {
-      if (this.panelSelectionIndex(this.panelView.rows) === this.panelView.rows.length - 1) this.focusBar()
-      else this.movePanel(1)
-      return { consume: true }
+  }
+
+  /** Open what the focused region's `Enter` leads to. */
+  private openFocused(): void {
+    if (this.focus === 'panel') {
+      this.navigate('subagent details', () => this.openPanelRow())
+      return
     }
-    if (matchesKey(data, 'enter')) this.navigate('subagent details', () => this.openPanelRow())
-    return { consume: true }
+    if (this.focus === 'bar') {
+      this.openSegment(this.barSelection)
+      return
+    }
+    const section = this.focusedSection()
+    /* v8 ignore next -- the transcript answers Enter only while it holds a section */
+    if (section === undefined) return
+    this.openReader(section.cursor)
   }
 
   /**
@@ -1390,35 +1780,43 @@ export class TuiApp {
   }
 
   /**
-   * Move the bar's selection, wrapping at both ends.
-   * @param step - 1 for the next segment, -1 for the previous one.
+   * Move the bar's selection: one segment either way wrapping at both ends,
+   * or straight to an end.
+   * @param to - which way along the drawn segments.
    */
-  private moveStatusBar(step: number): void {
+  private moveStatusBar(to: MoveTarget): void {
     const count = this.segments.length
-    const next = this.segments[(footerSelectionIndex(this.segments, this.barSelection) + step + count) % count]
+    const next = this.segments[barTarget(to, footerSelectionIndex(this.segments, this.barSelection), count)]
     /* v8 ignore next -- the wrapped index stays inside the bar's own segments */
     if (next !== undefined) this.barSelection = next.id
+    this.startChrome('selection', SEGMENT_TICKS)
     this.refreshFooter()
   }
 
   /**
-   * Move the panel's selection, stopping at both ends of the drawn rows. The
-   * rows behind a `+<n> more` row are not selectable; `/subagents` walks the
-   * complete tree.
-   * @param step - 1 for the next row, -1 for the previous one.
+   * Put the panel's selection on one of its drawn rows. The rows behind a
+   * `+<n> more` row are not selectable; `/subagents` walks the complete tree.
+   * @param index - the row the selection lands on.
    */
-  private movePanel(step: number): void {
-    const rows = this.panelView.rows
-    const next = rows[Math.max(0, Math.min(this.panelSelectionIndex(rows) + step, rows.length - 1))]
-    /* v8 ignore next -- the clamped index stays inside the panel's own rows */
-    if (next !== undefined) this.panelSelection = next.id
+  private selectPanelRow(index: number): void {
+    this.panelSelection = this.panelView.rows[index]?.id
     this.refreshSubagentPanel()
   }
 
-  /** Give the keyboard to the status bar, starting at its first segment. */
+  /**
+   * Give the keyboard to the status bar, starting at its first segment. The
+   * bar is redrawn even when it already held the keyboard, because the
+   * selection this reset would otherwise disagree with the segment still
+   * drawn as selected, and `Enter` would open the other one.
+   */
   private focusBar(): void {
     this.barSelection = FIRST_FOOTER_SEGMENT
-    this.focusRegion('bar')
+    if (this.focus !== 'bar') {
+      this.focusRegion('bar')
+      return
+    }
+    this.startChrome('selection', SEGMENT_TICKS)
+    this.refreshFooter()
   }
 
   /**
@@ -1440,13 +1838,36 @@ export class TuiApp {
   }
 
   /**
-   * Give the keyboard to the transcript on its newest block. A session with
-   * nothing to inspect yet says so and leaves the keyboard where it was.
+   * Give the keyboard to the region above the status bar: the subagent
+   * panel's last row while the panel is drawn, and the editor otherwise,
+   * which is what the bar sits under once no panel is between them.
+   */
+  private focusAboveBar(): void {
+    if (this.panelView.rows.length > 0) this.focusPanel(this.panelView.rows.length - 1)
+    else this.focusEditor()
+  }
+
+  /**
+   * The section the conversation takes the keyboard on: the one it was left
+   * on, settled against the blocks drawn now, and the newest section when no
+   * remembered cursor survives — which is every first entry, because a
+   * session switch forgets the cursor with the blocks it named.
+   * @returns the cursor, or undefined when the transcript has nothing to read.
+   */
+  private transcriptEntry(): TranscriptCursor | undefined {
+    const blocks = navigableBlocks(this.chat.children)
+    const remembered = this.cursor === undefined ? undefined : clampCursor(this.cursor, blocks)
+    return remembered ?? lastSection(blocks)
+  }
+
+  /**
+   * Give the keyboard to the transcript, where it left off. A session with
+   * nothing to read yet says so and leaves the keyboard where it was.
    */
   private focusTranscript(): void {
-    const cursor = enterNewest(navigableBlocks(this.chat.children))
+    const cursor = this.transcriptEntry()
     if (cursor === undefined) {
-      this.notice('nothing in the transcript to inspect yet')
+      this.showToast(NOTHING_TO_READ_TOAST)
       return
     }
     this.cursor = cursor
@@ -1455,20 +1876,52 @@ export class TuiApp {
   }
 
   /**
+   * The regions drawn around the editor right now, in stack order: the
+   * conversation while it holds a section, the subagent panel while it has
+   * rows, and the status bar, which is always drawn.
+   * @returns the regions `Tab` walks.
+   */
+  private drawnRegions(): DockedRegion[] {
+    const drawn: DockedRegion[] = []
+    if (this.transcriptEntry() !== undefined) drawn.push('transcript')
+    if (this.panelView.rows.length > 0) drawn.push('panel')
+    drawn.push('bar')
+    return drawn
+  }
+
+  /**
+   * Give the keyboard to the next drawn region, wrapping at both ends. The
+   * editor is not in the walk: `Esc` and the printable keys return there from
+   * anywhere.
+   * @param step - 1 for the next region, -1 for the previous one.
+   */
+  private cycleRegion(step: 1 | -1): void {
+    const drawn = this.drawnRegions()
+    const from = drawn.findIndex(region => region === this.focus)
+    const next = drawn[(from + step + drawn.length) % drawn.length]
+    /* v8 ignore next -- the status bar is always drawn, so the wrapped index names a region */
+    if (next === undefined) return
+    if (next === 'transcript') this.focusTranscript()
+    else if (next === 'panel') this.focusPanel(this.panelSelectionIndex(this.panelView.rows))
+    else this.focusBar()
+  }
+
+  /**
    * Put the transcript focus on another section.
    * @param cursor - where the focus moves to.
    */
   private moveCursor(cursor: TranscriptCursor): void {
     this.cursor = cursor
+    this.startChrome('selection', STEP_TICKS)
     this.tui.requestRender()
   }
 
   /**
    * Read the remembered cursor against the transcript as it is drawn right
-   * now: it grew parts and blocks since the cursor was taken, and a session
-   * change replaced the blocks it named altogether. The cursor itself is left
-   * alone, so a page and a trip through the editor come back to the same
-   * section; {@link TuiApp.focusTranscript} replaces it.
+   * now, which grew parts and blocks since the cursor was taken. The cursor
+   * itself is left alone, so a page and a trip through the editor come back
+   * to the same section; {@link TuiApp.moveCursor} moves it and
+   * {@link TuiApp.bind} drops it with the session it belonged to.
    * @returns the section the cursor names, or undefined when the transcript
    * has nothing to hold it.
    */
@@ -1481,19 +1934,6 @@ export class TuiApp {
     /* v8 ignore next -- clampCursor settles on a block that carries the part it names */
     if (block === undefined || part === undefined) return undefined
     return { cursor, blocks, block, part }
-  }
-
-  /**
-   * Open the focused section as a read-only page and come back to it.
-   * @param section - the focused section.
-   */
-  private openSection(section: FocusedSection): void {
-    const { cursor, blocks } = section
-    const prompt = new DetailPrompt(this.deps.palette, sectionHeading(cursor, blocks), section.part.rows)
-    this.navigate('section', async () => {
-      await this.showModal(prompt)
-      this.focusRegion('transcript')
-    })
   }
 
   /**
@@ -1510,7 +1950,7 @@ export class TuiApp {
       parts: partLabels(cursor, blocks),
       rows: section.part.rows,
       highlighted: this.highlighted !== undefined,
-      complete: section.block.blockKind === 'context',
+      level: this.frameLift(),
     }
   }
 
@@ -1533,19 +1973,66 @@ export class TuiApp {
   /**
    * Give the keyboard to `region` and redraw the bar. The caller redraws the
    * panel; the panel's own refresh calls this when its last row leaves.
+   *
+   * A region taking the keyboard lifts its own chrome for a moment, which is
+   * what makes the landing visible; the editor taking it back settles
+   * whatever was still moving, because nothing that motion lifted is drawn
+   * any more.
    * @param region - the region that takes the keyboard.
    */
   private setFocus(region: FocusRegion): void {
+    this.finishReaderClose()
+    if (region === 'editor') this.chrome = undefined
+    else this.startChrome('landing', LANDING_TICKS)
     this.focus = region
     // pi-tui accepts a null focus, so the editor stops drawing its cursor
-    // while another region owns the keyboard.
-    this.tui.setFocus(region === 'editor' ? this.editor : null)
+    // while another region owns the keyboard. An open reader owns the whole
+    // key stream, so nothing the docked regions do may take it away.
+    if (this.reader === undefined) this.tui.setFocus(region === 'editor' ? this.editor : null)
     this.refreshFooter()
   }
 
-  private toggleTools(): void {
+  /**
+   * Answer `Ctrl+O` and `/tools`: fold or unfold every block that folds, tool
+   * cards and context rows alike. The setting outlives the blocks on screen,
+   * so a card or an injection that arrives later opens with the rest.
+   *
+   * On a transcript taller than the terminal this rewrites lines the renderer
+   * can no longer repaint and pi-tui redraws the screen in full. It is the one
+   * key that does; `Space` turns the held block alone, inside the window.
+   */
+  private toggleFolding(): void {
     this.toolsExpanded = !this.toolsExpanded
-    for (const block of this.toolBlocks.values()) block.setExpanded(this.toolsExpanded)
+    for (const child of this.chat.children) {
+      if (isFoldable(child)) child.setExpanded(this.toolsExpanded)
+    }
+    this.tui.requestRender()
+  }
+
+  /**
+   * Answer `Space`: fold or unfold the block the transcript focus holds.
+   *
+   * Rewriting a block in place is legal only while the renderer can still
+   * repaint its first line, and the frame's own guard is what knows that: the
+   * render settles the frame, and the mark it leaves names the one block this
+   * key may rewrite. A block above that window keeps what it draws, and the
+   * line names the key that opens every block at once instead.
+   */
+  private foldFocused(): void {
+    const section = this.focusedSection()
+    const block = section?.block
+    if (section === undefined || block === undefined || !isFoldable(block)) return
+    // Settle the frame first: the mark describes the frame the keys that led
+    // here leave behind, not the one before them.
+    this.tui.renderNow()
+    if (this.highlighted?.block !== block) {
+      // What cannot be marked cannot be rewritten either; the reader draws
+      // every row of it instead, at no cost to the conversation.
+      this.openReader(section.cursor)
+      this.showToast(ABOVE_WINDOW_TOAST)
+      return
+    }
+    block.setExpanded(!block.isExpanded())
     this.tui.requestRender()
   }
 
@@ -1609,7 +2096,10 @@ export class TuiApp {
         this.stop()
         return
       case 'tools':
-        this.toggleTools()
+        this.toggleFolding()
+        return
+      case 'turns':
+        this.openReader()
         return
       case 'model':
         await this.chooseModel(argument)
@@ -1694,21 +2184,16 @@ export class TuiApp {
     }
   }
 
+  /**
+   * Print the commands and the keys: one row per focus state, the keys it
+   * answers beside its name. Every legend is the one its own surface draws,
+   * read from the module that owns it, so this list cannot name a key the
+   * screen names differently.
+   */
   private showHelp(): void {
     const palette = this.deps.palette
     const rows = this.completableCommands().map(command => `/${command.name.padEnd(12)} ${palette.dim(command.description)}`)
-    const keys = [
-      'Enter sends · Shift+Enter inserts a newline · Up/Down recall history',
-      'While a turn runs: Enter queues for the next turn · Ctrl+S steers the running turn',
-      '@ completes paths and sessions (workspace, ../, ~/, absolute) · / completes commands',
-      'Esc stops the running turn · Ctrl+O expands or collapses tool output',
-      'Shift+Tab cycles the current model\'s reasoning effort for the next request',
-      'Shift+Up focuses the transcript, Shift+Down the subagent panel or the status bar',
-      'Then ↑ ↓ walk every section, panel row, and bar segment; ← → move between a block\'s parts or the bar\'s segments (Shift+← → also move the bar)',
-      'Enter opens the focused section or segment, Esc returns to the input',
-      'Ctrl+C clears the input (twice quits) · Ctrl+D on an empty input quits',
-    ]
-    this.chat.addChild(new Text([...rows, '', ...keys.map(palette.dim)].join('\n'), 0, 1))
+    this.chat.addChild(new Text([...rows, '', ...helpKeyLines().map(palette.dim)].join('\n'), 0, 1))
     this.tui.requestRender()
   }
 
@@ -2291,6 +2776,98 @@ export class TuiApp {
     this.updateFadeTicker()
   }
 
+  // ── chrome motion ───────────────────────────────────────────────────────
+
+  /**
+   * Start one motion on the application's own clock and tick.
+   *
+   * A terminal that draws no ramp at all - reduced motion, a disabled
+   * palette, no color - runs no motion either, and every call site draws its
+   * settled rendering instead, so nothing here is on the path of a terminal
+   * that asked for none.
+   * @param ticks - how many fade periods the motion lasts.
+   * @returns the motion, or undefined on a terminal that runs none.
+   */
+  private startMotion(ticks: number): Motion | undefined {
+    if (!this.fading) return undefined
+    const motion = new Motion({
+      startedAt: this.deps.now(),
+      ticks,
+      stepMs: this.deps.fadeStepMs,
+      now: () => this.deps.now(),
+    })
+    this.motions.add(motion)
+    this.updateFadeTicker()
+    return motion
+  }
+
+  /**
+   * Lift the chrome of the region that holds the keyboard. One motion runs at
+   * a time, because one region holds the keyboard at a time: a step replaces
+   * the landing that brought the keyboard here, which settles the frame back
+   * as soon as the walk goes on.
+   * @param scope - how much of the surface the motion lifts.
+   * @param ticks - how many fade periods it lasts.
+   */
+  private startChrome(scope: MotionScope, ticks: number): void {
+    const motion = this.startMotion(ticks)
+    this.chrome = motion === undefined ? undefined : { motion, scope }
+  }
+
+  /**
+   * How far above its settled drawing the focused surface's own frame is
+   * drawn right now.
+   * @returns the level, and the settled one for everything but a landing.
+   */
+  private frameLift(): MotionLevel {
+    return this.chrome?.scope === 'landing' ? this.chrome.motion.level() : 0
+  }
+
+  /**
+   * How far above its settled drawing the mark the focused region holds is
+   * drawn right now.
+   * @returns the level, and the settled one while nothing moves.
+   */
+  private markLift(): MotionLevel {
+    return this.chrome?.motion.level() ?? 0
+  }
+
+  /**
+   * The lift the subagent panel's selected row is drawn with. The panel's
+   * text is built when something changes it rather than once per frame, so
+   * this is also what the fade tick compares against to know it must build it
+   * again.
+   * @returns the level, and the settled one whenever the panel does not hold
+   * the keyboard.
+   */
+  private panelLiftNow(): MotionLevel {
+    return this.focus === 'panel' ? this.markLift() : 0
+  }
+
+  /**
+   * How much of its height the reader draws right now.
+   * @returns the share of the pane's rows: growing while it opens, shrinking
+   * while it comes down, and 1 for a reader that is simply up.
+   */
+  private readerReveal(): number {
+    const closing = this.readerClosing
+    if (closing !== undefined) return 1 - closing.motion.progress()
+    return this.readerOpening?.progress() ?? 1
+  }
+
+  /**
+   * Take a shrinking reader off the screen now, for anything that needs the
+   * viewport back before the motion settles: another overlay, a prompt, a
+   * session change, or the next key press - pi-tui would hand the key stream
+   * back to an overlay it still holds a focus restore for.
+   */
+  private finishReaderClose(): void {
+    const closing = this.readerClosing
+    if (closing === undefined) return
+    this.readerClosing = undefined
+    closing.handle.hide()
+  }
+
   /**
    * Arm the fade tick while streamed text or a card still draws below the last
    * brightness level and disarm it otherwise, so a session that is not
@@ -2317,6 +2894,7 @@ export class TuiApp {
     return this.textTail?.needsRepaint() === true
       || this.reasoningTail?.needsRepaint() === true
       || this.blockFades.needsRepaint()
+      || this.motions.needsRepaint()
   }
 
   /**
@@ -2331,13 +2909,17 @@ export class TuiApp {
    * unmarked, and the inspector reports that instead.
    * @param viewportTop - the frame's first repaintable line.
    * @param width - the width it was built at.
+   * @param frameLines - how many lines the frame has, which is what places
+   * an overlay: pi-tui composites one into the frame's last `rows` lines.
    * @returns whether anything changed a line, so the frame is built again
    * before it is written.
    */
-  private settleFrame(viewportTop: number, width: number): boolean {
+  private settleFrame(viewportTop: number, width: number, frameLines: number): boolean {
+    const rows = this.deps.terminal.rows
+    this.viewportFloor = repaintFloor(Math.max(frameLines, rows) - rows, viewportTop)
     const section = this.focusedSection()
     const wanted: HeldSection | undefined = section !== undefined && this.focus === 'transcript'
-      ? { block: section.block, part: section.cursor.part }
+      ? { block: section.block, part: section.cursor.part, level: this.markLift() }
       : undefined
     const fades = this.fadesMoving()
     if (!fades && wanted === undefined && this.highlighted === undefined) return false
@@ -2358,9 +2940,11 @@ export class TuiApp {
     // what this frame will impose, so taking the mark off again is repaintable.
     const target = wantedStart !== undefined && repaintFloor(wantedStart, viewportTop) === 0 ? wanted : undefined
     const current = this.highlighted
-    if (current?.block === target?.block && current?.part === target?.part) return changed
+    if (current?.block === target?.block && current?.part === target?.part && current?.level === target?.level) {
+      return changed
+    }
     current?.block.setHighlight(undefined)
-    target?.block.setHighlight(target.part)
+    target?.block.setHighlight(target.part, target.level)
     this.highlighted = target
     return true
   }
@@ -2375,6 +2959,13 @@ export class TuiApp {
     this.textTail?.tick()
     this.reasoningTail?.tick()
     this.blockFades.tick()
+    if (this.toast?.clock.expired() === true) this.hideToast()
+    if (this.readerClosing?.motion.needsRepaint() === false) this.finishReaderClose()
+    // The panel's text is built when something changes it, so its own lift is
+    // what tells this period to build it again; every other surface reads the
+    // level while it renders.
+    if (this.panelLift !== this.panelLiftNow()) this.refreshSubagentPanel()
+    this.motions.tick()
     this.tui.requestRender()
     this.updateFadeTicker()
   }
@@ -2550,7 +3141,7 @@ export class TuiApp {
     }
     const view = injectedContextView(source, message.content)
     if (view === undefined) return
-    this.chat.addChild(new ContextBlock(this.theme, view.title, view.parts, this.turn))
+    this.addContext(view.title, view.parts, this.turn)
   }
 
   /**
@@ -2561,7 +3152,20 @@ export class TuiApp {
     const view = systemPromptView(contentText(data.message.content), this.sawSystemPrompt)
     if (view === undefined) return
     this.sawSystemPrompt = true
-    this.chat.addChild(new ContextBlock(this.theme, view.title, view.parts, data.turn))
+    this.addContext(view.title, view.parts, data.turn)
+  }
+
+  /**
+   * Append one context block, folded as every other foldable block is drawn
+   * right now.
+   * @param title - form and producer, a notice summary, or `system prompt`.
+   * @param parts - the model-facing rows, one part per contribution.
+   * @param turn - the turn the message was appended in.
+   */
+  private addContext(title: string, parts: readonly SectionPart[], turn: number): void {
+    const block = new ContextBlock(this.theme, title, parts, turn)
+    block.setExpanded(this.toolsExpanded)
+    this.chat.addChild(block)
   }
 
   private presentCall(name: string, args: unknown): ToolCallView | undefined {

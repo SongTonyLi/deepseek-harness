@@ -16,9 +16,12 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { Terminal } from '@earendil-works/pi-tui'
 import { TuiApp, type BoundSession, type SessionHost } from '../src/app.ts'
+import { CONTEXT_PREVIEW_LINES } from '../src/blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
 import { FOCUS_PREVIEW_LINES } from '../src/inspector.ts'
+import { READER_MIN_COLUMNS } from '../src/reader.ts'
 import { createPalette } from '../src/style.ts'
+import { TOAST_MS } from '../src/toast.ts'
 
 /**
  * The clock every bench starts at, a fixed instant so an elapsed readout is
@@ -161,6 +164,15 @@ export const KEY = {
   tab: '\t',
   shiftTab: '\u001b[Z',
   space: ' ',
+  pageUp: '\u001b[5~',
+  pageDown: '\u001b[6~',
+  home: '\u001b[H',
+  end: '\u001b[F',
+  ctrlG: '\u0007',
+  ctrlU: '\u0015',
+  backspace: '\u007f',
+  slash: '/',
+  digit1: '1',
 } as const
 
 /** What the scripted Agent observed. */
@@ -273,8 +285,14 @@ export async function bench(options: {
   history?: readonly SessionEvent[]
   initialPrompt?: string
   toolPreviewLines?: number
+  /** Collapsed body rows of a system prompt or an injected context block. */
+  contextPreviewLines?: number
   /** Rows of the focused section the docked inspector shows. */
   focusPreviewLines?: number
+  /** Columns the reader needs before it draws two sections side by side. */
+  readerMinColumns?: number
+  /** How long a transient key-feedback line holds before it fades out. */
+  toastMs?: number
   color?: boolean
   /** Start with the Agent already running. */
   running?: boolean
@@ -424,7 +442,10 @@ export async function bench(options: {
     terminal,
     palette: createPalette(options.color ?? false),
     toolPreviewLines: options.toolPreviewLines ?? 3,
+    contextPreviewLines: options.contextPreviewLines ?? CONTEXT_PREVIEW_LINES,
     focusPreviewLines: options.focusPreviewLines ?? FOCUS_PREVIEW_LINES,
+    readerMinColumns: options.readerMinColumns ?? READER_MIN_COLUMNS,
+    toastMs: options.toastMs ?? TOAST_MS,
     liveRefreshMs,
     fadeSteps: options.fadeSteps ?? FADE_STEPS,
     fadeStepMs,

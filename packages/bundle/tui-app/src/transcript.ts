@@ -268,14 +268,30 @@ export function foldRows(lines: readonly string[], keep: number, marker: (hidden
   return [...lines.slice(0, keep), marker(lines.length - keep)]
 }
 
+/** Where folded rows are drawn, which decides the key their marker names. */
+export type FoldOpener =
+  /** The transcript block the walk marks, which one press of `Space` opens. */
+  | 'marked'
+  /** Any other block in the conversation; `Ctrl+O` opens every one of them. */
+  | 'transcript'
+  /** The docked inspector, whose remaining rows the reader draws. */
+  | 'inspector'
+
+/** The key each fold marker names, the one place these words are written. */
+const FOLD_KEYS: Record<FoldOpener, string> = {
+  marked: 'Space expands',
+  transcript: 'Ctrl+O expands',
+  inspector: 'Ctrl+G reads it',
+}
+
 /**
- * Cut a card body to its collapsed preview.
- * @param lines - the full body rows.
- * @param previewLines - rows kept when collapsed.
- * @param expanded - whether the user expanded tool cards.
- * @returns the rows to draw, with a trailing count of hidden rows when cut.
+ * The one fold grammar, on the row that stands for what a fold left out: how
+ * many rows are not drawn, and the key that reaches them from where the
+ * keyboard is.
+ * @param hidden - rows the fold left out.
+ * @param opens - where the folded rows are drawn.
+ * @returns the marker row, unstyled.
  */
-export function previewLines(lines: readonly string[], previewLines: number, expanded: boolean): string[] {
-  if (expanded) return [...lines]
-  return foldRows(lines, previewLines, hidden => `… ${String(hidden)} more line${hidden === 1 ? '' : 's'} (Ctrl+O expands)`)
+export function foldMarker(hidden: number, opens: FoldOpener): string {
+  return `… ${String(hidden)} more row${hidden === 1 ? '' : 's'} · ${FOLD_KEYS[opens]}`
 }

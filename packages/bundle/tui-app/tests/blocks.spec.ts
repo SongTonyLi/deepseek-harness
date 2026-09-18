@@ -1,11 +1,11 @@
 /** Transcript components rendered at fixed widths. */
 
 import { describe, expect, it } from 'vitest'
-import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import { createPalette } from '../src/style.ts'
 
-const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2 }
+const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 6 }
 
 /** The two-level fade style, which draws one sequence whatever the ramp would be. */
 const FADE: FadeStyle = { capability: 'dim', ramp: [] }
@@ -50,7 +50,7 @@ describe('blocks', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w'])
     block.setResult(['a', 'b', 'c'], false)
-    expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w', '  │ a', '  │ … 2 more lines (Ctrl+O expands)'])
+    expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w', '  │ a', '  │ … 2 more rows · Ctrl+O expands'])
     block.setExpanded(true)
     expect(block.render(40)).toHaveLength(6)
     const failed = new ToolBlock(theme, 'bash', { title: '', lines: [] }, 1)
@@ -83,7 +83,7 @@ describe('blocks', () => {
       '',
       '\u001b[2m\u25cf bash\u001b[22m',
       '\u001b[2m  \u2502 a\u001b[22m',
-      '\u001b[2m  \u2502 \u2026 2 more lines (Ctrl+O expands)\u001b[22m',
+      '\u001b[2m  \u2502 \u2026 2 more rows · Ctrl+O expands\u001b[22m',
     ])
   })
 
@@ -243,8 +243,17 @@ describe('the focus gutter', () => {
     const long = new ToolBlock({ ...theme, toolPreviewLines: 1 }, 'bash', { title: '', lines: ['a', 'b'] }, 1)
     long.setResult(['c'], false)
     long.setHighlight(0)
-    expect(long.render(40)).toEqual(['│ ', '┃ ● bash', '┃   │ a', '│   │ … 2 more lines (Ctrl+O expands)'])
+    // The card holds the focus, so its marker names the key that opens this
+    // block alone rather than the one that opens every block.
+    expect(long.render(40)).toEqual(['│ ', '┃ ● bash', '┃   │ a', '│   │ … 2 more rows · Space expands'])
+    // The result has no drawn row of its own here, so the marker that stands
+    // for the rows the fold took carries the mark: a card the inspector
+    // reports as marked always marks a line.
+    long.setHighlight(1)
+    expect(long.render(40)).toEqual(['│ ', '│ ● bash', '│   │ a', '┃   │ … 2 more rows · Space expands'])
     long.setExpanded(true)
+    expect(long.render(40)).toEqual(['│ ', '│ ● bash', '│   │ a', '│   │ b', '┃   │ c'])
+    long.setHighlight(0)
     expect(long.render(40)).toEqual(['│ ', '┃ ● bash', '┃   │ a', '┃   │ b', '│   │ c'])
   })
 
@@ -329,5 +338,95 @@ describe('ContextBlock', () => {
     const drawn = new ContextBlock(theme, 'system prompt', [{ kind: 'system', rows: [long] }], 0).render(16).join('\n')
     expect(drawn.replaceAll(/[^x]/g, '')).toBe(long)
     expect(drawn).not.toContain('…')
+  })
+})
+
+describe('folding a block', () => {
+  /** An injection far longer than any preview budget. */
+  const RULES = Array.from({ length: 30 }, (_, index) => `rule ${String(index)}`)
+
+  it('draws an injection folded at its budget under a title it never folds', () => {
+    const block = new ContextBlock({ ...theme, contextPreviewLines: 4 }, 'system prompt', [{ kind: 'system', rows: RULES }], 0)
+    expect(block.isExpanded()).toBe(false)
+    expect(block.render(40)).toEqual([
+      '',
+      '⬡ system prompt',
+      '  rule 0',
+      '  rule 1',
+      '  rule 2',
+      '  rule 3',
+      '  … 26 more rows · Ctrl+O expands',
+    ])
+    // What the model was given is never cut from what the keyboard reads.
+    expect(block.parts()[0]?.rows).toEqual(RULES)
+    block.setExpanded(true)
+    expect(block.isExpanded()).toBe(true)
+    const expanded = block.render(40)
+    expect(expanded).toHaveLength(2 + RULES.length)
+    expect(expanded.at(-1)).toBe('  rule 29')
+    expect(block.parts()[0]?.rows).toEqual(RULES)
+  })
+
+  it('marks the drawn rows of the focused contribution and leaves the marker to the block', () => {
+    const block = new ContextBlock({ ...theme, contextPreviewLines: 3 }, 'snapshot · workspace', [
+      { kind: 'snapshot', label: 'sandbox', rows: ['allow python'] },
+      { kind: 'snapshot', label: 'git', rows: ['clean', 'tree'] },
+    ], 0)
+    block.setHighlight(1)
+    // The block holds the focus, so the marker names the key that opens this
+    // block alone, and the rows the fold took are not the focused section's.
+    expect(block.render(40).map(line => line.trimEnd())).toEqual([
+      '│',
+      '│ ⬡ snapshot · workspace',
+      '│   sandbox',
+      '│   allow python',
+      '┃   git',
+      '│   … 2 more rows · Space expands',
+    ])
+    // A contribution the fold left out entirely has no row of its own to
+    // mark, so the marker that stands for the rows the fold took carries the
+    // focus: a block the inspector reports as marked always marks a line.
+    const cut = new ContextBlock({ ...theme, contextPreviewLines: 1 }, 'snapshot · workspace', [
+      { kind: 'snapshot', label: 'sandbox', rows: ['allow python'] },
+      { kind: 'snapshot', label: 'git', rows: ['clean'] },
+    ], 0)
+    cut.setHighlight(1)
+    expect(cut.render(40).map(line => line.trimEnd())).toEqual([
+      '│',
+      '│ ⬡ snapshot · workspace',
+      '│   sandbox',
+      '┃   … 3 more rows · Space expands',
+    ])
+    cut.setHighlight(0)
+    expect(cut.render(40).map(line => line.trimEnd())).toEqual([
+      '│',
+      '│ ⬡ snapshot · workspace',
+      '┃   sandbox',
+      '│   … 3 more rows · Space expands',
+    ])
+  })
+
+  it('counts one row left out in the singular', () => {
+    const block = new ContextBlock({ ...theme, contextPreviewLines: 1 }, 'system prompt', [{ kind: 'system', rows: ['keep', 'cut'] }], 0)
+    expect(block.render(40).at(-1)).toBe('  … 1 more row · Ctrl+O expands')
+  })
+
+  it('wraps the marker to the width every other row it draws is wrapped to', () => {
+    const block = new ContextBlock({ ...theme, contextPreviewLines: 1 }, 'system prompt', [{ kind: 'system', rows: RULES }], 0)
+    // pi-tui refuses to write a line wider than the terminal, so the row that
+    // names the fold is wrapped like the rows it stands for.
+    expect(block.render(24)).toEqual(['', '⬡ system prompt', '  rule 0', '  … 29 more rows ·', '  Ctrl+O expands'])
+    block.setHighlight(0)
+    // The gutter still marks the focused contribution's own row and leaves
+    // every row of the marker to the block.
+    expect(block.render(24)).toEqual(['│ ', '│ ⬡ system prompt', '┃   rule 0', '│   … 29 more rows ·', '│   Space expands'])
+  })
+
+  it('is the marker every foldable block carries, and nothing else carries', () => {
+    expect(isFoldable(new ContextBlock(theme, 'system prompt', [{ kind: 'system', rows: ['a'] }], 0))).toBe(true)
+    expect(isFoldable(new ToolBlock(theme, 'bash', { title: '', lines: [] }, 1))).toBe(true)
+    expect(isFoldable(new UserBlock(theme, 'read the spec', 1))).toBe(false)
+    expect(isFoldable(new AssistantBlock(theme, 1))).toBe(false)
+    expect(isFoldable(undefined)).toBe(false)
   })
 })

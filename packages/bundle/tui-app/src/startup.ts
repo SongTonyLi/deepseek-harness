@@ -48,8 +48,9 @@ Examples:
   dsh --profile tui --resume <session-id>    continue an earlier session
   dsh tui                                    alias of --profile tui
 
-Keys: Enter sends, Esc stops the running turn, Ctrl+O expands tool output,
-Ctrl+C twice (or Ctrl+D on an empty input) quits. Type /help for commands.
+Keys: Enter sends, Esc twice stops the running turn, Ctrl+O folds or unfolds
+every tool card and context row, Ctrl+C twice (or Ctrl+D on an empty input)
+quits. Type /help for commands.
 `)
 }
 

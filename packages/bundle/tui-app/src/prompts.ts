@@ -5,9 +5,10 @@
  * @module @deepseek-ai/dsh-tui-app/prompts
  */
 
-import { Input, Markdown, SelectList, Text, decodeKittyPrintable, fuzzyFilter, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type SelectListLayoutOptions, type TUI } from '@earendil-works/pi-tui'
+import { Input, Markdown, SelectList, Text, fuzzyFilter, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type SelectListLayoutOptions, type TUI } from '@earendil-works/pi-tui'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { planReviewOptions, type AskUserQuestionAnswerItem, type AskUserQuestionItem, type AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
+import { typedText } from './keys.ts'
 import { markdownTheme, selectListTheme, type Palette } from './style.ts'
 import { foldRows } from './transcript.ts'
 
@@ -196,20 +197,6 @@ const CURRENT_MARK = ' ✓'
 
 /** What the filter line says while the query is empty. */
 const FILTER_HINT = 'type to filter · Enter selects · Esc cancels'
-
-/** Characters a typed query never carries: C0 controls, DEL, and C1 controls. */
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u
-
-/**
- * The text one key press types.
- * @param data - the bytes the terminal sent.
- * @returns the characters to append to a query, or undefined for control keys and escape sequences.
- */
-function typedText(data: string): string | undefined {
-  const kitty = decodeKittyPrintable(data)
-  if (kitty !== undefined) return kitty
-  return CONTROL_CHARACTERS.test(data) ? undefined : data
-}
 
 /**
  * The text a picker row is matched against.
