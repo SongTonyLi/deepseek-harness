@@ -48,3 +48,11 @@ worktrees/
 .agents/worktrees/
 .typert-*/
 native/system/test/bin/
+
+# Local session residue and packed CLI tarballs: never part of the tree.
+.tmp/
+.claude-flow/
+.claude/.proven-config-version
+.claude/proven-config.json
+.claude/workflows/
+/*.tgz
