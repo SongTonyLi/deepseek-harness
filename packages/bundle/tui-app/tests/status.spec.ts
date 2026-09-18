@@ -153,7 +153,7 @@ describe('statusReport', () => {
       },
       goal: { phase: 'blocked', objective: 'ship it', round: 3, maxRounds: 8, blockedReason: 'waiting' },
       plan: { active: true, pending: true },
-      permissions: { options: [{ value: 'read-only', name: 'Read only' }], currentValue: 'read-only' },
+      permissions: { currentValue: 'read-only' },
     }
     expect(statusReport(facts)).toEqual([
       'context: ~54k / 128k (42%)',
@@ -167,7 +167,7 @@ describe('statusReport', () => {
       'goal: blocked · round 3/8 · ship it',
       '  blocked: waiting',
       'plan: on (switching)',
-      'permission: Read only',
+      'permission: read-only',
     ])
   })
 
@@ -177,7 +177,7 @@ describe('statusReport', () => {
       stats: { turns: 1, steps: 1, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 },
       goal: { phase: 'active', objective: 'ship it', round: 0, maxRounds: 8 },
       plan: { active: false, pending: false },
-      permissions: { options: [], currentValue: 'custom' },
+      permissions: { currentValue: 'custom' },
     }
     expect(statusReport(facts)).toEqual([
       'tokens: ↑0 uncached · cache read 0 · cache write 0 · ↓0',
