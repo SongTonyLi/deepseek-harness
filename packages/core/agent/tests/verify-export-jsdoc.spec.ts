@@ -152,6 +152,16 @@ describe('verify-export-jsdoc type-level exports', () => {
     ])
   })
 
+  it('skips generated Cursor protobuf dumps', () => {
+    const root = mkdtempSync(join(tmpdir(), 'export-jsdoc-'))
+    roots.push(root)
+    const generated = join(root, 'packages/llm/llm-cursor/src/native/agent_pb.ts')
+    mkdirSync(dirname(generated), { recursive: true })
+    writeFileSync(generated, 'export const generated = 1\n')
+    writeFileSync(join(root, 'packages/llm/llm-cursor/src/index.ts'), '/** Documented. */\nexport const OK = 1\n')
+    expect(collectExportJsdocViolations(root)).toEqual([])
+  })
+
   it('skips `declare module` augmentation bodies (the cordis gate owns them)', () => {
     expect(collectExportJsdocViolations(make(
       "declare module '@deepseek-ai/cordis' {\n  interface Events {\n    'fix/x'(): void\n  }\n}\nexport {}\n",

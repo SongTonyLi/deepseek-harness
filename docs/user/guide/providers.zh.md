@@ -8,7 +8,7 @@
 
 打开**设置 → 模型**。DeepSeek 卡片提供一个 API 密钥字段；输入密钥并保存。
 
-![模型页：DeepSeek 卡片，以及添加提供方与添加自定义提供方两个入口](providers-models-page.zh.png)
+![模型页：DeepSeek 卡片与 Cursor 卡片，以及添加提供方与添加自定义提供方两个入口](providers-models-page.zh.png)
 
 密钥是只写的。保存后，页面只会收到脱敏描述符，永远不会收到明文密钥。密钥存储在 `$DSH_HOME/.credentials.yaml` 中，settings 只保留它的凭据引用。
 
@@ -18,9 +18,9 @@
 
 ## 登录提供方
 
-有些提供方使用登录而非 API 密钥。其中最常用的是 Codex：用 ChatGPT Plus 或 Pro 账号登录后，即可通过该订阅使用 GPT-5 与 GPT-6 系列 Codex 模型，无需 API 密钥，也不按 token 计费。
+有些提供方使用登录而非 API 密钥。Codex 是其中之一：用 ChatGPT Plus 或 Pro 账号登录后，即可通过该订阅使用 GPT-5 与 GPT-6 系列 Codex 模型，无需 API 密钥，也不按 token 计费。Cursor 是另一个：插件挂载后 Models 页上就已经有 Cursor 卡片，用 Cursor 订阅登录后，`cursor` 路由使用该账户。
 
-选择**添加提供方**，选取 `openai-codex` 并保存；然后在它的卡片上点击**登录**。对话框会打开，并给出通往提供方页面的链接。在那里完成登录后，对话框会报告成功。如果提供方在过程中提出问题——用哪种登录方式、要粘贴回来的验证码——对话框也会提出，点击**继续**发送你的回答。
+对于 Codex，选择**添加提供方**，选取 `openai-codex` 并保存；然后在它的卡片上点击**登录**。对于 Cursor，直接在 Cursor 卡片上点击**登录**。对话框会打开，并给出通往提供方页面的链接。在那里完成登录后，对话框会报告成功。如果提供方在过程中提出问题——用哪种登录方式、要粘贴回来的验证码——对话框也会提出，点击**继续**发送你的回答。
 
 在没有浏览器的机器上，若提供方提供设备码方式则选择它：对话框会显示一个短验证码，可在它指明的页面上用任意其他设备输入。
 
@@ -28,7 +28,7 @@
 
 自带订阅登录的提供方会显示这些控件，其余只在卡片自己的字段中要求 API 密钥。登录凭据与密钥一同存储在 `$DSH_HOME/.credentials.yaml` 中，并会自行刷新。
 
-在终端（`dsh tui`）中，登录分两条命令：先用 `/settings llm-pi-ai providers.openai-codex {}` 配置路由，再执行 `/login llm-pi-ai/openai-codex`。登录页面会在默认浏览器中打开，其地址同时保留在对话记录里；在 SSH 下或加上 `dsh tui --no-open` 时，请自行打开该地址，设备码方式在那里同样可用。
+在终端（`dsh tui`）中，登录通过 `/login`。Codex 需要先配置路由：`/settings llm-pi-ai providers.openai-codex {}`，再执行 `/login llm-pi-ai/openai-codex`。Cursor 已经注册：`/login llm-cursor/cursor`。登录页面会在默认浏览器中打开，其地址同时保留在对话记录里；在 SSH 下或加上 `dsh tui --no-open` 时，请自行打开该地址，设备码方式在那里同样可用。
 
 ## 添加自定义提供方
 
@@ -52,7 +52,7 @@ Provider ID 是永久的，因为请求、已保存会话、模型默认值和�
 
 ## 进阶配置
 
-自动生成的[插件配置目录](../../config-catalog.zh.md)列出每个插件的所有受支持字段与默认值；[`dsh-llm-pi-ai`](../../config-catalog.zh.md#deepseek-aidsh-llm-pi-ai) 就是本页所配置的那个提供方段落。[`dsh-llm-pi-ai`](../../../packages/llm/llm-pi-ai/README.zh.md) 和 [`dsh-llm-deepseek`](../../../packages/llm/llm-deepseek/README.zh.md) 参考文档负责直接 `settings.yaml` 配置、目录解析、推理控制、凭据与适配器错误。
+自动生成的[插件配置目录](../../config-catalog.zh.md)列出每个插件的所有受支持字段与默认值；[`dsh-llm-pi-ai`](../../config-catalog.zh.md#deepseek-aidsh-llm-pi-ai) 是本页为目录路由配置的提供方段落，[`dsh-llm-cursor`](../../config-catalog.zh.md#deepseek-aidsh-llm-cursor) 是 Cursor 订阅适配器。[`dsh-llm-pi-ai`](../../../packages/llm/llm-pi-ai/README.zh.md)、[`dsh-llm-deepseek`](../../../packages/llm/llm-deepseek/README.zh.md) 和 [`dsh-llm-cursor`](../../../packages/llm/llm-cursor/README.zh.md) 参考文档负责直接 `settings.yaml` 配置、目录解析、凭据与适配器错误。
 
 ::: tip 其他设置
 模型页提供 API 密钥、显示名称、API 地址、API 协议，以及每个模型的 ID、显示名称、上下文窗口、最大输出 token 数和输入类型。推理等级、请求兼容性开关、请求头、超时和重试策略在 `$DSH_HOME/settings.yaml` 中设置，也就是模型页写入的同一份文档。可以直接编辑它；浏览器与服务器在同一台机器时，也可以点击设置页顶部的**打开配置文件**打开它。适配器会在下一次请求时重新读取，无需重启任何东西。下面各小节介绍多数网关会用到的字段。

@@ -105,7 +105,7 @@ Every picker the terminal opens — the model and reasoning-effort lists of `/mo
 
 ### Subscription sign-in
 
-`/login` stores a subscription credential but does not activate a dormant model route. Configure the catalog route first, then use its full credential key; for example, run `/settings llm-pi-ai providers.openai-codex {}` and then `/login llm-pi-ai/openai-codex`. A marked authorization page opens in the local default browser while its URL remains in the transcript as a fallback. SSH launches, hosts without a desktop, `--no-open`, and opener failures leave the manual URL and device-code paths available instead.
+`/login` stores a subscription credential but does not activate a dormant model route. Configure the catalog route first, then use its full credential key; for example, run `/settings llm-pi-ai providers.openai-codex {}` and then `/login llm-pi-ai/openai-codex`. Cursor is already registered: `/login llm-cursor/cursor`. A marked authorization page opens in the local default browser while its URL remains in the transcript as a fallback. SSH launches, hosts without a desktop, `--no-open`, and opener failures leave the manual URL and device-code paths available instead.
 
 ### Prompts from the agent
 

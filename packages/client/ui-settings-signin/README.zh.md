@@ -60,11 +60,11 @@ kind: "package-reference"
 
 ### 两个座位，一个快照
 
-`settings.models.provider-card` 以拥有它的 settings namespace 为键，因此在 `llm-pi-ai` 下注册一个条目即可触达该适配器族的每一张卡片；该区域随后只在提供方的 flow 提供订阅方式处渲染。`settings.models.footer` 承载对话框，它属于页面而非某张卡片：一次尝试会在其卡片滚出视野后继续存在，而且同时只有一次尝试在跑。两个座位接收同一个快照 store，因此卡片与对话框绝不会对「正在运行什么」产生分歧。
+`settings.models.provider-card` 以拥有它的 settings namespace 为键，因此在 `llm-pi-ai` 或 `llm-cursor` 下注册一个条目即可触达该适配器族的每一张卡片；该区域随后只在提供方的 flow 提供订阅方式处渲染。`settings.models.footer` 承载对话框，它属于页面而非某张卡片：一次尝试会在其卡片滚出视野后继续存在，而且同时只有一次尝试在跑。两个座位接收同一个快照 store，因此卡片与对话框绝不会对「正在运行什么」产生分歧。
 
 ### flow 目录
 
-Host 的 flow 列表按提供方路由联接：记录 scope 属于 pi-ai 适配器族的 flow 会在其记录 id 中给出提供方，而来自其他插件的 flow 指向的不是提供方，因此被略过。目录在挂载时、任何位置的尝试结算后、任何凭据记录变更后，以及重连后重新读取——因此在第二个标签页完成的登录无需轮询即可在此收敛。被拒绝的读取保留上一次的良好结果，而不是在尝试途中清空这些控件。
+Host 的 flow 列表按提供方路由联接：记录 scope 属于适配器族 settings namespace（`llm-pi-ai` 或 `llm-cursor`）的 flow 会在其记录 id 中给出提供方，而来自其他插件的 flow 指向的不是提供方，因此被略过。目录在挂载时、任何位置的尝试结算后、任何凭据记录变更后，以及重连后重新读取——因此在第二个标签页完成的登录无需轮询即可在此收敛。被拒绝的读取保留上一次的良好结果，而不是在尝试途中清空这些控件。
 
 ### 单次尝试
 
@@ -92,7 +92,8 @@ Host 的 flow 列表按提供方路由联接：记录 scope 属于 pi-ai 适配�
 - [ui-settings-models](../ui-settings-models/README.zh.md) — 声明本插件所填两个座位的模型页。
 - [api-authorization-controller](../../api/authorization-controller/README.zh.md) — 此处每次调用背后的 Remote namespace。
 - [dsh-authorization](../../credentials/authorization/README.zh.md) — 拥有 flow 与尝试生命周期的 seam。
-- [llm-pi-ai](../../llm/llm-pi-ai/README.zh.md) — 为每个已安装提供方注册一个登录的适配器。
+- [llm-pi-ai](../../llm/llm-pi-ai/README.zh.md) — 为每个已安装目录提供方注册一个登录的适配器。
+- [llm-cursor](../../llm/llm-cursor/README.zh.md) — 始终在线的 Cursor 订阅适配器及其 PKCE flow。
 - [配置模型](../../../docs/user/guide/providers.zh.md) — 同时覆盖密钥与登录两类提供方的用户指南。
 
 -----
@@ -114,9 +115,9 @@ Host 的 flow 列表按提供方路由联接：记录 scope 属于 pi-ai 适配�
 
 - **刷新页面会丢弃运行中的登录** — 尝试活在发起它的那条流里，因此人要从头开始。已完成的登录是持久的；只有未完成的会丢失。
 - **退出登录只在本地遗忘** — 已存凭据被删除而不通知提供方，因此订阅会话在提供方一侧仍然有效，直到在那里吊销。
-- **只有适配器族的提供方获得该座位** — 卡片座位以 pi-ai 的 settings namespace 为键，因此由非 LLM（大语言模型）适配器插件注册的 flow 在本页没有位置。
+- **只有适配器族的提供方获得该座位** — 卡片座位以适配器族 settings namespace（`llm-pi-ai`、`llm-cursor`）为键，因此由非 LLM（大语言模型）适配器插件注册的 flow 在本页没有位置。
 - **这里不提供收取密钥的登录** — 只以 API 密钥登录的提供方保留卡片自己的密钥字段，因为把同一份机密存成记录而非引用，会让人有两处地方要找。
-- **登录不会添加该提供方的路由** — 已登录的提供方仍然需要它在模型页上的那一行，因为部署方提供哪些路由始终是 settings 的决定。
+- **登录不会添加休眠的目录路由** — 已登录的 pi-ai 提供方仍然需要它在模型页上的那一行，因为部署方提供哪些目录路由始终是 settings 的决定。挂载 `llm-cursor` 时 Cursor 路由已经注册。
 
 <a id="dev-note"></a>
 ### 开发备注
