@@ -1,7 +1,7 @@
 /** Transcript components rendered at fixed widths. */
 
 import { describe, expect, it } from 'vitest'
-import { AssistantBlock, NoticeBlock, ToolBlock, UserBlock, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import { createPalette } from '../src/style.ts'
 
@@ -182,6 +182,7 @@ describe('navigable sections', () => {
     const block = new AssistantBlock(theme, 2)
     expect(block.parts()).toEqual([{ kind: 'reply', rows: [''] }])
     block.appendReasoning('weighing it\nup')
+    expect(block.parts()).toEqual([{ kind: 'reasoning', rows: ['weighing it', 'up'] }])
     block.appendText('# done')
     expect(block.parts()).toEqual([
       { kind: 'reasoning', rows: ['weighing it', 'up'] },
@@ -211,7 +212,7 @@ describe('the focus gutter', () => {
 
   it('draws a prompt behind the focus gutter, two columns narrower', () => {
     const block = new UserBlock(theme, 'one two three four', 1)
-    block.setHighlight('user')
+    block.setHighlight(0)
     expect(block.render(10)).toEqual(['┃ ', '┃ › one', '┃   two', '┃   three', '┃   four'])
     block.setHighlight(undefined)
     expect(block.render(10)).toEqual(['', '› one two', '  three', '  four'])
@@ -221,23 +222,27 @@ describe('the focus gutter', () => {
     const block = new AssistantBlock(theme, 1)
     block.appendReasoning('weighing it up')
     block.appendText('done')
-    block.setHighlight('reasoning')
+    block.setHighlight(0)
     expect(trimmed(block.render(40))).toEqual(['│', '┃ weighing it up', '│', '│ done'])
-    block.setHighlight('reply')
+    block.setHighlight(1)
+    expect(trimmed(block.render(40))).toEqual(['│', '│ weighing it up', '│', '┃ done'])
+    block.setHighlight(9)
     expect(trimmed(block.render(40))).toEqual(['│', '│ weighing it up', '│', '┃ done'])
   })
 
   it('accents the header with the call rows, or the result rows, and leaves the truncation marker dim', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     block.setResult(['out'], false)
-    block.setHighlight('call')
+    block.setHighlight(0)
     expect(block.render(40)).toEqual(['│ ', '┃ ● bash ls', '┃   │ cwd: /w', '│   │ out'])
-    block.setHighlight('result')
+    block.setHighlight(1)
     expect(block.render(40)).toEqual(['│ ', '│ ● bash ls', '│   │ cwd: /w', '┃   │ out'])
+    block.setHighlight(9)
+    expect(block.render(40)).toEqual(['│ ', '┃ ● bash ls', '┃   │ cwd: /w', '│   │ out'])
 
     const long = new ToolBlock({ ...theme, toolPreviewLines: 1 }, 'bash', { title: '', lines: ['a', 'b'] }, 1)
     long.setResult(['c'], false)
-    long.setHighlight('call')
+    long.setHighlight(0)
     expect(long.render(40)).toEqual(['│ ', '┃ ● bash', '┃   │ a', '│   │ … 2 more lines (Ctrl+O expands)'])
     long.setExpanded(true)
     expect(long.render(40)).toEqual(['│ ', '┃ ● bash', '┃   │ a', '┃   │ b', '│   │ c'])
@@ -246,11 +251,83 @@ describe('the focus gutter', () => {
   it('prepends the gutter after the fade, so the fade keeps matching the card own text', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     block.setFade(blockFade(0))
-    block.setHighlight('call')
+    block.setHighlight(0)
     expect(block.render(40)).toEqual([
       '│ ',
       '┃ \u001b[2m● bash ls\u001b[22m',
       '┃ \u001b[2m  │ cwd: /w\u001b[22m',
     ])
+  })
+})
+
+describe('ContextBlock', () => {
+  it('draws the title and every source row in full', () => {
+    const block = new ContextBlock(theme, 'system prompt', [{ kind: 'system', rows: ['You are the agent.', 'Be brief.'] }], 0)
+    expect(block.render(40)).toEqual(['', '⬡ system prompt', '  You are the agent.', '  Be brief.'])
+    expect(block.parts()[0]?.rows).toEqual(['You are the agent.', 'Be brief.'])
+    block.invalidate()
+  })
+
+  it('names each snapshot contribution above its own rows', () => {
+    const block = new ContextBlock(theme, 'snapshot · workspace', [
+      { kind: 'snapshot', label: 'sandbox', rows: ['allow python'] },
+      { kind: 'snapshot', label: 'git', rows: ['clean', 'tree'] },
+    ], 0)
+    expect(block.render(40)).toEqual([
+      '',
+      '⬡ snapshot · workspace',
+      '  sandbox',
+      '  allow python',
+      '  git',
+      '  clean',
+      '  tree',
+    ])
+  })
+
+  it('accents only the focused contribution and keeps the others on screen', () => {
+    const trimmed = (lines: string[]): string[] => lines.map(line => line.trimEnd())
+    const block = new ContextBlock(theme, 'snapshot · workspace', [
+      { kind: 'snapshot', label: 'sandbox', rows: ['allow python'] },
+      { kind: 'snapshot', label: 'git', rows: ['clean'] },
+    ], 0)
+    block.setHighlight(1)
+    expect(trimmed(block.render(40))).toEqual([
+      '│',
+      '│ ⬡ snapshot · workspace',
+      '│   sandbox',
+      '│   allow python',
+      '┃   git',
+      '┃   clean',
+    ])
+    block.setHighlight(0)
+    expect(trimmed(block.render(40))).toEqual([
+      '│',
+      '│ ⬡ snapshot · workspace',
+      '┃   sandbox',
+      '┃   allow python',
+      '│   git',
+      '│   clean',
+    ])
+    block.setHighlight(9)
+    expect(trimmed(block.render(40))[0]).toBe('┃')
+  })
+
+  it('omits a blank body when a notice has only a title', () => {
+    const block = new ContextBlock(theme, 'notice · skill loaded', [{ kind: 'notice', rows: [''] }], 0)
+    expect(block.render(40)).toEqual(['', '⬡ notice · skill loaded'])
+  })
+
+  it('wraps a long title under the glyph', () => {
+    const block = new ContextBlock(theme, 'instructions · agent-instructions', [{ kind: 'instructions', rows: ['# AGENTS.md'] }], 0)
+    expect(block.render(16)[1]).toContain('⬡')
+    expect(block.render(16).join('\n')).toContain('instructions')
+    expect(block.render(16).join('\n')).toContain('# AGENTS.md')
+  })
+
+  it('keeps every character of a long context row, wrapping instead of cutting', () => {
+    const long = 'x'.repeat(40)
+    const drawn = new ContextBlock(theme, 'system prompt', [{ kind: 'system', rows: [long] }], 0).render(16).join('\n')
+    expect(drawn.replaceAll(/[^x]/g, '')).toBe(long)
+    expect(drawn).not.toContain('…')
   })
 })

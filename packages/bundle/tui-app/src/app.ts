@@ -72,8 +72,9 @@ import {
   subagentDetail,
   type SubagentChoice,
 } from './catalog.ts'
-import { AssistantBlock, NoticeBlock, ToolBlock, UserBlock, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
+import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { exportSessionZip } from './export.ts'
@@ -83,12 +84,11 @@ import {
   clampCursor,
   enterNewest,
   isSectionSource,
-  moveBlock,
+  moveSection,
   movePart,
   navigableBlocks,
   partLabels,
   sectionHeading,
-  type SectionKind,
   type SectionPart,
   type SectionSource,
   type TranscriptCursor,
@@ -194,7 +194,7 @@ type FocusRegion = 'editor' | 'transcript' | 'panel' | 'bar'
 /** The block that carries the focus gutter right now, and which of its sections is accented. */
 interface HeldSection {
   block: SectionSource
-  part: SectionKind
+  part: number
 }
 
 /** The transcript cursor read against the blocks drawn right now. */
@@ -397,6 +397,8 @@ export class TuiApp {
   private todoTurns = new Map<string, TodoHistory>()
   /** The turn the last logged `turn/start` opened; 0 before the first one. */
   private turn = 0
+  /** Whether a nonempty system prompt has already been drawn in this transcript. */
+  private sawSystemPrompt = false
   /** When the running turn started, from its `turn/start` envelope; absent between turns. */
   private turnStartedAt: number | undefined
   private pending: PendingAttachment[] = []
@@ -613,6 +615,7 @@ export class TuiApp {
     this.submittedIds.clear()
     this.todoTurns.clear()
     this.turn = 0
+    this.sawSystemPrompt = false
     this.turnStartedAt = undefined
     this.streaming = undefined
     this.endFade()
@@ -1237,7 +1240,8 @@ export class TuiApp {
   /**
    * Answer the keys every non-editor region answers the same way: `Escape`
    * hands the keyboard back to the editor, `Shift+Up` names the conversation,
-   * and `Shift+Down` the status bar.
+   * and `Shift+Down` the status bar. The transcript reads those two shift
+   * arrows as a walk instead, so this helper is for the bar and the panel.
    * @param data - the raw key bytes.
    * @returns the consume marker when the key named a region, `undefined` when the focused region owns the key.
    */
@@ -1290,12 +1294,17 @@ export class TuiApp {
    * Answer one key while the transcript holds focus. Every key is consumed
    * here, so nothing typed while reading the conversation reaches the editor;
    * `Ctrl+C` and `Ctrl+D` never reach this far and keep their global meaning.
+   * `Up` / `Down` and `Shift+Up` / `Shift+Down` walk every section in reading
+   * order; `Shift+Up` from the editor still enters on the newest section, and
+   * `Shift+Down` from the editor still names the regions under it.
    * @param data - the raw key bytes.
    * @returns the consume marker the input listener returns.
    */
   private onTranscriptKey(data: string): { consume: true } {
-    const region = this.onRegionKey(data)
-    if (region !== undefined) return region
+    if (matchesKey(data, 'escape')) {
+      this.focusEditor()
+      return { consume: true }
+    }
     const section = this.focusedSection()
     /* v8 ignore next 5 -- only a session change empties the transcript, and it hands the keyboard back first */
     if (section === undefined) {
@@ -1304,14 +1313,15 @@ export class TuiApp {
       return { consume: true }
     }
     const { cursor, blocks } = section
-    if (matchesKey(data, 'up')) {
-      this.moveCursor(moveBlock(cursor, -1, blocks))
+    if (matchesKey(data, 'up') || matchesKey(data, 'shift+up')) {
+      this.moveCursor(moveSection(cursor, -1, blocks))
       return { consume: true }
     }
-    if (matchesKey(data, 'down')) {
-      // Past the newest block the stack continues under the editor.
-      if (cursor.block === blocks.length - 1) this.focusBelowEditor()
-      else this.moveCursor(moveBlock(cursor, 1, blocks))
+    if (matchesKey(data, 'down') || matchesKey(data, 'shift+down')) {
+      // Past the newest section the stack continues under the editor.
+      const next = moveSection(cursor, 1, blocks)
+      if (next.block === cursor.block && next.part === cursor.part) this.focusBelowEditor()
+      else this.moveCursor(next)
       return { consume: true }
     }
     if (matchesKey(data, 'left')) {
@@ -1500,6 +1510,7 @@ export class TuiApp {
       parts: partLabels(cursor, blocks),
       rows: section.part.rows,
       highlighted: this.highlighted !== undefined,
+      complete: section.block.blockKind === 'context',
     }
   }
 
@@ -1693,7 +1704,7 @@ export class TuiApp {
       'Esc stops the running turn · Ctrl+O expands or collapses tool output',
       'Shift+Tab cycles the current model\'s reasoning effort for the next request',
       'Shift+Up focuses the transcript, Shift+Down the subagent panel or the status bar',
-      'Then ↑ ↓ move between blocks, panel rows, and the bar; ← → move between a block\'s parts or the bar\'s segments (Shift+← → also move the bar)',
+      'Then ↑ ↓ walk every section, panel row, and bar segment; ← → move between a block\'s parts or the bar\'s segments (Shift+← → also move the bar)',
       'Enter opens the focused section or segment, Esc returns to the input',
       'Ctrl+C clears the input (twice quits) · Ctrl+D on an empty input quits',
     ]
@@ -2326,7 +2337,7 @@ export class TuiApp {
   private settleFrame(viewportTop: number, width: number): boolean {
     const section = this.focusedSection()
     const wanted: HeldSection | undefined = section !== undefined && this.focus === 'transcript'
-      ? { block: section.block, part: section.part.kind }
+      ? { block: section.block, part: section.cursor.part }
       : undefined
     const fades = this.fadesMoving()
     if (!fades && wanted === undefined && this.highlighted === undefined) return false
@@ -2434,6 +2445,9 @@ export class TuiApp {
       case 'user/message':
         this.onUserMessage(event.data)
         break
+      case 'system/message':
+        this.onSystemMessage(event.data)
+        break
       case 'assistant/message': {
         const { message, usage, interrupted } = event.data
         const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('')
@@ -2534,11 +2548,20 @@ export class TuiApp {
       this.chat.addChild(new UserBlock(this.theme, [contentText(message.content), ...attachments].filter(part => part !== '').join('\n'), this.turn))
       return
     }
-    // Injected context (instructions, catalogs, runtime snapshots) is model-facing
-    // and drawn nowhere; a plugin notice carries a one-line account for the user.
-    if (source.kind === 'plugin' && source.form === 'notice') {
-      this.chat.addChild(new NoticeBlock(this.theme, source.summary))
-    }
+    const view = injectedContextView(source, message.content)
+    if (view === undefined) return
+    this.chat.addChild(new ContextBlock(this.theme, view.title, view.parts, this.turn))
+  }
+
+  /**
+   * Draw one nonempty system prompt as a navigable context block.
+   * @param data - the durable `system/message` payload.
+   */
+  private onSystemMessage(data: SessionEvent<'system/message'>['data']): void {
+    const view = systemPromptView(contentText(data.message.content), this.sawSystemPrompt)
+    if (view === undefined) return
+    this.sawSystemPrompt = true
+    this.chat.addChild(new ContextBlock(this.theme, view.title, view.parts, data.turn))
   }
 
   private presentCall(name: string, args: unknown): ToolCallView | undefined {

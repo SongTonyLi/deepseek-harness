@@ -225,6 +225,20 @@ export function todoLines(facts: StatusFacts): string[] {
 }
 
 /**
+ * One-line todo expansion for the status bar: the counts by status, and the
+ * item being worked on, or the next pending item when none is in progress.
+ * @param facts - the facts one status read produced.
+ * @returns the expansion; empty when no todo list is known.
+ */
+export function todoSummary(facts: StatusFacts): string {
+  if (facts.todos === undefined) return ''
+  const { items, done, active, pending } = facts.todos
+  const counts = `todos: ${String(done)} done · ${String(active)} active · ${String(pending)} pending`
+  const current = items.find(item => item.status === 'in_progress') ?? items.find(item => item.status === 'pending')
+  return current === undefined ? counts : `${counts} · ${current.content}`
+}
+
+/**
  * The goal section: phase, admitted rounds, objective, and the blocking
  * condition while the goal is blocked.
  * @param facts - the facts one status read produced.

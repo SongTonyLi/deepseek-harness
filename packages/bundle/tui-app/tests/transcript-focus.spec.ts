@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
+import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { KEY, bench, type Bench } from './bench.ts'
 
 /** The scrollback-clear sequence pi-tui writes on a full redraw. */
@@ -40,24 +41,26 @@ describe('walking the transcript', () => {
     await test.settle()
     const screen = await test.screen()
     expect(screen).toContain('3/3 · turn 1 · bash · result')
-    expect(screen).toContain('‹ call · result ›')
+    expect(screen).toContain('← 1 call · 2 result →')
     expect(screen).toContain('clean tree')
-    expect(screen).toContain('↑ ↓ blocks · ← → parts · Enter page · Esc back')
+    expect(screen).toContain('↑ ↓ sections · ← → parts · Enter page · Esc back')
     // The card itself carries the gutter, accented on the focused result rows.
     expect(screen).toContain('┃   │ clean tree')
     expect(screen).not.toContain('off screen')
   })
 
-  it('walks blocks with Up and Down and parts with Left and Right', async () => {
+  it('walks every section with Up and Down and stays inside a block with Left and Right', async () => {
     const test = await conversation()
     test.terminal.type(KEY.shiftUp)
-    test.terminal.type(KEY.left)
+    await test.settle()
+    expect(await test.screen()).toContain('3/3 · turn 1 · bash · result')
+    test.terminal.type(KEY.up)
     await test.settle()
     expect(await test.screen()).toContain('3/3 · turn 1 · bash · call')
     test.terminal.type(KEY.up)
     await test.settle()
     expect(await test.screen()).toContain('2/3 · turn 1 · reply')
-    test.terminal.type(KEY.left)
+    test.terminal.type(KEY.up)
     await test.settle()
     const reasoning = await test.screen()
     expect(reasoning).toContain('2/3 · turn 1 · reasoning')
@@ -65,24 +68,61 @@ describe('walking the transcript', () => {
     test.terminal.type(KEY.up)
     await test.settle()
     expect(await test.screen()).toContain('1/3 · turn 0 · you')
-    // The oldest block is the end of the walk, and a prompt has one part.
+    // The oldest section is the end of the walk, and a prompt has one part.
     test.terminal.type(KEY.up)
     test.terminal.type(KEY.left)
     test.terminal.type(KEY.right)
     await test.settle()
     const oldest = await test.screen()
     expect(oldest).toContain('1/3 · turn 0 · you')
-    expect(oldest).not.toContain('‹ you ›')
+    expect(oldest).not.toContain('← 1 you →')
     test.terminal.type(KEY.down)
     await test.settle()
+    expect(await test.screen()).toContain('2/3 · turn 1 · reasoning')
+    test.terminal.type(KEY.right)
+    await test.settle()
     expect(await test.screen()).toContain('2/3 · turn 1 · reply')
+  })
+
+  it('keeps Shift+Up and Shift+Down walking the transcript instead of jumping', async () => {
+    const test = await conversation()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.up)
+    await test.settle()
+    expect(await test.screen()).toContain('3/3 · turn 1 · bash · call')
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(await test.screen()).toContain('2/3 · turn 1 · reply')
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    const back = await test.screen()
+    expect(back).toContain('3/3 · turn 1 · bash · call')
+    expect(back).toContain('↑ ↓ sections')
+  })
+
+  it('focuses reasoning on a tool-call step that has no visible reply', async () => {
+    const test = await bench()
+    prompt(test, 'inspect it')
+    test.appendAssistant([{ type: 'reasoning', text: 'planning the call' }])
+    test.appendToolCall('call-1', 'bash', { command: 'git status' })
+    test.appendToolResult('call-1', [{ type: 'text', text: 'clean' }])
+    await test.settle()
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.up)
+    await test.settle()
+    const screen = await test.screen()
+    expect(screen).toContain('2/3 · turn 1 · reasoning')
+    expect(screen).toContain('planning the call')
+    expect(screen).not.toContain('2/3 · turn 1 · reply')
   })
 
   it('opens the focused section as a page and comes back to it', async () => {
     const test = await conversation()
     test.terminal.type(KEY.shiftUp)
     test.terminal.type(KEY.up)
-    test.terminal.type(KEY.left)
+    test.terminal.type(KEY.up)
+    test.terminal.type(KEY.up)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('↑ ↓ scroll · Enter, Esc, or ← returns')
@@ -102,7 +142,7 @@ describe('walking the transcript', () => {
     expect(test.calls.followups).toHaveLength(1)
     test.terminal.type(KEY.escape)
     await test.settle()
-    expect(await test.screen()).not.toContain('↑ ↓ blocks')
+    expect(await test.screen()).not.toContain('↑ ↓ sections')
     prompt(test, 'back to typing')
     await test.settle()
     expect(test.calls.followups.map(message => message.content).at(-1)).toEqual([{ type: 'text', text: 'back to typing' }])
@@ -111,7 +151,48 @@ describe('walking the transcript', () => {
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
-    expect(await test.screen()).not.toContain('↑ ↓ blocks')
+    expect(await test.screen()).not.toContain('↑ ↓ sections')
+  })
+
+  it('walks system prompts and injected context, and Left/Right walk snapshot contributions in full', async () => {
+    const history = [
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('You are the agent.', 'system-prompt') } },
+      { type: 'user/message', seq: 1, time: 1, data: createUserMessage({ content: [{ type: 'text', text: '# AGENTS.md' }], source: { kind: 'plugin', plugin: 'agent-instructions', form: 'instructions' } }) },
+      { type: 'user/message', seq: 2, time: 1, data: createUserMessage({
+        content: [{ type: 'text', text: 'assembled' }],
+        source: { kind: 'plugin', plugin: 'workspace', form: 'snapshot', sections: [
+          { name: 'sandbox', text: 'allow python' },
+          { name: 'git', text: 'clean tree' },
+        ] },
+      }) },
+    ] as never[]
+    const test = await bench({ history })
+    await test.settle()
+    const drawn = test.terminal.text()
+    expect(drawn).toContain('You are the agent.')
+    expect(drawn).toContain('# AGENTS.md')
+    expect(drawn).toContain('allow python')
+    expect(drawn).toContain('clean tree')
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(await test.screen()).toContain('3/3 · turn 0 · snapshot · workspace · git')
+    expect(await test.screen()).toContain('clean tree')
+    expect(await test.screen()).toContain('← 1 sandbox · 2 git →')
+    test.terminal.type(KEY.left)
+    await test.settle()
+    const sandbox = await test.screen()
+    expect(sandbox).toContain('sandbox')
+    expect(sandbox).toContain('allow python')
+    test.terminal.type(KEY.up)
+    await test.settle()
+    expect(await test.screen()).toContain('instructions · agent-instructions')
+    expect(await test.screen()).toContain('# AGENTS.md')
+    test.terminal.type(KEY.up)
+    await test.settle()
+    const system = await test.screen()
+    expect(system).toContain('system prompt')
+    expect(system).toContain('You are the agent.')
+    expect(system).not.toContain('system prompt update')
   })
 
   it('says so when the transcript has nothing to inspect yet', async () => {
@@ -153,7 +234,7 @@ describe('walking the transcript', () => {
 
     test.appendToolCall('call-2', 'bash', { command: 'ls' })
     await test.settle()
-    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.down)
     await test.settle()
     expect(await test.screen()).toContain('bash · running')
     test.appendToolResult('call-2', [{ type: 'text', text: 'one file' }])

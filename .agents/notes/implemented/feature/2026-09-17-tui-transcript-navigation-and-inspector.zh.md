@@ -12,19 +12,19 @@ Status: implemented
 
 各区域自上而下堆叠——对话记录的各个块、面板绘制期间子 agent 面板的各行、状态栏的各个分段——并由两个入口按键离开编辑器：`Shift+Up` 进入它上方的对话，`Shift+Down` 进入停靠在它下方的区域。`Shift+Up` 落在最新的块上，位于该块的最后一个小节；没有可检视内容的会话让键盘留在编辑器，并给出 `nothing in the transcript to inspect yet`。`Shift+Down` 在面板绘制期间落在面板的第一行，否则落在状态栏的第一个分段。
 
-在编辑器之外的每个区域内，方向键都表达空间关系。`Up` 与 `Down` 在区域内部移动，并在其末端跨入相邻区域——从最新的块进入面板或状态栏，从面板的第一行回到对话记录——且从不环绕，因此对话记录中最旧的块与状态栏是这个堆叠的两端。`Left` 与 `Right` 在所聚焦块的各部分之间、以及状态栏保留自身环绕行为的各分段之间移动；面板忽略它们。`Enter` 打开所聚焦的小节、行或分段，`Esc` 从任何区域返回编辑器。其余按键都被持有焦点的区域消费，因此敲下的字符不会落进用户并未注视的编辑器；`Ctrl+C` 与 `Ctrl+D` 保持其全局含义，并把键盘交还编辑器。
+在编辑器之外的每个区域内，方向键都表达空间关系。`Up` 与 `Down` 在区域内部移动，并在其末端跨入相邻区域——从最新的小节进入面板或状态栏，从面板的第一行回到对话记录——且从不环绕，因此对话记录中最旧的小节与状态栏是这个堆叠的两端。键盘位于对话期间，`Up` / `Down` 与 `Shift+Up` / `Shift+Down` 按阅读顺序走过每一个小节，而不是一次跳过整个块；`Left` 与 `Right` 留在所聚焦块的各部分之内，在状态栏上则在保留自身环绕行为的各分段之间移动；面板忽略它们。`Enter` 打开所聚焦的小节、行或分段，`Esc` 从任何区域返回编辑器。其余按键都被持有焦点的区域消费，因此敲下的字符不会落进用户并未注视的编辑器；`Ctrl+C` 与 `Ctrl+D` 保持其全局含义，并把键盘交还编辑器。
 
-所聚焦的小节显示在两处。`InspectorPane` 停靠在模态槽位与编辑器之间，完整地绘制该小节：一个空白分隔行、以粗体强调色绘制的标题 `3/12 · turn 2 · bash git status · result`、当块拥有多个部分时的部分条 `‹ reasoning · reply ›`、该小节自身按终端宽度折行并在 `focusPreviewLines` 行处以 `… N more rows · Enter opens the page` 收起的各行，以及暗色提示 `↑ ↓ blocks · ← → parts · Enter page · Esc back`。该面板每次渲染读取一次视图，而不是被推入视图，因此仍在流式输出的回复与刚刚落地的结果会随绘制它们的那一帧在其中生长；而键盘不在此处时它什么也不绘制。
+所聚焦的小节显示在两处。`InspectorPane` 停靠在模态槽位与编辑器之间，完整地绘制该小节：一个空白分隔行、以粗体强调色绘制的标题 `3/12 · turn 2 · bash git status · result`、当块拥有多个部分时带编号且会折行的部分条 `← 1 reasoning · 2 reply →`、该小节自身按终端宽度折行的各行——系统提示词或注入上下文画出全部各行，其余在 `focusPreviewLines` 行处以 `… N more rows · Enter opens the page` 收起，以及暗色提示 `↑ ↓ sections · ← → parts · Enter page · Esc back`。该面板每次渲染读取一次视图，而不是被推入视图，因此仍在流式输出的回复与刚刚落地的结果会随绘制它们的那一帧在其中生长；而键盘不在此处时它什么也不绘制。
 
 `Enter` 把该小节作为 `DetailPrompt` 打开——即先列表后详情的工作所定义的只读可滚动页面——沿用同一个标题并承载该部分的完整行；离开页面后键盘回到同一个小节。游标是一个块下标与一个部分下标，在页面往返与经由编辑器往返之间都被记住，并在每个按键之前对照此刻绘制的各块落定，因此在游标被取得之后新增了部分或块的对话记录仍然容得下它。
 
 块自身也被就地标记。它持有焦点期间，其内容按窄两列折行，并为每一行加上前缀栏：块自身的行用暗色 `│ `，所聚焦小节的行用强调色 `┃ `；工具卡片的截断标记行使用块的那一种，因为它代表的是两个小节共同略去的行。该前缀栏在任何淡入重新着色之后才被加上，因此淡入仍与块自身的文本匹配，而前缀栏自己的样式序列绝不进入那次匹配。
 
-`src/navigation.ts` 是纯数据——没有 pi-tui、没有调色板、没有时钟：它按 `navigable` 标记筛选对话记录容器的子组件，在其上移动一个 `TranscriptCursor`，把记住的游标对照当前各块落定，并构造标题与部分条。`src/inspector.ts` 持有纯函数 `renderInspector` 与每次渲染调用它的那一个组件；`src/screen.ts` 持有下文所述的屏幕子类。`focusPreviewLines` 是穿过 `TuiAppDeps` 的经校验配置字段（`z.natural().min(1).default(12)`），因此想要更高的检视区或屏幕上更多对话的部署从 `cordis.yml` 修改它。
+`src/navigation.ts` 是纯数据——没有 pi-tui、没有调色板、没有时钟：它按 `navigable` 标记筛选对话记录容器的子组件，在其上一次一个小节地移动一个 `TranscriptCursor`，把记住的游标对照当前各块落定，并构造标题与部分条。`src/inspector.ts` 持有纯函数 `renderInspector` 与每次渲染调用它的那一个组件；`src/screen.ts` 持有下文所述的屏幕子类。`focusPreviewLines` 是穿过 `TuiAppDeps` 的经校验配置字段（`z.natural().min(1).default(12)`），因此想要更高的检视区或屏幕上更多对话的部署从 `cordis.yml` 修改它。
 
 ## What a block exposes as sections
 
-三个对话记录组件各自报告它拿到的源文本，而不是它绘制出的渲染结果。`UserBlock` 承载一个带有已提交提示文本的 `user` 部分。`AssistantBlock` 在推理非空期间承载一个 `reasoning` 部分，随后是承载 Markdown 源文本的 `reply` 部分。`ToolBlock` 承载一个 `call` 部分——标题行与参数行，模型未传参数时为 `(no arguments)`——并在结果落地之后承载一个 `result` 部分，其中是未经截断的结果行，工具什么也没回答时为 `(no output)`。每个块还承载它被追加时所处的轮次，标题会陈述它；通知与打印出的行不带任何标记，因此键盘会跳过它们。
+每个可导航的对话记录组件都报告它拿到的源文本，而不是它绘制出的渲染结果。`UserBlock` 承载一个带有已提交提示文本的 `user` 部分。`AssistantBlock` 在推理非空期间承载一个 `reasoning` 部分，一旦可见文本到达再承载一个 `reply` 部分；仅当该消息没有推理时才保留空回复，因此一次工具调用步骤不会变成空白小节。`ToolBlock` 承载一个 `call` 部分——标题行与参数行，模型未传参数时为 `(no arguments)`——并在结果落地之后承载一个 `result` 部分，其中是未经截断的结果行，工具什么也没回答时为 `(no output)`。`ContextBlock` 承载非空的系统提示词或一条注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——并在对话记录中画出全部面向模型的各行；快照按具名贡献各成一部分，因此 Left/Right 走过每一份；无法阅读的贡献列表则回退到组装后的文本，因此一份贡献绝不会被空标签取代。空的系统提示词与压缩替换则省略。每个块还承载它被追加时所处的轮次，标题会陈述它；轮次结束通知与打印出的行不带任何标记，因此键盘会跳过它们。
 
 ## Highlighting inside the repaint window
 
@@ -54,13 +54,13 @@ pi-tui 的 `TuiMainScreen` 只对下标不小于 `previousViewportTop` 的各行
 
 ## Consequences
 
-- 编辑器的两个入口按键指明方向：`Shift+Up` 是对话，`Shift+Down` 是停靠区域，这替换了[可导航的终端状态栏](2026-09-16-tui-status-bar-navigation.zh.md)所定义的单一入口按键，以及[实时终端子 agent 面板与已用时间计数](2026-09-17-tui-live-subagent-panel.zh.md)对其所作的扩展。
+- 编辑器的两个入口按键指明方向：`Shift+Up` 是对话，`Shift+Down` 是停靠区域，这替换了[可导航的终端状态栏](2026-09-16-tui-status-bar-navigation.zh.md)所定义的单一入口按键，以及[实时终端子 agent 面板与已用时间计数](2026-09-17-tui-live-subagent-panel.zh.md)对其所作的扩展。一旦对话已有焦点，这两个带 Shift 的方向键与 `Up` / `Down` 一样走过各小节，而不再跳到某个区域。
 - 子 agent 面板的选择在两端停住而不环绕，因为第一行的 `Up` 与最后一行的 `Down` 属于它上方与下方的区域。
 - 键盘位于对话记录期间，检视区从对话那里占走若干行，这正是它的行数预算是配置字段而非常量的原因。
 - 位于重绘窗口之上的聚焦块在屏幕上不带任何标记；检视区是唯一始终显示的指示，并且会说明该块属于另一种情形。
 - 对话记录组件只有在带上标记、轮次、它的各部分与它的高亮渲染时才是可导航的；遗漏这些的新块类型会被键盘跳过，且不产生任何诊断。
 - 页面显示源文本，因此回复的 Markdown 读起来就是模型写下的样子——星号、代码围栏与表格——而不是对话记录渲染出的样子。
-- `tests/navigation.spec.ts` 固定纯粹的游标、标题与标签；`tests/inspector.spec.ts` 固定绘制出的面板；`tests/screen.spec.ts` 固定主屏幕交给守卫的重绘窗口（含帧变矮之后）与它的结算遍数；`tests/blocks.spec.ts` 固定每个块的小节与前缀栏；`tests/transcript-focus.spec.ts` 在伪终端上固定整套键盘行为，包括流式输出中的小节、会话切换与回滚区不变式。
+- `tests/context.spec.ts` 固定系统提示词与注入上下文的投影；`tests/navigation.spec.ts` 固定纯粹的游标、标题与标签；`tests/inspector.spec.ts` 固定绘制出的面板；`tests/screen.spec.ts` 固定主屏幕交给守卫的重绘窗口（含帧变矮之后）与它的结算遍数；`tests/blocks.spec.ts` 固定每个块的小节与前缀栏；`tests/transcript-focus.spec.ts` 在伪终端上固定整套键盘行为，包括流式输出中的小节、注入上下文、会话切换与回滚区不变式。
 
 ## Related decisions
 

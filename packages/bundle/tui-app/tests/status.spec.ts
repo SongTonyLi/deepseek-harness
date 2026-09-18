@@ -15,6 +15,7 @@ import {
   readStatusFacts,
   retryMessage,
   statusReport,
+  todoSummary,
   type StatusFacts,
   type StatusProjections,
 } from '../src/status.ts'
@@ -135,6 +136,38 @@ describe('footerStatus', () => {
   it('marks a pending plan switch and hides plan mode while off', () => {
     expect(footerStatus({ plan: { active: false, pending: true } })).toEqual([{ id: 'plan', label: 'plan…' }])
     expect(footerStatus({ plan: { active: false, pending: false } })).toEqual([])
+  })
+})
+
+describe('todoSummary', () => {
+  it('names the in-progress item after the counts, and the next pending item when none is running', () => {
+    expect(todoSummary({
+      todos: {
+        items: [
+          { content: 'read the spec', status: 'completed' },
+          { content: 'write the data layer', status: 'in_progress' },
+          { content: 'wire the picker', status: 'pending' },
+        ],
+        done: 1,
+        active: 1,
+        pending: 1,
+      },
+    })).toBe('todos: 1 done · 1 active · 1 pending · write the data layer')
+    expect(todoSummary({
+      todos: {
+        items: [{ content: 'write tests', status: 'completed' }, { content: 'ship', status: 'pending' }],
+        done: 1,
+        active: 0,
+        pending: 1,
+      },
+    })).toBe('todos: 1 done · 0 active · 1 pending · ship')
+  })
+
+  it('keeps the counts alone when every item is done, and is empty before the first write', () => {
+    expect(todoSummary({
+      todos: { items: [{ content: 'write tests', status: 'completed' }], done: 1, active: 0, pending: 0 },
+    })).toBe('todos: 1 done · 0 active · 0 pending')
+    expect(todoSummary({})).toBe('')
   })
 })
 

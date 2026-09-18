@@ -2,8 +2,11 @@
  * The transcript as a list of navigable sections.
  *
  * A conversation is drawn as one component per fact, and the keyboard walks it
- * in two directions: between blocks and, inside a block, between its parts -
- * the reasoning and the reply of a message, the call and the result of a tool.
+ * in two directions: `Up` / `Down` through every section in reading order —
+ * a system prompt, injected context, the reasoning and the reply of a message,
+ * the call and the result of a tool — and `Left` / `Right` between the parts
+ * of the held block without leaving it. Snapshot contributions are separate
+ * parts of one injected block, so the arrows walk each named piece of context.
  * This module turns the transcript container's children into that list and
  * moves one cursor over it. Everything here is plain data: no pi-tui, no
  * palette, no clock. The rows a part carries are the block's own source text,
@@ -18,13 +21,28 @@ import { assertNever } from '@deepseek-ai/dsh-util-values'
 const SEPARATOR = ' · '
 
 /** Which section of a block one part is. */
-export type SectionKind = 'user' | 'reasoning' | 'reply' | 'call' | 'result'
+export type SectionKind =
+  | 'user'
+  | 'reasoning'
+  | 'reply'
+  | 'call'
+  | 'result'
+  | 'system'
+  | 'instructions'
+  | 'catalog'
+  | 'snapshot'
+  | 'notice'
+  | 'relay'
+  | 'recall'
+  | 'context'
 
 /** One navigable section of a block. */
 export interface SectionPart {
   kind: SectionKind
   /** The section's full source rows, unwrapped and without palette styling. */
   rows: readonly string[]
+  /** Strip and heading label when it is not the kind name, e.g. a snapshot contribution. */
+  label?: string
 }
 
 /** What every navigable transcript block exposes, whatever kind it is. */
@@ -41,9 +59,9 @@ interface SectionSourceBase {
   parts(): readonly SectionPart[]
   /**
    * Draw this block with the focus mark, or without it.
-   * @param part - the section drawn as focused, or undefined to clear the mark.
+   * @param part - the index of the section drawn as focused, or undefined to clear the mark.
    */
-  setHighlight(part: SectionKind | undefined): void
+  setHighlight(part: number | undefined): void
 }
 
 /** A prompt the user submitted, as the keyboard sees it. */
@@ -65,13 +83,20 @@ export interface ToolSection extends SectionSourceBase {
   readonly title: string
 }
 
+/** A system prompt or injected context, as the keyboard sees it. */
+export interface ContextSection extends SectionSourceBase {
+  readonly blockKind: 'context'
+  /** Form and producer, a notice summary, or `system prompt` / `system prompt update`. */
+  readonly title: string
+}
+
 /**
  * A navigable transcript block: the sections the keyboard walks and the focus
- * mark it draws while one of them is held. `UserBlock`, `AssistantBlock`, and
- * `ToolBlock` implement it; notices and printed rows do not, which is how
- * {@link navigableBlocks} tells them apart.
+ * mark it draws while one of them is held. `UserBlock`, `AssistantBlock`,
+ * `ToolBlock`, and `ContextBlock` implement it; turn-end notices and printed
+ * rows do not, which is how {@link navigableBlocks} tells them apart.
  */
-export type SectionSource = UserSection | AssistantSection | ToolSection
+export type SectionSource = UserSection | AssistantSection | ToolSection | ContextSection
 
 /** Where the transcript focus sits: one block, and one part inside it. */
 export interface TranscriptCursor {
@@ -141,16 +166,68 @@ export function enterNewest(blocks: readonly SectionSource[]): TranscriptCursor 
 }
 
 /**
- * Move to another block, landing on its last part.
- * @param cursor - where the focus sits.
- * @param step - 1 for the next block, -1 for the previous one.
+ * Every section of the transcript in drawing order, oldest block first and
+ * each block's parts in reading order. Blocks that currently expose no parts
+ * are omitted, so a walk never lands on an empty index.
  * @param blocks - the navigable blocks.
- * @returns the new cursor; the cursor itself at either end of the list.
+ * @returns one cursor per section.
  */
-export function moveBlock(cursor: TranscriptCursor, step: number, blocks: readonly SectionSource[]): TranscriptCursor {
-  const block = clampIndex(cursor.block + step, blocks.length)
-  if (block === cursor.block) return cursor
-  return { block, part: Math.max(0, partCount(blocks, block) - 1) }
+function flattenSections(blocks: readonly SectionSource[]): TranscriptCursor[] {
+  const sections: TranscriptCursor[] = []
+  for (let block = 0; block < blocks.length; block += 1) {
+    const count = partCount(blocks, block)
+    for (let part = 0; part < count; part += 1) sections.push({ block, part })
+  }
+  return sections
+}
+
+/**
+ * Whether two cursors name the same section.
+ * @param left - one cursor.
+ * @param right - the other.
+ * @returns true when both name the same block and part.
+ */
+function sameSection(left: TranscriptCursor, right: TranscriptCursor): boolean {
+  return left.block === right.block && left.part === right.part
+}
+
+/**
+ * Index into a non-empty flattened section list.
+ * @param sections - the flattened sections; length at least 1.
+ * @param index - an in-range index.
+ * @param fallback - used when that index has no section.
+ * @returns that section.
+ */
+function sectionAt(sections: readonly TranscriptCursor[], index: number, fallback: TranscriptCursor): TranscriptCursor {
+  const section = sections[index]
+  /* v8 ignore next -- callers pass an in-range index into a non-empty list */
+  return section ?? fallback
+}
+
+/**
+ * Move to another section in reading order: the previous or next part of the
+ * held block, or the last or first part of the neighbouring block that has
+ * one. A block whose `parts()` is empty is skipped.
+ * @param cursor - where the focus sits.
+ * @param step - 1 for the next section, -1 for the previous one.
+ * @param blocks - the navigable blocks.
+ * @returns the new cursor; the cursor itself at either end of the transcript.
+ */
+export function moveSection(cursor: TranscriptCursor, step: number, blocks: readonly SectionSource[]): TranscriptCursor {
+  const sections = flattenSections(blocks)
+  if (sections.length === 0) return cursor
+  const settled = clampCursor(cursor, blocks)
+  if (settled === undefined) {
+    const index = step >= 0
+      ? sections.findIndex(section => section.block > cursor.block)
+      : sections.findLastIndex(section => section.block < cursor.block)
+    if (index < 0) return sectionAt(sections, step >= 0 ? sections.length - 1 : 0, cursor)
+    return sectionAt(sections, index, cursor)
+  }
+  const index = sections.findIndex(section => sameSection(section, settled))
+  /* v8 ignore next -- a settled cursor is always in flattenSections */
+  if (index < 0) return settled
+  return sectionAt(sections, clampIndex(index + step, sections.length), settled)
 }
 
 /**
@@ -219,6 +296,10 @@ function subjectOf(block: SectionSource, part: SectionPart): string[] {
       const settled = block.parts().some(candidate => candidate.kind === 'result')
       return [card, settled ? partLabel(part.kind) : 'running']
     }
+    case 'context':
+      return part.label === undefined || part.label === block.title
+        ? [block.title]
+        : [block.title, part.label]
     /* v8 ignore next -- closed-union exhaustiveness guard */
     default:
       return assertNever(block, 'tui transcript block kind')
@@ -250,5 +331,8 @@ export function sectionHeading(cursor: TranscriptCursor, blocks: readonly Sectio
 export function partLabels(cursor: TranscriptCursor, blocks: readonly SectionSource[]): PartLabel[] {
   const block = blocks[cursor.block]
   if (block === undefined) return []
-  return block.parts().map((part, index) => ({ label: partLabel(part.kind), focused: index === cursor.part }))
+  return block.parts().map((part, index) => ({
+    label: part.label ?? partLabel(part.kind),
+    focused: index === cursor.part,
+  }))
 }

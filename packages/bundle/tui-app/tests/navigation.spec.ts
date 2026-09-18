@@ -5,26 +5,26 @@ import {
   clampCursor,
   enterNewest,
   isSectionSource,
-  moveBlock,
   movePart,
+  moveSection,
   navigableBlocks,
   partLabels,
   sectionHeading,
   type AssistantSection,
-  type SectionKind,
+  type ContextSection,
   type SectionPart,
   type ToolSection,
   type UserSection,
 } from '../src/navigation.ts'
 
 /** Every mark a fake block was told to draw, in the order it was told. */
-const marks: (SectionKind | undefined)[] = []
+const marks: (number | undefined)[] = []
 
 /**
  * Record one mark for the block that received it.
- * @param part - the focused section, or undefined to clear the mark.
+ * @param part - the focused section index, or undefined to clear the mark.
  */
-function mark(part: SectionKind | undefined): void {
+function mark(part: number | undefined): void {
   marks.push(part)
 }
 
@@ -55,6 +55,16 @@ function assistantBlock(parts: SectionPart[]): AssistantSection {
  */
 function toolBlock(name: string, title: string, parts: SectionPart[]): ToolSection {
   return { blockKind: 'tool', name, title, navigable: true, turn: 2, parts: () => parts, setHighlight: mark }
+}
+
+/**
+ * A system prompt or injected context with fixed parts.
+ * @param title - the heading name.
+ * @param parts - its sections in reading order.
+ * @returns the block.
+ */
+function contextBlock(title: string, parts: SectionPart[]): ContextSection {
+  return { blockKind: 'context', title, navigable: true, turn: 0, parts: () => parts, setHighlight: mark }
 }
 
 const prompt = userBlock(['read the spec', 'then fix it'])
@@ -91,14 +101,35 @@ describe('entering and moving', () => {
     expect(enterNewest([assistantBlock([])])).toBeUndefined()
   })
 
-  it('moves between blocks and lands on the destination\'s last part', () => {
-    expect(moveBlock({ block: 2, part: 0 }, -1, blocks)).toEqual({ block: 1, part: 1 })
-    expect(moveBlock({ block: 1, part: 1 }, -1, blocks)).toEqual({ block: 0, part: 0 })
+  it('walks every section in reading order, crossing from a block into its neighbour', () => {
+    expect(moveSection({ block: 2, part: 1 }, -1, blocks)).toEqual({ block: 2, part: 0 })
+    expect(moveSection({ block: 2, part: 0 }, -1, blocks)).toEqual({ block: 1, part: 1 })
+    expect(moveSection({ block: 1, part: 1 }, -1, blocks)).toEqual({ block: 1, part: 0 })
+    expect(moveSection({ block: 1, part: 0 }, -1, blocks)).toEqual({ block: 0, part: 0 })
+    expect(moveSection({ block: 0, part: 0 }, 1, blocks)).toEqual({ block: 1, part: 0 })
+    expect(moveSection({ block: 1, part: 0 }, 1, blocks)).toEqual({ block: 1, part: 1 })
+    expect(moveSection({ block: 1, part: 1 }, 1, blocks)).toEqual({ block: 2, part: 0 })
   })
 
-  it('stays on the held part at either end of the list', () => {
-    expect(moveBlock({ block: 0, part: 0 }, -1, blocks)).toEqual({ block: 0, part: 0 })
-    expect(moveBlock({ block: 2, part: 0 }, 1, blocks)).toEqual({ block: 2, part: 0 })
+  it('stays on the held section at either end of the transcript', () => {
+    expect(moveSection({ block: 0, part: 0 }, -1, blocks)).toEqual({ block: 0, part: 0 })
+    expect(moveSection({ block: 2, part: 1 }, 1, blocks)).toEqual({ block: 2, part: 1 })
+  })
+
+  it('skips a neighbouring block that has no parts', () => {
+    const empty = assistantBlock([])
+    const withGap = [prompt, empty, card]
+    expect(moveSection({ block: 0, part: 0 }, 1, withGap)).toEqual({ block: 2, part: 0 })
+    expect(moveSection({ block: 2, part: 0 }, -1, withGap)).toEqual({ block: 0, part: 0 })
+    expect(moveSection({ block: 1, part: 0 }, 1, withGap)).toEqual({ block: 2, part: 0 })
+    expect(moveSection({ block: 1, part: 0 }, -1, withGap)).toEqual({ block: 0, part: 0 })
+    expect(moveSection({ block: 1, part: 0 }, 1, [card, empty])).toEqual({ block: 0, part: 1 })
+    expect(moveSection({ block: 0, part: 0 }, -1, [empty, card])).toEqual({ block: 1, part: 0 })
+  })
+
+  it('has nowhere to walk when every block is empty', () => {
+    expect(moveSection({ block: 0, part: 0 }, 1, [])).toEqual({ block: 0, part: 0 })
+    expect(moveSection({ block: 0, part: 0 }, 1, [assistantBlock([])])).toEqual({ block: 0, part: 0 })
   })
 
   it('moves between the parts of one block and stops at both ends', () => {
@@ -157,6 +188,19 @@ describe('sectionHeading', () => {
     expect(sectionHeading({ block: 9, part: 0 }, blocks)).toBe('')
     expect(sectionHeading({ block: 0, part: 9 }, blocks)).toBe('')
   })
+
+  it('names a system prompt and each snapshot contribution', () => {
+    const context = [
+      contextBlock('system prompt', [{ kind: 'system', rows: ['You are the agent.'] }]),
+      contextBlock('snapshot · workspace', [
+        { kind: 'snapshot', label: 'sandbox', rows: ['allow python'] },
+        { kind: 'snapshot', label: 'git', rows: ['clean'] },
+      ]),
+    ]
+    expect(sectionHeading({ block: 0, part: 0 }, context)).toBe('1/2 · turn 0 · system prompt')
+    expect(sectionHeading({ block: 1, part: 0 }, context)).toBe('2/2 · turn 0 · snapshot · workspace · sandbox')
+    expect(sectionHeading({ block: 1, part: 1 }, context)).toBe('2/2 · turn 0 · snapshot · workspace · git')
+  })
 })
 
 describe('partLabels', () => {
@@ -168,6 +212,22 @@ describe('partLabels', () => {
     expect(partLabels({ block: 0, part: 0 }, blocks)).toEqual([{ label: 'you', focused: true }])
   })
 
+  it('uses a snapshot contribution name as the strip label', () => {
+    const snapshot = contextBlock('snapshot · workspace', [
+      { kind: 'snapshot', label: 'sandbox', rows: ['allow python'] },
+      { kind: 'snapshot', label: 'git', rows: ['clean'] },
+    ])
+    expect(partLabels({ block: 0, part: 1 }, [snapshot])).toEqual([
+      { label: 'sandbox', focused: false },
+      { label: 'git', focused: true },
+    ])
+  })
+
+  it('does not repeat a contribution name that already is the title', () => {
+    const named = contextBlock('sandbox', [{ kind: 'snapshot', label: 'sandbox', rows: ['allow'] }])
+    expect(sectionHeading({ block: 0, part: 0 }, [named])).toBe('1/1 · turn 0 · sandbox')
+  })
+
   it('lists nothing for a cursor past the blocks', () => {
     expect(partLabels({ block: 9, part: 0 }, blocks)).toEqual([])
   })
@@ -175,8 +235,8 @@ describe('partLabels', () => {
 
 describe('setHighlight', () => {
   it('carries the focused section, and clears the mark with undefined', () => {
-    reply.setHighlight('reply')
+    reply.setHighlight(1)
     card.setHighlight(undefined)
-    expect(marks).toEqual(['reply', undefined])
+    expect(marks).toEqual([1, undefined])
   })
 })

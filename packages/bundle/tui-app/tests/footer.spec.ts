@@ -189,9 +189,25 @@ describe('buildFooterSegments', () => {
     expect(rows(built, 'plan')).toEqual(['plan: on', '/status prints all of these sections'])
   })
 
-  it('hands the todo fact to the app instead of building rows for it', () => {
-    const built = buildFooterSegments(inputs({ facts }))
-    expect(segment(built, 'todo').detail).toEqual({ kind: 'page' })
+  it('hands the todo fact to the app and summarises the counts plus the item being worked on', () => {
+    const built = buildFooterSegments(inputs({
+      facts: {
+        todos: {
+          items: [
+            { content: 'read the spec', status: 'completed' },
+            { content: 'write the data layer', status: 'in_progress' },
+            { content: 'wire the picker', status: 'pending' },
+          ],
+          done: 1,
+          active: 1,
+          pending: 1,
+        },
+      },
+    }))
+    expect(segment(built, 'todo').detail).toEqual({
+      kind: 'page',
+      summary: 'todos: 1 done · 1 active · 1 pending · write the data layer',
+    })
     expect(() => rows(built, 'todo')).toThrow('opened by the app')
   })
 
@@ -257,17 +273,17 @@ describe('renderFooter', () => {
     expect(styled[0]).not.toContain('\n')
   })
 
-  it('keeps model, effort, a running turn, context, and workspace on the unfocused line', () => {
+  it('keeps model, effort, a running turn, context, todo, and workspace on the unfocused line', () => {
     const [line] = renderFooter(buildFooterSegments(crowded()), { palette, width: WIDE })
     expect(line).toContain('deepseek/deepseek-chat')
     expect(line).toContain('effort high')
     expect(line).toContain('turn 1m12s')
     expect(line).toContain('ctx 42%')
+    expect(line).toContain('todo 1/1')
     expect(line).toContain('/work')
     expect(line).toContain('Shift+↓')
     expect(line).toMatch(/\+\d/u)
     expect(line).not.toContain('permission')
-    expect(line).not.toContain('todo 1/1')
     expect(line).not.toContain('goal active')
     expect(line).not.toContain('2 attached')
     expect(line).not.toContain('↑1.2k')
@@ -330,11 +346,25 @@ describe('renderFooter', () => {
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(40)
   })
 
-  it('summarises a page segment on the expansion line from its label', () => {
-    const built = buildFooterSegments(inputs({ facts }))
+  it('expands the todo segment with the counts and the item being worked on, not the chip', () => {
+    const built = buildFooterSegments(inputs({
+      facts: {
+        todos: {
+          items: [
+            { content: 'read the spec', status: 'completed' },
+            { content: 'write the data layer', status: 'in_progress' },
+            { content: 'wire the picker', status: 'pending' },
+          ],
+          done: 1,
+          active: 1,
+          pending: 1,
+        },
+      },
+    }))
     const todo = footerSelectionIndex(built, 'todo')
     const [, expansion] = renderFooter(built, { palette, selected: todo, width: WIDE })
-    expect(expansion).toContain('todo 1/1')
+    expect(expansion).toContain('todos: 1 done · 1 active · 1 pending · write the data layer')
+    expect(expansion).not.toContain('todo 1/3 · ← → select')
     expect(expansion).toContain('← → select')
   })
 })

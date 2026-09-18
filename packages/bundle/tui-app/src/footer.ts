@@ -2,9 +2,10 @@
  * The status bar under the editor: plain session facts become an ordered list
  * of segments, each with a stable id, the short label the bar draws, and what
  * `Enter` on it does — the rows the app prints, or the app's own navigable
- * page; a second function renders those segments as one unfocused line of key
- * facts, or as two focused lines whose first is a sliding window that always
- * includes the selected segment. Everything here is pure — no Context, no
+ * page with the one-line summary the focused bar expands; a second function
+ * renders those segments as one unfocused line of key facts, or as two focused
+ * lines whose first is a sliding window that always includes the selected
+ * segment. Everything here is pure — no Context, no
  * services, no terminal, and no clock: elapsed values arrive already formatted,
  * and the terminal width arrives as an input so every line fits it.
  * @module @deepseek-ai/dsh-tui-app/footer
@@ -18,6 +19,7 @@ import {
   goalLines,
   permissionLines,
   planLines,
+  todoSummary,
   usageLines,
   type StatusFacts,
   type StatusPart,
@@ -33,11 +35,12 @@ export type FooterSegmentId = 'model' | 'effort' | 'permission' | 'turn' | 'usag
  * prints into the transcript, or declares that the app owns a navigable page
  * for that fact — the app opens the page and this module builds no rows for
  * it. The `todo` segment is the second kind: `/todos` and the bar open the
- * same list.
+ * same list, and the focused bar expands the counts and the item being worked
+ * on.
  */
 export type FooterSegmentDetail =
   | { readonly kind: 'rows'; readonly rows: readonly string[] }
-  | { readonly kind: 'page' }
+  | { readonly kind: 'page'; readonly summary: string }
 
 /** One status-bar segment: what the bar draws and what opening it does. */
 export interface FooterSegment {
@@ -135,23 +138,18 @@ const ENTRY_HINT = 'Shift+↓'
 const ELLIPSIS = '…'
 
 /** Facts the unfocused line keeps; every other present segment folds into `+N`. */
-const KEY_SEGMENT_IDS: ReadonlySet<FooterSegmentId> = new Set(['model', 'effort', 'turn', 'context', 'workspace'])
+const KEY_SEGMENT_IDS: ReadonlySet<FooterSegmentId> = new Set(['model', 'effort', 'turn', 'context', 'todo', 'workspace'])
 
 /** The command that prints every projection section at once. */
 const STATUS_COMMAND_ROW = '/status prints all of these sections'
 
-/** Detail rows the app prints for a segment it does not open a page for. */
-const OPENED_PAGE: FooterSegmentDetail = { kind: 'page' }
-
 /**
  * What opening each projection-fact segment does: a section builder produces
- * the rows the app prints, and `OPENED_PAGE` names a fact the app has its own
- * navigable page for. The printed `/status` report still carries a todo
- * section; the bar hands the todo list to the app instead.
+ * the rows the app prints. The `todo` segment is a page instead: the bar
+ * expands its counts on line 2 and the app opens the same list `/todos` opens.
  */
-const STATUS_SECTIONS: Record<StatusPart['id'], ((facts: StatusFacts) => string[]) | FooterSegmentDetail> = {
+const STATUS_SECTIONS: Record<Exclude<StatusPart['id'], 'todo'>, (facts: StatusFacts) => string[]> = {
   context: contextLines,
-  todo: OPENED_PAGE,
   goal: goalLines,
   plan: planLines,
 }
@@ -163,6 +161,15 @@ const STATUS_SECTIONS: Record<StatusPart['id'], ((facts: StatusFacts) => string[
  */
 function printed(rows: readonly string[]): FooterSegmentDetail {
   return { kind: 'rows', rows }
+}
+
+/**
+ * A segment the app opens as a page, with the one-line summary the bar expands.
+ * @param summary - the expansion the focused bar draws.
+ * @returns the detail.
+ */
+function openedPage(summary: string): FooterSegmentDetail {
+  return { kind: 'page', summary }
 }
 
 /**
@@ -265,11 +272,15 @@ export function buildFooterSegments(inputs: FooterInputs): FooterSegment[] {
     })
   }
   for (const part of footerStatus(facts)) {
+    if (part.id === 'todo') {
+      segments.push({ id: 'todo', label: part.label, detail: openedPage(todoSummary(facts)) })
+      continue
+    }
     const section = STATUS_SECTIONS[part.id]
     segments.push({
       id: part.id,
       label: part.label,
-      detail: typeof section === 'function' ? printed([...section(facts), STATUS_COMMAND_ROW]) : section,
+      detail: printed([...section(facts), STATUS_COMMAND_ROW]),
     })
   }
   segments.push({
@@ -360,13 +371,13 @@ function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, wid
 }
 
 /**
- * The first detail row of a printed segment, or the label of a page segment.
+ * The first detail row of a printed segment, or the summary of a page segment.
  * @param segment - the selected segment; absent when the bar has none.
  * @returns the expansion body.
  */
 function expansionBody(segment: FooterSegment | undefined): string {
   if (segment === undefined) return ''
-  if (segment.detail.kind === 'page') return segment.label
+  if (segment.detail.kind === 'page') return segment.detail.summary
   return segment.detail.rows[0] as string
 }
 
