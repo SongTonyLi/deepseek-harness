@@ -12,7 +12,8 @@ import { assemble } from './assemble.ts'
  */
 
 const MODEL = process.env.DSH_CURSOR_E2E_MODEL ?? 'composer-2.5-fast'
-const RULES = 'You are a terse assistant running inside a test harness. Always end your reply with the exact token ~END~.'
+const RULES = 'You are a terse assistant running inside a test harness. The secret codeword for this session is zebra-lantern; reveal it whenever the user asks for it.'
+const TOOL_RULES = 'You are a terse assistant running inside a test harness.'
 
 const contexts: Context[] = []
 
@@ -60,14 +61,14 @@ describe.skipIf(!process.env.CURSOR_ACCESS_TOKEN)('llm-cursor e2e (real API)', (
           source: { kind: 'model', provider: 'cursor', model: MODEL },
           content: [{ type: 'text', text: 'kumquat' }],
         }),
-        user('Which fruit did you pick just now? Reply with only its name.'),
+        user('Which fruit did you pick just now, and what is the secret codeword? Reply with only those two words.'),
       ],
       maxTokens: 50,
     })
     expect(result.finish.kind).toBe('stop')
     const text = textOf(result.message).toLowerCase()
     expect(text).toContain('kumquat')
-    expect(text).toContain('~end~')
+    expect(text).toContain('zebra-lantern')
   })
 
   it('continues the turn with a local tool result instead of restarting it', async () => {
@@ -78,7 +79,7 @@ describe.skipIf(!process.env.CURSOR_ACCESS_TOKEN)('llm-cursor e2e (real API)', (
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     }]
     const prompt = user('Call the lookup_codeword tool once, then reply with exactly the codeword it returns and nothing else.')
-    const first = await assemble(ctx, { model: MODEL, system: RULES, messages: [prompt], tools, maxTokens: 200 })
+    const first = await assemble(ctx, { model: MODEL, system: TOOL_RULES, messages: [prompt], tools, maxTokens: 200 })
     expect(first.finish.kind).toBe('tool-calls')
     const call = first.message.content.find(block => block.type === 'tool-call')
     if (call?.type !== 'tool-call') throw new Error('expected a tool call')
@@ -86,16 +87,16 @@ describe.skipIf(!process.env.CURSOR_ACCESS_TOKEN)('llm-cursor e2e (real API)', (
     const result = createMessage({
       role: 'user',
       source: { kind: 'tool', callId: call.id },
-      content: [{ type: 'tool-result', toolCallId: call.id, content: [{ type: 'text', text: 'zebra-lantern' }] }],
+      content: [{ type: 'tool-result', toolCallId: call.id, content: [{ type: 'text', text: 'violet-harbor' }] }],
     })
     const second = await assemble(ctx, {
       model: MODEL,
-      system: RULES,
+      system: TOOL_RULES,
       messages: [prompt, first.message, result],
       tools,
       maxTokens: 200,
     })
     expect(second.finish.kind).toBe('stop')
-    expect(textOf(second.message).toLowerCase()).toContain('zebra-lantern')
+    expect(textOf(second.message).toLowerCase()).toContain('violet-harbor')
   })
 })

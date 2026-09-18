@@ -9,6 +9,7 @@ import {
   buildPromptMessages,
   conversationFromOptions,
   decodeMcpArgsMap,
+  NATIVE_TOOLS_RULE,
   TOOL_RESULT_CONTINUATION_TEXT,
 } from '../src/request.ts'
 import type { CursorRunPayload } from '../src/request.ts'
@@ -303,6 +304,36 @@ describe('buildCursorRun', () => {
       { role: 'user', content: [{ type: 'text', text: '<rules>\nsys\n</rules>' }] },
     ])
     expect(payload.mcpTools[0]?.providerIdentifier).toBe('dsh')
+  })
+
+  it('carries the adapter tool notice as the one global Cursor rule', () => {
+    const payload = buildCursorRun({
+      provider: 'cursor',
+      model: 'composer-2',
+      system: 'sys',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+    })
+    expect(payload.rules.map(rule => ({ fullPath: rule.fullPath, content: rule.content, type: rule.type?.type.case }))).toEqual([
+      { fullPath: 'dsh/cursor-adapter', content: NATIVE_TOOLS_RULE, type: 'global' },
+    ])
+    expect(NATIVE_TOOLS_RULE).toContain('mcp_dsh_')
+  })
+
+  it('estimates prompt tokens from rules, replayed history, the action text, and tool definitions', () => {
+    const short = buildCursorRun({
+      provider: 'cursor',
+      model: 'composer-2',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+    })
+    const long = buildCursorRun({
+      provider: 'cursor',
+      model: 'composer-2',
+      system: 'x'.repeat(4_000),
+      messages: [...toolCallHistory, createUserMessage({ content: [{ type: 'text', text: 'y'.repeat(400) }], source: { kind: 'user' } })],
+      tools: [{ name: 'echo', description: 'z'.repeat(400), parameters: { type: 'object', properties: {} } }],
+    })
+    expect(short.inputTokenEstimate).toBeGreaterThan(0)
+    expect(long.inputTokenEstimate).toBeGreaterThan(short.inputTokenEstimate + 1_000)
   })
 
   it('replays the in-flight turn with its tool results and sends the continuation notice after local tool results', () => {
