@@ -24,6 +24,11 @@
   - paragraph: 填入各提供方的 API 密钥即可使用其模型。
   - list:
     - listitem:
+      - text: Cursor
+      - button "编辑 Cursor (cursor)": 编辑
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
+    - listitem:
       - text: openrouter
       - button "编辑 openrouter": 编辑
       - button "删除 openrouter": 删除

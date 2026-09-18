@@ -78,6 +78,8 @@ describe.skipIf(MODE === 'record')('web e2e: another usable provider ends first-
       { timeout: 10_000 },
     ).toBe(1)
     await settings.getByRole('button', { name: '编辑 DeepSeek (deepseek-official)' }).waitFor({ timeout: 10_000 })
+    await settings.getByRole('button', { name: '登录', exact: true }).waitFor({ timeout: 10_000 })
+    expect(await settings.getByText('Cursor', { exact: true }).count()).toBe(1)
     const dismissed = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
     await compareOrRefreshGolden(DISMISSED_EXPECTED, dismissed, MODE)
 

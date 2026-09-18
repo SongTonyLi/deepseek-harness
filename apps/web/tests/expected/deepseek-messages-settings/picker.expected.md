@@ -5,3 +5,11 @@
       - text: Messages Flash
       - img
     - menuitemradio "DeepSeek-V4-Pro"
+  - group "Cursor":
+    - text: Cursor
+    - menuitemradio "Composer 2"
+    - menuitemradio "Composer 2 Fast"
+    - menuitemradio "Composer 1.5"
+    - menuitemradio "Claude 4.5 Sonnet"
+    - menuitemradio "Claude 4.6 Opus"
+    - menuitemradio "GPT-5.1"

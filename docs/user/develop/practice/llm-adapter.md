@@ -148,8 +148,9 @@ The repository contains complete implementations:
 
 - `packages/llm/llm-deepseek/` — DeepSeek API adapter using the OpenAI-compatible format
 - `packages/llm/llm-pi-ai/` — Pi AI adapter using a different API format
+- `packages/llm/llm-cursor/` — Cursor subscription adapter using unofficial Connect/protobuf HTTP/2
 
-Compare the two shipped adapters to see the same harness contract implemented over different provider SDKs.
+Compare the shipped adapters to see the same harness contract implemented over different provider APIs.
 
 ## Error handling
 

@@ -86,10 +86,14 @@ describe('ui-settings-signin browser plugin', () => {
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
 
-    const card = b.slots.entries('settings.models.provider-card')[0]!
-    expect(card.component).toBe(SignInCard)
-    expect(card.options).toMatchObject({ key: 'llm-pi-ai' })
-    expect(card.locale).toBe(NS)
+    const card = b.slots.entries('settings.models.provider-card')
+    expect(card).toHaveLength(2)
+    expect(card.map(entry => entry.options)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'llm-pi-ai' }),
+      expect.objectContaining({ key: 'llm-cursor' }),
+    ]))
+    expect(card[0]!.component).toBe(SignInCard)
+    expect(card[0]!.locale).toBe(NS)
     const footer = b.slots.entries('settings.models.footer')[0]!
     expect(footer.component).toBe(SignInFooter)
     expect(footer.options).toMatchObject({ id: 'signin-dialog', order: 0 })
@@ -129,7 +133,7 @@ describe('ui-settings-signin browser plugin', () => {
     stop()
     expect(b.slots.entries('settings.models.footer')).toHaveLength(0)
     declare(b.slots)
-    await vi.waitFor(() => { expect(b.slots.entries('settings.models.provider-card')).toHaveLength(1) })
+    await vi.waitFor(() => { expect(b.slots.entries('settings.models.provider-card')).toHaveLength(2) })
     await fiber.dispose()
   })
 

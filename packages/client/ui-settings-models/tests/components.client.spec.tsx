@@ -9,7 +9,7 @@ import type {
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
-  ModelsSection, needsSetup, providerCopy, providerTargetLabel, removeProviderProfile,
+  ModelsSection, needsSetup, showsApiKeyCredentialStatus, providerCopy, providerTargetLabel, removeProviderProfile,
 } from '../src/client/ModelsSection.tsx'
 import type { ModelsSectionInjected, ModelsSectionProps } from '../src/client/ModelsSection.tsx'
 import { pathOps } from '../src/client/ProviderEditor.tsx'
@@ -473,6 +473,42 @@ describe('ModelsSection', () => {
     expect(screen.getByText('zombie').closest('li')?.querySelector('[role="img"]')).toBeNull()
   })
 
+  it('does not paint an API-key missing dot on the Cursor subscription row', async () => {
+    const { face } = scriptedFace()
+    face.llm.listProviders.mockResolvedValue(remoteOk([{ id: 'cursor', name: 'Cursor' }]))
+    face.llm.listConfigurableProviders.mockResolvedValue(remoteOk([
+      { provider: 'cursor', displayName: 'Cursor', settingsNs: 'llm-cursor', settingsPath: [] },
+    ]))
+    face.settings.describe.mockResolvedValue(remoteOk({
+      writable: true,
+      hasDocument: false,
+      namespaces: [
+        ...wireNamespaces(),
+        {
+          ns: 'llm-cursor',
+          schema: { type: 'object', properties: { apiKeyEnv: { type: 'string' } } },
+          value: { apiKeyEnv: 'CURSOR_ACCESS_TOKEN' },
+          applies: 'live',
+          secrets: [],
+          revision: 0,
+        },
+      ],
+    }))
+    const controller = new ModelsSettingsStore(ctxWith(face), settingsSchema, new SettingsDescribeMirror(ctxWith(face)))
+    await controller.load()
+    render(<ModelsSection
+      controller={controller}
+      useSnapshot={bindSnapshotSelector(controller.store)}
+      operations={operationsWith(face)}
+      schema={settingsSchema}
+      t={t}
+      renderSlot={() => null}
+    />)
+    expect(screen.getByText('Cursor')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: en.credentialMissing })).toBeNull()
+    expect(screen.queryByRole('img', { name: en.credentialConfigured })).toBeNull()
+  })
+
   it('turns the setup card into a row once the credential reports configured', async () => {
     const { face } = await mountFirstRun()
     face.credentials.describe.mockImplementation((refs: string[]) => Promise.resolve(remoteOk(
@@ -510,6 +546,15 @@ describe('ModelsSection', () => {
     // A user who can already reach some provider is not in the first-run
     // posture, so nothing on the page opens itself.
     expect(needsSetup(row(undefined), true)).toBe(false)
+    expect(needsSetup({
+      ...row(undefined),
+      entry: { ...entry, provider: 'cursor', settingsNs: 'llm-cursor' },
+    }, false)).toBe(false)
+    expect(showsApiKeyCredentialStatus(row(undefined))).toBe(true)
+    expect(showsApiKeyCredentialStatus({
+      ...row(undefined),
+      entry: { ...entry, provider: 'cursor', settingsNs: 'llm-cursor' },
+    })).toBe(false)
   })
 
   it('derives conventional credential references from route ids', () => {

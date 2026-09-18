@@ -60,11 +60,11 @@ The plugin fills the two seats the Models section declares and adds nothing to t
 
 ### Two seats, one snapshot
 
-`settings.models.provider-card` is keyed by the owning settings namespace, so registering one entry under `llm-pi-ai` reaches every card of that adapter family; the area then renders only where the provider's flow offers a subscription method. `settings.models.footer` carries the dialog, which belongs to the page rather than to a card: an attempt survives its card scrolling out of view, and only one runs at a time. Both seats receive the same snapshot store, so the card and the dialog can never disagree about what is running.
+`settings.models.provider-card` is keyed by the owning settings namespace, so registering one entry under `llm-pi-ai` or `llm-cursor` reaches every card of that adapter family; the area then renders only where the provider's flow offers a subscription method. `settings.models.footer` carries the dialog, which belongs to the page rather than to a card: an attempt survives its card scrolling out of view, and only one runs at a time. Both seats receive the same snapshot store, so the card and the dialog can never disagree about what is running.
 
 ### The flow directory
 
-The Host's flow list is joined by provider route: a flow whose record scope is the pi-ai adapter family names a provider in its record id, and a flow from any other plugin addresses something that is not a provider and is left alone. The directory is re-read at mount, after every attempt settles anywhere, after any credential record changes, and after a reconnect — so a sign-in completed in a second tab converges here without polling. A refused read keeps the last good rows rather than emptying the controls mid-attempt.
+The Host's flow list is joined by provider route: a flow whose record scope is an adapter-family settings namespace (`llm-pi-ai` or `llm-cursor`) names a provider in its record id, and a flow from any other plugin addresses something that is not a provider and is left alone. The directory is re-read at mount, after every attempt settles anywhere, after any credential record changes, and after a reconnect — so a sign-in completed in a second tab converges here without polling. A refused read keeps the last good rows rather than emptying the controls mid-attempt.
 
 ### One attempt
 
@@ -92,7 +92,8 @@ These pages move from the page this plugin extends to the Host halves behind it.
 - [ui-settings-models](../ui-settings-models/README.md) — the Models page declaring both seats this plugin fills.
 - [api-authorization-controller](../../api/authorization-controller/README.md) — the Remote namespace behind every call here.
 - [dsh-authorization](../../credentials/authorization/README.md) — the seam that owns the flows and the attempt lifecycle.
-- [llm-pi-ai](../../llm/llm-pi-ai/README.md) — the adapter registering one login per installed provider.
+- [llm-pi-ai](../../llm/llm-pi-ai/README.md) — the adapter registering one login per installed catalog provider.
+- [llm-cursor](../../llm/llm-cursor/README.md) — the always-on Cursor subscription adapter and its PKCE flow.
 - [Configure models](../../../docs/user/guide/providers.md) — the user guide covering both key and sign-in providers.
 
 -----
@@ -114,9 +115,9 @@ These limits define where the surface stops; they are current package constraint
 
 - **Reloading the page abandons a running sign-in** — the attempt lives in the stream that started it, so the human starts over. A completed sign-in is durable; only an unfinished one is lost.
 - **Sign-out forgets locally** — the stored credential is deleted without telling the provider, so a subscription session stays valid on the provider's side until revoked there.
-- **Only adapter-family providers get the seat** — the card seat is keyed by the pi-ai settings namespace, so a flow registered by a plugin that is not an LLM adapter has no home on this page.
+- **Only adapter-family providers get the seat** — the card seat is keyed by adapter-family settings namespaces (`llm-pi-ai`, `llm-cursor`), so a flow registered by a plugin that is not an LLM adapter has no home on this page.
 - **A key-collecting login is not offered here** — a provider whose only login prompts for an API key keeps the card's own key field, because storing the same secret as a record instead of a reference would leave two places to look for it.
-- **Signing in does not add the provider's route** — a signed-in provider still needs its Models row, because which routes a deployment serves stays a settings decision.
+- **Signing in does not add a dormant catalog route** — a signed-in pi-ai provider still needs its Models row, because which catalog routes a deployment serves stays a settings decision. The Cursor route is already registered when `llm-cursor` is mounted.
 
 <a id="dev-note"></a>
 ### Dev Note

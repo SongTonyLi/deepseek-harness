@@ -8,7 +8,8 @@
 // the endpoint, and a declared route's own name and protocol — as merge
 // patches against the stored profile. Zero model calls: configuration is pure
 // settings/credentials/llm-domain traffic, so there is no fixture and a
-// stray stream would fail loud because the adapter registry is empty. The provider under test is
+// stray stream would fail loud: DeepSeek is disabled and Cursor has no
+// credential. The provider under test is
 // minimax-cn so a developer's real ANTHROPIC/OPENAI environment keys can
 // never shadow the derived reference. The deletion dialog distinguishes a
 // reference-free profile from a page-managed key before the credential and
@@ -76,8 +77,10 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     await dialog.waitFor({ timeout: 10_000 })
     await dialog.getByRole('button', { name: '模型' }).click()
     await dialog.getByText('填入各提供方的 API 密钥即可使用其模型。').waitFor({ timeout: 10_000 })
-    // The dormant pi-ai adapter contributes its whole installed catalog; no
-    // provider is configured yet, so the page is one add button.
+    // Cursor is always-on, so its Sign-in card is already a row. The dormant
+    // pi-ai adapter still contributes its whole installed catalog to Add provider.
+    await dialog.getByRole('button', { name: '登录', exact: true }).waitFor({ timeout: 10_000 })
+    expect(await dialog.getByText('Cursor', { exact: true }).count()).toBe(1)
     const add = dialog.getByRole('button', { name: '添加提供方' })
     await add.waitFor({ timeout: 10_000 })
     // The button enables once the dormant catalog lands in the join.
@@ -98,7 +101,7 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
   it('refuses a key no HTTP header can carry before anything is written', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-models-illegal-key'))
     const dialog = page.getByRole('dialog', { name: '设置' })
-    const key = dialog.getByLabel('API 密钥')
+    const key = dialog.getByRole('textbox', { name: 'API 密钥' })
     const save = dialog.getByRole('button', { name: '保存', exact: true })
 
     // A key no HTTP header can carry would save cleanly and fail the first

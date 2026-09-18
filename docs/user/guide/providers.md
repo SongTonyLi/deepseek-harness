@@ -8,7 +8,7 @@ This guide assumes you started the Web UI through the [root README](../../../REA
 
 Open **Settings → Models**. The DeepSeek card exposes one API-key field; enter the key and save it.
 
-![The Models page: the DeepSeek card, with Add provider and Add a custom provider below it](providers-models-page.png)
+![The Models page: the DeepSeek card, the Cursor card, with Add provider and Add a custom provider below them](providers-models-page.png)
 
 Keys are write-only. The page receives a redacted descriptor after saving, never the literal secret. The key is stored in `$DSH_HOME/.credentials.yaml`, while settings retain only its credential reference.
 
@@ -18,9 +18,9 @@ Choose **Add provider** and pick a provider dsh ships with; the list shows provi
 
 ## Sign in to a provider
 
-Some providers take a sign-in instead of an API key. Codex is the one most people want: signing in with a ChatGPT Plus or Pro account makes the GPT-5 and GPT-6 Codex models available through that subscription, with no API key and no per-token billing.
+Some providers take a sign-in instead of an API key. Codex is one: signing in with a ChatGPT Plus or Pro account makes the GPT-5 and GPT-6 Codex models available through that subscription, with no API key and no per-token billing. Cursor is another: the Cursor card is already on the Models page when the plugin is mounted, and signing in with a Cursor subscription uses that account for the `cursor` route.
 
-Choose **Add provider**, pick `openai-codex`, and save it; then choose **Sign in** on its card. A dialog opens with a link to the provider's page. Complete the sign-in there and the dialog reports success. If the provider asks anything on the way — which login method to use, a code to paste back — the dialog asks it too, and **Continue** sends your answer.
+For Codex, choose **Add provider**, pick `openai-codex`, and save it; then choose **Sign in** on its card. For Cursor, choose **Sign in** on the Cursor card directly. A dialog opens with a link to the provider's page. Complete the sign-in there and the dialog reports success. If the provider asks anything on the way — which login method to use, a code to paste back — the dialog asks it too, and **Continue** sends your answer.
 
 On a machine with no browser, pick the device-code method when the provider offers it: the dialog then shows a short code to type on the page it names, from any other device.
 
@@ -28,7 +28,7 @@ A signed-in provider shows **Signed in with a provider subscription** on its car
 
 Providers that ship a subscription login show these controls; the rest ask only for an API key, in the card's own field. A sign-in is stored in `$DSH_HOME/.credentials.yaml` alongside your keys, and refreshes itself.
 
-The terminal (`dsh tui`) signs in through two commands: configure the route with `/settings llm-pi-ai providers.openai-codex {}`, then `/login llm-pi-ai/openai-codex`. The sign-in page opens in the default browser while its address stays printed in the transcript; over SSH or with `dsh tui --no-open`, open that address yourself, and the device-code method works there too.
+The terminal (`dsh tui`) signs in through `/login`. Codex needs the route first: `/settings llm-pi-ai providers.openai-codex {}`, then `/login llm-pi-ai/openai-codex`. Cursor is already registered: `/login llm-cursor/cursor`. The sign-in page opens in the default browser while its address stays printed in the transcript; over SSH or with `dsh tui --no-open`, open that address yourself, and the device-code method works there too.
 
 ## Add a custom provider
 
@@ -52,7 +52,7 @@ If a saved default names a provider that was deleted, the composer displays **Se
 
 ## Advanced configuration
 
-The generated [plugin configuration catalog](../../config-catalog.md) lists every supported field and default for every plugin; [`dsh-llm-pi-ai`](../../config-catalog.md#deepseek-aidsh-llm-pi-ai) is the provider section this page configures. The [`dsh-llm-pi-ai`](../../../packages/llm/llm-pi-ai/README.md) and [`dsh-llm-deepseek`](../../../packages/llm/llm-deepseek/README.md) references own direct `settings.yaml` configuration, catalog resolution, reasoning controls, credentials, and adapter errors.
+The generated [plugin configuration catalog](../../config-catalog.md) lists every supported field and default for every plugin; [`dsh-llm-pi-ai`](../../config-catalog.md#deepseek-aidsh-llm-pi-ai) is the provider section this page configures for catalog routes, and [`dsh-llm-cursor`](../../config-catalog.md#deepseek-aidsh-llm-cursor) is the Cursor subscription adapter. The [`dsh-llm-pi-ai`](../../../packages/llm/llm-pi-ai/README.md), [`dsh-llm-deepseek`](../../../packages/llm/llm-deepseek/README.md), and [`dsh-llm-cursor`](../../../packages/llm/llm-cursor/README.md) references own direct `settings.yaml` configuration, catalog resolution, credentials, and adapter errors.
 
 ::: tip Additional settings
 The Models page exposes the API key, display name, base URL, API protocol, and each model's id, display name, context window, max output tokens, and input types. Configure reasoning effort levels, request-compatibility switches, headers, timeouts, and retry policy in `$DSH_HOME/settings.yaml`, the same document the page writes. Edit it directly, or, when the browser runs on the same machine as the server, open it with **Open configuration file** in the Settings header; the adapters re-read it on the next request, so nothing needs a restart. The subsections below cover the fields most gateways need.

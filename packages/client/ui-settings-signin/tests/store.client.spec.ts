@@ -25,6 +25,16 @@ const ANTHROPIC: AuthorizationFlowView = {
   kind: 'grant',
 }
 
+const CURSOR: AuthorizationFlowView = {
+  key: 'llm-cursor/cursor',
+  scope: 'llm-cursor',
+  id: 'cursor',
+  label: 'Cursor',
+  methods: [{ id: 'oauth', label: 'Cursor subscription' }],
+  inFlight: false,
+  configured: false,
+}
+
 /** A flow owned by some other plugin, which the Models page must not claim. */
 const FOREIGN: AuthorizationFlowView = {
   ...CODEX,
@@ -69,7 +79,7 @@ function scriptedStream() {
   }
 }
 
-function bench(overrides: Partial<SignInOperations> = {}, flows: AuthorizationFlowView[] = [CODEX, ANTHROPIC, FOREIGN]) {
+function bench(overrides: Partial<SignInOperations> = {}, flows: AuthorizationFlowView[] = [CODEX, ANTHROPIC, CURSOR, FOREIGN]) {
   const stream = scriptedStream()
   const signals: AbortSignal[] = []
   const calls = {
@@ -94,6 +104,7 @@ async function settled(controller: SignInController, until: (state: ReturnType<S
 describe('the flow join', () => {
   it('keys flows by provider route and ignores a flow another plugin owns', () => {
     expect(providerOf(CODEX)).toBe('openai-codex')
+    expect(providerOf(CURSOR)).toBe('cursor')
     expect(providerOf(FOREIGN)).toBeUndefined()
   })
 
@@ -107,14 +118,14 @@ describe('the flow join', () => {
 
   it('loads only the provider flows and keeps the last good set when a read is refused', async () => {
     const list = vi.fn<SignInOperations['list']>()
-      .mockResolvedValueOnce([CODEX, ANTHROPIC, FOREIGN])
+      .mockResolvedValueOnce([CODEX, ANTHROPIC, CURSOR, FOREIGN])
       .mockResolvedValueOnce(undefined)
     const { controller } = bench({ list })
     await controller.load()
-    expect([...controller.store.getSnapshot().flows.keys()]).toEqual(['openai-codex', 'anthropic'])
+    expect([...controller.store.getSnapshot().flows.keys()]).toEqual(['openai-codex', 'anthropic', 'cursor'])
     expect(controller.store.getSnapshot().loaded).toBe(true)
     await controller.load()
-    expect([...controller.store.getSnapshot().flows.keys()]).toEqual(['openai-codex', 'anthropic'])
+    expect([...controller.store.getSnapshot().flows.keys()]).toEqual(['openai-codex', 'anthropic', 'cursor'])
   })
 })
 
