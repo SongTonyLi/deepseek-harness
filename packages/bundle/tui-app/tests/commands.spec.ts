@@ -187,8 +187,14 @@ describe('session commands', () => {
       before: (ctx) => { ctx.provide('permissionPresets', { current: (session: Session) => presets.get(session.id) } as never) },
     })
     expect(test.terminal.text()).not.toContain('permission')
+    expect(test.terminal.text()).not.toContain('+1')
     presets.set(test.session.id, 'workspace-write')
     test.session.append('permission/preset', { preset: 'workspace-write' })
+    await test.settle()
+    // Unfocused, the new permission fact folds into +N rather than crowding the key line.
+    expect(test.terminal.text()).toContain('+1')
+    expect(test.terminal.text()).not.toContain('permission workspace-write')
+    test.terminal.type(KEY.shiftDown)
     await test.settle()
     expect(test.terminal.text()).toContain('permission workspace-write')
   })
@@ -213,7 +219,7 @@ describe('attachments', () => {
     typeLine(test.terminal, `/attach ${join(dir, 'shot.png')}`)
     await test.settle()
     expect(test.terminal.text()).toContain('attached file notes.txt')
-    expect(test.terminal.text()).toContain('2 attached')
+    expect(test.terminal.text()).toContain('+1')
     typeLine(test.terminal, '/attach')
     await test.settle()
     expect(test.terminal.text()).toContain('attached: notes.txt, shot.png')
@@ -226,7 +232,7 @@ describe('attachments', () => {
     ])
     expect(test.terminal.text()).toContain('[file: notes.txt] [image: shot.png]')
     // The hint line ends with the keys that leave the editor for the other regions.
-    expect(test.terminal.text().trimEnd().endsWith('Shift+↓ status bar')).toBe(true)
+    expect(test.terminal.text().trimEnd().endsWith('Shift+↓')).toBe(true)
     expect(test.terminal.text().split('\n').filter(line => line.includes('/work')).at(-1)).not.toContain('attached')
     typeLine(test.terminal, `/attach ${join(dir, 'notes.txt')}`)
     await test.settle()

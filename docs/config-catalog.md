@@ -3533,24 +3533,24 @@ export interface Config {
    */
   liveRefreshMs: number
   /**
-   * Brightness levels streamed assistant text, streamed reasoning, and a tool
-   * card climb through before they draw in the colors the terminal itself
-   * gives them: each enters near the terminal background and brightens one
-   * level per {@link Config.streamFadeStepMs}, so one word, one reasoning
-   * word, or one card reaches its settled color `streamFadeSteps *
-   * streamFadeStepMs` after it appeared. Each word carries the moment it
-   * appeared, so a fast stream leaves a longer trail of brightening words and
-   * never a darker one. Two levels is the shortest ramp that still shows; more
-   * levels spread the same period over a softer trailing edge. Text that has
-   * settled is never dimmed again.
+   * How long one streamed fade lasts, in `streamFadeStepMs` ticks: reply text
+   * fades in from near the terminal background toward the terminal foreground,
+   * while reasoning and tool cards appear at a lifted color and recede to the
+   * colors they settle in, over `streamFadeSteps * streamFadeStepMs`. Each
+   * reply word carries the moment it appeared, so a fast stream leaves a
+   * longer trail of brightening words and never a darker one. Two is the
+   * shortest step count that still shows a ramp; more steps spread the same
+   * duration over a softer trailing edge. Text that has settled is never
+   * dimmed again.
    */
   streamFadeSteps: number
   /**
-   * How long one brightness level lasts, in milliseconds, which is also the
-   * repaint period of the fading text. The terminal arms this repaint only
-   * while a word or a card still draws below the last level and disarms it as
-   * soon as the last one settles, so an idle session runs no timer. A shorter
-   * period draws a smoother fade at the cost of more redraws.
+   * How long one fade tick lasts, in milliseconds, which is also the
+   * repaint period while anything is still fading. Duration of each fade is
+   * `streamFadeSteps * streamFadeStepMs`. The terminal arms this repaint only
+   * while a word or a card still differs from its settled colors and disarms
+   * it as soon as the last one settles, so an idle session runs no timer. A
+   * shorter period draws a smoother fade at the cost of more redraws.
    */
   streamFadeStepMs: number
   /**

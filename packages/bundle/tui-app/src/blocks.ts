@@ -133,14 +133,13 @@ export interface FadeRender {
   flush(): void
 }
 
-/** The live fade of one block that brightens as a unit rather than word by word. */
+/** The live fade of one block that floats out as a unit rather than word by word. */
 export interface BlockFade {
   /**
-   * The brightness level the block's rows draw at. Read per render, not
+   * The fractional age the block's rows draw at. Read per render, not
    * captured: the application ages it on the wall clock.
-   * @returns the level, or undefined once the block draws in the colors it
-   * rendered itself, which is the same "the last level is the terminal's own
-   * foreground" rule the word tail follows.
+   * @returns elapsed `stepMs` units, or undefined once the block draws in the
+   * colors it rendered itself.
    */
   age(): number | undefined
   /**
@@ -156,8 +155,9 @@ export interface BlockFade {
  * durable `assistant/message` replaces both with the committed content.
  *
  * A block that is streaming right now can carry a {@link FadeRender} for its
- * text and another for its reasoning, each drawing that region's newest words
- * dimmed and brightening. A block rebuilt from history carries neither, and
+ * text and another for its reasoning. Visible text draws newest words dimmed
+ * and brightening; reasoning floats out from a lifted color toward the dim
+ * italic it settles in. A block rebuilt from history carries neither, and
  * {@link AssistantBlock.commit} drops the ones a streaming block had, so
  * settled text is never recolored.
  */
@@ -235,7 +235,8 @@ export class AssistantBlock implements Component, AssistantSection {
   setRepaintFloor(floor: number): boolean {
     if (floor <= this.repaintFloor) return false
     this.repaintFloor = floor
-    return drawnSpans(this.fade).length > 0 || drawnSpans(this.reasoningFade).length > 0
+    return (this.fade !== undefined && fadingInSpans(this.fade).length > 0)
+      || (this.reasoningFade !== undefined && floatingOutSpans(this.reasoningFade).length > 0)
   }
 
   /**
@@ -303,13 +304,11 @@ export class AssistantBlock implements Component, AssistantSection {
   }
 
   /**
-   * The reasoning lines, with the streaming tail recolored.
+   * The reasoning lines, with the streaming tail floated out toward dim italic.
    *
-   * The ramp climbs towards the assumed terminal foreground, but the reasoning
-   * draws inside the faint and italic sequences `appendReasoning` wrapped it
-   * in, and a recolored run reasserts the styling in force at its start. The
-   * tail therefore arrives at the dim foreground the settled reasoning carries,
-   * not at the plain one.
+   * The mix starts at a lifted color and recedes to the faint foreground the
+   * settled reasoning already carries. At full age the original dim italic
+   * bytes come back unchanged.
    * @param width - the width the reasoning lays out in.
    * @param at - index of the region's first line in this block's render.
    * @returns the lines to draw.
@@ -320,7 +319,7 @@ export class AssistantBlock implements Component, AssistantSection {
     if (fade === undefined) return lines
     if (this.reasoningFadeWidth !== undefined && this.reasoningFadeWidth !== width) fade.flush()
     this.reasoningFadeWidth = width
-    return recolorTail(lines, drawnSpans(fade), fade.style(), this.repaintFloor - at)
+    return recolorTail(lines, floatingOutSpans(fade), fade.style(), this.repaintFloor - at, 'out')
   }
 
   /**
@@ -340,7 +339,7 @@ export class AssistantBlock implements Component, AssistantSection {
     if (fade === undefined) return lines
     if (this.fadeWidth !== undefined && this.fadeWidth !== width) fade.flush()
     this.fadeWidth = width
-    return recolorTail(lines, drawnSpans(fade), fade.style(), this.repaintFloor - at)
+    return recolorTail(lines, fadingInSpans(fade), fade.style(), this.repaintFloor - at)
   }
 }
 
@@ -350,8 +349,8 @@ export type ToolCardStatus = 'running' | 'done' | 'error'
 /**
  * A tool call card: status glyph, tool name, headline, then a foldable body.
  *
- * The card arrives in two pieces, and each fades in on its own: the header and
- * the call rows when the call is logged, the result rows when the tool
+ * The card arrives in two pieces, and each floats out on its own: the header
+ * and the call rows when the call is logged, the result rows when the tool
  * answers. A card rebuilt from history carries neither fade.
  */
 export class ToolBlock implements Component, ToolSection {
@@ -419,7 +418,7 @@ export class ToolBlock implements Component, ToolSection {
 
   /**
    * Hand the rows the renderer can no longer repaint back to the colors this
-   * card drew them in, so a fade that is still climbing never rewrites them.
+   * card drew them in, so a fade that is still moving never rewrites them.
    * @param floor - this card's own first repaintable line; the application
    * raises it as the frame grows and never lowers it.
    * @returns whether the floor took rows away from a fade that is drawing
@@ -488,11 +487,11 @@ export class ToolBlock implements Component, ToolSection {
 }
 
 /**
- * Draw one group of a card's rows at the level its fade reports.
+ * Draw one group of a card's rows at the mix its fade reports.
  * @param lines - the group's final rendered lines.
  * @param fade - the group's fade; absent for a card that never faded.
  * @param from - first line of the group the fade may recolor.
- * @returns the lines at that level, or the lines themselves once the fade
+ * @returns the lines at that mix, or the lines themselves once the fade
  * settled or was never attached.
  */
 function faded(lines: readonly string[], fade: BlockFade | undefined, from: number): readonly string[] {
@@ -502,16 +501,29 @@ function faded(lines: readonly string[], fade: BlockFade | undefined, from: numb
 }
 
 /**
- * The tail chunks one streaming region still draws below the terminal's own
+ * The tail chunks one streaming reply still draws below the terminal's own
  * foreground.
  *
  * The last ramp level is an assumed foreground - pi-tui reports the terminal
  * background but not its foreground - so a chunk that reached it is left to
  * draw in the terminal's own foreground, which is also what it draws in once it
  * leaves the tail. No chunk can therefore jump color as it settles.
- * @param fade - the region's fade; absent for a region that never faded.
+ * @param fade - the region's fade.
  * @returns the spans to recolor, oldest first.
  */
-function drawnSpans(fade: FadeRender | undefined): readonly FadeSpan[] {
-  return fade === undefined ? [] : fade.spans().filter(span => span.age < fade.steps - 1)
+function fadingInSpans(fade: FadeRender): readonly FadeSpan[] {
+  return fade.spans().filter(span => span.age < fade.steps - 1)
+}
+
+/**
+ * The tail chunks one streaming reasoning region still floats out.
+ *
+ * Overlay continues until `age >= steps`, which is `steps * stepMs` after the
+ * word appeared. The last overlay sits near the dim settle; the next frame is
+ * the original dim italic bytes.
+ * @param fade - the region's fade.
+ * @returns the spans to recolor, oldest first.
+ */
+function floatingOutSpans(fade: FadeRender): readonly FadeSpan[] {
+  return fade.spans().filter(span => span.age < fade.steps)
 }

@@ -6,8 +6,8 @@
  * the editor it keeps two docked regions the keyboard can take over — the
  * subagent panel and the status bar — and one repeating tick advances their
  * elapsed counters and re-reads a stale subagent listing. A second tick, at
- * its own period, brightens the text of the message streaming right now and
- * the tool cards that just landed, each only as far up the frame as the
+ * its own period, brightens streamed reply text and floats out reasoning and
+ * tool cards that just landed, each only as far up the frame as the
  * renderer repaints without discarding the terminal's scrollback
  * (`./screen.ts`).
  * @module @deepseek-ai/dsh-tui-app/app
@@ -95,9 +95,9 @@ import {
 } from './navigation.ts'
 import {
   FIRST_FOOTER_SEGMENT,
+  FooterBar,
   buildFooterSegments,
   footerSelectionIndex,
-  renderFooter,
   type FooterSegment,
   type FooterSegmentId,
 } from './footer.ts'
@@ -386,7 +386,7 @@ export class TuiApp {
   /** Holds {@link panel} exactly while the bound session has subagent rows. */
   private readonly panelSlot = new Container()
   private readonly panel: Text
-  private readonly footer: Text
+  private readonly footer: FooterBar
   private readonly modals: ModalQueue
   private readonly theme: BlockTheme
   private readonly toolBlocks = new Map<ToolCallId, ToolBlock>()
@@ -478,7 +478,13 @@ export class TuiApp {
     }))
     this.editor.onSubmit = (text) => { this.onSubmit(text) }
     this.panel = new Text('', 0, 0)
-    this.footer = new Text('', 0, 0)
+    this.footer = new FooterBar(() => ({
+      segments: this.segments,
+      render: {
+        palette: this.deps.palette,
+        ...this.focus === 'bar' ? { selected: footerSelectionIndex(this.segments, this.barSelection) } : {},
+      },
+    }))
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
     const tree = [this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.editor, this.panelSlot, this.footer]
     for (const child of tree) this.tui.addChild(child)
@@ -742,7 +748,6 @@ export class TuiApp {
   }
 
   private refreshFooter(): void {
-    const palette = this.deps.palette
     const permission = this.deps.ctx.get('permissionPresets')?.current(this.agent.session)
     const started = this.turnStartedAt
     const inbox = this.agent.inbox
@@ -764,14 +769,6 @@ export class TuiApp {
       home: this.home,
       attachments: this.pending.map(attachment => ({ name: attachment.name, kind: attachment.block.type })),
     })
-    const hints = this.agent.status === 'running'
-      ? 'Enter queues for the next turn · Ctrl+S steers this turn · Esc stops it · Ctrl+O tool output · Ctrl+C twice quits'
-      : 'Enter sends · Esc stops the turn · Ctrl+O tool output · Ctrl+C twice quits'
-    this.footer.setText(renderFooter(this.segments, {
-      palette,
-      ...this.focus === 'bar' ? { selected: footerSelectionIndex(this.segments, this.barSelection) } : {},
-      hints,
-    }))
     this.tui.requestRender()
   }
 
@@ -1262,7 +1259,8 @@ export class TuiApp {
 
   /**
    * Answer one key while the status bar holds focus. Every key is consumed
-   * here, so nothing typed at the bar reaches the editor.
+   * here, so nothing typed at the bar reaches the editor. `Shift+Left` and
+   * `Shift+Right` move between segments the same way as `Left` and `Right`.
    * @param data - the raw key bytes.
    * @returns the consume marker the input listener returns.
    */
@@ -1276,11 +1274,11 @@ export class TuiApp {
       else this.focusTranscript()
       return { consume: true }
     }
-    if (matchesKey(data, 'left') || matchesKey(data, 'shift+tab')) {
+    if (matchesKey(data, 'left') || matchesKey(data, 'shift+left') || matchesKey(data, 'shift+tab')) {
       this.moveStatusBar(-1)
       return { consume: true }
     }
-    if (matchesKey(data, 'right') || matchesKey(data, 'tab')) {
+    if (matchesKey(data, 'right') || matchesKey(data, 'shift+right') || matchesKey(data, 'tab')) {
       this.moveStatusBar(1)
       return { consume: true }
     }
@@ -1695,7 +1693,7 @@ export class TuiApp {
       'Esc stops the running turn · Ctrl+O expands or collapses tool output',
       'Shift+Tab cycles the current model\'s reasoning effort for the next request',
       'Shift+Up focuses the transcript, Shift+Down the subagent panel or the status bar',
-      'Then ↑ ↓ move between blocks, panel rows, and the bar; ← → move between a block\'s parts or the bar\'s segments',
+      'Then ↑ ↓ move between blocks, panel rows, and the bar; ← → move between a block\'s parts or the bar\'s segments (Shift+← → also move the bar)',
       'Enter opens the focused section or segment, Esc returns to the input',
       'Ctrl+C clears the input (twice quits) · Ctrl+D on an empty input quits',
     ]
@@ -2196,9 +2194,9 @@ export class TuiApp {
   }
 
   /**
-   * Take one reasoning delta, which fades in on its own tail: the reasoning
-   * and the visible text of one message stream at different times and each
-   * brightens from the moment its own words appeared.
+   * Take one reasoning delta, which floats out on its own tail: the reasoning
+   * and the visible text of one message stream at different times, and each
+   * ages from the moment its own words appeared.
    * @param delta - the streamed reasoning delta.
    */
   private appendStreamedReasoning(delta: string): void {

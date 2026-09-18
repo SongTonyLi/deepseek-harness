@@ -156,6 +156,8 @@ export const KEY = {
   right: '\u001b[C',
   shiftUp: '\u001b[1;2A',
   shiftDown: '\u001b[1;2B',
+  shiftLeft: '\u001b[1;2D',
+  shiftRight: '\u001b[1;2C',
   tab: '\t',
   shiftTab: '\u001b[Z',
   space: ' ',

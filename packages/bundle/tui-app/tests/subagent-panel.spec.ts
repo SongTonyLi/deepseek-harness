@@ -108,11 +108,7 @@ describe('renderSubagentPanel', () => {
 
   it('heads the panel with the count and stays quiet while the keyboard is elsewhere', () => {
     const built = view([child('session-kid'), child('session-other')])
-    expect(renderSubagentPanel(built, { palette })).toBe([
-      'subagents · 2 listed',
-      'session-kid · one-shot · resident · idle',
-      'session-other · one-shot · resident · idle',
-    ].join('\n'))
+    expect(renderSubagentPanel(built, { palette })).toBe('subagents · 2 listed · session-kid')
   })
 
   it('names its keys and accents the selected row while it holds the keyboard', () => {
@@ -126,9 +122,13 @@ describe('renderSubagentPanel', () => {
 
   it('counts the rows it did not draw and carries the last listing failure', () => {
     const entries = Array.from({ length: SUBAGENT_PANEL_MAX_ROWS + 1 }, (_, index) => child(`session-${String(index)}`))
-    const drawn = renderSubagentPanel(view(entries), { palette, failure: 'the listing timed out' })
-    expect(drawn).toContain(`subagents · ${String(SUBAGENT_PANEL_MAX_ROWS + 1)} listed`)
-    expect(drawn).toContain('+1 more · /subagents lists them all')
-    expect(drawn).toContain('listing failed: the listing timed out')
+    const listed = `subagents · ${String(SUBAGENT_PANEL_MAX_ROWS + 1)} listed`
+    const unfocused = renderSubagentPanel(view(entries), { palette, failure: 'the listing timed out' })
+    expect(unfocused).toBe(`${listed} · session-0 · listing failed: the listing timed out`)
+    expect(unfocused).not.toContain('+1 more')
+    const focused = renderSubagentPanel(view(entries), { palette, selected: 0, failure: 'the listing timed out' })
+    expect(focused).toContain(listed)
+    expect(focused).toContain('+1 more · /subagents lists them all')
+    expect(focused).toContain('listing failed: the listing timed out')
   })
 })

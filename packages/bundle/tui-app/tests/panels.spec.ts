@@ -34,20 +34,20 @@ function projectionsStub(values: () => Record<string, unknown>): { stub: NonNull
 
 describe('status', () => {
   it('folds the projection seam into the footer, redraws on change, and prints /status', async () => {
-    let todos: unknown[] = []
+    const extra: { todos?: unknown[] } = {}
     const projections = projectionsStub(() => ({
       contextPressure: { projectedTokens: 54_000, pressureTokens: 50_000, contextWindow: 128_000 },
-      todos,
       plan: { active: true, pending: false },
+      ...extra,
     }))
     const test = await bench({ projections: projections.stub })
     await test.settle()
     expect(test.terminal.text()).toContain('ctx 42%')
-    expect(test.terminal.text()).toContain('plan')
-    todos = [{ id: '1', content: 'write tests', status: 'completed' }, { id: '2', content: 'ship', status: 'pending' }]
+    expect(test.terminal.text()).toContain('+1')
+    extra.todos = [{ id: '1', content: 'write tests', status: 'completed' }, { id: '2', content: 'ship', status: 'pending' }]
     projections.fire(test.session)
     await test.settle()
-    expect(test.terminal.text()).toContain('todo 1/2')
+    expect(test.terminal.text()).toContain('+2')
     typeLine(test.terminal, '/status')
     await test.settle()
     expect(test.terminal.text()).toContain('context: ~54k / 128k (42%)')
@@ -462,9 +462,12 @@ describe('todo list', () => {
   it('opens the same list from the status bar, leaving the segment label alone', async () => {
     const test = await bench({ projections: projectionsStub(() => ({ todos: mixed })).stub })
     await test.settle()
-    expect(test.terminal.text()).toContain('todo 1/3')
-    // The bar holds the model segment first; the todo segment is the next one.
+    expect(test.terminal.text()).toContain('+1')
+    // The bar holds the model segment first; effort is always next, then todo.
     test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(test.terminal.text()).toContain('todo 1/3')
+    test.terminal.type(KEY.right)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
@@ -557,6 +560,7 @@ describe('todo list', () => {
       },
     })
     test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()

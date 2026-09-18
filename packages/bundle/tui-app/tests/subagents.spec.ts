@@ -3,6 +3,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
+import { createPalette } from '../src/style.ts'
+import { SUBAGENT_PANEL_MAX_ROWS, renderSubagentPanel, subagentPanelView } from '../src/subagent-panel.ts'
 
 /** One descendant listing entry, as the subagent runtime answers with. */
 function entry(id: string, extra: Record<string, unknown> = {}): unknown {
@@ -66,7 +68,8 @@ describe('the live subagent panel', () => {
     listed = [entry('session-kid')]
     await reconcile(test, kid)
     expect(test.terminal.text()).toContain('subagents · 1 listed')
-    expect(test.terminal.text()).toContain('session-kid · one-shot · resident · running')
+    expect(test.terminal.text()).toContain('session-kid')
+    expect(test.terminal.text()).not.toContain('one-shot · resident · running')
 
     // The child settles: its session record is no longer resident, so the
     // listing keeps it and the panel does not.
@@ -98,8 +101,15 @@ describe('the live subagent panel', () => {
     waiting.setStatus('idle')
     test.tick(0)
     await test.settle()
+    const unfocused = await test.screen()
+    expect(unfocused).toContain('subagents · 3 listed')
+    expect(unfocused.split('\n').find(line => line.includes('subagents ·'))?.trim())
+      .toBe('subagents · 3 listed · session-kid')
+    expect(unfocused).not.toContain('↑ ↓ select')
+    test.terminal.type(KEY.shiftDown)
     const screen = await test.screen()
     expect(screen).toContain('subagents · 3 listed')
+    expect(screen).toContain('↑ ↓ select · Enter details · Esc back')
     expect(panelRow(screen, 'session-kid')).toBe('session-kid · one-shot · resident · running · 1m12s · ↑1.2k ↓300')
     expect(panelRow(screen, 'reviewer')).toBe('reviewer · continuable · resident · idle · 8s · ↑1.2k ↓300')
     expect(panelRow(screen, 'session-broken')).toBe('session-broken · unreadable: corrupt')
@@ -113,6 +123,8 @@ describe('the live subagent panel', () => {
     })
     const kid = await test.createChild({ id: 'session-kid' })
     await reconcile(test, kid)
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
     expect(test.terminal.text()).toContain('resident · running · 5s')
     expect(test.tickArmed()).toBe(true)
     test.tick()
@@ -162,7 +174,7 @@ describe('the live subagent panel', () => {
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
-    expect(await test.screen()).toContain('Shift+↑ transcript')
+    expect(await test.screen()).toContain('Shift+↓')
   })
 
   it('returns focus to the editor when the panel it held goes away', async () => {
@@ -260,6 +272,8 @@ describe('the live subagent panel', () => {
     })
     const kid = await test.createChild({ id: 'session-kid' })
     await reconcile(test, kid)
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
     expect(panelRow(await test.screen(), 'session-kid')).toBe('session-kid · one-shot · resident · running')
   })
 
@@ -286,8 +300,8 @@ describe('the live subagent panel', () => {
     test.tick()
     await test.settle()
     const screen = await test.screen()
-    // The rows the last good listing produced stay, with the reason under them.
-    expect(screen).toContain('session-kid · one-shot · resident')
+    // The rows the last good listing produced stay, named on the summary until focus.
+    expect(screen).toContain('subagents · 1 listed · session-kid')
     expect(screen).toContain('listing failed: the query engine is busy')
     expect(test.terminal.text().split('subagent listing failed: the query engine is busy')).toHaveLength(2)
   })
@@ -470,5 +484,43 @@ describe('the live subagent panel', () => {
     test.tick()
     await test.settle()
     expect(reads).toHaveLength(2)
+  })
+})
+
+describe('renderSubagentPanel', () => {
+  const palette = createPalette(false)
+
+  /** One resident child at the given id, as the listing answers. */
+  function listed(id: string, extra: Record<string, unknown> = {}): never {
+    return {
+      kind: 'child',
+      id,
+      activity: 'running',
+      mode: 'one-shot',
+      hasChildren: false,
+      parentId: 'session-root',
+      depth: 1,
+      ...extra,
+    } as never
+  }
+
+  it('collapses to one summary line while the keyboard is elsewhere', () => {
+    const view = subagentPanelView({
+      entries: [listed('session-kid'), listed('session-other')],
+      facts: new Map(),
+      now: BENCH_NOW,
+    })
+    expect(renderSubagentPanel(view, { palette })).toBe('subagents · 2 listed · session-kid')
+    expect(renderSubagentPanel({ rows: [], hidden: 0, ticking: false }, { palette })).toBe('subagents · 0 listed')
+  })
+
+  it('draws the rows, overflow, hints, and listing failure while it holds the keyboard', () => {
+    const entries = Array.from({ length: SUBAGENT_PANEL_MAX_ROWS + 1 }, (_, index) => listed(`session-${String(index)}`))
+    const view = subagentPanelView({ entries, facts: new Map(), now: BENCH_NOW })
+    const drawn = renderSubagentPanel(view, { palette, selected: 0, failure: 'the listing timed out' })
+    expect(drawn.split('\n')[0]).toContain('↑ ↓ select · Enter details · Esc back')
+    expect(drawn).toContain('session-0 · one-shot · resident · idle')
+    expect(drawn).toContain('+1 more · /subagents lists them all')
+    expect(drawn).toContain('listing failed: the listing timed out')
   })
 })

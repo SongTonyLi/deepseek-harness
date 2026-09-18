@@ -2,13 +2,15 @@
  * The status bar under the editor: plain session facts become an ordered list
  * of segments, each with a stable id, the short label the bar draws, and what
  * `Enter` on it does — the rows the app prints, or the app's own navigable
- * page; a second function renders the segments as the footer's two lines, dim
- * while the editor holds focus and with the selected segment accented while
- * the bar does. Everything here is pure — no Context, no services, no
- * terminal, and no clock: elapsed values arrive already formatted.
+ * page; a second function renders those segments as one unfocused line of key
+ * facts, or as two focused lines whose first is a sliding window that always
+ * includes the selected segment. Everything here is pure — no Context, no
+ * services, no terminal, and no clock: elapsed values arrive already formatted,
+ * and the terminal width arrives as an input so every line fits it.
  * @module @deepseek-ai/dsh-tui-app/footer
  */
 
+import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import {
   contextLines,
@@ -94,8 +96,16 @@ export interface FooterRender {
   palette: Palette
   /** Index of the selected segment; absent while the editor keeps focus. */
   selected?: number
-  /** The key hints the unfocused second line carries. */
-  hints: string
+  /** Terminal columns the bar must fit; pi-tui refuses any wider line. */
+  width: number
+}
+
+/** The segments and selection the status-bar component reads once per render. */
+export interface FooterBarView {
+  /** The segments in bar order. */
+  segments: readonly FooterSegment[]
+  /** Palette and selection; the width arrives per render. */
+  render: Omit<FooterRender, 'width'>
 }
 
 /** The segment focus enters the bar on; `buildFooterSegments` always emits it first. */
@@ -115,11 +125,17 @@ const WORKSPACE_LABEL_WIDTH = 24
 /** The last two segments of a path, with the separators that precede them. */
 const PATH_TAIL = /[/\\][^/\\]+[/\\][^/\\]+$/u
 
-/** The keys the focused bar answers, replacing the usual hints. */
+/** The keys the focused bar answers, drawn on the expansion line. */
 const FOCUS_HINTS = `← → select${SEPARATOR}↑ ↓ regions${SEPARATOR}Enter details${SEPARATOR}Esc back`
 
-/** What the unfocused hints advertise as the two ways out of the editor. */
-const ENTRY_HINT = `Shift+↑ transcript${SEPARATOR}Shift+↓ status bar`
+/** The one entry key the unfocused line keeps, trailing the facts. */
+const ENTRY_HINT = 'Shift+↓'
+
+/** What ends a line the width cut short; one column, so the mark itself fits. */
+const ELLIPSIS = '…'
+
+/** Facts the unfocused line keeps; every other present segment folds into `+N`. */
+const KEY_SEGMENT_IDS: ReadonlySet<FooterSegmentId> = new Set(['model', 'effort', 'turn', 'context', 'workspace'])
 
 /** The command that prints every projection section at once. */
 const STATUS_COMMAND_ROW = '/status prints all of these sections'
@@ -178,10 +194,28 @@ function startsWithDirectory(path: string, directory: string): boolean {
 }
 
 /**
+ * The effort segment: always present, labelled `effort default` when the
+ * selection leaves reasoning effort to the model.
+ * @param effort - the selection's reasoning effort; absent is the model's own default.
+ * @returns the segment.
+ */
+function effortSegment(effort: ModelSelection['reasoningEffort']): FooterSegment {
+  const unset = effort === undefined
+  return {
+    id: 'effort',
+    label: unset ? 'effort default' : `effort ${effort}`,
+    detail: printed([
+      unset ? 'reasoning effort: the model\'s own default' : `reasoning effort: ${effort}`,
+      `Shift+Tab cycles it${SEPARATOR}/effort picks one`,
+    ]),
+  }
+}
+
+/**
  * Build the status bar's segments in the order it draws them: model, effort,
- * permission, turn, usage, the projection facts, workspace, attachments. Only
- * the model and workspace segments are always present; every other segment
- * needs its fact.
+ * permission, turn, usage, the projection facts, workspace, attachments. The
+ * model, effort, and workspace segments are always present; every other
+ * segment needs its fact.
  * @param inputs - the facts the app read for the bound session.
  * @returns the segments, the model segment first.
  */
@@ -197,14 +231,7 @@ export function buildFooterSegments(inputs: FooterInputs): FooterSegment[] {
       effort === undefined ? 'reasoning effort: the model\'s own default' : `reasoning effort: ${effort}`,
       '/model picks the provider and model for the next request',
     ]),
-  }]
-  if (effort !== undefined) {
-    segments.push({
-      id: 'effort',
-      label: `effort ${effort}`,
-      detail: printed([`reasoning effort: ${effort}`, `Shift+Tab cycles it${SEPARATOR}/effort picks one`]),
-    })
-  }
+  }, effortSegment(effort)]
   if (inputs.permission !== undefined) {
     const projected = permissionLines(facts)
     segments.push({
@@ -275,22 +302,148 @@ export function footerSelectionIndex(segments: readonly FooterSegment[], selecte
 }
 
 /**
- * Render the footer's two lines: the segment labels, then the key hints.
- * Unfocused the whole bar is dim and the hints advertise the entry key;
- * focused the selected segment is accented and the hints name the navigation
- * keys instead.
- * @param segments - the segments in bar order.
- * @param render - the palette, the selected index, and the unfocused hints.
- * @returns the footer text, two lines separated by a newline.
+ * Inclusive span of `widths` that contains `selected` and fits `budget`.
+ * @param widths - visible width of each part, in order.
+ * @param selected - the index that must stay in the span.
+ * @param budget - maximum visible width of the joined span.
+ * @param sep - visible width of the separator between two parts.
+ * @returns start and end indices, inclusive.
  */
-export function renderFooter(segments: readonly FooterSegment[], render: FooterRender): string {
-  const { palette, selected, hints } = render
-  const labels = segments.map(segment => segment.label)
-  if (selected === undefined) {
-    return `${palette.dim(labels.join(SEPARATOR))}\n${palette.dim(`${hints}${SEPARATOR}${ENTRY_HINT}`)}`
+function windowSpan(
+  widths: readonly number[],
+  selected: number,
+  budget: number,
+  sep: number,
+): { start: number; end: number } {
+  let start = selected
+  let end = selected
+  let used = widths[selected] as number
+  if (used >= budget) return { start, end }
+  while (end + 1 < widths.length) {
+    const next = used + sep + (widths[end + 1] as number)
+    if (next > budget) break
+    end += 1
+    used = next
   }
-  const bar = labels
-    .map((label, index) => index === selected ? palette.bold(palette.accent(label)) : palette.dim(label))
-    .join(palette.dim(SEPARATOR))
-  return `${bar}\n${palette.dim(FOCUS_HINTS)}`
+  while (start > 0) {
+    const next = used + sep + (widths[start - 1] as number)
+    if (next > budget) break
+    start -= 1
+    used = next
+  }
+  return { start, end }
+}
+
+/**
+ * Cut `line` to `width` columns.
+ * @param line - the already-styled line.
+ * @param width - terminal columns the line must fit; at least 1.
+ * @returns the line, ellipsized when it was wider.
+ */
+function fitLine(line: string, width: number): string {
+  return truncateToWidth(line, Math.max(1, width), ELLIPSIS)
+}
+
+/**
+ * The unfocused line: key facts, a `+N` token for the rest, and the entry key.
+ * @param segments - the segments in bar order.
+ * @param palette - the palette the line is dimmed with.
+ * @param width - terminal columns the line must fit.
+ * @returns one dim line.
+ */
+function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, width: number): string {
+  const key = segments.filter(segment => KEY_SEGMENT_IDS.has(segment.id)).map(segment => segment.label)
+  const folded = segments.length - key.length
+  if (folded > 0) key.push(`+${String(folded)}`)
+  key.push(ENTRY_HINT)
+  return fitLine(palette.dim(key.join(SEPARATOR)), width)
+}
+
+/**
+ * The first detail row of a printed segment, or the label of a page segment.
+ * @param segment - the selected segment; absent when the bar has none.
+ * @returns the expansion body.
+ */
+function expansionBody(segment: FooterSegment | undefined): string {
+  if (segment === undefined) return ''
+  if (segment.detail.kind === 'page') return segment.label
+  return segment.detail.rows[0] as string
+}
+
+/**
+ * The focused second line: the selected segment's summary plus the navigation keys.
+ * @param segment - the selected segment.
+ * @param palette - the palette the line is dimmed with.
+ * @param width - terminal columns the line must fit.
+ * @returns one dim line that keeps the hints when they fit.
+ */
+function expansionLine(segment: FooterSegment | undefined, palette: Palette, width: number): string {
+  const body = expansionBody(segment)
+  const suffix = palette.dim(body === '' ? FOCUS_HINTS : `${SEPARATOR}${FOCUS_HINTS}`)
+  const prefix = palette.dim(body)
+  const rest = width - visibleWidth(suffix)
+  if (rest < 1) return fitLine(`${prefix}${suffix}`, width)
+  return `${truncateToWidth(prefix, rest, ELLIPSIS)}${suffix}`
+}
+
+/**
+ * The focused bar: a sliding window of segment labels, then the expansion line.
+ * @param segments - the segments in bar order.
+ * @param selected - index of the held segment.
+ * @param palette - the palette the labels and hints are styled with.
+ * @param width - terminal columns each line must fit.
+ * @returns two lines, the selected label always in the first.
+ */
+function focusedLines(
+  segments: readonly FooterSegment[],
+  selected: number,
+  palette: Palette,
+  width: number,
+): string[] {
+  const held = Math.min(Math.max(0, selected), Math.max(0, segments.length - 1))
+  const styled = segments.map((segment, index) =>
+    index === held ? palette.bold(palette.accent(segment.label)) : palette.dim(segment.label))
+  const sep = palette.dim(SEPARATOR)
+  const { start, end } = windowSpan(styled.map(visibleWidth), held, width, visibleWidth(sep))
+  const bar = styled.slice(start, end + 1).join(sep)
+  return [fitLine(bar, width), expansionLine(segments[held], palette, width)]
+}
+
+/**
+ * Render the footer. Unfocused it is one dim line of key facts with a trailing
+ * `Shift+↓`; focused it is the navigable segments (windowed to `width` so the
+ * selected one is never dropped) and an expansion of that segment plus the
+ * navigation keys. Every returned line fits `width`.
+ * @param segments - the segments in bar order.
+ * @param render - the palette, optional selected index, and terminal width.
+ * @returns the footer lines, one when unfocused and two when focused.
+ */
+export function renderFooter(segments: readonly FooterSegment[], render: FooterRender): string[] {
+  const width = Math.max(1, render.width)
+  if (render.selected === undefined) return [unfocusedLine(segments, render.palette, width)]
+  return focusedLines(segments, render.selected, render.palette, width)
+}
+
+/**
+ * The status bar as a mounted component. The view is read once per render
+ * rather than pushed in, so the terminal width of that frame windows and
+ * truncates the lines.
+ */
+export class FooterBar implements Component {
+  /**
+   * @param view - reads the segments and selection the bar draws.
+   */
+  constructor(private readonly view: () => FooterBarView) {}
+
+  invalidate(): void {}
+
+  /**
+   * Draw the status bar at `width`.
+   * @param width - the total width the bar lays out in.
+   * @returns the footer lines, each no wider than `width`.
+   */
+  render(width: number): string[] {
+    const { segments, render } = this.view()
+    return renderFooter(segments, { ...render, width })
+  }
 }

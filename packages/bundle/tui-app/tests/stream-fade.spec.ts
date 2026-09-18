@@ -1,4 +1,4 @@
-/** Streamed assistant text fading in: the colors it draws, the tick that ages it, and everything that settles it. */
+/** Streamed assistant text fading in, and reasoning and tool cards floating out. */
 
 import { describe, expect, it } from 'vitest'
 import { FADE_STEPS, FADE_TICK_MS, buildFadeRamp } from '../src/fade.ts'
@@ -26,6 +26,20 @@ function levelSgr(level: number, steps: number = FADE_STEPS): string {
 
 /** Any 24-bit foreground, which only the fade emits on this surface. */
 const ANY_FADE_COLOR = '\u001b[38;2;'
+
+/** Truecolor overlays a float-out wrote. */
+function fadeRgbs(text: string): { r: number; g: number; b: number }[] {
+  return [...text.matchAll(/\u001b\[38;2;(\d+);(\d+);(\d+)m/g)].map(([, r, g, b]) => ({
+    r: Number(r),
+    g: Number(g),
+    b: Number(b),
+  }))
+}
+
+/** Relative luminance of one overlay color. */
+function rgbLuma(color: { r: number; g: number; b: number }): number {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
+}
 
 /** Faint intensity, the only level the two-level mode draws. */
 const DIM = '\u001b[2m'
@@ -135,6 +149,7 @@ describe('streaming fade', () => {
     await fadeTick(test)
     const settled = lineWith(drawn(test), 'hello')
     expect(settled).not.toContain(ANY_FADE_COLOR)
+    await fadeTick(test)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
@@ -265,6 +280,16 @@ describe('streaming fade', () => {
     expect(faded).not.toContain(ANY_FADE_COLOR)
   })
 
+  it('leaves dim reasoning in its settled faint bytes, with no color overlay', async () => {
+    const test = await bench({ color: true, env: { COLORTERM: 'truecolor' } })
+    await test.settle()
+    test.stream.start()
+    await streamReasoning(test, 'weighing the options')
+    const faded = lineWith(drawn(test), 'weighing')
+    expect(faded).toContain(DIM)
+    expect(faded).not.toContain(ANY_FADE_COLOR)
+  })
+
   it('writes no sequence at all under reduced motion', async () => {
     const test = await bench({ ...TRUECOLOR, reducedMotion: true })
     await test.settle()
@@ -287,20 +312,26 @@ describe('streaming fade', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
-  it('fades streamed reasoning on its own tail and settles it at the dim foreground', async () => {
+  it('floats streamed reasoning out from a lifted color and settles on the dim italic bytes', async () => {
     const test = await bench(TRUECOLOR)
     await test.settle()
     test.stream.start()
     await streamReasoning(test, 'weighing the options')
-    expect(lineWith(drawn(test), 'weighing')).toContain(levelSgr(0))
+    const first = lineWith(drawn(test), 'weighing')
+    const firstColor = fadeRgbs(first)[0]
+    expect(firstColor).toBeDefined()
+    expect(rgbLuma(firstColor ?? { r: 0, g: 0, b: 0 })).toBeGreaterThan(200)
+    expect(first).not.toContain(levelSgr(0))
 
-    for (let level = 1; level < FADE_STEPS - 1; level += 1) await fadeTick(test)
-    expect(lineWith(drawn(test), 'weighing')).toContain(levelSgr(FADE_STEPS - 2))
+    for (let tick = 0; tick < FADE_STEPS - 1; tick += 1) await fadeTick(test)
+    const later = lineWith(drawn(test), 'weighing')
+    const laterColor = fadeRgbs(later)[0]
+    expect(laterColor).toBeDefined()
+    expect(rgbLuma(laterColor ?? { r: 0, g: 0, b: 0 })).toBeLessThan(rgbLuma(firstColor ?? { r: 255, g: 255, b: 255 }))
+    expect(later).not.toContain(levelSgr(0))
     await fadeTick(test)
     const settled = lineWith(drawn(test), 'weighing')
     expect(settled).not.toContain(ANY_FADE_COLOR)
-    // The ramp runs inside the faint sequence the reasoning is drawn in, so it
-    // arrives at the dim foreground rather than the plain one.
     expect(settled).toContain(DIM)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
@@ -313,7 +344,10 @@ describe('streaming fade', () => {
     await fadeTick(test)
     await streamText(test, 'answering')
     const output = drawn(test)
-    expect(lineWith(output, 'thinking')).toContain(levelSgr(1))
+    const thinking = fadeRgbs(lineWith(output, 'thinking'))[0]
+    expect(thinking).toBeDefined()
+    expect(rgbLuma(thinking ?? { r: 0, g: 0, b: 0 })).toBeGreaterThan(150)
+    expect(lineWith(output, 'thinking')).not.toContain(levelSgr(1))
     expect(lineWith(output, 'answering')).toContain(levelSgr(0))
   })
 
@@ -326,8 +360,10 @@ describe('streaming fade', () => {
     drawn(test)
     await streamReasoning(test, 'harder')
     const reasoning = lineWith(drawn(test), 'harder')
-    expect(reasoning).toContain(levelSgr(1))
-    expect(reasoning).toContain(levelSgr(0))
+    const reasoningColors = fadeRgbs(reasoning)
+    expect(reasoningColors).toHaveLength(2)
+    expect(rgbLuma(reasoningColors[0] ?? { r: 0, g: 0, b: 0 })).toBeLessThan(rgbLuma(reasoningColors[1] ?? { r: 255, g: 255, b: 255 }))
+    expect(reasoning).not.toContain(levelSgr(0))
 
     await streamText(test, 'alpha ')
     await fadeTick(test)
@@ -353,15 +389,25 @@ describe('streaming fade', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
-  it('fades a tool card in when its call is logged and its result rows when they land', async () => {
+  it('floats a tool card out when its call is logged and its result rows when they land', async () => {
     const test = await bench(TRUECOLOR)
     await test.settle()
     test.appendToolCall('call-1', 'probe', { path: 'x' })
     await test.settle()
-    expect(lineWith(drawn(test), 'probe')).toContain(levelSgr(0))
+    const callFirst = lineWith(drawn(test), 'probe')
+    const callColor = fadeRgbs(callFirst)[0]
+    expect(callColor).toBeDefined()
+    expect(rgbLuma(callColor ?? { r: 0, g: 0, b: 0 })).toBeGreaterThan(200)
+    expect(callFirst).not.toContain(levelSgr(0))
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
 
-    for (let level = 1; level < FADE_STEPS - 1; level += 1) await fadeTick(test)
+    await fadeTick(test)
+    await fadeTick(test)
+    const callMid = lineWith(drawn(test), 'probe')
+    expect(Math.min(...fadeRgbs(callMid).map(rgbLuma))).toBeLessThan(250)
+    expect(callMid).not.toContain(levelSgr(0))
+
+    for (let tick = 2; tick < FADE_STEPS - 1; tick += 1) await fadeTick(test)
     drawn(test)
     await fadeTick(test)
     expect(lineWith(drawn(test), 'probe')).not.toContain(ANY_FADE_COLOR)
@@ -370,12 +416,15 @@ describe('streaming fade', () => {
     test.appendToolResult('call-1', [{ type: 'text', text: 'result row' }])
     await test.settle()
     const landed = drawn(test)
-    expect(lineWith(landed, 'result row')).toContain(levelSgr(0))
-    // The call rows settled before the result arrived and keep their colors.
+    const resultFirst = lineWith(landed, 'result row')
+    const resultColor = fadeRgbs(resultFirst)[0]
+    expect(resultColor).toBeDefined()
+    expect(rgbLuma(resultColor ?? { r: 0, g: 0, b: 0 })).toBeGreaterThan(150)
+    expect(resultFirst).not.toContain(levelSgr(0))
     expect(lineWith(landed, 'probe')).not.toContain(ANY_FADE_COLOR)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
 
-    for (let level = 1; level < FADE_STEPS - 1; level += 1) await fadeTick(test)
+    for (let tick = 0; tick < FADE_STEPS - 1; tick += 1) await fadeTick(test)
     drawn(test)
     await fadeTick(test)
     expect(lineWith(drawn(test), 'result row')).not.toContain(ANY_FADE_COLOR)
@@ -423,11 +472,11 @@ describe('streaming fade', () => {
     await test.settle()
     const cards = drawn(test)
     expect(lineWith(cards, 'alpha')).not.toContain(ANY_FADE_COLOR)
-    expect(lineWith(cards, 'gamma')).toContain(levelSgr(0))
+    expect(fadeRgbs(lineWith(cards, 'gamma')).length).toBeGreaterThan(0)
 
     await fadeTick(test)
     await fadeTick(test)
-    expect(lineWith(drawn(test), 'gamma')).toContain(levelSgr(2))
+    expect(fadeRgbs(lineWith(drawn(test), 'gamma')).length).toBeGreaterThan(0)
     expect(since()).not.toContain(CLEAR_SCROLLBACK)
   })
 
@@ -439,7 +488,7 @@ describe('streaming fade', () => {
     test.appendToolCall('call-1', 'alpha', WIDE_ARGUMENTS)
     await test.settle()
     await fadeTick(test)
-    expect(lineWith(drawn(test), 'alpha')).toContain(levelSgr(1))
+    expect(fadeRgbs(lineWith(drawn(test), 'alpha')).length).toBeGreaterThan(0)
 
     test.appendToolCall('call-2', 'beta', WIDE_ARGUMENTS)
     test.appendToolCall('call-3', 'gamma', WIDE_ARGUMENTS)
@@ -471,7 +520,7 @@ describe('streaming fade', () => {
     const since = writesFrom(test)
     test.stream.start()
     await streamReasoning(test, 'weighing the options')
-    expect(lineWith(drawn(test), 'weighing')).toContain(levelSgr(0))
+    expect(fadeRgbs(lineWith(drawn(test), 'weighing')).length).toBeGreaterThan(0)
 
     await streamText(test, Array.from({ length: 30 }, (_, line) => `reply ${String(line)}`).join('\n\n'))
     await fadeTick(test)
@@ -487,13 +536,15 @@ describe('streaming fade', () => {
     expect(test.tickDelaysMs()).toEqual([25])
     expect(lineWith(drawn(test), 'hello')).toContain(levelSgr(0, 3))
 
-    // Three levels leave two drawn ones, so the second period settles the chunk.
+    // Three fade-in levels leave two drawn ones; the last period drops the tail.
     test.runTick(25)
     await test.settle()
     expect(lineWith(drawn(test), 'hello')).toContain(levelSgr(1, 3))
     test.runTick(25)
     await test.settle()
     expect(lineWith(drawn(test), 'hello')).not.toContain(ANY_FADE_COLOR)
+    test.runTick(25)
+    await test.settle()
     expect(test.tickArmed(25)).toBe(false)
   })
 })
