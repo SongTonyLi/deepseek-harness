@@ -47,7 +47,7 @@ describe('status', () => {
     extra.todos = [{ id: '1', content: 'write tests', status: 'completed' }, { id: '2', content: 'ship', status: 'pending' }]
     projections.fire(test.session)
     await test.settle()
-    expect(test.terminal.text()).toContain('+2')
+    expect(test.terminal.text()).toContain('todo 1/2')
     typeLine(test.terminal, '/status')
     await test.settle()
     expect(test.terminal.text()).toContain('context: ~54k / 128k (42%)')
@@ -462,7 +462,8 @@ describe('todo list', () => {
   it('opens the same list from the status bar, leaving the segment label alone', async () => {
     const test = await bench({ projections: projectionsStub(() => ({ todos: mixed })).stub })
     await test.settle()
-    expect(test.terminal.text()).toContain('+1')
+    expect(test.terminal.text()).toContain('todo 1/3')
+    expect(test.terminal.text()).not.toMatch(/\+\d/u)
     // The bar holds the model segment first; effort is always next, then todo.
     test.terminal.type(KEY.shiftDown)
     await test.settle()

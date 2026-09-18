@@ -1,21 +1,23 @@
 /**
  * Transcript components: one pi-tui component per rendered fact (a user
- * prompt, an assistant reply, a tool card, a notice). Each owns its display
- * state and re-renders from it at any width.
+ * prompt, an assistant reply, a tool card, a system prompt or injected
+ * context, a notice). Each owns its display state and re-renders from it at
+ * any width.
  *
- * The prompt, the reply, and the tool card are also the navigable blocks the
- * keyboard walks (`./navigation.ts`): each reports its sections as plain source
- * rows and draws a two-column gutter beside them while it holds the focus -
- * accented on the focused section's own lines and dim on the rest of the
- * block. The gutter narrows the width the block's content wraps at and is
- * prepended after any fade recoloring, so the fade keeps matching the block's
- * own text and the gutter's styling never enters that match.
+ * The prompt, the reply, the tool card, and the compact context row are also
+ * the navigable blocks the keyboard walks (`./navigation.ts`): each reports
+ * its sections as plain source rows and draws a two-column gutter beside them
+ * while it holds the focus - accented on the focused section's own lines and
+ * dim on the rest of the block. The gutter narrows the width the block's
+ * content wraps at and is prepended after any fade recoloring, so the fade
+ * keeps matching the block's own text and the gutter's styling never enters
+ * that match.
  * @module @deepseek-ai/dsh-tui-app/blocks
  */
 
 import { Markdown, Text, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
-import type { AssistantSection, SectionKind, SectionPart, ToolSection, UserSection } from './navigation.ts'
+import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
 import { markdownTheme, type Palette } from './style.ts'
 import { previewLines, type ToolCallText } from './transcript.ts'
 
@@ -57,7 +59,7 @@ export class UserBlock implements Component, UserSection {
   readonly navigable = true as const
   readonly blockKind = 'user' as const
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
-  private highlight: SectionKind | undefined
+  private highlight: number | undefined
 
   constructor(private readonly theme: BlockTheme, private readonly text: string, readonly turn: number) {}
 
@@ -71,9 +73,9 @@ export class UserBlock implements Component, UserSection {
 
   /**
    * Draw this prompt with the focus gutter, or without it.
-   * @param part - the focused section, or undefined to clear the mark.
+   * @param part - the index of the focused section, or undefined to clear the mark.
    */
-  setHighlight(part: SectionKind | undefined): void {
+  setHighlight(part: number | undefined): void {
     this.highlight = part
   }
 
@@ -90,6 +92,9 @@ export class UserBlock implements Component, UserSection {
   }
 }
 
+/** What a compact context row uses in place of the user prompt's `›`. */
+const CONTEXT_GLYPH = '⬡'
+
 /** A dim one-line notice about the session (a stopped turn, a command result, a model switch). */
 export class NoticeBlock implements Component {
   private readonly text: Text
@@ -105,6 +110,77 @@ export class NoticeBlock implements Component {
 
   render(width: number): string[] {
     return this.text.render(width)
+  }
+}
+
+/**
+ * A system prompt or injected context, drawn in full under a dim title.
+ * Snapshot contributions keep their names above their own rows so every
+ * piece of context is visible in the transcript; the inspector Left/Right
+ * walk still addresses one contribution at a time.
+ */
+export class ContextBlock implements Component, ContextSection {
+  readonly navigable = true as const
+  readonly blockKind = 'context' as const
+  /** The section drawn as focused; absent while the keyboard is elsewhere. */
+  private highlight: number | undefined
+
+  /**
+   * @param theme - the palette the glyph and title are styled with.
+   * @param title - form and producer, a notice summary, or `system prompt`.
+   * @param sectionParts - the model-facing rows, one part per snapshot contribution.
+   * @param turn - the turn the message was appended in.
+   */
+  constructor(
+    private readonly theme: BlockTheme,
+    readonly title: string,
+    private readonly sectionParts: readonly SectionPart[],
+    readonly turn: number,
+  ) {}
+
+  /**
+   * The injection as navigable sections.
+   * @returns the parts the constructor was given.
+   */
+  parts(): readonly SectionPart[] {
+    return this.sectionParts
+  }
+
+  /**
+   * Draw this row with the focus gutter, or without it.
+   * @param part - the index of the focused section, or undefined to clear the mark.
+   */
+  setHighlight(part: number | undefined): void {
+    this.highlight = part
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const palette = this.theme.palette
+    const marked = this.highlight !== undefined
+    const inner = marked ? Math.max(1, width - GUTTER_WIDTH) : width
+    const textWidth = Math.max(1, inner - 2)
+    const indent = (line: string): string => `  ${line}`
+    const title = wrapTextWithAnsi(this.title, textWidth)
+    const lines = ['', ...title.map((line, index) => `${palette.dim(index === 0 ? CONTEXT_GLYPH : ' ')} ${palette.dim(line)}`)]
+    const ranges: { from: number; to: number }[] = []
+    for (const part of this.sectionParts) {
+      const from = lines.length
+      if (part.label !== undefined) {
+        lines.push(...wrapTextWithAnsi(part.label, textWidth).map(line => indent(palette.bold(line))))
+      }
+      const empty = part.rows.length === 1 && part.rows[0] === ''
+      if (!empty) {
+        for (const row of part.rows) {
+          lines.push(...wrapTextWithAnsi(row, textWidth).map(line => indent(palette.dim(line))))
+        }
+      }
+      ranges.push({ from, to: lines.length })
+    }
+    if (this.highlight === undefined) return lines
+    const section = ranges[this.highlight] ?? { from: 0, to: lines.length }
+    return withGutter(palette, lines, line => line >= section.from && line < section.to)
   }
 }
 
@@ -178,7 +254,7 @@ export class AssistantBlock implements Component, AssistantSection {
   /** First line of this block either tail may still recolor. */
   private repaintFloor = 0
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
-  private highlight: SectionKind | undefined
+  private highlight: number | undefined
 
   constructor(private readonly theme: BlockTheme, readonly turn: number) {
     const palette = theme.palette
@@ -191,20 +267,21 @@ export class AssistantBlock implements Component, AssistantSection {
    * reasoning as it was streamed or committed, and the reply as Markdown
    * source rather than the rendering the transcript draws.
    * @returns the reasoning part while the message has reasoning, then the
-   * reply, which is present from the start and empty until text arrives.
+   * reply once visible text has arrived. An empty reply is kept only while the
+   * message has no reasoning, so a tool-call step does not add a blank section.
    */
   parts(): readonly SectionPart[] {
     const parts: SectionPart[] = []
     if (this.reasoning.trim() !== '') parts.push({ kind: 'reasoning', rows: this.reasoning.split('\n') })
-    parts.push({ kind: 'reply', rows: this.text.split('\n') })
+    if (this.text !== '' || parts.length === 0) parts.push({ kind: 'reply', rows: this.text.split('\n') })
     return parts
   }
 
   /**
    * Draw this message with the focus gutter, or without it.
-   * @param part - the focused section, or undefined to clear the mark.
+   * @param part - the index of the focused section, or undefined to clear the mark.
    */
-  setHighlight(part: SectionKind | undefined): void {
+  setHighlight(part: number | undefined): void {
     this.highlight = part
   }
 
@@ -298,8 +375,9 @@ export class AssistantBlock implements Component, AssistantSection {
       reply.to = lines.length
     }
     if (this.interrupted) lines.push(this.theme.palette.dim('[interrupted]'))
-    if (!marked) return lines
-    const section = this.highlight === 'reasoning' ? reasoning : reply
+    if (this.highlight === undefined) return lines
+    const focused = this.parts()[this.highlight]
+    const section = focused?.kind === 'reasoning' ? reasoning : reply
     return withGutter(this.theme.palette, lines, index => index >= section.from && index < section.to)
   }
 
@@ -364,7 +442,7 @@ export class ToolBlock implements Component, ToolSection {
   /** First line of this card either fade may still recolor. */
   private repaintFloor = 0
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
-  private highlight: SectionKind | undefined
+  private highlight: number | undefined
 
   constructor(
     private readonly theme: BlockTheme,
@@ -394,9 +472,9 @@ export class ToolBlock implements Component, ToolSection {
 
   /**
    * Draw this card with the focus gutter, or without it.
-   * @param part - the focused section, or undefined to clear the mark.
+   * @param part - the index of the focused section, or undefined to clear the mark.
    */
-  setHighlight(part: SectionKind | undefined): void {
+  setHighlight(part: number | undefined): void {
     this.highlight = part
   }
 
@@ -473,13 +551,14 @@ export class ToolBlock implements Component, ToolSection {
     const call = faded(callLines, this.fade, this.repaintFloor - 1)
     const result = faded(resultLines, this.resultFade, this.repaintFloor - 1 - callLines.length)
     const lines = ['', ...call, ...result]
-    if (!marked) return lines
+    if (this.highlight === undefined) return lines
     // The truncation marker belongs to the card rather than to either section:
     // it stands for the rows both of them left out, so it keeps the block's own
     // gutter. It is the last row `previewLines` produced.
     const cut = !this.expanded && body.length > this.theme.toolPreviewLines
     const sections = lines.length - (cut ? rows(shown.slice(-1)).length : 0)
-    const section = this.highlight === 'result'
+    const focused = this.parts()[this.highlight]
+    const section = focused?.kind === 'result'
       ? { from: 1 + callLines.length, to: lines.length }
       : { from: 1, to: 1 + callLines.length }
     return withGutter(palette, lines, index => index >= section.from && index < section.to && index < sections)

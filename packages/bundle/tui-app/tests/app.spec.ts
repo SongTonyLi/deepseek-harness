@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, createSystemMessage } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
@@ -171,20 +171,39 @@ describe('TuiApp', () => {
 
   it('draws resumed history, notices, and turn-end reasons', async () => {
     const history = [
-      { type: 'user/message', seq: 0, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'earlier prompt' }], source: { kind: 'user' } }) },
-      { type: 'user/message', seq: 1, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'x' }], source: { kind: 'plugin', plugin: 'skill', form: 'notice', summary: 'skill loaded' } }) },
-      { type: 'user/message', seq: 2, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'x' }], source: { kind: 'plugin', plugin: 'agent-instructions', form: 'instructions' } }) },
-      { type: 'turn/end', seq: 3, time: 1, data: { turn: 1, reason: { kind: 'error', error: { code: 'E_TEST', message: 'boom' } } } },
-      { type: 'turn/end', seq: 4, time: 1, data: { turn: 2, reason: { kind: 'aborted', reason: { kind: 'user' } } } },
-      { type: 'step/start', seq: 5, time: 1, data: { turn: 3, step: 1 } },
-      { type: 'user/message', seq: 6, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'tool text' }], source: { kind: 'tool', callId: 'c' as never } }) },
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('You are the agent.', 'system-prompt') } },
+      { type: 'system/message', seq: 1, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('', 'system-prompt') } },
+      { type: 'system/message', seq: 2, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('Updated prompt.', 'system-prompt') } },
+      { type: 'user/message', seq: 3, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'earlier prompt' }], source: { kind: 'user' } }) },
+      { type: 'user/message', seq: 4, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'full notice body' }], source: { kind: 'plugin', plugin: 'skill', form: 'notice', summary: 'skill loaded' } }) },
+      { type: 'user/message', seq: 5, time: 1, data: createUserMessage({ content: [{ type: 'text', text: '# AGENTS.md' }], source: { kind: 'plugin', plugin: 'agent-instructions', form: 'instructions' } }) },
+      { type: 'user/message', seq: 6, time: 1, data: createUserMessage({
+        content: [{ type: 'text', text: 'assembled' }],
+        source: { kind: 'plugin', plugin: 'workspace', form: 'snapshot', sections: [{ name: 'sandbox', text: 'allow python' }, { name: 'git', text: 'clean tree' }] },
+      }) },
+      { type: 'user/message', seq: 7, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'hidden compact' }], source: { kind: 'plugin', plugin: 'compact' } }) },
+      { type: 'turn/end', seq: 8, time: 1, data: { turn: 1, reason: { kind: 'error', error: { code: 'E_TEST', message: 'boom' } } } },
+      { type: 'turn/end', seq: 9, time: 1, data: { turn: 2, reason: { kind: 'aborted', reason: { kind: 'user' } } } },
+      { type: 'step/start', seq: 10, time: 1, data: { turn: 3, step: 1 } },
+      { type: 'user/message', seq: 11, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'tool text' }], source: { kind: 'tool', callId: 'c' as never } }) },
     ] as never[]
     const test = await bench({ history })
     await test.settle()
     const screen = test.terminal.text()
+    expect(screen).toContain('⬡ system prompt')
+    expect(screen).toContain('You are the agent.')
+    expect(screen).toContain('⬡ system prompt update')
+    expect(screen).toContain('Updated prompt.')
     expect(screen).toContain('› earlier prompt')
-    expect(screen).toContain('· skill loaded')
-    expect(screen).not.toContain('agent-instructions')
+    expect(screen).toContain('⬡ notice · skill loaded')
+    expect(screen).toContain('full notice body')
+    expect(screen).toContain('⬡ instructions · agent-instructions')
+    expect(screen).toContain('# AGENTS.md')
+    expect(screen).toContain('⬡ snapshot · workspace')
+    expect(screen).toContain('sandbox')
+    expect(screen).toContain('allow python')
+    expect(screen).toContain('clean tree')
+    expect(screen).not.toContain('hidden compact')
     expect(screen).toContain('turn failed: E_TEST: boom')
     expect(screen).toContain('turn stopped')
     expect(screen).not.toContain('tool text')
@@ -604,6 +623,36 @@ describe('the status bar', () => {
     test.terminal.type(KEY.shiftTab)
     await test.settle()
     expect(await test.screen()).toContain('context: ~54k / 128k (42%) · ← → select')
+  })
+
+  it('lands Right from context on the todo details instead of jumping to the workspace', async () => {
+    const contextPressure = { projectedTokens: 54_000, pressureTokens: 50_000, contextWindow: 128_000 }
+    const test = await bench({
+      projections: {
+        snapshot: () => ({
+          asOfSeq: -1,
+          values: {
+            contextPressure,
+            todos: [
+              { content: 'read the spec', status: 'completed' },
+              { content: 'write the data layer', status: 'in_progress' },
+              { content: 'wire the picker', status: 'pending' },
+            ],
+          },
+        }),
+        onChanged: () => () => {},
+      },
+    })
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.tab)
+    test.terminal.type(KEY.tab)
+    await test.settle()
+    expect(await test.screen()).toContain('context: ~54k / 128k (42%) · ← → select')
+    test.terminal.type(KEY.right)
+    await test.settle()
+    const screen = await test.screen()
+    expect(screen).toContain('todos: 1 done · 1 active · 1 pending · write')
+    expect(screen).not.toContain('workspace: /work · ← → select')
   })
 
   it('cycles the reasoning effort with Shift+Tab only while the editor has focus', async () => {

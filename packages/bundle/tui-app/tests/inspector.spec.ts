@@ -30,9 +30,9 @@ describe('renderInspector', () => {
     expect(renderInspector(view(), plain)).toEqual([
       '',
       '2/3 · turn 2 · reply',
-      '‹ reasoning · reply ›',
+      '← 1 reasoning · 2 reply →',
       'done',
-      '↑ ↓ blocks · ← → parts · Enter page · Esc back',
+      '↑ ↓ sections · ← → parts · Enter page · Esc back',
     ])
   })
 
@@ -42,7 +42,7 @@ describe('renderInspector', () => {
 
   it('accents the held label and dims the rest of the strip', () => {
     const styled = renderInspector(view(), { ...plain, palette: createPalette(true) })
-    expect(styled[2]).toBe('\u001b[2m‹ \u001b[22m\u001b[2mreasoning\u001b[22m\u001b[2m · \u001b[22m\u001b[36mreply\u001b[39m\u001b[2m ›\u001b[22m')
+    expect(styled[2]).toBe('\u001b[2m← \u001b[22m\u001b[2m1 reasoning\u001b[22m\u001b[2m · \u001b[22m\u001b[36m2 reply\u001b[39m\u001b[2m →\u001b[22m')
   })
 
   it('omits the strip for a block that has one part', () => {
@@ -62,19 +62,79 @@ describe('renderInspector', () => {
       .toBe('44/44 · turn 1 · grep Grep ^(<<<<<<<|==…')
   })
 
-  it('cuts the strip, the fold marker, and the keys on a narrow terminal', () => {
+  it('cuts the heading, the fold marker, and the keys on a narrow terminal, and keeps every part label', () => {
     const narrow = renderInspector(view({ rows: ['a', 'b', 'c', 'd', 'e'] }), { ...plain, width: 12 })
-    expect(narrow.map(bare)).toEqual(['', '2/3 · turn …', '‹ reasoning…', 'a', 'b', 'c', '… 2 more ro…', '↑ ↓ blocks …'])
+    const shown = narrow.map(bare).join('\n')
+    expect(narrow.map(bare)[1]).toBe('2/3 · turn …')
+    expect(shown.replaceAll(/\s+/g, ' ')).toContain('1 reasoning')
+    expect(shown.replaceAll(/\s+/g, ' ')).toContain('2 reply')
+    expect(shown).toContain('… 2 more ro')
+    expect(narrow.map(bare).at(-1)).toBe('↑ ↓ section…')
     for (const line of narrow) expect(visibleWidth(line)).toBeLessThanOrEqual(12)
   })
 
   it('wraps the rows and names how many the page would add', () => {
     const long = renderInspector(view({ rows: ['one two three four five six seven', 'tail'] }), { ...plain, width: 20 })
-    expect(long.slice(3, -1)).toEqual(['one two three four', 'five six seven', 'tail'])
+    expect(long.map(bare).join('\n')).toContain('one two three four\nfive six seven\ntail')
     const cut = renderInspector(view({ rows: ['a', 'b', 'c', 'd', 'e'] }), plain)
-    expect(cut.slice(3)).toEqual(['a', 'b', 'c', '… 2 more rows · Enter opens the page', '↑ ↓ blocks · ← → parts · Enter page · Esc back'])
+    expect(cut.slice(3)).toEqual(['a', 'b', 'c', '… 2 more rows · Enter opens the page', '↑ ↓ sections · ← → parts · Enter page · Esc back'])
     const one = renderInspector(view({ rows: ['a', 'b', 'c', 'd'] }), plain)
     expect(one[6]).toBe('… 1 more row · Enter opens the page')
+  })
+
+  it('draws every row of a complete context section instead of folding', () => {
+    const complete = renderInspector(view({
+      heading: '1/2 · turn 0 · system prompt',
+      parts: [{ label: 'system', focused: true }],
+      rows: ['a', 'b', 'c', 'd'],
+      complete: true,
+    }), plain)
+    expect(complete.slice(2, -1)).toEqual(['a', 'b', 'c', 'd'])
+    expect(complete.join('\n')).not.toContain('more row')
+  })
+
+  it('wraps a complete context section instead of ellipsizing its rows', () => {
+    const long = 'x'.repeat(40)
+    const complete = renderInspector(view({
+      heading: 'system',
+      parts: [{ label: 'system', focused: true }],
+      rows: [long],
+      complete: true,
+    }), { ...plain, width: 12 })
+    const body = complete.slice(2, -1)
+    expect(body.join('')).toBe(long)
+    expect(body.join('\n')).not.toContain('…')
+    for (const line of body) expect(visibleWidth(line)).toBeLessThanOrEqual(12)
+  })
+
+  it('wraps a long part label across lines instead of cutting it', () => {
+    const strip = renderInspector(view({
+      parts: [
+        { label: 'workspace-sandbox-policy', focused: true },
+        { label: 'git', focused: false },
+      ],
+    }), { ...plain, width: 14 })
+    const shown = strip.map(bare).join('\n')
+    expect(shown.replaceAll(/\s+/g, '')).toContain('workspace-sandbox-policy')
+    expect(shown).toContain('2 git')
+    for (const line of strip) expect(visibleWidth(line)).toBeLessThanOrEqual(14)
+  })
+
+  it('wraps the numbered strip so every part stays visible', () => {
+    const many = renderInspector(view({
+      parts: [
+        { label: 'sandbox', focused: true },
+        { label: 'git', focused: false },
+        { label: 'todos', focused: false },
+        { label: 'env', focused: false },
+      ],
+    }), { ...plain, width: 22 })
+    const strip = many.slice(2, -2).map(bare)
+    expect(strip.join('\n')).toContain('1 sandbox')
+    expect(strip.join('\n')).toContain('2 git')
+    expect(strip.join('\n')).toContain('3 todos')
+    expect(strip.join('\n')).toContain('4 env')
+    expect(strip.length).toBeGreaterThan(1)
   })
 })
 
