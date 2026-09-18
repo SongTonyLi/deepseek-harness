@@ -723,7 +723,7 @@ describe('tracker and transform together', () => {
   })
 
   it('reports no change from a floor once reasoning has receded past the duration', () => {
-    const block = new AssistantBlock({ palette: createPalette(false), toolPreviewLines: 2 }, 1)
+    const block = new AssistantBlock({ palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 4 }, 1)
     block.appendReasoning('thinking hard')
     block.setReasoningFade({
       spans: () => [{ text: 'hard', age: 5 }],

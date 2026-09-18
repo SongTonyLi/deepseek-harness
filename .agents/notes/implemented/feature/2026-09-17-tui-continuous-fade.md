@@ -20,7 +20,7 @@ A chunk's brightness is a function of elapsed time, the ramp is perceptual, and 
 
 **Two-level `dim` overlays faint for the whole flight.** Color terminals encode each mix as truecolor or a 256-color index. A `dim` capability cannot encode that mix, so cards and reasoning tails stay behind `ESC[2m` until the clock settles and then draw the component's own bytes; there is no one-frame flash through an assumed foreground. The `none` capability still fades nothing.
 
-**Replay and the switched-off terminal fade nothing.** `bind` replays a session's history through the same handlers, so it sets a `replaying` flag around that loop and attaches no card fade while it is set: a replayed card describes what the session already did, however long ago it was logged. A terminal that resolves to the `none` capability, and a user who asked for reduced motion, track no tail, attach no card fade, and arm no tick.
+**Replay and the switched-off terminal fade nothing.** `bind` replays a session's history through the same handlers, so it sets a `replaying` flag around that loop and attaches no card fade while it is set: a replayed card describes what the session already did, however long ago it was logged. A terminal that resolves to the `none` capability, and a user who asked for reduced motion, track no tail, attach no card fade, and arm no tick for either. The one clock that still runs the tick with the effect off is the transient key-feedback line of [terminal reader overlay, Esc safety, and the editor as the hub](2026-09-18-tui-reader-overlay-and-esc-safety.md), which comes down on elapsed time rather than on a color.
 
 ## The tail is bounded by wall time, not by arrival rate
 

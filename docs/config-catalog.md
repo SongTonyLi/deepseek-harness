@@ -3538,16 +3538,50 @@ export interface Config {
   prompt?: string
   /** A persisted session id to resume instead of starting a new session. */
   resume?: string
-  /** Collapsed tool-card body rows before `Ctrl+O` expands them. */
+  /** Collapsed tool-card body rows before `Space` on the focused card, or `Ctrl+O`, expands them. */
   toolPreviewLines: number
   /**
+   * Rows a system prompt or an injected context block draws in the transcript
+   * before `Space` on the focused block, or `Ctrl+O`, expands it. One
+   * injection can carry more rows than the conversation around it, so the
+   * transcript shows this many and names the key that draws the rest. The
+   * model-facing text is never cut from what the keyboard reads: the docked
+   * inspector folds the focused section at `focusPreviewLines` and the walk
+   * itself addresses every row. A taller budget reads more of each injection
+   * at once and leaves less of the conversation on screen.
+   */
+  contextPreviewLines: number
+  /**
    * Rows of the focused transcript section the docked inspector shows before
-   * `Enter` opens the whole of it as a scrollable page. `Shift+Up` puts the
-   * keyboard on the newest block and the inspector draws the section it holds;
-   * a taller budget reads more of a long reply or tool result at once and
-   * leaves less of the conversation itself on screen.
+   * its fold marker names what is left. `Shift+Up` puts the keyboard on the
+   * newest block and the inspector draws the section it holds, folded at this
+   * budget whatever kind of section it is - a system prompt and an injected
+   * context block included, so one injection cannot fill the screen above the
+   * editor. The model-facing text itself is never cut: the rest of the
+   * section is one key away. A taller budget reads more of a long reply or
+   * tool result at once and leaves less of the conversation on screen.
    */
   focusPreviewLines: number
+  /**
+   * Columns the full-screen reader needs before it draws two sections side by
+   * side. `Ctrl+G` reads the conversation full screen and `Enter` on a
+   * section pins it beside the one the keyboard walks, so two prompts can be
+   * compared; below this width the pin is still recorded but one pane is
+   * drawn and the reader's legend says how many columns compare would need.
+   * A lower value splits a narrower terminal at the cost of two cramped
+   * columns of text.
+   */
+  readerMinColumns: number
+  /**
+   * How long a transient key-feedback line - `press Esc again to stop turn
+   * <n>`, `press Ctrl+C again to quit` - holds at full strength before it
+   * fades out, in milliseconds. It is also the window in which a second `Esc`
+   * stops the running turn: the arm lasts exactly as long as any part of the
+   * line is on screen, so there is no invisible window in which the key means
+   * something else. The line floats over the conversation and is never
+   * written into it; facts worth keeping stay transcript notices.
+   */
+  toastMs: number
   /**
    * Period in milliseconds of the terminal's one repeating redraw: it
    * advances the running-turn counter in the status bar and the per-child
@@ -3572,19 +3606,25 @@ export interface Config {
    */
   streamFadeSteps: number
   /**
-   * How long one fade tick lasts, in milliseconds, which is also the
-   * repaint period while anything is still fading. Duration of each fade is
-   * `streamFadeSteps * streamFadeStepMs`. The terminal arms this repaint only
-   * while a word or a card still differs from its settled colors and disarms
-   * it as soon as the last one settles, so an idle session runs no timer. A
-   * shorter period draws a smoother fade at the cost of more redraws.
+   * How long one fade tick lasts, in milliseconds, which is also the repaint
+   * period while anything is still moving. Duration of each fade is
+   * `streamFadeSteps * streamFadeStepMs`, and the app's own chrome motions -
+   * the keyboard landing on a region, a step of a walk, the reader opening and
+   * closing - run for their own step counts at this same tick. The terminal
+   * arms this repaint only while something still differs from its settled
+   * drawing and disarms it as soon as the last one settles, so an idle session
+   * runs no timer. A shorter period draws a smoother fade at the cost of more
+   * redraws.
    */
   streamFadeStepMs: number
   /**
-   * Draw streamed assistant text, streamed reasoning, and tool cards at the
-   * colors they render in as they arrive, with no brightness ramp and no
-   * repeating repaint, for users who do not want text that changes after it is
-   * drawn.
+   * Draw streamed assistant text, streamed reasoning, tool cards, and the
+   * app's own chrome at the colors they settle in, for users who do not want
+   * what is on screen to change after it is drawn: no brightness ramp on
+   * arriving text, no lift where the keyboard lands or steps, no reveal as the
+   * reader opens and closes, and no repeating repaint for any of them. A
+   * transient key-feedback line still holds for `toastMs` and then disappears,
+   * because the window it names has to end.
    */
   reducedMotion: boolean
   /** Permit local default-browser handoff for authorization pages. */
@@ -3592,7 +3632,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/bundle/tui-app/src/index.ts:41`](../packages/bundle/tui-app/src/index.ts)
+Source: [`packages/bundle/tui-app/src/index.ts:44`](../packages/bundle/tui-app/src/index.ts)
 
 <a id="deepseek-aidsh-typert-loader"></a>
 

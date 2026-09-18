@@ -58,15 +58,17 @@ export class GuardedMainScreen extends TuiMainScreen {
   /**
    * @param terminal - the terminal the tree renders into.
    * @param showHardwareCursor - whether the terminal's own cursor is the caret.
-   * @param guard - given the frame's first repaintable line and the width it
-   * was built at, applies what that geometry decides and reports whether it
-   * changed any line; run at most {@link SETTLE_PASSES} times per frame, each
-   * `true` on a frame that is built again.
+   * @param guard - given the frame's first repaintable line, the width it was
+   * built at, and how many lines it has, applies what that geometry decides
+   * and reports whether it changed any line; run at most
+   * {@link SETTLE_PASSES} times per frame, each `true` on a frame that is
+   * built again. The frame's own length is what places an overlay, which
+   * pi-tui composites into its last `terminal.rows` lines.
    */
   constructor(
     terminal: Terminal,
     showHardwareCursor: boolean,
-    private readonly guard: (viewportTop: number, width: number) => boolean,
+    private readonly guard: (viewportTop: number, width: number, frameLines: number) => boolean,
   ) {
     super(terminal, showHardwareCursor)
   }
@@ -83,7 +85,7 @@ export class GuardedMainScreen extends TuiMainScreen {
     const previousTop = this.captureRenderState().previousViewportTop
     let lines = super.render(width)
     for (let pass = 0; pass < SETTLE_PASSES; pass += 1) {
-      if (!this.guard(Math.max(previousTop, lines.length - this.terminal.rows), width)) break
+      if (!this.guard(Math.max(previousTop, lines.length - this.terminal.rows), width, lines.length)) break
       lines = super.render(width)
     }
     return lines

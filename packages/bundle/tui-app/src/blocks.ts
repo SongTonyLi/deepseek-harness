@@ -17,9 +17,10 @@
 
 import { Markdown, Text, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
+import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
 import { markdownTheme, type Palette } from './style.ts'
-import { previewLines, type ToolCallText } from './transcript.ts'
+import { foldMarker, foldRows, type ToolCallText } from './transcript.ts'
 
 /** Columns the focus gutter takes from the width a block's content wraps at. */
 const GUTTER_WIDTH = 2
@@ -29,6 +30,9 @@ const BLOCK_GUTTER = '│ '
 
 /** The gutter beside the lines of the focused section itself. */
 const PART_GUTTER = '┃ '
+
+/** Body rows a system prompt or an injected context block draws while it is folded. */
+export const CONTEXT_PREVIEW_LINES = 4
 
 /** What the call section reports for a tool the model called with no arguments. */
 const NO_ARGUMENTS = '(no arguments)'
@@ -41,6 +45,57 @@ export interface BlockTheme {
   palette: Palette
   /** Collapsed tool-card body rows. */
   toolPreviewLines: number
+  /** Collapsed body rows of a system prompt or an injected context block. */
+  contextPreviewLines: number
+}
+
+/**
+ * A block whose body the keyboard folds and unfolds: the tool card and the
+ * context block today. `Ctrl+O` sets every one of them at once and `Space`
+ * turns the one the transcript focus holds, so a kind that starts folding
+ * joins both keys by carrying the marker.
+ */
+export interface Foldable {
+  /** Marks a transcript child as foldable; {@link isFoldable} tests it. */
+  readonly foldable: true
+  /**
+   * Whether the whole body is drawn right now.
+   * @returns true while this block is unfolded.
+   */
+  isExpanded(): boolean
+  /**
+   * Fold or unfold the body.
+   * @param expanded - whether the full body is shown.
+   */
+  setExpanded(expanded: boolean): void
+}
+
+/**
+ * Whether one transcript child folds.
+ * @param child - a child of the transcript container.
+ * @returns true when the child carries the foldable marker.
+ */
+export function isFoldable(child: unknown): child is Foldable {
+  return typeof child === 'object' && child !== null && (child as { foldable?: unknown }).foldable === true
+}
+
+/** The room one block draws in, once the focus gutter has taken its own columns. */
+interface FocusFrame {
+  /** Whether the block draws the focus gutter at all. */
+  marked: boolean
+  /** Columns left for the block's own rows. */
+  content: number
+}
+
+/**
+ * How one block draws while the keyboard holds it, or does not.
+ * @param width - the width the transcript container gave the block.
+ * @param highlight - the index of the focused section, or undefined while the keyboard is elsewhere.
+ * @returns whether the gutter is drawn, and the columns it leaves the block.
+ */
+function focusFrame(width: number, highlight: number | undefined): FocusFrame {
+  const marked = highlight !== undefined
+  return { marked, content: marked ? Math.max(1, width - GUTTER_WIDTH) : width }
 }
 
 /**
@@ -48,10 +103,40 @@ export interface BlockTheme {
  * @param palette - the palette the gutter marks are styled with.
  * @param lines - the block's final rendered lines, fades already applied.
  * @param focused - whether the line at one index belongs to the focused section.
+ * @param level - how far above its settled accent the focused section's own
+ * mark is lifted, so a step of the walk is seen where it landed; the gutter
+ * beside the block's other lines stays dim throughout.
  * @returns the lines behind their gutter.
  */
-function withGutter(palette: Palette, lines: readonly string[], focused: (index: number) => boolean): string[] {
-  return lines.map((line, index) => `${focused(index) ? palette.accent(PART_GUTTER) : palette.dim(BLOCK_GUTTER)}${line}`)
+function withGutter(
+  palette: Palette,
+  lines: readonly string[],
+  focused: (index: number) => boolean,
+  level: MotionLevel,
+): string[] {
+  const mark = pulse(palette, palette.accent(PART_GUTTER), level)
+  return lines.map((line, index) => `${focused(index) ? mark : palette.dim(BLOCK_GUTTER)}${line}`)
+}
+
+/** A run of a block's rendered lines: the first, and the one after the last. */
+interface LineRange {
+  from: number
+  to: number
+}
+
+/**
+ * Which lines of a folded block the focus mark is drawn beside: the focused
+ * section's own drawn rows, or the fold marker when the fold left that
+ * section out of the transcript entirely. The marker stands for the rows the
+ * fold took, so it is the line the mark belongs on once they include every
+ * row the keyboard holds - a block drawn as focused always marks a line, and
+ * the docked inspector's report that the block carries the mark stays true.
+ * @param section - the focused section's drawn rows.
+ * @param marker - the fold marker's rows; an empty run while the block folds nothing.
+ * @returns the run the gutter accents.
+ */
+function markedRange(section: LineRange, marker: LineRange): LineRange {
+  return section.to > section.from ? section : marker
 }
 
 /** A prompt the user submitted, drawn with a leading `›`. */
@@ -60,6 +145,8 @@ export class UserBlock implements Component, UserSection {
   readonly blockKind = 'user' as const
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
   private highlight: number | undefined
+  /** How far above its settled accent the focus mark is drawn right now. */
+  private highlightLevel: MotionLevel = 0
 
   constructor(private readonly theme: BlockTheme, private readonly text: string, readonly turn: number) {}
 
@@ -75,20 +162,20 @@ export class UserBlock implements Component, UserSection {
    * Draw this prompt with the focus gutter, or without it.
    * @param part - the index of the focused section, or undefined to clear the mark.
    */
-  setHighlight(part: number | undefined): void {
+  setHighlight(part: number | undefined, level: MotionLevel = 0): void {
     this.highlight = part
+    this.highlightLevel = level
   }
 
   invalidate(): void {}
 
   render(width: number): string[] {
     const palette = this.theme.palette
-    const marked = this.highlight !== undefined
-    const inner = marked ? Math.max(1, width - GUTTER_WIDTH) : width
+    const { marked, content: inner } = focusFrame(width, this.highlight)
     const body = wrapTextWithAnsi(this.text, Math.max(1, inner - 2))
     const lines = ['', ...body.map((line, index) => `${palette.accent(index === 0 ? '›' : ' ')} ${palette.bold(line)}`)]
     // The prompt is one section, so every line of a focused prompt is its own.
-    return marked ? withGutter(palette, lines, () => true) : lines
+    return marked ? withGutter(palette, lines, () => true, this.highlightLevel) : lines
   }
 }
 
@@ -114,16 +201,25 @@ export class NoticeBlock implements Component {
 }
 
 /**
- * A system prompt or injected context, drawn in full under a dim title.
- * Snapshot contributions keep their names above their own rows so every
- * piece of context is visible in the transcript; the inspector Left/Right
- * walk still addresses one contribution at a time.
+ * A system prompt or injected context under a dim title, folded to
+ * `contextPreviewLines` body rows until it is opened.
+ *
+ * One injection can carry more rows than the conversation around it, so the
+ * transcript shows its head and names the key that draws the rest. What the
+ * model was given is never cut from what the keyboard reads: `parts()` stays
+ * complete, so the walk, the inspector, and any reader see every row whatever
+ * the transcript draws. Snapshot contributions keep their names above their
+ * own rows, and the Left/Right walk still addresses one contribution at a time.
  */
-export class ContextBlock implements Component, ContextSection {
+export class ContextBlock implements Component, ContextSection, Foldable {
   readonly navigable = true as const
   readonly blockKind = 'context' as const
+  readonly foldable = true as const
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
   private highlight: number | undefined
+  /** How far above its settled accent the focus mark is drawn right now. */
+  private highlightLevel: MotionLevel = 0
+  private expanded = false
 
   /**
    * @param theme - the palette the glyph and title are styled with.
@@ -150,37 +246,70 @@ export class ContextBlock implements Component, ContextSection {
    * Draw this row with the focus gutter, or without it.
    * @param part - the index of the focused section, or undefined to clear the mark.
    */
-  setHighlight(part: number | undefined): void {
+  setHighlight(part: number | undefined, level: MotionLevel = 0): void {
     this.highlight = part
+    this.highlightLevel = level
+  }
+
+  /**
+   * Whether every model-facing row is drawn right now.
+   * @returns true while the block is unfolded.
+   */
+  isExpanded(): boolean {
+    return this.expanded
+  }
+
+  /**
+   * Fold or unfold the body under the title.
+   * @param expanded - whether every row is shown.
+   */
+  setExpanded(expanded: boolean): void {
+    this.expanded = expanded
   }
 
   invalidate(): void {}
 
   render(width: number): string[] {
     const palette = this.theme.palette
-    const marked = this.highlight !== undefined
-    const inner = marked ? Math.max(1, width - GUTTER_WIDTH) : width
+    const { marked, content: inner } = focusFrame(width, this.highlight)
     const textWidth = Math.max(1, inner - 2)
     const indent = (line: string): string => `  ${line}`
+    // Every row the body draws - a contribution's text, its label, and the
+    // marker that stands for the rows the fold left out - is wrapped to the
+    // same width: pi-tui refuses to write a line wider than the terminal.
+    const dimRows = (text: string): string[] => wrapTextWithAnsi(text, textWidth).map(line => indent(palette.dim(line)))
     const title = wrapTextWithAnsi(this.title, textWidth)
-    const lines = ['', ...title.map((line, index) => `${palette.dim(index === 0 ? CONTEXT_GLYPH : ' ')} ${palette.dim(line)}`)]
+    // The title says what was injected, so it is never folded away; the fold
+    // takes only the body, and the ranges address it on its own.
+    const head = ['', ...title.map((line, index) => `${palette.dim(index === 0 ? CONTEXT_GLYPH : ' ')} ${palette.dim(line)}`)]
+    const body: string[] = []
     const ranges: { from: number; to: number }[] = []
     for (const part of this.sectionParts) {
-      const from = lines.length
+      const from = body.length
       if (part.label !== undefined) {
-        lines.push(...wrapTextWithAnsi(part.label, textWidth).map(line => indent(palette.bold(line))))
+        body.push(...wrapTextWithAnsi(part.label, textWidth).map(line => indent(palette.bold(line))))
       }
       const empty = part.rows.length === 1 && part.rows[0] === ''
       if (!empty) {
-        for (const row of part.rows) {
-          lines.push(...wrapTextWithAnsi(row, textWidth).map(line => indent(palette.dim(line))))
-        }
+        for (const row of part.rows) body.push(...dimRows(row))
       }
-      ranges.push({ from, to: lines.length })
+      ranges.push({ from, to: body.length })
     }
+    const kept = this.theme.contextPreviewLines
+    const cut = !this.expanded && body.length > kept
+    const shown = cut ? [...body.slice(0, kept), ...dimRows(foldMarker(body.length - kept, marked ? 'marked' : 'transcript'))] : body
+    const lines = [...head, ...shown]
     if (this.highlight === undefined) return lines
-    const section = ranges[this.highlight] ?? { from: 0, to: lines.length }
-    return withGutter(palette, lines, line => line >= section.from && line < section.to)
+    const section = ranges[this.highlight]
+    if (section === undefined) return withGutter(palette, lines, () => true, this.highlightLevel)
+    // The fold marker stands for the rows every part lost, so it keeps the
+    // block's own gutter while the held part still has a row of its own here.
+    const drawn = Math.min(section.to, cut ? kept : body.length)
+    const held = markedRange(
+      { from: head.length + section.from, to: head.length + drawn },
+      { from: head.length + (cut ? kept : body.length), to: lines.length },
+    )
+    return withGutter(palette, lines, line => line >= held.from && line < held.to, this.highlightLevel)
   }
 }
 
@@ -255,6 +384,8 @@ export class AssistantBlock implements Component, AssistantSection {
   private repaintFloor = 0
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
   private highlight: number | undefined
+  /** How far above its settled accent the focus mark is drawn right now. */
+  private highlightLevel: MotionLevel = 0
 
   constructor(private readonly theme: BlockTheme, readonly turn: number) {
     const palette = theme.palette
@@ -281,8 +412,9 @@ export class AssistantBlock implements Component, AssistantSection {
    * Draw this message with the focus gutter, or without it.
    * @param part - the index of the focused section, or undefined to clear the mark.
    */
-  setHighlight(part: number | undefined): void {
+  setHighlight(part: number | undefined, level: MotionLevel = 0): void {
     this.highlight = part
+    this.highlightLevel = level
   }
 
   /**
@@ -358,8 +490,7 @@ export class AssistantBlock implements Component, AssistantSection {
   }
 
   render(width: number): string[] {
-    const marked = this.highlight !== undefined
-    const inner = marked ? Math.max(1, width - GUTTER_WIDTH) : width
+    const { content: inner } = focusFrame(width, this.highlight)
     const lines: string[] = ['']
     const reasoning = { from: 0, to: 0 }
     const reply = { from: 0, to: 0 }
@@ -378,7 +509,7 @@ export class AssistantBlock implements Component, AssistantSection {
     if (this.highlight === undefined) return lines
     const focused = this.parts()[this.highlight]
     const section = focused?.kind === 'reasoning' ? reasoning : reply
-    return withGutter(this.theme.palette, lines, index => index >= section.from && index < section.to)
+    return withGutter(this.theme.palette, lines, index => index >= section.from && index < section.to, this.highlightLevel)
   }
 
   /**
@@ -431,9 +562,10 @@ export type ToolCardStatus = 'running' | 'done' | 'error'
  * and the call rows when the call is logged, the result rows when the tool
  * answers. A card rebuilt from history carries neither fade.
  */
-export class ToolBlock implements Component, ToolSection {
+export class ToolBlock implements Component, ToolSection, Foldable {
   readonly navigable = true as const
   readonly blockKind = 'tool' as const
+  readonly foldable = true as const
   private status: ToolCardStatus = 'running'
   private resultLines: string[] = []
   private expanded = false
@@ -443,6 +575,8 @@ export class ToolBlock implements Component, ToolSection {
   private repaintFloor = 0
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
   private highlight: number | undefined
+  /** How far above its settled accent the focus mark is drawn right now. */
+  private highlightLevel: MotionLevel = 0
 
   constructor(
     private readonly theme: BlockTheme,
@@ -474,8 +608,9 @@ export class ToolBlock implements Component, ToolSection {
    * Draw this card with the focus gutter, or without it.
    * @param part - the index of the focused section, or undefined to clear the mark.
    */
-  setHighlight(part: number | undefined): void {
+  setHighlight(part: number | undefined, level: MotionLevel = 0): void {
     this.highlight = part
+    this.highlightLevel = level
   }
 
   /**
@@ -519,6 +654,14 @@ export class ToolBlock implements Component, ToolSection {
   }
 
   /**
+   * Whether the whole body is drawn right now.
+   * @returns true while the card is unfolded.
+   */
+  isExpanded(): boolean {
+    return this.expanded
+  }
+
+  /**
    * Fold or unfold the body.
    * @param expanded - whether the full body is shown.
    */
@@ -530,8 +673,7 @@ export class ToolBlock implements Component, ToolSection {
 
   render(width: number): string[] {
     const palette = this.theme.palette
-    const marked = this.highlight !== undefined
-    const outer = marked ? Math.max(1, width - GUTTER_WIDTH) : width
+    const { marked, content: outer } = focusFrame(width, this.highlight)
     const glyph = this.status === 'running'
       ? palette.warning('●')
       : this.status === 'done' ? palette.success('●') : palette.error('●')
@@ -539,7 +681,9 @@ export class ToolBlock implements Component, ToolSection {
     const body = [...this.call.lines, ...this.resultLines]
     // Truncation runs over the whole body, so the kept rows can stop inside
     // the call rows; how many of them survived splits the two fade groups.
-    const shown = previewLines(body, this.theme.toolPreviewLines, this.expanded)
+    const shown = this.expanded
+      ? body
+      : foldRows(body, this.theme.toolPreviewLines, hidden => foldMarker(hidden, marked ? 'marked' : 'transcript'))
     const callCount = Math.min(this.call.lines.length, shown.length)
     const inner = Math.max(1, outer - 4)
     const rows = (lines: readonly string[]): string[] =>
@@ -554,14 +698,19 @@ export class ToolBlock implements Component, ToolSection {
     if (this.highlight === undefined) return lines
     // The truncation marker belongs to the card rather than to either section:
     // it stands for the rows both of them left out, so it keeps the block's own
-    // gutter. It is the last row `previewLines` produced.
+    // gutter while the held section still has a row of its own. It is the last
+    // row the fold produced.
     const cut = !this.expanded && body.length > this.theme.toolPreviewLines
     const sections = lines.length - (cut ? rows(shown.slice(-1)).length : 0)
     const focused = this.parts()[this.highlight]
     const section = focused?.kind === 'result'
       ? { from: 1 + callLines.length, to: lines.length }
       : { from: 1, to: 1 + callLines.length }
-    return withGutter(palette, lines, index => index >= section.from && index < section.to && index < sections)
+    const held = markedRange(
+      { from: section.from, to: Math.min(section.to, sections) },
+      { from: sections, to: lines.length },
+    )
+    return withGutter(palette, lines, index => index >= held.from && index < held.to, this.highlightLevel)
   }
 }
 

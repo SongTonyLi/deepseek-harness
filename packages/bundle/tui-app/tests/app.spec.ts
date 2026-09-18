@@ -1,5 +1,8 @@
 /** The terminal application over a scripted Agent: rendering, keys, commands, and the two interaction seams. */
 
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, createSystemMessage } from '@deepseek-ai/dsh-llm'
@@ -8,12 +11,20 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
-import { KEY, bench } from './bench.ts'
+import { FADE_TICK_MS } from '../src/fade.ts'
+import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, REGION_LABELS, widestHint } from '../src/keys.ts'
+import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
+import { ABOVE_WINDOW_TOAST, NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
+import { foldMarker } from '../src/transcript.ts'
+import { BENCH_NOW, KEY, bench } from './bench.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
   for (const char of text) terminal.type(char)
   terminal.type(KEY.enter)
 }
+
+/** A system prompt longer than any fold budget. */
+const RULES = Array.from({ length: 6 }, (_, index) => `rule ${String(index)}`).join('\n')
 
 describe('TuiApp', () => {
   it('draws the header, footer, and a submitted prompt, and hands the prompt to the idle Agent', async () => {
@@ -23,7 +34,7 @@ describe('TuiApp', () => {
     expect(test.terminal.title).toBe('dsh · /work')
     const screen = test.terminal.text()
     expect(screen).toContain('session session-tui-test')
-    expect(screen).toContain('test-provider/test-model')
+    expect(screen).toContain('test-model · effort default')
     expect(screen).toContain('/work')
 
     typeLine(test.terminal, 'hello there')
@@ -143,7 +154,7 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).toContain('cwd: /work')
     test.appendToolResult('call-1', [{ type: 'text', text: 'a\nb\nc\nd\n' }], true, { extra: 1 })
     await test.settle()
-    expect(test.terminal.text()).toContain('… 4 more lines (Ctrl+O expands)')
+    expect(test.terminal.text()).toContain('… 4 more rows · Ctrl+O expands')
     expect(test.terminal.text()).not.toContain('exit 2')
     test.terminal.type(KEY.ctrlO)
     await test.settle()
@@ -167,6 +178,58 @@ describe('TuiApp', () => {
     expect(screen).toContain('{"path":"x"}')
     expect(screen).toContain('mystery output')
     expect(screen).not.toContain('orphan')
+  })
+
+  it('folds every tool card and context block together with Ctrl+O and /tools', async () => {
+    const history = [
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage(RULES, 'system-prompt') } },
+    ] as never[]
+    const test = await bench({ history, toolPreviewLines: 1, contextPreviewLines: 2 })
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    test.appendToolResult('call-1', [{ type: 'text', text: 'a\nb\nc' }])
+    await test.settle()
+    const folded = await test.screen()
+    expect(folded).toContain('rule 1')
+    expect(folded).not.toContain('rule 5')
+    expect(folded).toContain('… 4 more rows · Ctrl+O expands')
+    expect(folded).not.toContain('  │ c')
+
+    // One key reaches every foldable block, whatever kind it is.
+    test.terminal.type(KEY.ctrlO)
+    await test.settle()
+    const open = await test.screen()
+    expect(open).toContain('rule 5')
+    expect(open).toContain('  │ c')
+    expect(open).not.toContain('more rows')
+
+    typeLine(test.terminal, '/tools')
+    await test.settle()
+    const closed = await test.screen()
+    expect(closed).not.toContain('rule 5')
+    expect(closed).not.toContain('  │ c')
+    expect(closed).toContain('… 4 more rows · Ctrl+O expands')
+  })
+
+  it('draws a long injected snapshot folded at the configured budget', async () => {
+    const history = [
+      { type: 'user/message', seq: 0, time: 1, data: createUserMessage({
+        content: [{ type: 'text', text: 'assembled' }],
+        source: { kind: 'plugin', plugin: 'workspace', form: 'snapshot', sections: [
+          { name: 'sandbox', text: 'allow python' },
+          { name: 'git', text: Array.from({ length: 20 }, (_, index) => `changed file ${String(index)}`).join('\n') },
+        ] },
+      }) },
+    ] as never[]
+    const test = await bench({ history })
+    await test.settle()
+    const screen = await test.screen()
+    expect(screen).toContain('⬡ snapshot · workspace')
+    // Four rows of body, and the injection is no longer than the conversation.
+    expect(screen).toContain('  sandbox')
+    expect(screen).toContain('  allow python')
+    expect(screen).toContain('  changed file 0')
+    expect(screen).not.toContain('changed file 1')
+    expect(screen).toContain('… 19 more rows · Ctrl+O expands')
   })
 
   it('draws resumed history, notices, and turn-end reasons', async () => {
@@ -215,17 +278,23 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).not.toContain('turn blocked')
   })
 
-  it('stops the running turn on Escape, clears on Ctrl+C, and quits on a double Ctrl+C or Ctrl+D', async () => {
+  it('arms the stop on Escape and stops the running turn on a second press, clears on Ctrl+C, and quits on a double Ctrl+C or Ctrl+D', async () => {
     const test = await bench()
     test.terminal.type(KEY.escape)
     expect(test.calls.cancels).toBe(0)
     test.setStatus('running')
+    // The first press only arms the stop and says so.
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    expect(test.terminal.text()).toContain('press Esc again to stop turn 0')
     test.terminal.type(KEY.escape)
     expect(test.calls.cancels).toBe(1)
     expect(test.calls.cancelOptions).toEqual({ keepInbox: true })
     await test.settle()
     expect(test.terminal.text()).toContain('stopping the turn…')
     test.agent.inbox.append('next-turn', createUserMessage({ content: [{ type: 'text', text: 'later' }], source: { kind: 'user' } }))
+    test.terminal.type(KEY.escape)
     test.terminal.type(KEY.escape)
     await test.settle()
     expect(test.terminal.text()).toContain('1 queued message(s) stay queued')
@@ -251,6 +320,270 @@ describe('TuiApp', () => {
     const test = await bench()
     test.terminal.type(KEY.ctrlC)
     test.terminal.type(KEY.ctrlC)
+    expect(test.quits).toHaveLength(1)
+  })
+
+  it('takes the stop arm back down when the editor takes another key', async () => {
+    const test = await bench({ running: true })
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.terminal.text()).toContain('press Esc again to stop turn 0')
+    // Typing takes the notice down and disarms with it, so a press at the end
+    // of a sentence arms again instead of stopping the turn.
+    test.terminal.type('a')
+    await test.settle()
+    expect(await test.screen()).not.toContain('press Esc again to stop turn')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    test.terminal.type(KEY.escape)
+    expect(test.calls.cancels).toBe(1)
+  })
+
+  it('takes the stop arm down with the line Ctrl+C put in its place', async () => {
+    const test = await bench({ running: true })
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.terminal.text()).toContain('press Esc again to stop turn 0')
+    // Ctrl+C takes the arming line down and says something else instead, so
+    // the next Escape must arm again rather than stop a turn with nothing on
+    // screen that said it would.
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    const shown = await test.screen()
+    expect(shown).toContain('press Ctrl+C again to quit')
+    expect(shown).not.toContain('press Esc again to stop turn')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    expect(test.terminal.text()).toContain('press Esc again to stop turn 0')
+    test.terminal.type(KEY.escape)
+    expect(test.calls.cancels).toBe(1)
+  })
+
+  it('arms no timer for a line the next key press took down', async () => {
+    const test = await bench({ toastMs: 2000 })
+    await test.settle()
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
+    test.terminal.type('a')
+    await test.settle()
+    expect(await test.screen()).not.toContain('press Ctrl+C again to quit')
+    // The line is gone, so nothing is left to repaint for the rest of what
+    // would have been its flight.
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+
+  it('arms again instead of stopping once the notice has come down', async () => {
+    const test = await bench({ running: true, toastMs: 800 })
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.terminal.text()).toContain('press Esc again to stop turn 0')
+    test.setNow(BENCH_NOW + 800)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    test.terminal.type(KEY.escape)
+    expect(test.calls.cancels).toBe(1)
+  })
+
+  it('floats key feedback over the conversation, takes it down again, and arms no timer afterwards', async () => {
+    const test = await bench({ toastMs: 900 })
+    await test.settle()
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    const shown = await test.screen()
+    expect(shown).toContain('press Ctrl+C again to quit')
+    // The line is an overlay, so it costs the conversation no row of its own.
+    expect(shown).not.toContain('· press Ctrl+C again to quit')
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
+    test.runTick(FADE_TICK_MS, 900)
+    await test.settle()
+    expect(await test.screen()).not.toContain('press Ctrl+C again to quit')
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+
+  it('fades the line out on a terminal that draws a ramp, and holds the arm for the whole flight', async () => {
+    const test = await bench({ color: true, background: 'rgb:0000/0000/0000', toastMs: 500, fadeSteps: 4, fadeStepMs: 50, running: true })
+    await test.settle()
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    // Held at full strength, then recolored for the fade, then gone.
+    test.runTick(FADE_TICK_MS, 500)
+    await test.settle()
+    expect(await test.screen()).toContain('press Esc again to stop turn 0')
+    test.runTick(FADE_TICK_MS, 100)
+    await test.settle()
+    expect(await test.screen()).toContain('press Esc again to stop turn 0')
+    // The arm covers the hold and the fade together: 500 + 4 x 50.
+    test.setNow(BENCH_NOW + 699)
+    test.terminal.type(KEY.escape)
+    expect(test.calls.cancels).toBe(1)
+  })
+
+  it('reads the newest section full screen from the input and from /turns', async () => {
+    const test = await bench()
+    typeLine(test.terminal, 'read the spec')
+    test.appendAssistant([{ type: 'text', text: 'the reply' }])
+    await test.settle()
+
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    const reading = await test.screen()
+    expect(reading).toContain(' ● READER ')
+    expect(reading).toContain('▸ 1  [read the spec]')
+    expect(reading).toContain('▌the reply')
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    expect(await test.screen()).not.toContain(' ● READER ')
+
+    typeLine(test.terminal, '/turns')
+    await test.settle()
+    expect(await test.screen()).toContain('▌the reply')
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    expect(await test.screen()).not.toContain(' ● READER ')
+  })
+
+  it('says there is nothing to read yet and opens nothing', async () => {
+    const test = await bench()
+    await test.settle()
+    typeLine(test.terminal, '/turns')
+    await test.settle()
+    expect(test.terminal.text()).toContain('nothing in the transcript to read yet')
+    expect(await test.screen()).not.toContain(' ● READER ')
+    // The keyboard never left the input.
+    typeLine(test.terminal, 'hello')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'hello' }]])
+  })
+
+  it('steps the reader aside for an approval and brings it back afterwards', async () => {
+    const test = await bench()
+    typeLine(test.terminal, 'read the spec')
+    test.appendAssistant([{ type: 'text', text: 'the reply' }])
+    await test.settle()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READER ')
+
+    const asked = test.ctx.waterfall(
+      'approval/request',
+      { agent: test.agent, toolName: 'bash', reason: 'writes outside the workspace' },
+      () => Promise.resolve<ApprovalOutcome>('unavailable'),
+    )
+    await test.settle()
+    const prompted = await test.screen()
+    expect(prompted).toContain('Allow bash?')
+    expect(prompted).not.toContain(' ● READER ')
+    test.terminal.type(KEY.enter)
+    await expect(asked).resolves.toBe('allowed-once')
+    await test.settle()
+    // The seam is answered, so the reader has the screen and the keyboard back.
+    expect(await test.screen()).toContain(' ● READER ')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(await test.screen()).toContain('2/2 · turn 1 · reply')
+  })
+
+  it('keeps the reader aside until the last queued prompt has been answered', async () => {
+    const test = await bench()
+    typeLine(test.terminal, 'read the spec')
+    test.appendAssistant([{ type: 'text', text: 'the reply' }])
+    await test.settle()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READER ')
+
+    const ask = (toolName: string): Promise<ApprovalOutcome> => test.ctx.waterfall(
+      'approval/request',
+      { agent: test.agent, toolName, reason: 'writes outside the workspace' },
+      () => Promise.resolve<ApprovalOutcome>('unavailable'),
+    )
+    const first = ask('bash')
+    const second = ask('write')
+    await test.settle()
+    expect(await test.screen()).toContain('Allow bash?')
+    test.terminal.type(KEY.enter)
+    await expect(first).resolves.toBe('allowed-once')
+    await test.settle()
+    // The queue shows the second seam next, and the reader would cover it if
+    // it came back between the two.
+    const queued = await test.screen()
+    expect(queued).toContain('Allow write?')
+    expect(queued).not.toContain(' ● READER ')
+    test.terminal.type(KEY.enter)
+    await expect(second).resolves.toBe('allowed-once')
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READER ')
+  })
+
+  it('closes the reader and says so when a session switch takes the conversation', async () => {
+    const gate = { release: () => {} }
+    const test = await bench({ hostGate: gate })
+    typeLine(test.terminal, 'read the spec')
+    test.appendAssistant([{ type: 'text', text: 'the reply' }])
+    await test.settle()
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    // The host is still opening the next session, so the conversation still
+    // takes the keyboard and the reader still opens on it.
+    test.terminal.type(KEY.shiftUp)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READER ')
+    gate.release()
+    await test.settle()
+    const after = await test.screen()
+    expect(after).not.toContain(' ● READER ')
+    expect(after).toContain('the transcript changed · reader closed')
+  })
+
+  it('closes the reader over a switch whose session brings a history of its own', async () => {
+    const gate = { release: () => {} }
+    const test = await bench({
+      hostGate: gate,
+      openedHistory: [{
+        type: 'user/message',
+        seq: 0,
+        time: 1,
+        data: createUserMessage({ content: [{ type: 'text', text: 'earlier prompt' }], source: { kind: 'user' } }),
+      }] as never[],
+    })
+    typeLine(test.terminal, 'read the spec')
+    test.appendAssistant([{ type: 'text', text: 'the reply' }])
+    await test.settle()
+    typeLine(test.terminal, '/fork')
+    await test.settle()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READER ')
+    gate.release()
+    await test.settle()
+    // The replayed history leaves the new transcript full, so nothing but the
+    // switch itself can take the reader down - and the keyboard is back in the
+    // input rather than reading a conversation nobody opened.
+    const after = await test.screen()
+    expect(after).not.toContain(' ● READER ')
+    expect(after).toContain('› earlier prompt')
+    expect(after).toContain('the transcript changed · reader closed')
+    typeLine(test.terminal, 'hello again')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content).at(-1)).toEqual([{ type: 'text', text: 'hello again' }])
+  })
+
+  it('takes the reader down with the terminal when the application stops', async () => {
+    const test = await bench()
+    typeLine(test.terminal, 'read the spec')
+    test.appendAssistant([{ type: 'text', text: 'the reply' }])
+    await test.settle()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READER ')
+    test.app.stop()
+    await test.settle()
+    expect(test.terminal.stopped).toBe(true)
     expect(test.quits).toHaveLength(1)
   })
 
@@ -289,8 +622,8 @@ describe('TuiApp', () => {
     typeLine(test.terminal, '/help')
     await test.settle()
     expect(test.terminal.text()).toContain('/echo')
-    expect(test.terminal.text()).toContain('Esc stops the running turn')
-    expect(test.terminal.text()).toContain('@ completes paths and sessions (workspace, ../, ~/, absolute)')
+    expect(test.terminal.text()).toContain('Esc arms the stop · Esc again stops the turn')
+    expect(test.terminal.text()).toContain('@ completes paths and sessions · / completes commands')
     typeLine(test.terminal, '/echo one two')
     typeLine(test.terminal, '/fail')
     typeLine(test.terminal, '/silent')
@@ -314,6 +647,76 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).toContain('other/big')
     typeLine(test.terminal, '/exit')
     expect(test.quits).toHaveLength(1)
+  })
+
+  it('lists one /help row per focus state, in the words that state draws', async () => {
+    const test = await bench()
+    typeLine(test.terminal, '/help')
+    await test.settle()
+    const lines = test.terminal.text().split('\n').map(line => line.trimEnd())
+    /** The printed row whose keys are `line`, or undefined when nothing lists it. */
+    const rowOf = (line: string): string | undefined => lines.find(printed => printed.endsWith(line))
+    for (const region of FOCUS_REGIONS) {
+      const [first, ...rest] = KEY_LINES[region]
+      // The state names itself once, on the row carrying its first line.
+      expect(rowOf(first as string)?.startsWith(REGION_LABELS[region]), region).toBe(true)
+      // Its further lines are listed under a blank name column.
+      for (const line of rest) expect(rowOf(line)?.trimStart(), region).toBe(line)
+    }
+    // Every docked legend is the one its own surface draws, not a second copy.
+    for (const region of ['transcript', 'panel', 'bar'] as const) {
+      expect(rowOf(widestHint(region)), region).toBeDefined()
+    }
+    // The reader is a focus state of its own, with both its columns named.
+    expect(rowOf(READER_HINTS.rail[0])?.startsWith('reader')).toBe(true)
+    expect(rowOf(READER_HINTS.pane[0])).toBeDefined()
+    const shown = lines.join('\n')
+    for (const key of ['Space folds', 'Ctrl+G reader', 'Tab regions', 'PgUp PgDn turns', 'Home End ends']) {
+      expect(shown, key).toContain(key)
+    }
+    expect(shown).toContain('Esc arms the stop · Esc again stops the turn')
+  })
+
+  it('writes every legend step, fold marker, and transient line in exactly one module', () => {
+    /** The string literals one module declares, its comments removed. */
+    const literals = (source: string): string[] => {
+      const code = source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/^\s*\/\/.*$/gmu, '')
+      return [...code.matchAll(/'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gu)].map(match => match[0].slice(1, -1))
+    }
+    const directory = fileURLToPath(new URL('../src', import.meta.url))
+    const modules = readdirSync(directory)
+      .filter(name => name.endsWith('.ts'))
+      .map(name => [name, literals(readFileSync(join(directory, name), 'utf8'))] as const)
+    /** Which modules declare `words`; a parameterized line is matched by its fixed head. */
+    const owners = (words: string): string[] => modules
+      .filter(([, declared]) => declared.some(literal => literal === words || literal.startsWith(`${words}$`)))
+      .map(([name]) => name)
+    const catalog: readonly (readonly [string, string])[] = [
+      // The one editor line built from the entry keys is a template there, so
+      // its fixed head is covered by the entry hints themselves.
+      ...[...HINTS.transcript, ...HINTS.panel, ...HINTS.bar, ...ENTRY_HINTS, ...KEY_LINES.transcript,
+        ...KEY_LINES.editor.filter(line => !line.startsWith(ENTRY_HINTS[0] as string))]
+        .map(step => [step, 'keys.ts'] as const),
+      ...[...READER_HINTS.rail, ...READER_HINTS.pane].map(step => [step, 'reader.ts'] as const),
+      ['compare needs ', 'reader.ts'],
+      ['terminal too small for the reader (needs ', 'reader.ts'],
+      [QUIT_TOAST, 'toast.ts'],
+      [NOTHING_TO_READ_TOAST, 'toast.ts'],
+      [ABOVE_WINDOW_TOAST, 'toast.ts'],
+      ['press Esc again to stop turn ', 'toast.ts'],
+      ['Space expands', 'transcript.ts'],
+      ['Ctrl+O expands', 'transcript.ts'],
+      ['Ctrl+G reads it', 'transcript.ts'],
+      ['stopping the turn…', 'app.ts'],
+      ['the transcript changed · reader closed', 'app.ts'],
+      ['wait for the session switch to finish', 'app.ts'],
+    ]
+    for (const [words, owner] of catalog) expect(owners(words), words).toEqual([owner])
+    expect(TOO_SMALL).toContain('terminal too small for the reader (needs ')
+    // The three fold markers are one grammar with three named openers.
+    expect(foldMarker(1, 'marked')).toBe('… 1 more row · Space expands')
+    expect(foldMarker(41, 'transcript')).toBe('… 41 more rows · Ctrl+O expands')
+    expect(foldMarker(41, 'inspector')).toBe('… 41 more rows · Ctrl+G reads it')
   })
 
   it('reports unknown commands when no registry is composed', async () => {
@@ -503,6 +906,19 @@ describe('TuiApp', () => {
     expect(test.quits).toHaveLength(1)
   })
 
+  it('lets Escape close the completion list instead of arming the stop', async () => {
+    const test = await bench({ running: true })
+    test.terminal.type('/')
+    await test.settle()
+    expect(test.terminal.text()).toContain('/sessions')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    const closed = await test.screen()
+    expect(closed).not.toContain('/sessions')
+    expect(closed).not.toContain('press Esc again to stop turn')
+    expect(test.calls.cancels).toBe(0)
+  })
+
   it('picks a model from the composed providers', async () => {
     const test = await bench({
       before: (ctx) => {
@@ -564,46 +980,60 @@ describe('the status bar', () => {
     expect(test.terminal.text()).toContain('Shift+↓')
     expect(test.terminal.text()).not.toContain('Shift+↑ transcript')
     expect(test.terminal.text()).not.toContain('Enter sends')
-    expect(test.terminal.text()).not.toContain('← → select')
+    expect(test.terminal.text()).not.toContain('←→ segments')
   })
 
-  it('takes focus on Shift+Down, swaps the hints, and keeps typed keys out of the editor', async () => {
+  it('takes focus on Shift+Down, swaps the hints, and types a printable key back into the editor', async () => {
     const test = await bench()
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    // The first printable key hands the keyboard back and lands at the caret.
     for (const char of 'zzz') test.terminal.type(char)
-    test.terminal.type(KEY.ctrlO)
-    await test.settle()
-    expect(test.calls.followups).toHaveLength(0)
-    test.terminal.type(KEY.escape)
     await test.settle()
     expect(test.terminal.text()).toContain('Shift+↓')
-    typeLine(test.terminal, 'hello')
+    expect(test.calls.followups).toHaveLength(0)
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.ctrlO)
     await test.settle()
-    // The keys pressed at the bar never reached the editor, so the prompt is exactly what was typed after Esc.
-    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'hello' }]])
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    typeLine(test.terminal, ' hello')
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'zzz hello' }]])
   })
 
-  it('leaves a running turn alone while Esc returns focus to the editor', async () => {
+  it('leaves a running turn alone while Esc returns focus to the editor, and for the whole handoff window after it', async () => {
     const test = await bench({ running: true })
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.escape)
     await test.settle()
     expect(test.calls.cancels).toBe(0)
+    // A habitual second press lands inside the handoff window and does nothing
+    // at all: it does not even arm the stop.
+    test.terminal.type(KEY.escape)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    expect(test.terminal.text()).not.toContain('press Esc again to stop turn')
+    test.setNow(BENCH_NOW + ESCAPE_HANDOFF_MS)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    expect(test.terminal.text()).toContain('press Esc again to stop turn 0')
     test.terminal.type(KEY.escape)
     await test.settle()
     expect(test.calls.cancels).toBe(1)
   })
 
-  it('moves the selection with Left, Right, and Tab, wrapping at both ends', async () => {
+  it('moves the selection with Left and Right, wrapping at both ends', async () => {
     const test = await benchWithContext()
     test.terminal.type(KEY.shiftDown)
-    test.terminal.type(KEY.tab)
+    test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('reasoning effort: the model\'s own default')
-    test.terminal.type(KEY.tab)
+    test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('context: ~54k / 128k (42%)')
@@ -619,10 +1049,10 @@ describe('the status bar', () => {
     // And before the first one it wraps to the workspace again.
     test.terminal.type(KEY.left)
     await test.settle()
-    expect(await test.screen()).toContain('workspace: /work · ← → select')
-    test.terminal.type(KEY.shiftTab)
+    expect(await test.screen()).toContain('workspace: /work · ←→ segments')
+    test.terminal.type(KEY.left)
     await test.settle()
-    expect(await test.screen()).toContain('context: ~54k / 128k (42%) · ← → select')
+    expect(await test.screen()).toContain('context: ~54k / 128k (42%) · ←→ segments')
   })
 
   it('lands Right from context on the todo details instead of jumping to the workspace', async () => {
@@ -644,15 +1074,15 @@ describe('the status bar', () => {
       },
     })
     test.terminal.type(KEY.shiftDown)
-    test.terminal.type(KEY.tab)
-    test.terminal.type(KEY.tab)
+    test.terminal.type(KEY.right)
+    test.terminal.type(KEY.right)
     await test.settle()
-    expect(await test.screen()).toContain('context: ~54k / 128k (42%) · ← → select')
+    expect(await test.screen()).toContain('context: ~54k / 128k (42%) · ←→ segments')
     test.terminal.type(KEY.right)
     await test.settle()
     const screen = await test.screen()
-    expect(screen).toContain('todos: 1 done · 1 active · 1 pending · write')
-    expect(screen).not.toContain('workspace: /work · ← → select')
+    expect(screen).toContain('todos: 1 done · 1 active · 1 pending')
+    expect(screen).not.toContain('workspace: /work · ←→ segments')
   })
 
   it('cycles the reasoning effort with Shift+Tab only while the editor has focus', async () => {
@@ -669,8 +1099,11 @@ describe('the status bar', () => {
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.shiftTab)
     await test.settle()
-    // At the bar the same key moves the selection instead, leaving the effort in force.
+    // At the bar the same key walks the regions instead, leaving the effort
+    // in force; this session draws no panel and has nothing to read, so the
+    // walk comes back to the bar itself.
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    test.terminal.type(KEY.left)
     test.terminal.type(KEY.enter)
     await test.settle()
     // Backward from the model wraps to the last segment, not the effort one.
@@ -686,22 +1119,21 @@ describe('the status bar', () => {
     expect(screen).toContain('provider: test-provider')
     expect(screen).toContain('reasoning effort: the model\'s own default')
     expect(screen).toContain('/model picks the provider and model for the next request')
-    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
   })
 
-  it('keeps the bar when neither an empty transcript nor an undrawn panel can take the keyboard', async () => {
+  it('keeps the bar when an empty transcript cannot take the keyboard, and leaves it for the editor', async () => {
     const test = await bench()
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.shiftUp)
     await test.settle()
-    expect(test.terminal.text()).toContain('nothing in the transcript to inspect yet')
-    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
-    // Up leaves the bar for the panel, and there is none drawn either.
+    expect(test.terminal.text()).toContain('nothing in the transcript to read yet')
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    // With no panel between them, Up at the bar reaches the editor, where the
+    // next character is typed.
     test.terminal.type(KEY.up)
-    test.terminal.type(KEY.down)
     await test.settle()
-    expect(test.terminal.text()).toContain('← → select · ↑ ↓ regions · Enter details · Esc back')
-    test.terminal.type(KEY.escape)
+    expect(await test.screen()).not.toContain('←→ segments · Enter details · Tab regions · Esc input')
     typeLine(test.terminal, 'hello')
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'hello' }]])
@@ -771,19 +1203,21 @@ describe('the status bar', () => {
     expect(test.terminal.text()).toContain('model: opened-model')
   })
 
-  it('moves one segment on Shift+Right from the model onto effort, including the default', async () => {
+  it('reaches the last segment on Shift+Right and the first on Shift+Left', async () => {
     const test = await bench()
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.shiftRight)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text()).toContain('reasoning effort: the model\'s own default')
-    expect(test.terminal.text()).toContain('Shift+Tab cycles it')
+    expect(test.terminal.text()).toContain('workspace: /work')
     expect(test.terminal.text()).not.toContain('provider: test-provider')
-    expect(test.terminal.text()).not.toContain('workspace: /work')
+    test.terminal.type(KEY.shiftLeft)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('provider: test-provider')
   })
 
-  it('lands Shift+Right on the effort in force after Shift+Tab cycles it', async () => {
+  it('lands Right on the effort in force after Shift+Tab cycles it', async () => {
     const test = await bench({
       before: (ctx) => {
         ctx.provide('llm', {
@@ -794,7 +1228,7 @@ describe('the status bar', () => {
     test.terminal.type(KEY.shiftTab)
     await test.settle()
     test.terminal.type(KEY.shiftDown)
-    test.terminal.type(KEY.shiftRight)
+    test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('reasoning effort: low')
@@ -803,20 +1237,22 @@ describe('the status bar', () => {
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
   })
 
-  it('treats a Shift+Right sequence as one move, and wraps Shift+Left the same as Left', async () => {
+  it('treats a Shift+Right sequence as one move, whatever the bar draws between the ends', async () => {
     const test = await benchWithContext()
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.shiftRight)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text()).toContain('reasoning effort: the model\'s own default')
-    expect(test.terminal.text()).toContain('Shift+Tab cycles it')
+    expect(test.terminal.text()).toContain('workspace: /work')
     expect(test.terminal.text()).not.toContain('context: ~54k / 128k (42%)')
     test.terminal.type(KEY.shiftLeft)
-    test.terminal.type(KEY.shiftLeft)
-    test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text()).toContain('workspace: /work')
+    expect(await test.screen()).toContain('provider: test-provider · ←→ segments')
+    // One step back from the first segment wraps to the last one, which is
+    // where Shift+Right had already landed.
+    test.terminal.type(KEY.left)
+    await test.settle()
+    expect(await test.screen()).toContain('workspace: /work · ←→ segments')
   })
 
   it('leaves Shift+Right with the editor while the editor has the keyboard', async () => {
@@ -824,7 +1260,7 @@ describe('the status bar', () => {
     for (const char of 'ab') test.terminal.type(char)
     test.terminal.type(KEY.shiftRight)
     await test.settle()
-    expect(test.terminal.text()).not.toContain('← → select')
+    expect(test.terminal.text()).not.toContain('←→ segments')
     typeLine(test.terminal, '')
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'ab' }]])

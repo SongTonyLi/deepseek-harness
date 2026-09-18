@@ -22,6 +22,8 @@ Status: implemented
 
 `src/navigation.ts` 是纯数据——没有 pi-tui、没有调色板、没有时钟：它按 `navigable` 标记筛选对话记录容器的子组件，在其上一次一个小节地移动一个 `TranscriptCursor`，把记住的游标对照当前各块落定，并构造标题与部分条。`src/inspector.ts` 持有纯函数 `renderInspector` 与每次渲染调用它的那一个组件；`src/screen.ts` 持有下文所述的屏幕子类。`focusPreviewLines` 是穿过 `TuiAppDeps` 的经校验配置字段（`z.natural().min(1).default(12)`），因此想要更高的检视区或屏幕上更多对话的部署从 `cordis.yml` 修改它。
 
+**部分被取代。**[终端阅读器浮层、Esc 安全性与作为枢纽的编辑器](2026-09-18-tui-reader-overlay-and-esc-safety.zh.md) 取代了上述八条规则：`Esc` 不再因为离开某处这一副作用而停止轮次，在编辑器里也只有在可见窗口内的第二次按下才会停止；区域栈会经过编辑器，因此在最新小节按 `Down`、在面板第一行按 `Up` 都会落到光标所在之处；在区域里按下的可打印字符会落在该光标处而不是被消费；`Shift+Up` / `Shift+Down` 跳过整个块而不再走一个小节，`PgUp` / `PgDn` 跳过一个轮次，`Home` / `End` 抵达两端；`Enter` 打开整屏阅读器而不是内联的 `DetailPrompt` 页面，`Shift+Up` 如今也因此在记住的小节上继续；系统提示词与注入的上下文都不再被完整画出——块在对话记录中按 `contextPreviewLines` 折叠，带框的检视区对每一种小节都按 `focusPreviewLines` 折叠并留下 `… <n> more rows · Ctrl+G reads it`，全部各行由阅读器画出；折叠它们的那个面板是一个圆角边框，框上带着 ` ● READ ` 标记牌，顶边是同一条标题，底边是该区域共享的提示语，取代了原先的空白分隔行与它自己的提示行；对话记录中没有可读内容时，键盘留在编辑器里，并浮出瞬时提示 `nothing in the transcript to read yet`。下文中每个块作为小节所承载的内容、就地装订线与重绘窗口规则未变，阅读器与折叠正依赖于它们。
+
 ## What a block exposes as sections
 
 每个可导航的对话记录组件都报告它拿到的源文本，而不是它绘制出的渲染结果。`UserBlock` 承载一个带有已提交提示文本的 `user` 部分。`AssistantBlock` 在推理非空期间承载一个 `reasoning` 部分，一旦可见文本到达再承载一个 `reply` 部分；仅当该消息没有推理时才保留空回复，因此一次工具调用步骤不会变成空白小节。`ToolBlock` 承载一个 `call` 部分——标题行与参数行，模型未传参数时为 `(no arguments)`——并在结果落地之后承载一个 `result` 部分，其中是未经截断的结果行，工具什么也没回答时为 `(no output)`。`ContextBlock` 承载非空的系统提示词或一条注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——并在对话记录中画出全部面向模型的各行；快照按具名贡献各成一部分，因此 Left/Right 走过每一份；无法阅读的贡献列表则回退到组装后的文本，因此一份贡献绝不会被空标签取代。空的系统提示词与压缩替换则省略。每个块还承载它被追加时所处的轮次，标题会陈述它；轮次结束通知与打印出的行不带任何标记，因此键盘会跳过它们。

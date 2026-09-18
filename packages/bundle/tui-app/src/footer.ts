@@ -3,8 +3,9 @@
  * of segments, each with a stable id, the short label the bar draws, and what
  * `Enter` on it does — the rows the app prints, or the app's own navigable
  * page with the one-line summary the focused bar expands; a second function
- * renders those segments as one unfocused line of key facts, or as two focused
- * lines whose first is a sliding window that always includes the selected
+ * renders those segments as one unfocused line whose two ends are reserved
+ * for the model and the entry keys, or as two focused lines whose first is
+ * that same anchored model plus a sliding window around the selected
  * segment. Everything here is pure — no Context, no
  * services, no terminal, and no clock: elapsed values arrive already formatted,
  * and the terminal width arrives as an input so every line fits it.
@@ -13,6 +14,9 @@
 
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
+import { fitLegend } from './frame.ts'
+import { ENTRY_HINTS, HINTS } from './keys.ts'
+import { pulse, type MotionLevel } from './motion.ts'
 import {
   contextLines,
   footerStatus,
@@ -47,6 +51,13 @@ export interface FooterSegment {
   id: FooterSegmentId
   /** The short text the bar draws. */
   label: string
+  /**
+   * What the bar draws instead once {@link FooterSegment.label} outgrows its
+   * budget; absent leaves the label to be ellipsized. The model segment
+   * carries the bare model name, so the bar drops the provider rather than the
+   * end of the model's own name.
+   */
+  short?: string
   /** What `Enter` on the segment does. */
   detail: FooterSegmentDetail
 }
@@ -99,6 +110,12 @@ export interface FooterRender {
   palette: Palette
   /** Index of the selected segment; absent while the editor keeps focus. */
   selected?: number
+  /**
+   * How far above its settled drawing the selected label is lifted right now,
+   * which is what makes a walk along the bar visible; omitted and `0` both
+   * draw the settled label. The lift never changes the line count.
+   */
+  level?: MotionLevel
   /** Terminal columns the bar must fit; pi-tui refuses any wider line. */
   width: number
 }
@@ -128,11 +145,34 @@ const WORKSPACE_LABEL_WIDTH = 24
 /** The last two segments of a path, with the separators that precede them. */
 const PATH_TAIL = /[/\\][^/\\]+[/\\][^/\\]+$/u
 
-/** The keys the focused bar answers, drawn on the expansion line. */
-const FOCUS_HINTS = `← → select${SEPARATOR}↑ ↓ regions${SEPARATOR}Enter details${SEPARATOR}Esc back`
+/**
+ * Longest model label the bar draws in full. A wider `provider/model` pair
+ * falls back to the bare model name and only then is ellipsized, so the fact
+ * the next request depends on is never the one the width eats. A presentation
+ * choice of this terminal surface, not a deployment setting.
+ */
+const MODEL_LABEL_WIDTH = 20
 
-/** The one entry key the unfocused line keeps, trailing the facts. */
-const ENTRY_HINT = 'Shift+↓'
+/** Narrowest line that still names an entry key; below it the facts take the whole width. */
+const HINT_MIN_WIDTH = 40
+
+/** The most of the line one entry hint takes, as a divisor: a third, so the facts keep the rest. */
+const HINT_WIDTH_SHARE = 3
+
+/** Columns kept clear between the last fact and the entry hint, so they never read as one list. */
+const HINT_GAP = 2
+
+/** What marks that the focused window starts after the segment next to the anchor. */
+const WINDOW_START = '‹'
+
+/** What marks that the focused window ends before the last segment. */
+const WINDOW_END = '›'
+
+/** Columns the closing window mark takes, the space before it included. */
+const WINDOW_MARK_WIDTH = 2
+
+/** Columns the brackets around the selected label take. */
+const BRACKET_WIDTH = 2
 
 /** What ends a line the width cut short; one column, so the mark itself fits. */
 const ELLIPSIS = '…'
@@ -232,6 +272,7 @@ export function buildFooterSegments(inputs: FooterInputs): FooterSegment[] {
   const segments: FooterSegment[] = [{
     id: 'model',
     label: `${selection.provider}/${selection.model}`,
+    short: selection.model,
     detail: printed([
       `provider: ${selection.provider}`,
       `model: ${selection.model}`,
@@ -356,18 +397,80 @@ function fitLine(line: string, width: number): string {
 }
 
 /**
- * The unfocused line: key facts, a `+N` token for the rest, and the entry key.
+ * The label the bar draws for the segment it anchors on, which
+ * `buildFooterSegments` always emits first: the full one while it fits its
+ * budget, then the segment's own shorter form, and only then an ellipsis.
+ * @param segment - the anchored segment; absent for an empty bar.
+ * @returns the label, never wider than {@link MODEL_LABEL_WIDTH}.
+ */
+function anchorLabel(segment: FooterSegment | undefined): string {
+  if (segment === undefined) return ''
+  if (visibleWidth(segment.label) <= MODEL_LABEL_WIDTH) return segment.label
+  return truncateToWidth(segment.short ?? segment.label, MODEL_LABEL_WIDTH, ELLIPSIS)
+}
+
+/**
+ * The entry keys this width names.
+ * @param width - terminal columns the line must fit.
+ * @returns the widest step that keeps the facts the majority of the line, and
+ * the empty string on a terminal too narrow to spare the columns.
+ */
+function entryHint(width: number): string {
+  if (width < HINT_MIN_WIDTH) return ''
+  return fitLegend(ENTRY_HINTS, Math.floor(width / HINT_WIDTH_SHARE))
+}
+
+/**
+ * The key facts that fit the middle of the unfocused line.
+ * @param facts - the key labels after the anchor, in bar order.
+ * @param hidden - segments the bar folds away whatever the width, because
+ * they are not among its key facts.
+ * @param room - columns the middle has, the anchor and the hint already taken.
+ * @returns the labels to draw, the `+N` token last when anything is folded.
+ */
+function middleFacts(facts: readonly string[], hidden: number, room: number): string[] {
+  const drawn: string[] = []
+  let used = 0
+  for (const label of facts) {
+    const cost = visibleWidth(SEPARATOR) + visibleWidth(label)
+    if (used + cost > room) break
+    used += cost
+    drawn.push(label)
+  }
+  let folded = hidden + facts.length - drawn.length
+  if (folded === 0) return drawn
+  const token = (): string => `+${String(folded)}`
+  const fits = (): boolean => used + visibleWidth(SEPARATOR) + visibleWidth(token()) <= room
+  // The count itself is a fact: a drawn label gives way so the line can say
+  // how much it is not showing.
+  while (!fits() && drawn.length > 0) {
+    used -= visibleWidth(SEPARATOR) + visibleWidth(drawn.pop() as string)
+    folded += 1
+  }
+  if (fits()) drawn.push(token())
+  return drawn
+}
+
+/**
+ * The unfocused line, built from both ends inward: the anchored model label,
+ * the entry keys reserved at the right edge, and the key facts filling
+ * whatever middle is left, every segment they cannot hold folded into `+N`.
  * @param segments - the segments in bar order.
  * @param palette - the palette the line is dimmed with.
  * @param width - terminal columns the line must fit.
  * @returns one dim line.
  */
 function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, width: number): string {
-  const key = segments.filter(segment => KEY_SEGMENT_IDS.has(segment.id)).map(segment => segment.label)
-  const folded = segments.length - key.length
-  if (folded > 0) key.push(`+${String(folded)}`)
-  key.push(ENTRY_HINT)
-  return fitLine(palette.dim(key.join(SEPARATOR)), width)
+  const [anchor, ...rest] = segments
+  const model = anchorLabel(anchor)
+  const hint = entryHint(width)
+  const reserved = hint === '' ? 0 : visibleWidth(hint) + HINT_GAP
+  const facts = rest.filter(segment => KEY_SEGMENT_IDS.has(segment.id)).map(segment => segment.label)
+  const drawn = middleFacts(facts, rest.length - facts.length, width - visibleWidth(model) - reserved)
+  const left = palette.dim([model, ...drawn].filter(token => token !== '').join(SEPARATOR))
+  if (hint === '') return fitLine(left, width)
+  const padding = ' '.repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(hint)))
+  return fitLine(`${left}${padding}${palette.dim(hint)}`, width)
 }
 
 /**
@@ -382,15 +485,19 @@ function expansionBody(segment: FooterSegment | undefined): string {
 }
 
 /**
- * The focused second line: the selected segment's summary plus the navigation keys.
+ * The focused second line: the selected segment's summary plus the keys the
+ * bar answers. The legend takes the width's own step before the summary is
+ * measured, so a narrow terminal drops legend words instead of cutting the
+ * way back to the input off the end of the line.
  * @param segment - the selected segment.
  * @param palette - the palette the line is dimmed with.
  * @param width - terminal columns the line must fit.
- * @returns one dim line that keeps the hints when they fit.
+ * @returns one dim line.
  */
 function expansionLine(segment: FooterSegment | undefined, palette: Palette, width: number): string {
   const body = expansionBody(segment)
-  const suffix = palette.dim(body === '' ? FOCUS_HINTS : `${SEPARATOR}${FOCUS_HINTS}`)
+  const legend = fitLegend(HINTS.bar, width)
+  const suffix = palette.dim(body === '' ? legend : `${SEPARATOR}${legend}`)
   const prefix = palette.dim(body)
   const rest = width - visibleWidth(suffix)
   if (rest < 1) return fitLine(`${prefix}${suffix}`, width)
@@ -398,33 +505,101 @@ function expansionLine(segment: FooterSegment | undefined, palette: Palette, wid
 }
 
 /**
- * The focused bar: a sliding window of segment labels, then the expansion line.
+ * One segment label as the focused bar draws it. The selected one is
+ * bracketed as well as accented, so which segment `Enter` opens is legible
+ * without color, and a walk that just reached it draws it lifted until the
+ * motion settles back onto the accent.
+ * @param text - the label.
+ * @param selected - whether the bar holds this segment.
+ * @param palette - the palette the label is styled with.
+ * @param level - how far above the settled label to lift it.
+ * @returns the styled label.
+ */
+function segmentLabel(text: string, selected: boolean, palette: Palette, level: MotionLevel): string {
+  return selected ? pulse(palette, palette.accent(`[${text}]`), level) : palette.dim(text)
+}
+
+/**
+ * The text a selected label keeps where the window cannot hold all of it. The
+ * brackets are what says which segment `Enter` opens on a terminal without
+ * color, so the label's own text is what gives way rather than the bracket
+ * that closes it.
+ * @param text - the label.
+ * @param room - columns the bracketed label may take.
+ * @returns the text, cut so that it and both brackets fit `room`.
+ */
+function fitSelected(text: string, room: number): string {
+  const inside = room - BRACKET_WIDTH
+  if (visibleWidth(text) <= inside) return text
+  return truncateToWidth(text, Math.max(1, inside), ELLIPSIS)
+}
+
+/**
+ * The segments after the anchor, windowed around the selection. `‹` and `›`
+ * mark the side the window is cut on, so a walk that slid past a fact says so
+ * rather than appearing to have lost it.
+ * @param rest - the segments after the anchored one, in bar order.
+ * @param held - index of the selected segment within them; negative while the
+ * anchor itself is selected, which draws no selection here.
+ * @param palette - the palette the labels and marks are styled with.
+ * @param room - columns left after the anchor.
+ * @param level - how far above its settled drawing the selected label is lifted.
+ * @returns the window, opening with its connector, or the empty string when
+ * the bar draws nothing but its anchor.
+ */
+function focusedWindow(rest: readonly FooterSegment[], held: number, palette: Palette, room: number, level: MotionLevel): string {
+  if (rest.length === 0) return ''
+  const sep = palette.dim(SEPARATOR)
+  const sepWidth = visibleWidth(SEPARATOR)
+  const selected = Math.max(0, held)
+  // The connector takes the separator's own columns, whether it reads as one
+  // or as the mark of a window that starts further along.
+  const budget = room - sepWidth
+  // The end mark takes its columns before the selected label is measured, so
+  // a window narrow enough to cut that label cuts it inside its brackets
+  // rather than losing the bracket to the mark.
+  const cap = budget - (selected < rest.length - 1 ? WINDOW_MARK_WIDTH : 0)
+  const styled = rest.map((segment, index) =>
+    segmentLabel(index === held ? fitSelected(segment.label, cap) : segment.label, index === held, palette, level))
+  const widths = styled.map(visibleWidth)
+  const last = rest.length - 1
+  const opened = windowSpan(widths, selected, budget, sepWidth)
+  const span = opened.end < last ? windowSpan(widths, selected, budget - WINDOW_MARK_WIDTH, sepWidth) : opened
+  const lead = span.start > 0 ? palette.dim(` ${WINDOW_START} `) : sep
+  const trail = span.end < last ? palette.dim(` ${WINDOW_END}`) : ''
+  return `${lead}${styled.slice(span.start, span.end + 1).join(sep)}${trail}`
+}
+
+/**
+ * The focused bar: the anchored model label, a sliding window of the segments
+ * after it, then the expansion line.
  * @param segments - the segments in bar order.
  * @param selected - index of the held segment.
  * @param palette - the palette the labels and hints are styled with.
  * @param width - terminal columns each line must fit.
- * @returns two lines, the selected label always in the first.
+ * @param level - how far above its settled drawing the selected label is lifted.
+ * @returns two lines, the anchor and the selected label always in the first.
  */
 function focusedLines(
   segments: readonly FooterSegment[],
   selected: number,
   palette: Palette,
   width: number,
+  level: MotionLevel,
 ): string[] {
   const held = Math.min(Math.max(0, selected), Math.max(0, segments.length - 1))
-  const styled = segments.map((segment, index) =>
-    index === held ? palette.bold(palette.accent(segment.label)) : palette.dim(segment.label))
-  const sep = palette.dim(SEPARATOR)
-  const { start, end } = windowSpan(styled.map(visibleWidth), held, width, visibleWidth(sep))
-  const bar = styled.slice(start, end + 1).join(sep)
-  return [fitLine(bar, width), expansionLine(segments[held], palette, width)]
+  const [anchor, ...rest] = segments
+  const model = anchor === undefined ? '' : segmentLabel(anchorLabel(anchor), held === 0, palette, level)
+  const windowed = focusedWindow(rest, held - 1, palette, width - visibleWidth(model), level)
+  return [fitLine(`${model}${windowed}`, width), expansionLine(segments[held], palette, width)]
 }
 
 /**
- * Render the footer. Unfocused it is one dim line of key facts with a trailing
- * `Shift+↓`; focused it is the navigable segments (windowed to `width` so the
- * selected one is never dropped) and an expansion of that segment plus the
- * navigation keys. Every returned line fits `width`.
+ * Render the footer. Unfocused it is one dim line built from both ends: the
+ * model anchored left, the entry keys anchored right, and the key facts in
+ * between. Focused it is the anchored model, the navigable segments (windowed
+ * to `width` so the selected one is never dropped) and an expansion of that
+ * segment plus the navigation keys. Every returned line fits `width`.
  * @param segments - the segments in bar order.
  * @param render - the palette, optional selected index, and terminal width.
  * @returns the footer lines, one when unfocused and two when focused.
@@ -432,7 +607,7 @@ function focusedLines(
 export function renderFooter(segments: readonly FooterSegment[], render: FooterRender): string[] {
   const width = Math.max(1, render.width)
   if (render.selected === undefined) return [unfocusedLine(segments, render.palette, width)]
-  return focusedLines(segments, render.selected, render.palette, width)
+  return focusedLines(segments, render.selected, render.palette, width, render.level ?? 0)
 }
 
 /**

@@ -8,7 +8,10 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
-import { KEY, bench } from './bench.ts'
+import { FADE_TICK_MS } from '../src/fade.ts'
+import { ENTRY_HINTS, HINTS, widestHint } from '../src/keys.ts'
+import { LANDING_TICKS, SEGMENT_TICKS } from '../src/motion.ts'
+import { KEY, bench, type Bench } from './bench.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
   for (const char of text) terminal.type(char)
@@ -569,6 +572,192 @@ describe('todo list', () => {
   })
 })
 
+/** One resident child, which is what makes the subagent panel draw a row. */
+const RESIDENT_CHILD = {
+  kind: 'child',
+  id: 'session-kid',
+  parentId: 'session-tui-test',
+  depth: 1,
+  mode: 'one-shot',
+  activity: 'running',
+}
+
+describe('one legend grammar', () => {
+  /** What a legend clause must open with: a key, never a noun. */
+  const KEY_LED = /^(?:[↑↓←→⇧@/]|Shift\+|Ctrl\+|PgUp|PgDn|Home|End|Tab|Enter|Esc|Space)/u
+
+  /**
+   * Whether one legend is key clauses joined by the shared separator.
+   * @param legend - the drawn legend.
+   * @returns true when every clause opens with a key.
+   */
+  function keyLed(legend: string): boolean {
+    return legend.split(' · ').every(clause => KEY_LED.test(clause))
+  }
+
+  it('names keys in clauses and ends each docked legend on where Esc goes', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([RESIDENT_CHILD] as never) })
+    const kid = await test.createChild({ id: 'session-kid' })
+    kid.setStatus('running')
+    test.tick()
+    typeLine(test.terminal, 'read the spec')
+    await test.settle()
+    // Unfocused, the bar's own line ends on the keys that leave the input.
+    expect((await test.screen()).trimEnd().endsWith(ENTRY_HINTS[0] as string)).toBe(true)
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(await test.screen()).toContain(widestHint('transcript'))
+    test.terminal.type(KEY.escape)
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(await test.screen()).toContain(widestHint('panel'))
+    test.terminal.type(KEY.down)
+    await test.settle()
+    expect(await test.screen()).toContain(widestHint('bar'))
+    // One grammar: key clauses, the last of them naming where Esc goes.
+    for (const region of ['transcript', 'panel', 'bar'] as const) {
+      for (const step of HINTS[region]) {
+        expect(keyLed(step), step).toBe(true)
+        expect(step.endsWith('Esc input'), step).toBe(true)
+      }
+    }
+    // The input has no legend of its own: the keys that reach it are named
+    // where the keyboard is, and the keys that leave it on the bar's line.
+    for (const step of ENTRY_HINTS) expect(keyLed(step), step).toBe(true)
+  })
+})
+
+describe('the status bar ends and the region cycle', () => {
+  it('selects the first and last segment with Home, End, and the Shift arrows', async () => {
+    const test = await bench()
+    // The bar of a plain session draws the model, the effort, and the workspace.
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.end)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workspace: /work')
+    test.terminal.type(KEY.home)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('model: test-model')
+    test.terminal.type(KEY.shiftRight)
+    await test.settle()
+    expect(await test.screen()).toContain('workspace: /work · ←→ segments')
+    test.terminal.type(KEY.shiftLeft)
+    await test.settle()
+    expect(await test.screen()).toContain('provider: test-provider · ←→ segments')
+  })
+
+  it('cycles the bar to the conversation with Tab, and through the panel while one is drawn', async () => {
+    const test = await bench()
+    typeLine(test.terminal, 'read the spec')
+    await test.settle()
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    // With no panel drawn the walk wraps from the bar straight to the
+    // conversation, in both directions.
+    test.terminal.type(KEY.tab)
+    await test.settle()
+    expect(await test.screen()).toContain('1/1 · turn 0 · you')
+    test.terminal.type(KEY.tab)
+    await test.settle()
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(await test.screen()).toContain('1/1 · turn 0 · you')
+  })
+
+  it('walks the bar backwards into the panel instead of moving its selection', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([RESIDENT_CHILD] as never) })
+    const kid = await test.createChild({ id: 'session-kid' })
+    kid.setStatus('running')
+    test.tick()
+    await test.settle()
+    expect(test.terminal.text()).toContain('subagents · 1 listed')
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.down)
+    await test.settle()
+    expect(await test.screen()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    // Shift+Tab used to move the bar's selection, which Left already does.
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(await test.screen()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    test.terminal.type(KEY.tab)
+    await test.settle()
+    expect(await test.screen()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    // The selection stayed on the first segment through the walk.
+    expect(test.terminal.text()).toContain('model: test-model')
+  })
+
+  it('walks the conversation, the panel, and the bar in the order they are drawn, both ways', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([RESIDENT_CHILD] as never) })
+    typeLine(test.terminal, 'read the spec')
+    const kid = await test.createChild({ id: 'session-kid' })
+    kid.setStatus('running')
+    test.tick()
+    await test.settle()
+    /** The legend the region holding the keyboard draws right now. */
+    const region = async (): Promise<string> => {
+      const shown = await test.screen()
+      if (shown.includes('↑↓ sections · ←→ parts')) return 'conversation'
+      if (shown.includes('↑↓ children · Enter details')) return 'panel'
+      if (shown.includes('←→ segments · Enter details')) return 'bar'
+      return 'editor'
+    }
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(await region()).toBe('conversation')
+    const forward: string[] = []
+    for (let step = 0; step < 3; step += 1) {
+      test.terminal.type(KEY.tab)
+      await test.settle()
+      forward.push(await region())
+    }
+    expect(forward).toEqual(['panel', 'bar', 'conversation'])
+    const backward: string[] = []
+    for (let step = 0; step < 3; step += 1) {
+      test.terminal.type(KEY.shiftTab)
+      await test.settle()
+      backward.push(await region())
+    }
+    expect(backward).toEqual(['bar', 'panel', 'conversation'])
+  })
+
+  it('draws the selection Shift+Down puts back on the first segment', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
+    await test.settle()
+    expect(await test.screen()).toContain('reasoning effort: the model')
+    // Naming the bar again starts it at its first segment, which has to reach
+    // the screen before Enter opens a segment nothing draws as selected.
+    test.terminal.output = ''
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(test.terminal.text()).toContain('provider: test-provider · ←→ segments')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('model: test-model')
+  })
+
+  it('holds the bar when it is the only region drawn', async () => {
+    const test = await bench()
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(await test.screen()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    // An empty conversation is not in the walk, so Tab says nothing about
+    // having nothing to read: it simply comes back to the bar.
+    test.terminal.type(KEY.tab)
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.terminal.text()).not.toContain('nothing in the transcript to read yet')
+    expect(await test.screen()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+  })
+})
+
 describe('approval detail', () => {
   it('shows the logged tool call above the options when the request names it', async () => {
     const test = await bench()
@@ -582,5 +771,69 @@ describe('approval detail', () => {
     expect(test.terminal.text()).toContain('rm -rf build')
     test.terminal.type(KEY.enter)
     await expect(outcome).resolves.toBe('allowed-once')
+  })
+})
+
+describe('the lift under the editor', () => {
+  /**
+   * One complete repaint with its escape sequences, always at the same width
+   * so two captures are comparable.
+   * @param test - the running bench.
+   * @returns the frame as the terminal received it.
+   */
+  async function repaint(test: Bench): Promise<string> {
+    test.terminal.resize(96)
+    await test.settle()
+    test.terminal.output = ''
+    test.terminal.resize(100)
+    await test.settle()
+    return test.terminal.output
+  }
+
+  /** The peak of a lift: the one moment a mark under the editor is drawn bold. */
+  const PEAK = '\u001b[1m\u001b[36m\u001b[36m'
+
+  it('lifts the segment a walk along the bar reaches and settles it on the accent', async () => {
+    const test = await bench({ color: true })
+    await test.settle()
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    // The bar takes the keyboard on its first segment, lifted.
+    expect(await repaint(test)).toContain(`${PEAK}[test-model]`)
+    test.runTick(FADE_TICK_MS, LANDING_TICKS * FADE_TICK_MS)
+    await test.settle()
+    expect(await repaint(test)).toContain('\u001b[36m[test-model]')
+
+    test.terminal.type(KEY.right)
+    await test.settle()
+    const moved = await repaint(test)
+    expect(moved).toContain(`${PEAK}[effort default]`)
+    expect(moved).not.toContain(`${PEAK}[test-model]`)
+    test.runTick(FADE_TICK_MS, SEGMENT_TICKS * FADE_TICK_MS)
+    await test.settle()
+    const settled = await repaint(test)
+    expect(settled).toContain('\u001b[36m[effort default]')
+    expect(settled).not.toContain(PEAK)
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+
+  it('lifts the panel row the keyboard lands on and repaints it as the lift falls', async () => {
+    const test = await bench({ color: true, subagents: () => Promise.resolve([RESIDENT_CHILD] as never) })
+    const kid = await test.createChild({ id: 'session-kid' })
+    kid.setStatus('running')
+    test.tick()
+    await test.settle()
+    expect(test.terminal.text()).toContain('subagents · 1 listed')
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    // The panel draws its text when something changes it rather than once per
+    // frame, so the fade tick is what walks its lift back down.
+    expect(await repaint(test)).toContain(`${PEAK}session-kid`)
+    test.runTick(FADE_TICK_MS, LANDING_TICKS * FADE_TICK_MS)
+    await test.settle()
+    const settled = await repaint(test)
+    expect(settled).toContain('\u001b[36msession-kid')
+    expect(settled).not.toContain(PEAK)
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 })

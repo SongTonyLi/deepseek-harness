@@ -12,8 +12,8 @@ import {
   formatTimestamp,
   formatTokens,
   formatUsage,
+  foldRows,
   parseArguments,
-  previewLines,
   toolCallText,
   toolResultLines,
   turnEndNotice,
@@ -180,11 +180,10 @@ describe('transcript', () => {
       .toEqual(['  …', '  5', '  6', '- 7', '+ X'])
   })
 
-  it('cuts a body to its preview unless expanded', () => {
+  it('cuts rows to a maximum and names what one fold left out', () => {
     const lines = ['a', 'b', 'c', 'd']
-    expect(previewLines(lines, 4, false)).toEqual(lines)
-    expect(previewLines(lines, 3, false)).toEqual(['a', 'b', 'c', '… 1 more line (Ctrl+O expands)'])
-    expect(previewLines(lines, 2, false)).toEqual(['a', 'b', '… 2 more lines (Ctrl+O expands)'])
-    expect(previewLines(lines, 1, true)).toEqual(lines)
+    const marker = (hidden: number): string => `${String(hidden)} left`
+    expect(foldRows(lines, 4, marker)).toEqual(lines)
+    expect(foldRows(lines, 2, marker)).toEqual(['a', 'b', '2 left'])
   })
 })

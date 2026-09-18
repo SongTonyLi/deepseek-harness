@@ -57,7 +57,7 @@ describe('session commands', () => {
     const screen = test.terminal.text()
     expect(screen).toContain('resumed: session session-older')
     expect(screen).toContain('› earlier prompt')
-    expect(screen).toContain('test-provider/opened-model')
+    expect(screen).toContain('opened-model · effort default')
     typeLine(test.terminal, '/quit')
     expect(test.quits[0]?.agent.session.id).toBe('session-older')
   })
@@ -104,7 +104,8 @@ describe('session commands', () => {
     typeLine(test.terminal, '/new')
     await test.settle()
     expect(test.hostCalls).toHaveLength(3)
-    expect(test.terminal.text()).toContain('stop the running turn (Esc) before switching')
+    // The refusal names the stop as the editor answers it: two presses.
+    expect(test.terminal.text()).toContain('stop the running turn (Esc twice) before switching')
   })
 
   it('refuses input and a second switch while the host opens, and releases a session opened after quit', async () => {
@@ -231,8 +232,8 @@ describe('attachments', () => {
       { type: 'text', text: 'look at these' },
     ])
     expect(test.terminal.text()).toContain('[file: notes.txt] [image: shot.png]')
-    // The hint line ends with the keys that leave the editor for the other regions.
-    expect(test.terminal.text().trimEnd().endsWith('Shift+↓')).toBe(true)
+    // The bar's one line ends with the keys that leave the editor, both ways.
+    expect(test.terminal.text().trimEnd().endsWith('Shift+↑ read · Shift+↓ status')).toBe(true)
     expect(test.terminal.text().split('\n').filter(line => line.includes('/work')).at(-1)).not.toContain('attached')
     typeLine(test.terminal, `/attach ${join(dir, 'notes.txt')}`)
     await test.settle()
@@ -560,7 +561,7 @@ describe('sign-in', () => {
     typeLine(test.terminal, '/help')
     await test.settle()
     expect(test.terminal.text()).toContain('/login')
-    expect(test.terminal.text()).toContain('Shift+Tab cycles the current model')
+    expect(test.terminal.text()).toContain('Shift+Tab effort')
     typeLine(test.terminal, '/login')
     await test.settle()
     expect(test.terminal.text()).toContain('ChatGPT')

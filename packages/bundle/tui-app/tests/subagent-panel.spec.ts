@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
+import type { MotionLevel } from '../src/motion.ts'
 import { createPalette } from '../src/style.ts'
 import {
   SUBAGENT_PANEL_MAX_ROWS,
@@ -15,6 +16,9 @@ import {
 
 /** A fixed instant the running elapsed values are measured against. */
 const NOW = Date.UTC(2026, 1, 3, 14, 25, 0)
+
+/** A terminal wide enough for the heading's widest legend step. */
+const WIDE = 100
 
 /** One resident one-shot child at the given depth. */
 function child(id: string, extra: Partial<SubagentDescendantListEntry> = {}): SubagentDescendantListEntry {
@@ -108,25 +112,48 @@ describe('renderSubagentPanel', () => {
 
   it('heads the panel with the count and stays quiet while the keyboard is elsewhere', () => {
     const built = view([child('session-kid'), child('session-other')])
-    expect(renderSubagentPanel(built, { palette })).toBe('subagents · 2 listed · session-kid')
+    expect(renderSubagentPanel(built, { palette, width: WIDE })).toBe('subagents · 2 listed · session-kid')
   })
 
   it('names its keys and accents the selected row while it holds the keyboard', () => {
     const built = view([child('session-kid'), child('session-other')])
-    const drawn = renderSubagentPanel(built, { palette: createPalette(true), selected: 1 })
+    const drawn = renderSubagentPanel(built, { palette: createPalette(true), selected: 1, width: WIDE })
     const [heading, first, second] = drawn.split('\n')
-    expect(heading).toContain('↑ ↓ select · Enter details · Esc back')
+    expect(heading).toContain('↑↓ children · Enter details · Tab regions · Esc input')
     expect(first).toContain('\u001b[2msession-kid')
-    expect(second).toContain('\u001b[1m\u001b[36msession-other')
+    expect(second).toContain('\u001b[36msession-other')
+  })
+
+  it('takes the legend step its width holds, so the heading never wraps into a second docked row', () => {
+    const built = view([child('session-kid'), child('session-other')])
+    const heading = (width: number): string =>
+      (renderSubagentPanel(built, { palette, selected: 0, width }).split('\n')[0] ?? '')
+    expect(heading(WIDE)).toBe('subagents · 2 listed · ↑↓ children · Enter details · Tab regions · Esc input')
+    expect(heading(50)).toBe('subagents · 2 listed · ↑↓ children · Esc input')
+    expect(heading(30)).toBe('subagents · 2 listed · Esc input')
+    for (const width of [WIDE, 50]) expect(heading(width).length).toBeLessThanOrEqual(width)
+  })
+
+  it('lifts the selected row while the landing is still moving and settles back onto the accent', () => {
+    const built = view([child('session-kid'), child('session-other')])
+    const styled = createPalette(true)
+    const rows = (level: MotionLevel): string[] =>
+      renderSubagentPanel(built, { palette: styled, selected: 1, level, width: WIDE }).split('\n')
+    expect(rows(2)[2]).toContain('\u001b[1m\u001b[36m')
+    expect(rows(1)[2]).toContain('\u001b[36m')
+    expect(rows(0)[2]).toBe(renderSubagentPanel(built, { palette: styled, selected: 1, width: WIDE }).split('\n')[2])
+    expect(rows(0)[2]).not.toContain('\u001b[1m')
+    // The lift never changes what the panel takes on the screen.
+    expect(rows(2)).toHaveLength(rows(0).length)
   })
 
   it('counts the rows it did not draw and carries the last listing failure', () => {
     const entries = Array.from({ length: SUBAGENT_PANEL_MAX_ROWS + 1 }, (_, index) => child(`session-${String(index)}`))
     const listed = `subagents · ${String(SUBAGENT_PANEL_MAX_ROWS + 1)} listed`
-    const unfocused = renderSubagentPanel(view(entries), { palette, failure: 'the listing timed out' })
+    const unfocused = renderSubagentPanel(view(entries), { palette, width: WIDE, failure: 'the listing timed out' })
     expect(unfocused).toBe(`${listed} · session-0 · listing failed: the listing timed out`)
     expect(unfocused).not.toContain('+1 more')
-    const focused = renderSubagentPanel(view(entries), { palette, selected: 0, failure: 'the listing timed out' })
+    const focused = renderSubagentPanel(view(entries), { palette, selected: 0, width: WIDE, failure: 'the listing timed out' })
     expect(focused).toContain(listed)
     expect(focused).toContain('+1 more · /subagents lists them all')
     expect(focused).toContain('listing failed: the listing timed out')

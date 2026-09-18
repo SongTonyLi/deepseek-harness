@@ -14,6 +14,8 @@ Status: implemented
 
 `DetailPrompt` 是一个只读页面：一个高亮标题、调用方的各行按终端宽度换行，以及一行暗色提示。`Up` 与 `Down` 滚动一行，`PageUp` 与 `PageDown` 滚动一整页，当行数超过一次绘制的 16 行时提示行带上 `(<first>/<total>)`，`Enter`、`Esc` 或 `Left` 返回列表。其他按键一律忽略，因为该页面没有别的要应答。
 
+**已扩展。**[终端阅读器浮层、Esc 安全性与作为枢纽的编辑器](2026-09-18-tui-reader-overlay-and-esc-safety.zh.md) 保留了这些页面及它们应答的每一个按键，并为离开它们的路径补上一条规则：离开页面与取消选择器都会开启该说明所定义的交接窗口，于是紧跟在关闭页面那一下之后到达编辑器的 `Esc` 什么也不做，而不会触及正在运行的轮次。会打开这类页面的就只有这几处——`/subagents`、`/todos`、`/changes`、`todo` 状态栏分段，以及子 agent 面板的某一行——因为对话记录的小节改由该说明的整屏阅读器阅读。
+
 `/subagents` 是第一个消费方。`listSubagentChoices` 把子 agent 运行时的后代清单映射为选择器行——持久标签或 id，按深度缩进，后面跟活动状态、模式与 id——`subagentDetail` 则通过 `sessionQuery` 读取某个子会话，取得该行的标签与描述、创建时间、workspace、标题、轮次提纲与已交付文件，并把提纲与文件列表各折叠到八条。清单报告为 `diagnostic` 候选的后代同样可以打开；其页面载有 id 与该持久记录无法解读的原因。
 
 agent 的 todo 列表是第二个消费方，由 `/todos` 以及在状态栏 `todo` 分段上按 `Enter` 打开。`listTodoChoices` 把 `todos` 投影变成每条目一行——状态符号、截到 64 列的内容与状态词——`todoDetail` 则打印某个条目按 72 列换行的完整内容、其状态、`item 3 of 7`、按状态计数的列表（`2 completed · 1 in progress · 4 pending`），以及该条目的轮次事实。列表为空、尚未写入或在本 profile 中不可用时，绘制 `no todos yet` 通知，而不是打开一个空选择器。

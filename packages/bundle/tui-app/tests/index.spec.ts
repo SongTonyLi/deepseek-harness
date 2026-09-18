@@ -128,7 +128,10 @@ async function settled(): Promise<void> {
 function config(overrides: Partial<Config> = {}): Config {
   return {
     toolPreviewLines: 8,
+    contextPreviewLines: 4,
     focusPreviewLines: 12,
+    readerMinColumns: 80,
+    toastMs: 2000,
     liveRefreshMs: 1000,
     streamFadeSteps: 8,
     streamFadeStepMs: 33,
@@ -375,13 +378,41 @@ describe('the presentation tunables', () => {
   it('default to the shipped terminal settings', () => {
     expect(validate({})).toEqual({
       toolPreviewLines: 8,
+      contextPreviewLines: 4,
       focusPreviewLines: 12,
+      readerMinColumns: 80,
+      toastMs: 2000,
       liveRefreshMs: 1000,
       streamFadeSteps: 8,
       streamFadeStepMs: 33,
       reducedMotion: false,
       openBrowser: true,
     })
+  })
+
+  it('refuse a reader narrower than two readable panes', () => {
+    expect(() => validate({ readerMinColumns: 39 })).toThrow()
+    expect(validate({ readerMinColumns: 60 })).toMatchObject({ readerMinColumns: 60 })
+  })
+
+  it('refuse a fold that would draw no row of what it folds', () => {
+    expect(() => validate({ contextPreviewLines: 0 })).toThrow()
+    expect(() => validate({ toolPreviewLines: 0 })).toThrow()
+    expect(() => validate({ focusPreviewLines: 0 })).toThrow()
+    expect(validate({ contextPreviewLines: 1, toolPreviewLines: 1, focusPreviewLines: 1 })).toMatchObject({
+      contextPreviewLines: 1,
+      toolPreviewLines: 1,
+      focusPreviewLines: 1,
+    })
+  })
+
+  // The transient line is the clock of the second `Esc` that stops a turn, so
+  // a window too short to press twice in would leave a running turn with no
+  // way to stop it from the input.
+  it('refuse a transient line too short to answer', () => {
+    expect(() => validate({ toastMs: 0 })).toThrow()
+    expect(() => validate({ toastMs: 499 })).toThrow()
+    expect(validate({ toastMs: 500 })).toMatchObject({ toastMs: 500 })
   })
 
   it('refuse a fade shorter than two levels or faster than one frame', () => {
