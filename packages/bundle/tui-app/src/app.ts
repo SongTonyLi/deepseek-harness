@@ -50,14 +50,22 @@ import type {} from '@deepseek-ai/dsh-token-meter/client'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
+import type {} from '@deepseek-ai/dsh-workspace-changes'
 import { attachLocalFile, type PendingAttachment } from './attach.ts'
 import {
+  changeDiffRows,
+  changesNotice,
+  installBundle,
+  listBundles,
   listDeliverables,
   listPlugins,
   listSettings,
   listSubagentChoices,
+  listTurnChanges,
+  removeBundle,
   resetSetting,
   sessionOutline,
+  setPluginEnabled,
   setSetting,
   showSetting,
   subagentChoice,
@@ -306,9 +314,10 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'todos', description: 'Browse the agent\'s todo list (Enter shows one item in full)' },
   { name: 'outline', description: 'List the turns of this session with their prompts and replies' },
   { name: 'deliverables', description: 'List the files the agent presented in this session' },
+  { name: 'changes', description: 'Browse the files the last turn changed (/changes <turn> for an earlier one; Enter shows a file\'s diff)' },
   { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter shows one session\'s details)' },
   { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
-  { name: 'plugins', description: 'List the composed plugins and their state' },
+  { name: 'plugins', description: 'List the composed plugins (/plugins bundles, /plugins enable|disable <id>, /plugins add <spec>, /plugins remove <name>)' },
   { name: 'tools', description: 'Expand or collapse every tool card' },
   { name: 'quit', description: 'Save the session and exit' },
   { name: 'exit', description: 'Same as /quit' },
@@ -1033,6 +1042,66 @@ export class TuiApp {
   }
 
   /**
+   * Walk the files one turn changed: one row per file with its line counts,
+   * and entering a row shows the file's turn-start to turn-end comparison.
+   * @param turn - the turn to browse; the latest announced one when undefined.
+   */
+  private async browseChanges(turn: number | undefined): Promise<void> {
+    const sessionId = this.agent.session.id
+    const signal = new AbortController().signal
+    const changes = await listTurnChanges(this.deps.ctx, sessionId, turn, signal)
+    if (changes === undefined) {
+      this.notice(turn === undefined ? 'no changed files recorded yet' : `no changed files recorded for turn ${String(turn)}`)
+      return
+    }
+    if (changes.choices.length === 0) {
+      this.notice(`${changes.heading}: no file listed`)
+      return
+    }
+    await this.browse(changes.heading, changes.choices.map((choice): BrowseRow => ({
+      item: { value: String(choice.index), label: choice.label, description: choice.description },
+      heading: choice.label,
+      detail: () => changeDiffRows(this.deps.ctx, sessionId, choice, signal),
+    })))
+  }
+
+  /**
+   * `/plugins` and its management verbs over the profile's plugin manager:
+   * the composed plugins alone, the bundles, a switch of one entry or bundle,
+   * an installation, or a removal.
+   * @param argument - the verb and its operand; empty lists the composed plugins.
+   */
+  private async plugins(argument: string): Promise<void> {
+    const [verb = '', ...rest] = argument.split(/\s+/).filter(word => word !== '')
+    const operand = rest.join(' ')
+    switch (verb) {
+      case '':
+        this.showRows(listPlugins(this.deps.ctx), 'no plugins are listed')
+        return
+      case 'bundles':
+        this.showRows(await listBundles(this.deps.ctx), 'no bundles are listed')
+        return
+      case 'enable':
+      case 'disable':
+        if (operand === '') break
+        this.notice(await setPluginEnabled(this.deps.ctx, operand, verb === 'enable'), 'success')
+        return
+      case 'add':
+        if (operand === '') break
+        this.notice(`installing ${operand}…`)
+        this.notice(await installBundle(this.deps.ctx, operand), 'success')
+        return
+      case 'remove':
+        if (operand === '') break
+        this.notice(await removeBundle(this.deps.ctx, operand), 'success')
+        return
+      default:
+        break
+    }
+    this.notice('usage: /plugins · /plugins bundles · /plugins enable|disable <entry id or bundle> · /plugins add <spec> · /plugins remove <bundle>', 'error')
+  }
+
+  /**
    * The browsable entry behind one subagent row: the same detail page the
    * `/subagents` list and the live panel open.
    * @param choice - the listing row.
@@ -1587,6 +1656,15 @@ export class TuiApp {
       case 'deliverables':
         this.showRows(await listDeliverables(this.deps.ctx, this.agent.session.id, new AbortController().signal), 'nothing presented yet')
         return
+      case 'changes': {
+        const turn = argument === '' ? undefined : Number(argument)
+        if (turn !== undefined && !(Number.isSafeInteger(turn) && turn > 0)) {
+          this.notice('usage: /changes · /changes <turn>', 'error')
+          return
+        }
+        await this.browseChanges(turn)
+        return
+      }
       case 'subagents': {
         const choices = await listSubagentChoices(this.deps.ctx, this.agent.session.id, new AbortController().signal)
         if (choices.length === 0) {
@@ -1600,7 +1678,7 @@ export class TuiApp {
         await this.settings(argument)
         return
       case 'plugins':
-        this.showRows(listPlugins(this.deps.ctx), 'no plugins are listed')
+        await this.plugins(argument)
         return
       default:
         await this.runSharedCommand(line, name)
@@ -2411,6 +2489,14 @@ export class TuiApp {
       case 'compaction/summary':
         this.notice(compactionNotice(event.data))
         break
+      case 'workspace/changes': {
+        const summary = this.deps.ctx.get('workspaceChanges')?.summary(session.id, event.seq)
+        // A replayed log's summaries left with the Host that recorded them;
+        // the notice belongs to the turn that just ended.
+        if (summary === undefined) return
+        this.notice(changesNotice(summary))
+        break
+      }
       case 'llm/retry':
         this.loader.setMessage(retryMessage(event.data))
         break

@@ -127,6 +127,132 @@ describe('catalog commands', () => {
     expect(blank).toContain('no plugins are listed')
   })
 
+  it('browses the changed files of a turn into one file\'s comparison, and notices a live announcement', async () => {
+    const summary = { turn: 1, cwd: '/work', total: 2, added: 3, deleted: 1, files: [
+      { path: 'src/a.ts', display: 'src/a.ts', added: 3, deleted: 1 },
+      { path: 'img.png', display: 'img.png', added: 0, deleted: 0, binary: true },
+    ] }
+    const diffs: unknown[] = []
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          observeSession: () => Promise.resolve({
+            events: [{ type: 'workspace/changes', seq: 4, time: 1, data: { turn: 1 } }],
+            [Symbol.dispose]: () => {},
+          }),
+        } as never)
+        ctx.provide('workspaceChanges', {
+          summary: () => summary,
+          diff: (...args: unknown[]) => {
+            diffs.push(args.slice(0, 3))
+            return Promise.resolve({
+              kind: 'text', path: 'src/a.ts', display: 'src/a.ts', before: true, after: true, coarse: false,
+              hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-old line', '+new line'] }],
+            })
+          },
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/changes')
+    await test.settle()
+    let screen = test.terminal.text()
+    expect(screen).toContain('turn 1 · 2 files · +3 −1')
+    expect(screen).toContain('src/a.ts')
+    expect(screen).toContain('+3 −1')
+    expect(screen).toContain('binary')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    screen = test.terminal.text()
+    expect(screen).toContain('@@ -1,1 +1,1 @@')
+    expect(screen).toContain('- old line')
+    expect(screen).toContain('+ new line')
+    expect(diffs).toEqual([[test.session.id, 4, 0]])
+    // The page closes back into the picker, which draws before it takes the next key.
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    typeLine(test.terminal, '/changes 7')
+    typeLine(test.terminal, '/changes zero')
+    await test.settle()
+    screen = test.terminal.text()
+    expect(screen).toContain('no changed files recorded for turn 7')
+    expect(screen).toContain('usage: /changes · /changes <turn>')
+    test.session.append('workspace/changes', { turn: 1 })
+    await test.settle()
+    expect(test.terminal.text()).toContain('turn 1 changed 2 files (+3 −1) · /changes')
+  })
+
+  it('prints the empty states of /changes without the recorder or without announcements', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('sessionQuery', { observeSession: () => Promise.resolve({ events: [], [Symbol.dispose]: () => {} }) } as never)
+        ctx.provide('workspaceChanges', { summary: () => undefined, diff: () => Promise.resolve(undefined) } as never)
+      },
+    })
+    typeLine(test.terminal, '/changes')
+    await test.settle()
+    expect(test.terminal.text()).toContain('no changed files recorded yet')
+    test.session.append('workspace/changes', { turn: 1 })
+    await test.settle()
+    expect(test.terminal.text()).not.toContain('changed 0 files')
+    const empty = await bench({
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          observeSession: () => Promise.resolve({ events: [{ type: 'workspace/changes', seq: 2, time: 1, data: { turn: 1 } }], [Symbol.dispose]: () => {} }),
+        } as never)
+        ctx.provide('workspaceChanges', { summary: () => ({ turn: 1, cwd: '/work', total: 0, added: 0, deleted: 0, files: [] }), diff: () => Promise.resolve(undefined) } as never)
+      },
+    })
+    typeLine(empty.terminal, '/changes')
+    await empty.settle()
+    expect(empty.terminal.text()).toContain('turn 1 · 0 files · +0 −0: no file listed')
+    const bare = await bench()
+    typeLine(bare.terminal, '/changes')
+    await bare.settle()
+    expect(bare.terminal.text()).toContain('changes failed: workspace changes are not recorded in this profile')
+  })
+
+  it('manages bundles through /plugins verbs', async () => {
+    const calls: unknown[] = []
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('loader', { * entries() { yield { id: 'llm', options: { name: '@deepseek-ai/dsh-llm' }, disabled: false, fiber: { state: 2 } } } } as never)
+        ctx.provide('pluginManager', {
+          listPlugins: () => Promise.resolve([{ entryId: 'llm', moduleName: '@deepseek-ai/dsh-llm', enabled: true, fiberPhase: 'active', patchId: 'llm' }]),
+          listBundles: () => Promise.resolve([{ name: '@acme/bundle', version: '1.0.0', enabled: true, installed: true, optional: false, removable: true, rows: [], overrides: [] }]),
+          setPluginEnabled: (...args: unknown[]) => {
+            calls.push(args)
+            return Promise.resolve({ changed: true, application: 'applied', stage: 'enable', target: 'llm', enabled: false })
+          },
+          installBundle: (spec: string) => Promise.resolve(spec === 'nope'
+            ? { changed: false, application: 'failed', stage: 'install', target: 'nope', error: { code: 'not-found' } }
+            : { changed: true, application: 'applied', stage: 'install', target: spec, bundle: '@acme/good', enabled: true }),
+          removeBundle: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'remove', target: '@acme/bundle' }),
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/plugins bundles')
+    typeLine(test.terminal, '/plugins disable llm')
+    typeLine(test.terminal, '/plugins add nope')
+    typeLine(test.terminal, '/plugins add acme-good')
+    typeLine(test.terminal, '/plugins remove @acme/bundle')
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen).toContain('@acme/bundle  1.0.0  enabled  installed  removable')
+    expect(screen).toContain('enable llm: applied')
+    expect(calls).toEqual([['llm', false]])
+    expect(screen).toContain('installing nope…')
+    expect(screen).toContain('plugins failed: install nope: unchanged, failed · not-found')
+    expect(screen).toContain('install acme-good: applied · bundle @acme/good')
+    expect(screen).toContain('remove @acme/bundle: restart-required')
+    for (const incomplete of ['/plugins enable', '/plugins disable', '/plugins add', '/plugins remove', '/plugins dance']) {
+      typeLine(test.terminal, incomplete)
+      await test.settle()
+    }
+    expect(test.terminal.text().split('usage: /plugins · /plugins bundles').length).toBe(6)
+  })
+
   it('lists, shows, sets, and resets settings', async () => {
     const writes: unknown[] = []
     const test = await bench({

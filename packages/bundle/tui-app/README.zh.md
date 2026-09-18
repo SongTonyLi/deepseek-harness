@@ -90,9 +90,10 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `/todos` | 浏览 agent 的 todo 列表；`Enter` 完整打开其中一条，含其状态、位置与轮次 |
 | `/outline` | 本会话各轮次及其提示与回复预览 |
 | `/deliverables` | agent 交付的文件，按轮次分组 |
+| `/changes [turn]` | 浏览最近一轮（或第 `turn` 轮）改动的文件及其行数；`Enter` 打开某个文件从轮次开始到结束的对比 |
 | `/subagents` | 浏览本会话之下的子 agent 会话；`Enter` 打开某个会话的详情 |
 | `/settings [ns [path value]]` | 列出命名空间、显示某一个或设置某个字段；`/settings reset <ns>` 恢复默认 |
-| `/plugins` | 已组合的插件及其启用状态与生命周期阶段 |
+| `/plugins` | 已组合的插件及其启用状态与生命周期阶段；`/plugins bundles` 列出 profile 的组合包，`/plugins enable <id>` 与 `/plugins disable <id>` 切换某个插件条目或组合包，`/plugins add <spec>` 安装组合包，`/plugins remove <name>` 移除组合包 |
 | `/tools` | 像 `Ctrl+O` 一样展开或折叠所有工具卡片 |
 | `/quit`、`/exit` | 保存会话并退出 |
 
@@ -146,7 +147,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 
 ### 渲染模型
 
-持久事实来自会话日志：`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；插件通知是一行暗色文字，其他注入的上下文不绘制）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（某条 todo 的详情页所报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目）。实时增量来自 `agent/assistant-stream` 的文本与推理增量。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供页脚、`/status`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
+持久事实来自会话日志：`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；插件通知是一行暗色文字，其他注入的上下文不绘制）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`workspace/changes`（在 Host 仍保存摘要时，以一行通知给出该轮的文件数与行数）、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（某条 todo 的详情页所报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目）。实时增量来自 `agent/assistant-stream` 的文本与推理增量。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供页脚、`/status`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
 
 ### 基于 base 的 patch 面
 
@@ -176,7 +177,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/status.ts`](src/status.ts) | 投影接缝的事实，以及 `/status` 报告与分段详情共享的小节；压缩与重试通知 |
 | [`src/footer.ts`](src/footer.ts) | 状态栏：有序的各分段、每个分段的详情行，以及页脚渲染出的两行 |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | 实时子 agent 面板：一次后代列表加上采样到的实时事实构成其各行，各行再构成其文本 |
-| [`src/catalog.ts`](src/catalog.ts) | `/settings`、`/plugins`、`/subagents`、`/deliverables` 与 `/outline` 的行 |
+| [`src/catalog.ts`](src/catalog.ts) | `/settings`、`/plugins`、`/subagents`、`/deliverables`、`/changes` 与 `/outline` 的行，以及 `/plugins` 的管理动作 |
 | [`src/todos.ts`](src/todos.ts) | todo 列表：状态符号、选择器行与单个条目的详情行 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |
 | — | 不发布运行时不变量伴随模块；应用只在一个 Agent 上注册监听器，不持有其他观察者可能与之矛盾的可变关系。 |
@@ -232,7 +233,7 @@ runner 不向请求前缀添加任何内容；`/model` 切换像在浏览器中�
 - **同一时间一个会话**——`/sessions`、`/new` 与 `/fork` 在会话间切换终端，但只有绑定的 Agent 流式显示；浏览器可并排展示多个会话。
 - **审批为一次性**——提示只提供允许一次或拒绝，与审批接缝的词汇一致；没有记忆的授权。
 - **仅浏览器的页面留在浏览器**——workspace 与目录选择器、在应用中打开的链接、轨迹账本与逐条消息的点赞/点踩没有终端对应物；`/settings`、`/plugins`、`/subagents`、`/outline` 与共享的 `/feedback` 以文本覆盖其事实，子 agent 的对话记录通过切换到子会话来阅读。
-- **交付物只列名、不打开**——`/deliverables` 列出交付路径；浏览器会预览这些文件。
+- **交付物只列名、不打开**——`/deliverables` 列出交付路径，`/changes` 显示逐行对比；浏览器会预览这些文件。
 - **历史由终端回滚区持有**——键盘可以走遍对话记录的每个块与每个部分，但没有搜索，除工具卡片外也没有折叠；更丰富的导航由浏览器表层持有。
 - **滚走的聚焦块只在检视面板中被标记**——pi-tui 只对它写出的上一帧的最后 `rows` 行做差分重绘，要改动其上方的内容就得清空终端回滚区，因此更靠前的块得不到标记条，检视面板标题写出 `off screen`；占满终端的页面会把这条边界永久抬高，因此页面关闭后，打开它的那个块也可能写出 `off screen`；该小节仍可在检视面板中、以及 `Enter` 打开的页面上阅读。
 - **页面显示的是源文本**——在 assistant 回复上按 `Enter` 打开的是模型写下的 Markdown，而不是对话记录绘制出的渲染结果，因此表格与标题以源码形式呈现。

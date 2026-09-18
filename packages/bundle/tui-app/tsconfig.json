@@ -24,6 +24,9 @@
       "path": "../../boot/cmdline"
     },
     {
+      "path": "../../boot/plugin-manager"
+    },
+    {
       "path": "../../compaction/compaction"
     },
     {
@@ -49,6 +52,9 @@
     },
     {
       "path": "../../deliverables/tool-present"
+    },
+    {
+      "path": "../../deliverables/workspace-changes"
     },
     {
       "path": "../../goal/goal"

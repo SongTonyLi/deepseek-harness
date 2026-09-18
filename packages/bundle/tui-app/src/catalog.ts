@@ -1,14 +1,17 @@
 /**
  * Terminal rows for the browser's settings, plugins, subagents, deliverables,
- * and turn-outline pages. Each reader resolves its service through `ctx.get`
- * and throws an `Error` naming the absent service; the app prints the message.
- * `subagentDetail` is the exception: it returns that message as a row.
+ * changed-files, and turn-outline pages, and the plugin-management verbs the
+ * browser's Plugins page offers. Each reader resolves its service through
+ * `ctx.get` and throws an `Error` naming the absent service; the app prints
+ * the message. `subagentDetail` is the exception: it returns that message as a
+ * row.
  * @module @deepseek-ai/dsh-tui-app/catalog
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { pluginFiberPhase } from '@deepseek-ai/dsh-host-plugin-inventory'
+import type { BundleInfo, ChangeResult, PluginManager } from '@deepseek-ai/dsh-plugin-manager'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-query'
@@ -18,6 +21,7 @@ import type { SettingsDescriptor, SettingsProvider } from '@deepseek-ai/dsh-sett
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { PresentedFile } from '@deepseek-ai/dsh-tool-present/types'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import type { WorkspaceChanges, WorkspaceChangesSummary } from '@deepseek-ai/dsh-workspace-changes'
 import { describeFailure, formatTimestamp } from './transcript.ts'
 
 /**
@@ -315,4 +319,214 @@ export function sessionOutline(ctx: Context, session: Session): string[] {
   const outline = projections.snapshot(session, ['turnOutline']).values.turnOutline
   if (outline === undefined) throw new Error('the turnOutline projection is not registered in this profile')
   return outline.flatMap(outlineRows)
+}
+
+/** One `/changes` picker row: a file one turn changed, addressed as the Host serves its comparison. */
+export interface ChangeChoice {
+  /** The file's index in the turn's summary; the picker row value. */
+  index: number
+  /** The `workspace/changes` event sequence the summary is served for. */
+  seq: number
+  /** Row label: the file's display path. */
+  label: string
+  /** Row description: the line counts, or why the file has none. */
+  description: string
+}
+
+/** The changed files of one turn as picker rows under the turn's totals. */
+export interface TurnChanges {
+  /** Heading: the turn, its changed-file total, and its line totals. */
+  heading: string
+  /** One row per listed file in display order; fewer than the total once the recorder's cap cut the list. */
+  choices: ChangeChoice[]
+}
+
+/** The workspace-changes service, or a printable error naming its absence. */
+function requireWorkspaceChanges(ctx: Context): WorkspaceChanges {
+  const changes = ctx.get('workspaceChanges')
+  if (changes === undefined) throw new Error('workspace changes are not recorded in this profile')
+  return changes
+}
+
+/** `N file` or `N files`. */
+function fileCount(total: number): string {
+  return `${String(total)} file${total === 1 ? '' : 's'}`
+}
+
+/**
+ * The files one turn changed, as `/changes` picker rows: the latest
+ * `workspace/changes` announcement of `turn`, or of the newest announced turn
+ * when `turn` is undefined, resolved through the Host's summary.
+ * @param ctx - plugin context carrying the optional workspace-changes service and session query engine.
+ * @param sessionId - the session whose log is read.
+ * @param turn - the turn to list, or undefined for the latest announced one.
+ * @param signal - cancels a cold log read.
+ * @returns the rows under the turn's totals, or undefined when no such turn was announced.
+ * @throws {Error} when either service is not mounted, or when the Host no longer holds the announced summary.
+ */
+export async function listTurnChanges(
+  ctx: Context,
+  sessionId: SessionId,
+  turn: number | undefined,
+  signal: AbortSignal,
+): Promise<TurnChanges | undefined> {
+  const changes = requireWorkspaceChanges(ctx)
+  const query = ctx.get('sessionQuery')
+  if (query === undefined) throw new Error('the session query engine is not mounted in this profile')
+  using observation = await query.observeSession(sessionId, { signal, projectionMode: 'none' })
+  let announced: { seq: number; turn: number } | undefined
+  // The latest announcement of a turn replaces its earlier ones, so the last
+  // matching event is the one whose summary the Host still serves.
+  for (const event of observation.events) {
+    if (event.type !== 'workspace/changes') continue
+    if (turn !== undefined && event.data.turn !== turn) continue
+    announced = { seq: event.seq, turn: event.data.turn }
+  }
+  if (announced === undefined) return undefined
+  const summary = changes.summary(sessionId, announced.seq)
+  if (summary === undefined) throw new Error(`the changed files of turn ${String(announced.turn)} are no longer held by this host`)
+  const listed = summary.files.length === summary.total ? '' : ` (${String(summary.files.length)} listed)`
+  return {
+    heading: `turn ${String(summary.turn)} · ${fileCount(summary.total)}${listed} · +${String(summary.added)} −${String(summary.deleted)}`,
+    choices: summary.files.map((file, index) => ({
+      index,
+      seq: announced.seq,
+      label: file.display,
+      description: file.binary === true ? 'binary' : file.oversized === true ? 'oversized' : `+${String(file.added)} −${String(file.deleted)}`,
+    })),
+  }
+}
+
+/**
+ * The one-row notice a `workspace/changes` event prints once its summary is read.
+ * @param summary - the announced turn's summary.
+ * @returns the turn's file and line totals, naming `/changes` for the files.
+ */
+export function changesNotice(summary: WorkspaceChangesSummary): string {
+  return `turn ${String(summary.turn)} changed ${fileCount(summary.total)} (+${String(summary.added)} −${String(summary.deleted)}) · /changes`
+}
+
+/**
+ * The comparison one `/changes` row opens: the file's turn-start and turn-end
+ * contents as unified hunks in the tool cards' diff row form, `@@` headers
+ * between them and `…` where hunks are apart.
+ * @param ctx - plugin context carrying the optional workspace-changes service.
+ * @param sessionId - the session the summary belongs to.
+ * @param choice - the entered picker row.
+ * @param signal - cancels the snapshot reads.
+ * @returns the rows; explanatory rows when no lines can be shown.
+ * @throws {Error} when the service is not mounted or a snapshot read fails.
+ */
+export async function changeDiffRows(ctx: Context, sessionId: SessionId, choice: ChangeChoice, signal: AbortSignal): Promise<string[]> {
+  const diff = await requireWorkspaceChanges(ctx).diff(sessionId, choice.seq, choice.index, signal)
+  if (diff === undefined) return [`${choice.label}: the comparison is no longer held by this host`]
+  switch (diff.kind) {
+    case 'binary':
+      return [`${diff.display}: binary content, no line comparison`]
+    case 'oversized':
+      return [`${diff.display}: larger than the comparison limit, no line comparison`]
+    case 'text': {
+      const rows: string[] = []
+      if (!diff.before) rows.push('new file')
+      if (!diff.after) rows.push('deleted')
+      if (diff.coarse) rows.push('comparison timed out: every line is shown as replaced')
+      if (diff.hunks.length === 0) rows.push('no line changes')
+      diff.hunks.forEach((hunk, index) => {
+        if (index > 0) rows.push('  …')
+        rows.push(`@@ -${String(hunk.oldStart)},${String(hunk.oldLines)} +${String(hunk.newStart)},${String(hunk.newLines)} @@`)
+        // Each hunk line keeps its `+`, `-`, or space; the card form puts one
+        // space after it.
+        for (const line of hunk.lines) rows.push(`${line.slice(0, 1)} ${line.slice(1)}`)
+      })
+      return rows
+    }
+    /* v8 ignore next -- closed-union exhaustiveness guard */
+    default:
+      return assertNever(diff, 'tui workspace file diff')
+  }
+}
+
+/** The plugin manager, or a printable error naming its absence. */
+function requirePluginManager(ctx: Context): PluginManager {
+  const manager = ctx.get('pluginManager')
+  if (manager === undefined) throw new Error('plugin management is not mounted in this profile')
+  return manager
+}
+
+/**
+ * One row per bundle the profile can manage: name, version, enablement, how
+ * the profile holds it, whether it can be removed, and its management error.
+ * @param ctx - plugin context carrying the optional plugin manager.
+ * @returns the rows in the manager's order.
+ * @throws {Error} when no plugin manager is mounted.
+ */
+export async function listBundles(ctx: Context): Promise<string[]> {
+  return (await requirePluginManager(ctx).listBundles()).map(bundleRow)
+}
+
+/** One bundle's facts, two spaces apart. */
+function bundleRow(bundle: BundleInfo): string {
+  const held = bundle.installed ? 'installed' : bundle.optional ? 'optional' : 'shipped'
+  const facts = [bundle.name, bundle.version ?? '-', bundle.enabled ? 'enabled' : 'disabled', held]
+  if (bundle.removable) facts.push('removable')
+  if (bundle.readOnlyReason !== undefined) facts.push(`read-only (${bundle.readOnlyReason})`)
+  if (bundle.error !== undefined) facts.push(`error ${bundle.error.code}`)
+  return facts.join('  ')
+}
+
+/**
+ * Switch one plugin entry or one bundle on or off in the profile's persistent
+ * composition. A target naming a plugin entry id changes that entry;
+ * otherwise it names a bundle.
+ * @param ctx - plugin context carrying the optional plugin manager.
+ * @param target - a plugin entry id or a bundle name.
+ * @param enabled - the wanted state.
+ * @returns a confirmation row: the persisted change and how it applied.
+ * @throws {Error} when no plugin manager is mounted, when `target` names neither, or when the change failed.
+ */
+export async function setPluginEnabled(ctx: Context, target: string, enabled: boolean): Promise<string> {
+  const manager = requirePluginManager(ctx)
+  const plugin = (await manager.listPlugins()).find(candidate => candidate.entryId === target)
+  if (plugin !== undefined) return reportChange(await manager.setPluginEnabled(plugin.entryId, enabled))
+  const bundle = (await manager.listBundles()).find(candidate => candidate.name === target)
+  if (bundle !== undefined) return reportChange(await manager.setBundleEnabled(bundle.name, enabled))
+  throw new Error(`"${target}" is neither a plugin entry nor a bundle of this profile`)
+}
+
+/**
+ * Install one bundle into the profile and enable it.
+ * @param ctx - plugin context carrying the optional plugin manager.
+ * @param spec - what pnpm should add: a registry name, a path, a git address, or a tarball.
+ * @returns a confirmation row: the installation and how it applied.
+ * @throws {Error} when no plugin manager is mounted or the installation failed.
+ */
+export async function installBundle(ctx: Context, spec: string): Promise<string> {
+  return reportChange(await requirePluginManager(ctx).installBundle(spec))
+}
+
+/**
+ * Remove one installed bundle from the profile.
+ * @param ctx - plugin context carrying the optional plugin manager.
+ * @param name - the bundle's package name.
+ * @returns a confirmation row: the removal and how it applied.
+ * @throws {Error} when no plugin manager is mounted or the removal failed.
+ */
+export async function removeBundle(ctx: Context, name: string): Promise<string> {
+  return reportChange(await requirePluginManager(ctx).removeBundle(name))
+}
+
+/** One row over a change result; a failed change is thrown so the surface prints the row as an error. */
+function reportChange(result: ChangeResult): string {
+  const facts = [`${result.stage} ${result.target}: ${result.changed ? result.application : `unchanged, ${result.application}`}`]
+  if (result.bundle !== undefined && result.bundle !== result.target) facts.push(`bundle ${result.bundle}`)
+  if (result.error !== undefined) {
+    facts.push(result.error.diagnostic === undefined ? result.error.code : `${result.error.code}: ${result.error.diagnostic}`)
+  }
+  if (result.pendingBuilds !== undefined && result.pendingBuilds.length > 0) {
+    facts.push(`scripts awaiting approval: ${result.pendingBuilds.join(', ')}`)
+  }
+  if (result.warnings !== undefined) facts.push(...result.warnings)
+  const text = facts.join(' · ')
+  if (result.application === 'failed') throw new Error(text)
+  return text
 }

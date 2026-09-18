@@ -36,6 +36,12 @@
     - id: present
       name: '@deepseek-ai/dsh-tool-present'
 
+    # Records each top-level turn's changed files from git working-tree
+    # snapshots and announces them with `workspace/changes`; `/changes`
+    # browses the files and their comparisons as the browser's card does.
+    - id: workspace-changes
+      name: '@deepseek-ai/dsh-workspace-changes'
+
     # Whole-log turn outline for `/outline` (the turnOutline projection key)
     # over the base session-projection registry.
     - id: session-turn-outline

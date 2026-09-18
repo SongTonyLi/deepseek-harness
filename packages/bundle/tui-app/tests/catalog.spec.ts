@@ -1,16 +1,26 @@
-/** The settings, plugins, subagent rows and details, deliverables, and outline rows over scripted services. */
+/**
+ * The settings, plugins, subagent rows and details, deliverables, changed-file,
+ * and outline rows, and the plugin-management verbs, over scripted services.
+ */
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SubagentChoice } from '../src/catalog.ts'
+import type { ChangeChoice, SubagentChoice } from '../src/catalog.ts'
 import {
+  changeDiffRows,
+  changesNotice,
+  installBundle,
+  listBundles,
   listDeliverables,
   listPlugins,
   listSettings,
   listSubagentChoices,
+  listTurnChanges,
+  removeBundle,
   resetSetting,
   sessionOutline,
+  setPluginEnabled,
   setSetting,
   showSetting,
   subagentDetail,
@@ -384,5 +394,187 @@ describe('sessionOutline', () => {
       '2. (no prompt)',
     ])
     expect(asked).toEqual([[session, ['turnOutline']]])
+  })
+})
+
+/** One turn's summary as the Host serves it: one text file and one binary file of three. */
+const changesSummary = {
+  turn: 2,
+  cwd: '/work',
+  total: 3,
+  added: 12,
+  deleted: 4,
+  files: [
+    { path: 'src/a.ts', display: 'src/a.ts', added: 10, deleted: 4 },
+    { path: '/tmp/blob.bin', display: '/tmp/blob.bin', added: 0, deleted: 0, binary: true as const },
+  ],
+}
+
+/** Three announcements among other events: turn 1 once, turn 2 twice, so the later one wins. */
+const changesEvents = [
+  { type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } },
+  { type: 'workspace/changes', seq: 3, time: 1, data: { turn: 1 } },
+  { type: 'workspace/changes', seq: 5, time: 2, data: { turn: 2 } },
+  { type: 'workspace/changes', seq: 7, time: 3, data: { turn: 2 } },
+]
+
+/** A log of `events` and a workspace-changes service holding `held` summaries by sequence and answering `diff` with one comparison. */
+function changesCtx(events: readonly unknown[], held: Record<number, unknown> = { 7: changesSummary }, diff?: unknown): Context {
+  const ctx = new Context()
+  ctx.provide('sessionQuery', { observeSession: () => Promise.resolve({ events, [Symbol.dispose]: () => {} }) } as never)
+  ctx.provide('workspaceChanges', { summary: (_id: unknown, seq: number) => held[seq], diff: () => Promise.resolve(diff) } as never)
+  return ctx
+}
+
+describe('listTurnChanges', () => {
+  it('names the missing services', async () => {
+    await expect(listTurnChanges(new Context(), sessionId, undefined, signal)).rejects.toThrow('workspace changes are not recorded in this profile')
+    const ctx = new Context()
+    ctx.provide('workspaceChanges', {} as never)
+    await expect(listTurnChanges(ctx, sessionId, undefined, signal)).rejects.toThrow('the session query engine is not mounted in this profile')
+  })
+
+  it('resolves the latest announcement of the newest turn, or of the named one', async () => {
+    await expect(listTurnChanges(changesCtx(changesEvents), sessionId, undefined, signal)).resolves.toEqual({
+      heading: 'turn 2 · 3 files (2 listed) · +12 −4',
+      choices: [
+        { index: 0, seq: 7, label: 'src/a.ts', description: '+10 −4' },
+        { index: 1, seq: 7, label: '/tmp/blob.bin', description: 'binary' },
+      ],
+    })
+    const first = { ...changesSummary, turn: 1, total: 1, files: [{ ...changesSummary.files[0], oversized: true as const }] }
+    await expect(listTurnChanges(changesCtx(changesEvents, { 3: first }), sessionId, 1, signal)).resolves.toEqual({
+      heading: 'turn 1 · 1 file · +12 −4',
+      choices: [{ index: 0, seq: 3, label: 'src/a.ts', description: 'oversized' }],
+    })
+  })
+
+  it('reports an unannounced turn as undefined and a dropped summary as an error', async () => {
+    await expect(listTurnChanges(changesCtx([]), sessionId, undefined, signal)).resolves.toBeUndefined()
+    await expect(listTurnChanges(changesCtx(changesEvents), sessionId, 9, signal)).resolves.toBeUndefined()
+    await expect(listTurnChanges(changesCtx(changesEvents, {}), sessionId, undefined, signal))
+      .rejects.toThrow('the changed files of turn 2 are no longer held by this host')
+  })
+})
+
+describe('changesNotice', () => {
+  it('counts the turn\'s files and lines', () => {
+    expect(changesNotice(changesSummary)).toBe('turn 2 changed 3 files (+12 −4) · /changes')
+    expect(changesNotice({ ...changesSummary, total: 1 })).toBe('turn 2 changed 1 file (+12 −4) · /changes')
+  })
+})
+
+describe('changeDiffRows', () => {
+  const choice: ChangeChoice = { index: 0, seq: 7, label: 'src/a.ts', description: '+1 −1' }
+
+  it('names the missing service', async () => {
+    await expect(changeDiffRows(new Context(), sessionId, choice, signal)).rejects.toThrow('workspace changes are not recorded in this profile')
+  })
+
+  it('draws the hunks in the tool cards\' diff row form', async () => {
+    const diff = {
+      kind: 'text',
+      path: 'src/a.ts',
+      display: 'src/a.ts',
+      before: true,
+      after: true,
+      coarse: false,
+      hunks: [
+        { oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: [' keep', '-old', '+new'] },
+        { oldStart: 9, oldLines: 1, newStart: 9, newLines: 1, lines: ['-a', '+b'] },
+      ],
+    }
+    await expect(changeDiffRows(changesCtx([], {}, diff), sessionId, choice, signal)).resolves.toEqual([
+      '@@ -1,2 +1,2 @@', '  keep', '- old', '+ new', '  …', '@@ -9,1 +9,1 @@', '- a', '+ b',
+    ])
+  })
+
+  it('explains a new, deleted, coarse, unchanged, binary, oversized, or dropped comparison', async () => {
+    const text = { kind: 'text', path: 'x', display: 'x', before: false, after: false, coarse: true, hunks: [] }
+    await expect(changeDiffRows(changesCtx([], {}, text), sessionId, choice, signal)).resolves.toEqual([
+      'new file', 'deleted', 'comparison timed out: every line is shown as replaced', 'no line changes',
+    ])
+    await expect(changeDiffRows(changesCtx([], {}, { kind: 'binary', path: 'x', display: 'x' }), sessionId, choice, signal))
+      .resolves.toEqual(['x: binary content, no line comparison'])
+    await expect(changeDiffRows(changesCtx([], {}, { kind: 'oversized', path: 'x', display: 'x' }), sessionId, choice, signal))
+      .resolves.toEqual(['x: larger than the comparison limit, no line comparison'])
+    await expect(changeDiffRows(changesCtx([]), sessionId, choice, signal))
+      .resolves.toEqual(['src/a.ts: the comparison is no longer held by this host'])
+  })
+})
+
+/** A plugin manager over one plugin entry and two bundles that records every change call. */
+function managerCtx(calls: unknown[]): Context {
+  const ctx = new Context()
+  ctx.provide('pluginManager', {
+    listPlugins: () => Promise.resolve([{ entryId: 'llm', moduleName: '@deepseek-ai/dsh-llm', enabled: true, fiberPhase: 'active', patchId: 'llm' }]),
+    listBundles: () => Promise.resolve([
+      { name: '@acme/bundle', version: '1.2.0', enabled: true, installed: true, optional: false, removable: true, rows: [], overrides: [] },
+      { name: '@deepseek-ai/dsh-acp-app', version: '0.1.0', enabled: false, installed: false, optional: true, removable: false, rows: [], overrides: [] },
+      {
+        name: '@deepseek-ai/dsh-web-app',
+        enabled: false,
+        installed: false,
+        optional: false,
+        removable: false,
+        readOnlyReason: 'unaddressable',
+        error: { code: 'not-removable' },
+        rows: [],
+        overrides: [],
+      },
+    ]),
+    setPluginEnabled: (...args: unknown[]) => {
+      calls.push(['plugin', ...args])
+      return Promise.resolve({ changed: true, application: 'applied', stage: 'enable', target: 'llm', enabled: false })
+    },
+    setBundleEnabled: (...args: unknown[]) => {
+      calls.push(['bundle', ...args])
+      return Promise.resolve({ changed: true, application: 'restart-required', stage: 'enable', target: '@acme/bundle', enabled: true, warnings: ['row x stays disabled'] })
+    },
+    installBundle: (...args: unknown[]) => {
+      calls.push(['install', ...args])
+      return Promise.resolve(args[0] === 'nope'
+        ? { changed: false, application: 'failed', stage: 'install', target: 'nope', error: { code: 'operation-error', diagnostic: 'pnpm exited 1' }, pendingBuilds: ['esbuild'] }
+        : { changed: true, application: 'applied', stage: 'install', target: String(args[0]), bundle: '@acme/other', enabled: true })
+    },
+    removeBundle: (...args: unknown[]) => {
+      calls.push(['remove', ...args])
+      return Promise.resolve({ changed: true, application: 'applied', stage: 'remove', target: '@acme/bundle', bundle: '@acme/bundle' })
+    },
+  } as never)
+  return ctx
+}
+
+describe('plugin management', () => {
+  it('names the missing manager', async () => {
+    await expect(listBundles(new Context())).rejects.toThrow('plugin management is not mounted in this profile')
+    await expect(setPluginEnabled(new Context(), 'llm', true)).rejects.toThrow('plugin management is not mounted in this profile')
+    await expect(installBundle(new Context(), 'x')).rejects.toThrow('plugin management is not mounted in this profile')
+    await expect(removeBundle(new Context(), 'x')).rejects.toThrow('plugin management is not mounted in this profile')
+  })
+
+  it('lists bundles with how the profile holds them', async () => {
+    await expect(listBundles(managerCtx([]))).resolves.toEqual([
+      '@acme/bundle  1.2.0  enabled  installed  removable',
+      '@deepseek-ai/dsh-acp-app  0.1.0  disabled  optional',
+      '@deepseek-ai/dsh-web-app  -  disabled  shipped  read-only (unaddressable)  error not-removable',
+    ])
+  })
+
+  it('switches a plugin entry, then a bundle, and refuses an unknown target', async () => {
+    const calls: unknown[] = []
+    await expect(setPluginEnabled(managerCtx(calls), 'llm', false)).resolves.toBe('enable llm: applied')
+    await expect(setPluginEnabled(managerCtx(calls), '@acme/bundle', true)).resolves.toBe('enable @acme/bundle: restart-required · row x stays disabled')
+    await expect(setPluginEnabled(managerCtx(calls), 'ghost', true)).rejects.toThrow('"ghost" is neither a plugin entry nor a bundle of this profile')
+    expect(calls).toEqual([['plugin', 'llm', false], ['bundle', '@acme/bundle', true]])
+  })
+
+  it('installs and removes bundles, raising a failed change as the row it describes', async () => {
+    const calls: unknown[] = []
+    await expect(installBundle(managerCtx(calls), 'acme-other@1')).resolves.toBe('install acme-other@1: applied · bundle @acme/other')
+    await expect(installBundle(managerCtx(calls), 'nope'))
+      .rejects.toThrow('install nope: unchanged, failed · operation-error: pnpm exited 1 · scripts awaiting approval: esbuild')
+    await expect(removeBundle(managerCtx(calls), '@acme/bundle')).resolves.toBe('remove @acme/bundle: applied')
+    expect(calls).toEqual([['install', 'acme-other@1'], ['install', 'nope'], ['remove', '@acme/bundle']])
   })
 })

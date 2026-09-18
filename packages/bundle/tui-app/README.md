@@ -90,9 +90,10 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/todos` | Browse the agent's todo list; `Enter` opens one item in full with its status, position, and turns |
 | `/outline` | The turns of this session with their prompt and reply previews |
 | `/deliverables` | The files the agent presented, grouped by turn |
+| `/changes [turn]` | Browse the files the latest turn changed, or turn `turn`, with their line counts; `Enter` opens one file's turn-start to turn-end comparison |
 | `/subagents` | Browse the subagent sessions under this session; `Enter` opens one session's details |
 | `/settings [ns [path value]]` | List namespaces, show one, or set one field; `/settings reset <ns>` restores defaults |
-| `/plugins` | The composed plugins with enablement and lifecycle phase |
+| `/plugins` | The composed plugins with enablement and lifecycle phase; `/plugins bundles` lists the profile's bundles, `/plugins enable <id>` and `/plugins disable <id>` switch a plugin entry or a bundle, `/plugins add <spec>` installs a bundle, `/plugins remove <name>` removes one |
 | `/tools` | Expand or collapse every tool card, like `Ctrl+O` |
 | `/quit`, `/exit` | Save the session and exit |
 
@@ -146,7 +147,7 @@ The runner awaits the complete application (`ctx.get('loader')?.await()`) and bu
 
 ### Rendering model
 
-Durable facts come from the session log: `user/message` (own submissions are drawn once and their echo skipped by message id; a plugin notice is one dim row and other injected context is not drawn), `assistant/message` (which replaces the streamed block with the committed text and folds usage into the footer), `tool/call` and `tool/result` (drawn through the tool's `presentCall` and `presentResult` views when it declares them, with a raw-argument and raw-result fallback), `turn/end` notices, `session/title` (header), `permission/preset` (footer), and `todo/write` under the enclosing `turn/start` (the turns one todo item's page reports; the list carries no per-item identity, so a reworded item counts as a new one). Live incrementality comes from `agent/assistant-stream` text and reasoning deltas. Session facts outside the log come from the same services the browser reads: `sessionTitle`, `permissionPresets`, `sessionQuery` for the picker, `/deliverables`, and subagent details, `sessionProjections` for the footer, `/status`, `/todos`, and `/outline`, `fileReferences` and `sessionReferenceResolver` for `@` completion, `attachments`, `skills`, `authorization`, `settings`, `subagents`, and the Loader's entries for `/plugins`. Modal prompts are process-local presentation and are never logged.
+Durable facts come from the session log: `user/message` (own submissions are drawn once and their echo skipped by message id; a plugin notice is one dim row and other injected context is not drawn), `assistant/message` (which replaces the streamed block with the committed text and folds usage into the footer), `tool/call` and `tool/result` (drawn through the tool's `presentCall` and `presentResult` views when it declares them, with a raw-argument and raw-result fallback), `turn/end` notices, `workspace/changes` (one notice with the turn's file and line counts while the Host still holds the summary), `session/title` (header), `permission/preset` (footer), and `todo/write` under the enclosing `turn/start` (the turns one todo item's page reports; the list carries no per-item identity, so a reworded item counts as a new one). Live incrementality comes from `agent/assistant-stream` text and reasoning deltas. Session facts outside the log come from the same services the browser reads: `sessionTitle`, `permissionPresets`, `sessionQuery` for the picker, `/deliverables`, and subagent details, `sessionProjections` for the footer, `/status`, `/todos`, and `/outline`, `fileReferences` and `sessionReferenceResolver` for `@` completion, `attachments`, `skills`, `authorization`, `settings`, `subagents`, and the Loader's entries for `/plugins`. Modal prompts are process-local presentation and are never logged.
 
 ### Patch surface over base
 
@@ -176,7 +177,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/status.ts`](src/status.ts) | Projection-seam facts and the sections the `/status` report and the segment details share; compaction and retry notices |
 | [`src/footer.ts`](src/footer.ts) | The status bar: the ordered segments, each segment's detail rows, and the footer's two rendered lines |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | The live subagent panel: one descendant listing plus sampled live facts become its rows, and the rows its text |
-| [`src/catalog.ts`](src/catalog.ts) | Rows for `/settings`, `/plugins`, `/subagents`, `/deliverables`, and `/outline` |
+| [`src/catalog.ts`](src/catalog.ts) | Rows for `/settings`, `/plugins`, `/subagents`, `/deliverables`, `/changes`, and `/outline`, and the `/plugins` management verbs |
 | [`src/todos.ts`](src/todos.ts) | The todo list: the status glyphs, the picker rows, and one item's detail rows |
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers listeners on one Agent and holds no mutable relation another observer could contradict. |
@@ -232,7 +233,7 @@ These limits describe the terminal surface as shipped; they are not a general CL
 - **One session at a time** — `/sessions`, `/new`, and `/fork` switch the terminal between sessions, but only the bound Agent streams; the browser shows several sessions side by side.
 - **Approvals are one-shot** — the prompt offers allow once or reject, matching the approval seam's vocabulary; there is no remembered grant.
 - **Browser-only pages stay in the browser** — workspace and directory pickers, open-in-app links, the trajectory ledger, and per-message like/dislike have no terminal counterpart; `/settings`, `/plugins`, `/subagents`, `/outline`, and the shared `/feedback` cover their facts as text, and subagent transcripts are read by switching to the child session.
-- **Deliverables are named, not opened** — `/deliverables` lists the presented paths; the browser previews the files.
+- **Deliverables are named, not opened** — `/deliverables` lists the presented paths and `/changes` shows line comparisons; the browser previews the files.
 - **Terminal scrollback owns history** — the keyboard walks every block and part of the conversation, but there is no search and nothing folds beyond tool cards; the browser surface owns richer navigation.
 - **A focused block that scrolled away is marked only in the inspector** — pi-tui repaints differentially just the last `rows` lines of the last frame it wrote and clears the terminal's scrollback to change anything above them, so a block further back gains no gutter and the inspector heading says `off screen`; a page that filled the terminal raises that boundary for good, so the block it was opened from can read `off screen` once the page closes, and its section still reads in the inspector and on the page `Enter` opens.
 - **The page shows source text** — `Enter` on an assistant reply opens the Markdown the model wrote, not the rendering the transcript draws, so tables and headings read as their source.
