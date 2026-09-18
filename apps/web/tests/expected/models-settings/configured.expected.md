@@ -29,6 +29,11 @@
       - img "API 密钥已配置"
       - button "编辑 minimax-cn": 编辑
       - button "删除 minimax-cn": 删除
+    - listitem:
+      - text: Cursor
+      - button "编辑 Cursor (cursor)": 编辑
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
   - button "添加提供方":
     - img
     - text: 添加提供方

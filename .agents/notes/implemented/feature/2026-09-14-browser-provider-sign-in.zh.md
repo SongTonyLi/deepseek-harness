@@ -22,13 +22,13 @@ Status: implemented
 - **生成器是惰性的。** 尝试在载体拉取第一帧时开始，而不是在 `begin` 返回时。否则一条无人消费的流会在进程的整个生命周期里占住那个键，而这正是 seam 的撤回规则要防止的卡死状态。
 - **`begin` 的每一种失败都是流失败。** 校验、缺失的 seam、seam 的拒绝，以及出错的 flow，全都经由同一条路径到达，因此界面只写一个错误分支，而不必区分被拒绝的打开与失败的读取。
 
-**`dsh-client-ui-settings-signin` 是独立插件，而不是对 Models 页的修改。** Models 页早已声明 `settings.models.provider-card`（以 settings namespace 为键）与 `settings.models.footer`，正是为此：让插件添加提供方适配器的 UI，而该页无需知道它意味着什么。登录填充两者——卡片座位注册在 `llm-pi-ai` 下，因此该适配器族的每条路由都会获得它；页脚座位承载对话框，它属于页面而非卡片，因为一次尝试会在其卡片滚出视野后继续存在，且同时只有一次在跑。两个座位共享一个快照 store，因此卡片与对话框不可能对「正在运行什么」产生分歧。
+**`dsh-client-ui-settings-signin` 是独立插件，而不是对 Models 页的修改。** Models 页早已声明 `settings.models.provider-card`（以 settings namespace 为键）与 `settings.models.footer`，正是为此：让插件添加提供方适配器的 UI，而该页无需知道它意味着什么。登录填充两者——卡片座位注册在每个适配器族的 settings namespace 下（`llm-pi-ai` 与 `llm-cursor`），因此这些族的每条路由都会获得它；页脚座位承载对话框，它属于页面而非卡片，因为一次尝试会在其卡片滚出视野后继续存在，且同时只有一次在跑。两个座位共享一个快照 store，因此卡片与对话框不可能对「正在运行什么」产生分歧。
 
 卡片只提供订阅方式。`llm-pi-ai` 为全部 38 个已安装提供方注册登录，但其中 31 个只提示输入 API 密钥——而卡片本就为它准备了一等字段，并把它存为 settings profile 所指明的引用。在其旁再提供 pi-ai 的密钥提示，会把同一份机密改存为记录，让「我的密钥在哪」有两个答案。该判定是否定式的（除 `api-key` 之外的每个方式 id），因此提供方新增第二种订阅方式时无需改代码即可出现，而第二条密钥路径永远不会。
 
-flow 目录按提供方路由联接：记录 scope 为 `llm-pi-ai` 的 flow 会在其记录 id 中给出提供方，而来自其他插件的 flow 指向的不是提供方，因此被略过。`authorization/settled` 与 `credentials/record-updated` 加入转发事件白名单，因此在第二个标签页完成的登录无需轮询即可收敛。
+flow 目录按提供方路由联接：记录 scope 为适配器族 settings namespace（`llm-pi-ai` 或 `llm-cursor`）的 flow 会在其记录 id 中给出提供方，而来自其他插件的 flow 指向的不是提供方，因此被略过。`authorization/settled` 与 `credentials/record-updated` 加入转发事件白名单，因此在第二个标签页完成的登录无需轮询即可收敛。
 
-**base bundle 挂载 seam；web bundle 挂载 controller 与该插件。** seam 自身不提供任何 flow，因此把它挂进 `dsh-base` 不会要求任何人登录——无头或 ACP 组合保持不变，而让这些登录可触达的是那里本就存在的 `llm-pi-ai` 行。
+**base bundle 挂载 seam；web bundle 挂载 controller 与该插件。** seam 自身不提供任何 flow，因此把它挂进 `dsh-base` 不会要求任何人登录——无头或 ACP 组合保持不变，而让这些登录可触达的是那里本就存在的 `llm-pi-ai` 与 `llm-cursor` 行。
 
 `authorization/settled` 的 Cordis `Events` 声明从 authorization 包的 `index.ts` 移到其浏览器安全的 `types.ts`，与凭据 seam 声明其两个事件的方式一致：转发白名单的 Client face 必须读到 Host 所发出的同一份声明，而不引入仅 Host 可用的服务类型。
 
@@ -52,7 +52,7 @@ flow 目录按提供方路由联接：记录 scope 为 `llm-pi-ai` 的 flow 会�
 
 Remote 面新增一个 namespace 与两个失败代码：`authorization/rejected`（在 `reason` 中携带 seam 自己的代码）与 `authorization/no-prompt`。转发事件白名单新增两个条目。没有任何会话事件、settings 键或存储格式发生变化，这里也没有任何东西进入模型请求。
 
-有两项限制是继承而非修复的：一次尝试不可持久，因此登录途中刷新会丢弃它；每个键只允许一次尝试且是拒绝而非并入，每行上的 `inFlight` 让界面得以提前展示这一点。第三项是刻意的：只有 `llm-pi-ai` 记录 scope 中的 flow 获得 Models 页座位，因为来自非适配器插件的 flow 没有可落座的提供方卡片。
+有两项限制是继承而非修复的：一次尝试不可持久，因此登录途中刷新会丢弃它；每个键只允许一次尝试且是拒绝而非并入，每行上的 `inFlight` 让界面得以提前展示这一点。第三项是刻意的：只有记录 scope 为适配器族 settings namespace（`llm-pi-ai` 或 `llm-cursor`）的 flow 获得 Models 页座位，因为来自非适配器插件的 flow 没有可落座的提供方卡片。
 
 共享的浏览器启动 fixture 新增一个 `authorization/list` 默认值，因为现在每个整客户端 roster 规格都会启动一个在挂载时读取该目录的插件。
 

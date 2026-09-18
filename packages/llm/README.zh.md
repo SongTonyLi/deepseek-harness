@@ -1,5 +1,5 @@
 ---
-description: "LLM（大语言模型）能力包组：一个提供方无关的模型调用服务、DeepSeek 与 pi-ai 提供方适配器、请求重试执行，以及具备回放感知的 token 计量。"
+description: "LLM（大语言模型）能力包组：一个提供方无关的模型调用服务、DeepSeek、pi-ai 与 Cursor 提供方适配器、请求重试执行，以及具备回放感知的 token 计量。"
 kind: "package-group"
 ---
 
@@ -27,6 +27,7 @@ llm 组提供 harness 的模型调用能力：一个提供方无关的服务，�
 | [`llm/`](llm/README.zh.md) | 通过已注册的提供方适配器流式发起一次模型调用，并共享 harness 的消息、块与分片词汇 | `ctx.llm` |
 | [`llm-deepseek/`](llm-deepseek/README.zh.md) | 以 DeepSeek chat-completions 直连、thinking 与图片输入服务 `deepseek-official` 路由 | 注册到 `ctx.llm` |
 | [`llm-pi-ai/`](llm-pi-ai/README.zh.md) | 通过 pi-ai 目录与协议格式服务配置的提供方路由，包括手工声明的网关 | 注册到 `ctx.llm` |
+| [`llm-cursor/`](llm-cursor/README.zh.md) | 通过 Cursor 订阅 PKCE 与非官方 Connect/protobuf HTTP/2 服务始终在线的 `cursor` 路由 | 注册到 `ctx.llm` |
 | [`deepseek-llm-api-extensions/`](deepseek-llm-api-extensions/README.zh.md) | 在官方 DeepSeek 请求上注册具有生命周期归属的顶层字段 | `ctx.deepseekLlmApiExtensions` |
 | [`plugin-package-inventory-deepseek/`](plugin-package-inventory-deepseek/README.zh.md) | 为官方 DeepSeek 请求贡献当前启用的 Loader 包清单 | 贡献 `dsh_plugin_packages` |
 | [`llm-retry/`](llm-retry/README.zh.md) | 在持久 agent 步骤边界上按各提供方策略重试失败的模型请求 | 监听 `agent/request-error` |

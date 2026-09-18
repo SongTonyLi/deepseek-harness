@@ -1,9 +1,10 @@
 /**
  * Models-page sign-in, browser half. It fills the two seats the Models
- * section declares: a sign-in area inside every provider card of the pi-ai
- * adapter family, and the dialog that carries one running attempt's
- * conversation. The Host side is the authorization seam; this package adds no
- * settings and stores no credential itself.
+ * section declares: a sign-in area inside every provider card of an adapter
+ * family that owns a settings namespace (`llm-pi-ai`, `llm-cursor`), and the
+ * dialog that carries one running attempt's conversation. The Host side is the
+ * authorization seam; this package adds no settings and stores no credential
+ * itself.
  *
  * Export discipline: packages/client/AGENTS.md.
  */
@@ -83,12 +84,14 @@ export function apply(ctx: ClientContext): void {
     close: () => { controller.close() },
   })
 
-  ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({
-    name: 'settings.models.provider-card',
-    key: 'llm-pi-ai',
-    locale: NS,
-    inject: cardInjected,
-  }, SignInCard))
+  for (const key of ['llm-pi-ai', 'llm-cursor'] as const) {
+    ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({
+      name: 'settings.models.provider-card',
+      key,
+      locale: NS,
+      inject: cardInjected,
+    }, SignInCard))
+  }
   ctx.slots.inject('settings.models.footer', () => ctx.slots.register({
     name: 'settings.models.footer',
     id: 'signin-dialog',

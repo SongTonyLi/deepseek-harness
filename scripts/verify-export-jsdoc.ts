@@ -20,6 +20,11 @@ const PROTOCOL_STATICS = new Set(['Config', 'inject', 'name', 'reusable'])
 /** Plugin-protocol slot names exempt as top-level exports (const or function). */
 const PROTOCOL_EXPORTS = new Set(['Config', 'inject', 'name', 'reusable', 'apply'])
 
+/** Generated protobuf dumps are not package API prose; oxlint and coverage exclude the same file. */
+const GENERATED_EXPORT_JSDOC_EXCLUDES = new Set([
+  'packages/llm/llm-cursor/src/native/agent_pb.ts',
+])
+
 /** Per-file walk state threaded through the scope recursion. */
 interface Walk {
   rel: string
@@ -568,6 +573,7 @@ export function collectExportJsdocViolations(scanRoot: string = root): string[] 
   const violations: string[] = []
   const rels = globSync('packages/*/*/src/**/*.ts', { cwd: scanRoot })
     .map(path => path.split(sep).join('/'))
+    .filter(rel => !GENERATED_EXPORT_JSDOC_EXCLUDES.has(rel))
     .sort()
   const program = ts.createProgram(rels.map(rel => resolve(scanRoot, rel)), loadCompilerOptions(scanRoot))
   const checker = program.getTypeChecker()

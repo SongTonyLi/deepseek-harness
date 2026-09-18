@@ -13,11 +13,11 @@ import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 
 /**
- * The record scope of the pi-ai adapter family, which is the scope whose
- * record ids are provider route keys. A flow from another scope addresses
- * something other than a provider, so the Models page does not claim it.
+ * Record scopes whose flow ids are provider route keys. A flow from another
+ * scope addresses something other than a provider, so the Models page does not
+ * claim it.
  */
-const PROVIDER_SCOPE = 'llm-pi-ai'
+const PROVIDER_SCOPES = new Set(['llm-pi-ai', 'llm-cursor'])
 
 /** What the human is being asked right now, if anything. */
 export interface SignInQuestion {
@@ -146,7 +146,7 @@ export function createSignInOperations(ctx: ClientContext): SignInOperations {
  * @returns the provider route key, or undefined when the flow authorizes something that is not a provider.
  */
 export function providerOf(flow: AuthorizationFlowView): string | undefined {
-  return flow.scope === PROVIDER_SCOPE ? flow.id : undefined
+  return PROVIDER_SCOPES.has(flow.scope) ? flow.id : undefined
 }
 
 /**

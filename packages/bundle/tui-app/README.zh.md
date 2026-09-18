@@ -181,7 +181,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 ### 订阅登录
 
-`/login` 只存储订阅凭据，不会激活休眠的模型路由。先配置 catalog 路由，再使用完整的凭据键；例如先运行 `/settings llm-pi-ai providers.openai-codex {}`，再运行 `/login llm-pi-ai/openai-codex`。被标记的授权页面会在本地默认浏览器中打开，其 URL 同时保留在对话记录中作为后备。SSH 启动、无桌面的宿主、`--no-open` 以及打开器失败时，手动 URL 与设备码路径仍然可用。
+`/login` 只存储订阅凭据，不会激活休眠的模型路由。先配置 catalog 路由，再使用完整的凭据键；例如先运行 `/settings llm-pi-ai providers.openai-codex {}`，再运行 `/login llm-pi-ai/openai-codex`。Cursor 已经注册：`/login llm-cursor/cursor`。被标记的授权页面会在本地默认浏览器中打开，其 URL 同时保留在对话记录中作为后备。SSH 启动、无桌面的宿主、`--no-open` 以及打开器失败时，手动 URL 与设备码路径仍然可用。
 
 ### 来自 agent 的提示
 

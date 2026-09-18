@@ -6,10 +6,11 @@
 // snapshot way — so a real chromium exercises the real HTTP uplink/WebSocket
 // downlink, api-gateway, agent loop, tools, and persistence. Modes ride $DSH_SNAPSHOT:
 // replay (default, keyless: normally disables the direct DeepSeek rows and
-// inserts dsh-llm-replay in providers mode), record (real adapter + key,
-// harvests fixtures from live session memory), refresh (keyless replay that
-// rewrites goldens). A first-run option keeps the real adapter mounted while
-// masking its credential, without making a model call.
+// inserts dsh-llm-replay in providers mode; the always-on Cursor route stays
+// mounted with harvest off and CURSOR_ACCESS_TOKEN cleared), record (real
+// adapter + key, harvests fixtures from live session memory), refresh (keyless
+// replay that rewrites goldens). A first-run option keeps the real adapter
+// mounted while masking its credential, without making a model call.
 //
 // Composition divergences from `dsh web`, all deliberate, all via include
 // patches after the shipped bundle layers, over the SAME tree (never a
@@ -18,7 +19,7 @@
 // disabled (recorded fixtures must not embed this repo's AGENTS.md);
 // session-title-llm disabled (its fire-and-forget title call would race the
 // loop for the session's replay cursor); webserver pinned to port 0 with the
-// built dist; ordinary keyless modes disable both direct adapters and fill the open
+// built dist; ordinary keyless modes disable the DeepSeek adapters and fill the open
 // llm seam post-boot with installLlmReplay on the settled root ctx
 // (the plugin-row path discards the ReplayHandle; the direct install keeps
 // assertConsumed for the teardown fixture-consumption check).
@@ -199,7 +200,7 @@ const WEB_PATCH_PATH = join(REPO_ROOT, 'packages/bundle/web-app/cordis.patch.yml
 const INSTALL_ANCHOR = join(REPO_ROOT, 'apps/cli/package.json')
 
 // Replay publishes the provider catalog the gateway routes to (providers
-// mode, never catch-all: with both direct adapters disabled no adapter exists, so a
+// mode, never catch-all: DeepSeek is disabled in keyless mode, so a
 // catch-all would leave resolveModelInfo unroutable and compaction-basic's
 // post-step pressure check would warn every step). The published
 // contextWindow keeps that pressure path provably inert for small fixtures.
@@ -336,9 +337,10 @@ export interface LaunchOptions {
   /**
    * Replay fixture (session.jsonl) served by the inserted dsh-llm-replay row
    * in replay/refresh modes; ignored in record mode (the real adapter
-   * answers). Omit for scenarios issuing no model calls — a stray stream then
-   * fails loud with NO_ADAPTER (both direct adapters are disabled and no replay row
-   * mounts). With {@link replayProvidersOnly}, the fixture must record no
+   * answers). Omit for scenarios issuing no model calls — a stray DeepSeek
+   * stream then fails loud with NO_ADAPTER (those adapters are disabled and no
+   * replay row mounts). The always-on Cursor route fails MISSING_CREDENTIAL.
+   * With {@link replayProvidersOnly}, the fixture must record no
    * model calls (its header alone mounts the catalog).
    */
   replayFixture?: string
@@ -477,14 +479,22 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   const maskDeepSeekCredential = mode !== 'record' && options.deepSeekMissingCredential === true
   const messages = options.deepSeekMessages === true
   const originalDeepSeekCredential = process.env.DEEPSEEK_API_KEY
+  const originalCursorCredential = process.env.CURSOR_ACCESS_TOKEN
   let credentialEnvironmentRestored = false
   const restoreCredentialEnvironment = (): void => {
-    if (credentialEnvironmentRestored || !maskDeepSeekCredential) return
+    if (credentialEnvironmentRestored) return
     credentialEnvironmentRestored = true
-    if (originalDeepSeekCredential === undefined) {
-      Reflect.deleteProperty(process.env, 'DEEPSEEK_API_KEY')
+    if (maskDeepSeekCredential) {
+      if (originalDeepSeekCredential === undefined) {
+        Reflect.deleteProperty(process.env, 'DEEPSEEK_API_KEY')
+      } else {
+        process.env.DEEPSEEK_API_KEY = originalDeepSeekCredential
+      }
+    }
+    if (originalCursorCredential === undefined) {
+      Reflect.deleteProperty(process.env, 'CURSOR_ACCESS_TOKEN')
     } else {
-      process.env.DEEPSEEK_API_KEY = originalDeepSeekCredential
+      process.env.CURSOR_ACCESS_TOKEN = originalCursorCredential
     }
   }
   const workspaceCwd = await realpath(await mkdtemp(join(tmpdir(), 'dsh-web-e2e-ws-')))
@@ -531,6 +541,9 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     throw error
   }
   if (maskDeepSeekCredential) Reflect.deleteProperty(process.env, 'DEEPSEEK_API_KEY')
+  // Cursor is always-on. Clear the env token so a developer's subscription
+  // cannot mark the Models card usable or skip first-run onboarding.
+  Reflect.deleteProperty(process.env, 'CURSOR_ACCESS_TOKEN')
 
   // The include patch set — the same layer stack the profile boot composes
   // (bundle patches in dsh.profile.bundles order), applied over the SAME empty root (a
@@ -669,6 +682,8 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       { id: 'llm-deepseek', disabled: mode !== 'record' && !maskDeepSeekCredential,
         config: messages ? {} : { protocol: 'chat-completions' } },
     ],
+    // Keep the Cursor card on Models, but do not harvest a local IDE login.
+    { id: 'llm-cursor', config: { reuseInstalledCursorLogin: false } },
   ]
   const patches: PatchOptions[] = [...basePatches, ...surfacePatches, ...overlayPatches]
 

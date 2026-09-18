@@ -1145,6 +1145,33 @@ export interface Config {
 
 来源：[`packages/jobs/jobs-local/src/index.ts:31`](../packages/jobs/jobs-local/src/index.ts)
 
+<a id="deepseek-aidsh-llm-cursor"></a>
+
+## `@deepseek-ai/dsh-llm-cursor`
+
+需要：`llm`
+
+```ts config-catalog
+/**
+ * Plugin config, validated by the same-named schemastery schema and doubling
+ * as the `llm-cursor` settings-section shape.
+ */
+export interface Config {
+  /** Credential reference resolved per request; defaults to `CURSOR_ACCESS_TOKEN`. */
+  apiKeyEnv?: string
+  /** Whether a request may reuse a Cursor IDE or CLI login (default true). */
+  reuseInstalledCursorLogin?: boolean
+  /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
+  streamIdleTimeoutMs?: number
+  /** Provider-owned model-request retry policy; omission uses normal mode with five retries. */
+  retryPolicy?: RetryPolicyConfig
+}
+```
+
+Depends on: [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts)
+
+来源：[`packages/llm/llm-cursor/src/config.ts:19`](../packages/llm/llm-cursor/src/config.ts)
+
 <a id="deepseek-aidsh-llm-deepseek"></a>
 
 ## `@deepseek-ai/dsh-llm-deepseek`

@@ -141,7 +141,18 @@ export async function removeProviderProfile(
 export function needsSetup(row: ProviderRow, anyUsable: boolean): boolean {
   if (anyUsable) return false
   if (row.entry.settingsPath.length > 0) return false
+  if (row.entry.settingsNs === 'llm-cursor') return false
   return row.credential?.configured !== true
+}
+
+/**
+ * Whether this row reports API-key presence with the configured/missing dots.
+ * Cursor is signed in through the subscription seat, not an API-key field.
+ * @param row - the joined provider row.
+ * @returns whether to paint the API-key credential dots.
+ */
+export function showsApiKeyCredentialStatus(row: ProviderRow): boolean {
+  return row.entry.settingsNs !== 'llm-cursor'
 }
 
 /**
@@ -350,8 +361,10 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             )
           }
           const open = !adding && editing?.provider === row.entry.provider
-          const credentialConfigured = row.credential?.configured === true
-          const credentialMissing = !credentialConfigured
+          const credentialConfigured = showsApiKeyCredentialStatus(row)
+            && row.credential?.configured === true
+          const credentialMissing = showsApiKeyCredentialStatus(row)
+            && !credentialConfigured
             && row.apiKeyEnv !== undefined
             && row.credential?.configured === false
           return (
