@@ -34,7 +34,7 @@ import {
   type KvServerMessage,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
-import { CURSOR_RUN_PATH } from './protocol.ts'
+import { CURSOR_RUN_PATH, MCP_PROMPT_TOOL_PREFIX } from './protocol.ts'
 import { buildCursorRun, decodeMcpArgsMap } from './request.ts'
 
 /** Open a Connect stream; tests inject a fake. */
@@ -172,6 +172,12 @@ function* emitToolCall(index: number, id: string, name: string, args: Record<str
     index,
     block: { type: 'tool-call', id: ToolCallId(id), name, arguments: argumentsText },
   }
+}
+
+/** The harness tool name behind one Cursor MCP exec; a model may echo the replayed `mcp_dsh_` form. */
+function harnessToolName(mcp: { name: string; toolName: string }): string {
+  const name = mcp.toolName.length > 0 ? mcp.toolName : mcp.name
+  return name.startsWith(MCP_PROMPT_TOOL_PREFIX) ? name.slice(MCP_PROMPT_TOOL_PREFIX.length) : name
 }
 
 function settledOnAbort(signal: AbortSignal): Promise<never> {
@@ -343,10 +349,9 @@ function handleServerMessage(
     }
     if (execCase === 'mcpArgs') {
       const mcp = exec.message.value
-      const toolName = mcp.toolName.length > 0 ? mcp.toolName : mcp.name
       chunks.push(...closeOpen(open))
       open = undefined
-      chunks.push(...emitToolCall(nextIndex, mcp.toolCallId || `cursor-${exec.id}`, toolName, decodeMcpArgsMap(mcp.args)))
+      chunks.push(...emitToolCall(nextIndex, mcp.toolCallId || `cursor-${exec.id}`, harnessToolName(mcp), decodeMcpArgsMap(mcp.args)))
       nextIndex += 1
       sawContent = true
       return {

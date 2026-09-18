@@ -222,6 +222,25 @@ describe('streamCursorRun', () => {
       .toMatchObject({ block: { name: 'echo', id: 'call-2' } })
   })
 
+  it('strips the replayed mcp_dsh_ prefix from a model-emitted tool name', async () => {
+    for (const [name, toolName] of [['mcp_dsh_echo', ''], ['ignored', 'mcp_dsh_echo']] as const) {
+      const chunks = await collect(streamCursorRun(request, 'tok', 5_000, scripted([
+        serverMessage({
+          message: {
+            case: 'execServerMessage',
+            value: create(ExecServerMessageSchema, {
+              id: 3,
+              execId: 'e3',
+              message: { case: 'mcpArgs', value: create(McpArgsSchema, { name, toolName, toolCallId: 'c3', args: {} }) },
+            }),
+          },
+        }),
+      ])))
+      expect(chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'))
+        .toMatchObject({ block: { name: 'echo', id: 'c3' } })
+    }
+  })
+
   it('answers KV get/set, request context, and web search, and rejects native execs', async () => {
     const payload = buildCursorRun(request)
     const blobId = Buffer.from([...payload.blobStore.keys()][0]!, 'hex')

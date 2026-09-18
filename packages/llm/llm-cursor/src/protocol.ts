@@ -12,6 +12,16 @@ export const NS = 'llm-cursor'
 /** Always-registered provider route this adapter owns. */
 export const PROVIDER = 'cursor'
 
+/** `providerIdentifier` this adapter stamps on every MCP tool definition and historical MCP call. */
+export const MCP_PROVIDER_IDENTIFIER = 'dsh'
+
+/**
+ * Prefix Cursor puts in front of an MCP tool's name when it shows the tool to
+ * the model: `mcp_<providerIdentifier>_<toolName>`. Replayed prompt history uses
+ * the same name, and a model that echoes it on a new call is unwrapped.
+ */
+export const MCP_PROMPT_TOOL_PREFIX = `mcp_${MCP_PROVIDER_IDENTIFIER}_`
+
 /** Default credential reference resolved before a stored grant or harvest. */
 export const DEFAULT_API_KEY_ENV = 'CURSOR_ACCESS_TOKEN'
 

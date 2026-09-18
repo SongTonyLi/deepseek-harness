@@ -1,12 +1,64 @@
 /** History rebuild into a Cursor Run. */
 import { describe, expect, it } from 'vitest'
-import { fromBinary } from '@bufbuild/protobuf'
-import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { buildCursorRun, buildMcpToolDefinitions, conversationFromOptions, decodeMcpArgsMap } from '../src/request.ts'
-import { AgentClientMessageSchema } from '../src/native/agent_pb.ts'
-import { fromJson, toBinary } from '@bufbuild/protobuf'
+import { fromBinary, fromJson, toBinary } from '@bufbuild/protobuf'
 import { ValueSchema } from '@bufbuild/protobuf/wkt'
+import { createMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import {
+  buildCursorRun,
+  buildMcpToolDefinitions,
+  buildPromptMessages,
+  conversationFromOptions,
+  decodeMcpArgsMap,
+  TOOL_RESULT_CONTINUATION_TEXT,
+} from '../src/request.ts'
+import type { CursorRunPayload } from '../src/request.ts'
+import {
+  AgentClientMessageSchema,
+  ConversationStepSchema,
+  ConversationTurnStructureSchema,
+} from '../src/native/agent_pb.ts'
+import type { AgentRunRequest } from '../src/native/agent_pb.ts'
+
+function decodeRun(payload: CursorRunPayload): AgentRunRequest {
+  const message = fromBinary(AgentClientMessageSchema, payload.requestBytes)
+  if (message.message.case !== 'runRequest') throw new Error('expected run')
+  return message.message.value
+}
+
+function blobOf(payload: CursorRunPayload, id: Uint8Array): Uint8Array {
+  const blob = payload.blobStore.get(Buffer.from(id).toString('hex'))
+  if (blob === undefined) throw new Error('blob missing from the local store')
+  return blob
+}
+
+function rootPromptOf(payload: CursorRunPayload): unknown[] {
+  return (decodeRun(payload).conversationState?.rootPromptMessagesJson ?? [])
+    .map(id => JSON.parse(new TextDecoder().decode(blobOf(payload, id))) as unknown)
+}
+
+function userActionText(payload: CursorRunPayload): string | undefined {
+  const action = decodeRun(payload).action?.action
+  if (action?.case !== 'userMessageAction') throw new Error(`expected userMessageAction, got ${action?.case}`)
+  return action.value.userMessage?.text
+}
+
+const toolCallHistory = [
+  createUserMessage({ content: [{ type: 'text', text: 'use echo' }], source: { kind: 'user' } }),
+  createMessage({
+    role: 'assistant',
+    source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
+    content: [
+      { type: 'text', text: 'calling' },
+      { type: 'reasoning', text: 'think' },
+      { type: 'tool-call', id: ToolCallId('c1'), name: 'echo', arguments: '{"text":"hi"}' },
+    ],
+  }),
+  createMessage({
+    role: 'user',
+    source: { kind: 'tool', callId: ToolCallId('c1') },
+    content: [{ type: 'tool-result', toolCallId: ToolCallId('c1'), content: [{ type: 'text', text: 'hi' }] }],
+  }),
+]
 
 describe('conversationFromOptions', () => {
   it('uses options.system or a leading system message', () => {
@@ -17,8 +69,8 @@ describe('conversationFromOptions', () => {
       messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
     })
     expect(fromOption.systemPrompt).toBe('sys')
-    expect(fromOption.userText).toBe('hi')
-    expect(fromOption.completed).toEqual([])
+    expect(fromOption.action).toEqual({ kind: 'userMessage', text: 'hi' })
+    expect(fromOption.turns).toEqual([])
 
     const fromMessage = conversationFromOptions({
       provider: 'cursor',
@@ -29,7 +81,7 @@ describe('conversationFromOptions', () => {
       ],
     })
     expect(fromMessage.systemPrompt).toBe('be brief')
-    expect(fromMessage.userText).toBe('hi')
+    expect(fromMessage.action).toEqual({ kind: 'userMessage', text: 'hi' })
     const fromBoth = conversationFromOptions({
       provider: 'cursor',
       model: 'composer-2',
@@ -42,34 +94,22 @@ describe('conversationFromOptions', () => {
     expect(fromBoth.systemPrompt).toBe('sys')
   })
 
-  it('folds assistant steps and tool results into completed turns', () => {
-    const parsed = conversationFromOptions({
-      provider: 'cursor',
-      model: 'composer-2',
-      messages: [
-        createUserMessage({ content: [{ type: 'text', text: 'use echo' }], source: { kind: 'plugin', plugin: 'test' } }),
-        createMessage({
-          role: 'assistant',
-          source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
-          content: [
-            { type: 'text', text: 'calling' },
-            { type: 'reasoning', text: 'think' },
-            { type: 'tool-call', id: ToolCallId('c1'), name: 'echo', arguments: '{"text":"hi"}' },
-          ],
-        }),
-        createMessage({
-          role: 'user',
-          source: { kind: 'tool', callId: ToolCallId('c1') },
-          content: [{ type: 'tool-result', toolCallId: ToolCallId('c1'), content: [{ type: 'text', text: 'hi' }] }],
-        }),
-      ],
-    })
-    expect(parsed.userText).toBe('')
-    expect(parsed.completed[0]?.steps).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'assistantText', text: 'calling' }),
-      expect.objectContaining({ kind: 'thinking', text: 'think' }),
-      expect.objectContaining({ kind: 'toolCall', toolName: 'echo', result: { content: 'hi', isError: false } }),
-    ]))
+  it('continues the in-flight turn when history ends in a tool result', () => {
+    const parsed = conversationFromOptions({ provider: 'cursor', model: 'composer-2', messages: toolCallHistory })
+    expect(parsed.action).toEqual({ kind: 'continue' })
+    expect(parsed.turns).toHaveLength(1)
+    expect(parsed.turns[0]?.userText).toBe('use echo')
+    expect(parsed.turns[0]?.steps).toEqual([
+      { kind: 'assistantText', text: 'calling' },
+      { kind: 'thinking', text: 'think' },
+      {
+        kind: 'toolCall',
+        toolName: 'echo',
+        toolCallId: 'c1',
+        arguments: { text: 'hi' },
+        result: { content: 'hi', isError: false },
+      },
+    ])
   })
 
   it('keeps a trailing user message as the current action', () => {
@@ -86,8 +126,27 @@ describe('conversationFromOptions', () => {
         createUserMessage({ content: [{ type: 'text', text: 'second' }], source: { kind: 'plugin', plugin: 'test' } }),
       ],
     })
-    expect(parsed.completed).toHaveLength(1)
-    expect(parsed.userText).toBe('second')
+    expect(parsed.turns).toHaveLength(1)
+    expect(parsed.action).toEqual({ kind: 'userMessage', text: 'second' })
+  })
+
+  it('starts a new user action after a completed tool step when the human speaks again', () => {
+    const parsed = conversationFromOptions({
+      provider: 'cursor',
+      model: 'composer-2',
+      messages: [
+        ...toolCallHistory,
+        createMessage({
+          role: 'assistant',
+          source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
+          content: [{ type: 'text', text: 'echoed hi' }],
+        }),
+        createUserMessage({ content: [{ type: 'text', text: 'thanks, now stop' }], source: { kind: 'user' } }),
+      ],
+    })
+    expect(parsed.turns).toHaveLength(1)
+    expect(parsed.turns[0]?.steps.at(-1)).toEqual({ kind: 'assistantText', text: 'echoed hi' })
+    expect(parsed.action).toEqual({ kind: 'userMessage', text: 'thanks, now stop' })
   })
 
   it('joins trailing runtime-context and skill-catalog user messages into the current action', () => {
@@ -120,12 +179,15 @@ describe('conversationFromOptions', () => {
         }),
       ],
     })
-    expect(parsed.completed).toEqual([])
-    expect(parsed.userText).toBe([
-      'what does @AuditZoo-spring26/ do',
-      'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nsandbox:policy',
-      '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
-    ].join('\n\n'))
+    expect(parsed.turns).toEqual([])
+    expect(parsed.action).toEqual({
+      kind: 'userMessage',
+      text: [
+        'what does @AuditZoo-spring26/ do',
+        'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nsandbox:policy',
+        '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
+      ].join('\n\n'),
+    })
   })
 
   it('joins consecutive user-role messages in completed history and skips empty fragments', () => {
@@ -162,28 +224,119 @@ describe('conversationFromOptions', () => {
         }),
       ],
     })
-    expect(parsed.completed).toEqual([
+    expect(parsed.turns).toEqual([
       { userText: 'hello\n\nsnapshot-v1', steps: [{ kind: 'assistantText', text: 'hi' }] },
     ])
-    expect(parsed.userText).toBe('next\n\nsnapshot-v2')
+    expect(parsed.action).toEqual({ kind: 'userMessage', text: 'next\n\nsnapshot-v2' })
+  })
+})
+
+describe('buildPromptMessages', () => {
+  it('renders rules, user queries, grouped assistant text and tool calls, and tool results; skips thinking', () => {
+    expect(buildPromptMessages('sys', [{
+      userText: 'use echo',
+      steps: [
+        { kind: 'thinking', text: 'private' },
+        { kind: 'assistantText', text: 'calling' },
+        { kind: 'toolCall', toolName: 'echo', toolCallId: 'c1', arguments: { text: 'hi' }, result: { content: 'hi', isError: false } },
+        { kind: 'toolCall', toolName: 'echo', toolCallId: 'c2', arguments: {}, result: { content: 'boom', isError: true } },
+        { kind: 'assistantText', text: 'done' },
+      ],
+    }])).toEqual([
+      { role: 'user', content: [{ type: 'text', text: '<rules>\nsys\n</rules>' }] },
+      { role: 'user', content: [{ type: 'text', text: '<user_query>\nuse echo\n</user_query>' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'calling' },
+          { type: 'tool-call', toolCallId: 'c1', toolName: 'mcp_dsh_echo', args: { text: 'hi' } },
+          { type: 'tool-call', toolCallId: 'c2', toolName: 'mcp_dsh_echo', args: {} },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'c1', toolName: 'mcp_dsh_echo', result: 'hi' },
+          { type: 'tool-result', toolCallId: 'c2', toolName: 'mcp_dsh_echo', result: 'boom', isError: true },
+        ],
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+    ])
+  })
+
+  it('omits rules for an empty system prompt, blank user queries, and empty assistant text', () => {
+    expect(buildPromptMessages('', [{
+      userText: '  ',
+      steps: [
+        { kind: 'assistantText', text: '' },
+        { kind: 'toolCall', toolName: 'echo', toolCallId: 'c3', arguments: {} },
+      ],
+    }])).toEqual([
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c3', toolName: 'mcp_dsh_echo', args: {} }] },
+    ])
+    expect(buildPromptMessages('', [])).toEqual([])
+  })
+
+  it('replays only the query for a turn whose steps are all thinking', () => {
+    expect(buildPromptMessages('', [{ userText: 'q', steps: [{ kind: 'thinking', text: 'private' }] }])).toEqual([
+      { role: 'user', content: [{ type: 'text', text: '<user_query>\nq\n</user_query>' }] },
+    ])
   })
 })
 
 describe('buildCursorRun', () => {
-  it('encodes an AgentClientMessage with clientName dsh and MCP tools', () => {
+  it('encodes clientName dsh, MCP tools, the user action text, and the root prompt', () => {
     const payload = buildCursorRun({
       provider: 'cursor',
       model: 'composer-2',
+      system: 'sys',
       messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
       tools: [{ name: 'echo', description: 'echo', parameters: { type: 'object', properties: {} } }],
     })
-    const message = fromBinary(AgentClientMessageSchema, payload.requestBytes)
-    expect(message.message.case).toBe('runRequest')
-    if (message.message.case !== 'runRequest') throw new Error('expected run')
-    expect(message.message.value.conversationState?.clientName).toBe('dsh')
-    expect(message.message.value.requestedModel?.modelId).toBe('composer-2')
+    const run = decodeRun(payload)
+    expect(run.conversationState?.clientName).toBe('dsh')
+    expect(run.conversationState?.turns).toEqual([])
+    expect(run.requestedModel?.modelId).toBe('composer-2')
+    expect(userActionText(payload)).toBe('hi')
+    expect(rootPromptOf(payload)).toEqual([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: [{ type: 'text', text: '<rules>\nsys\n</rules>' }] },
+    ])
     expect(payload.mcpTools[0]?.providerIdentifier).toBe('dsh')
-    expect(payload.blobStore.size).toBeGreaterThan(0)
+  })
+
+  it('replays the in-flight turn with its tool results and sends the continuation notice after local tool results', () => {
+    const payload = buildCursorRun({
+      provider: 'cursor',
+      model: 'composer-2',
+      messages: toolCallHistory,
+      tools: [{ name: 'echo', description: 'echo', parameters: { type: 'object', properties: {} } }],
+    })
+    const run = decodeRun(payload)
+    expect(userActionText(payload)).toBe(TOOL_RESULT_CONTINUATION_TEXT)
+    expect(run.conversationState?.pendingToolCalls).toEqual([])
+    expect(rootPromptOf(payload)).toEqual([
+      { role: 'system', content: '' },
+      { role: 'user', content: [{ type: 'text', text: '<user_query>\nuse echo\n</user_query>' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'calling' },
+          { type: 'tool-call', toolCallId: 'c1', toolName: 'mcp_dsh_echo', args: { text: 'hi' } },
+        ],
+      },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'mcp_dsh_echo', result: 'hi' }] },
+    ])
+    const turnIds = run.conversationState?.turns ?? []
+    expect(turnIds).toHaveLength(1)
+    const turn = fromBinary(ConversationTurnStructureSchema, blobOf(payload, turnIds[0]!))
+    if (turn.turn.case !== 'agentConversationTurn') throw new Error('expected agent turn')
+    const steps = turn.turn.value.steps.map(id => fromBinary(ConversationStepSchema, blobOf(payload, id)))
+    expect(steps.map(step => step.message.case)).toEqual(['assistantMessage', 'thinkingMessage', 'toolCall'])
+    const call = steps[2]?.message
+    if (call?.case !== 'toolCall' || call.value.tool.case !== 'mcpToolCall') throw new Error('expected MCP tool call')
+    expect(call.value.tool.value.args?.toolCallId).toBe('c1')
+    expect(call.value.tool.value.result?.result.case).toBe('success')
   })
 })
 
@@ -236,8 +389,8 @@ describe('conversation edge cases', () => {
       ],
     })
     expect(parsed.systemPrompt).toBe('later')
-    expect(parsed.userText).toBe('')
-    expect(parsed.completed[0]?.steps).toEqual(expect.arrayContaining([
+    expect(parsed.action).toEqual({ kind: 'continue' })
+    expect(parsed.turns[0]?.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'toolCall', arguments: {}, result: { content: '', isError: true } }),
     ]))
   })
@@ -301,18 +454,24 @@ describe('conversation edge cases', () => {
         }),
       ],
     })
-    const message = fromBinary(AgentClientMessageSchema, payload.requestBytes)
-    expect(message.message.case).toBe('runRequest')
-    if (message.message.case !== 'runRequest') throw new Error('expected run')
-    expect(message.message.value.conversationState?.turns.length).toBeGreaterThan(0)
+    const run = decodeRun(payload)
+    expect(run.conversationState?.turns.length).toBeGreaterThan(0)
+    expect(userActionText(payload)).toBe(TOOL_RESULT_CONTINUATION_TEXT)
+    expect(rootPromptOf(payload).at(-1)).toEqual({
+      role: 'tool',
+      content: [
+        { type: 'tool-result', toolCallId: 'c1', toolName: 'mcp_dsh_echo', result: 'boom', isError: true },
+        { type: 'tool-result', toolCallId: 'early', toolName: 'mcp_dsh_echo', result: 'early' },
+      ],
+    })
   })
 
-  it('returns empty user text when there are no turns', () => {
+  it('returns an empty user action when there are no turns', () => {
     expect(conversationFromOptions({
       provider: 'cursor',
       model: 'composer-2',
       messages: [],
-    })).toEqual({ systemPrompt: '', completed: [], userText: '' })
+    })).toEqual({ systemPrompt: '', turns: [], action: { kind: 'userMessage', text: '' } })
     expect(conversationFromOptions({
       provider: 'cursor',
       model: 'composer-2',
@@ -334,8 +493,6 @@ describe('conversation edge cases', () => {
       sessionId: 'sess-1' as never,
       messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
     })
-    const message = fromBinary(AgentClientMessageSchema, payload.requestBytes)
-    if (message.message.case !== 'runRequest') throw new Error('expected run')
-    expect(message.message.value.conversationId).toBe('sess-1')
+    expect(decodeRun(payload).conversationId).toBe('sess-1')
   })
 })
