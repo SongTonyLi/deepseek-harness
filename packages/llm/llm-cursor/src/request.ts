@@ -1,6 +1,11 @@
 /**
  * Rebuild one Cursor `AgentRunRequest` from harness history, system prompt, and MCP tools.
  *
+ * Cursor's server builds the model prompt from `root_prompt_messages_json` and
+ * never renders `conversation_state.turns` back into prompt messages, so this
+ * module publishes the system prompt and every prior turn there as prompt
+ * messages and keeps the turn structures for the server's own bookkeeping.
+ *
  * @module @deepseek-ai/dsh-llm-cursor/request
  */
 
@@ -9,6 +14,7 @@ import { pathToFileURL } from 'node:url'
 import { create, fromBinary, fromJson, toBinary, toJson } from '@bufbuild/protobuf'
 import { ValueSchema } from '@bufbuild/protobuf/wkt'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { GenerateOptions, Message, ToolSchema } from '@deepseek-ai/dsh-llm'
 import {
   AgentClientMessageSchema,
@@ -19,6 +25,9 @@ import {
   ConversationStateStructureSchema,
   ConversationStepSchema,
   ConversationTurnStructureSchema,
+  CursorRuleSchema,
+  CursorRuleTypeGlobalSchema,
+  CursorRuleTypeSchema,
   McpArgsSchema,
   McpSuccessSchema,
   McpTextContentSchema,
@@ -34,8 +43,10 @@ import {
   ToolCallSchema,
   UserMessageActionSchema,
   UserMessageSchema,
+  type CursorRule,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
+import { MCP_PROMPT_TOOL_PREFIX, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
 
 /** One historical or in-flight assistant/tool step. */
 export type CursorTurnStep =
@@ -55,6 +66,42 @@ export interface CursorTurn {
   steps: CursorTurnStep[]
 }
 
+/**
+ * What the Run's single `userMessageAction` carries. `userMessage` is the human
+ * prompt joined with any injected user context. `continue` follows tool calls
+ * DSH ran locally: the in-flight turn is replayed with its results in the root
+ * prompt and the user message is {@link TOOL_RESULT_CONTINUATION_TEXT}.
+ */
+export type CursorRunAction =
+  | { kind: 'userMessage'; text: string }
+  | { kind: 'continue' }
+
+/** Harness history split into the turns to replay and the action that drives the Run. */
+export interface CursorConversation {
+  systemPrompt: string
+  /** Turns before the action, oldest first; on `continue`, the last one is the in-flight turn with its tool results. */
+  turns: CursorTurn[]
+  action: CursorRunAction
+}
+
+/**
+ * User message sent after locally executed tool calls. A Run requires one user
+ * message; the tool results themselves ride the root prompt as `tool` messages.
+ */
+export const TOOL_RESULT_CONTINUATION_TEXT = 'The results of your tool calls are in the tool messages above. Continue the task.'
+
+/**
+ * Rule that tells the model Cursor's built-in tools answer with a rejection
+ * here, so it calls the harness tools by their `mcp_dsh_` names instead.
+ */
+export const NATIVE_TOOLS_RULE = 'DeepSeek Harness runs this session. '
+  + 'Cursor\'s built-in tools (read, write, edit, delete, ls, grep, shell, fetch, diagnostics, and the rest) are not available: '
+  + `calling one returns a rejection and does nothing. Use only the tools whose names start with ${MCP_PROMPT_TOOL_PREFIX}, `
+  + `for example ${MCP_PROMPT_TOOL_PREFIX}read instead of read.`
+
+/** Rule path Cursor shows beside {@link NATIVE_TOOLS_RULE}. */
+const ADAPTER_RULE_PATH = 'dsh/cursor-adapter'
+
 /** Built Run payload plus the blob store Cursor may ask back for. */
 export interface CursorRunPayload {
   /** Encoded `AgentClientMessage` carrying the Run. */
@@ -63,6 +110,26 @@ export interface CursorRunPayload {
   blobStore: Map<string, Uint8Array>
   /** MCP tool definitions sent on the Run. */
   mcpTools: McpToolDefinition[]
+  /** Rules answered on `requestContextArgs`: {@link NATIVE_TOOLS_RULE} as one global rule. */
+  rules: CursorRule[]
+  /**
+   * Prompt-side token estimate at one token per four characters of rules,
+   * replayed prompt messages, action text, and MCP tool definitions. Cursor
+   * reports no prompt usage, so this stands in for `TokenUsage.inputTokens`.
+   */
+  inputTokenEstimate: number
+}
+
+/** One content part of a replayed prompt message. */
+export type CursorPromptPart =
+  | { type: 'text'; text: string }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: 'tool-result'; toolCallId: string; toolName: string; result: string; isError?: true }
+
+/** One `root_prompt_messages_json` entry Cursor renders into the model prompt. */
+export interface CursorPromptMessage {
+  role: 'user' | 'assistant' | 'tool'
+  content: CursorPromptPart[]
 }
 
 function textOf(message: Message): string {
@@ -137,7 +204,7 @@ export function buildMcpToolDefinitions(tools: readonly ToolSchema[] | undefined
     toolName: tool.name,
     description: tool.description,
     inputSchema: encodeMcpArgValue(tool.parameters),
-    providerIdentifier: 'dsh',
+    providerIdentifier: MCP_PROVIDER_IDENTIFIER,
   }))
 }
 
@@ -157,7 +224,7 @@ function buildTurnStepBytes(step: CursorTurnStep): Uint8Array {
       name: step.toolName,
       args: encodeMcpArgsMap(step.arguments),
       toolCallId: step.toolCallId,
-      providerIdentifier: 'dsh',
+      providerIdentifier: MCP_PROVIDER_IDENTIFIER,
       toolName: step.toolName,
     }),
     ...step.result === undefined ? {} : {
@@ -197,16 +264,18 @@ function createUserMessage(text: string, selectedContextBlob: Uint8Array) {
 }
 
 /**
- * Split harness messages into completed Cursor turns plus the current user text.
+ * Split harness messages into Cursor turns plus the action for this Run.
  *
  * Consecutive user-role messages with no assistant steps between them join in
  * order into one Cursor user text. A Run has a single `userMessageAction`, so
  * runtime-context snapshots and skill catalogs that follow the human prompt
- * ride that action instead of replacing it.
+ * ride that action instead of replacing it. History that ends in assistant
+ * steps, normally tool calls plus their local results, carries no new user
+ * text and becomes a `continue` action.
  * @param options - assembled model request.
- * @returns conversation turns and the new user action text.
+ * @returns turns to replay and the Run action.
  */
-export function conversationFromOptions(options: GenerateOptions): { systemPrompt: string; completed: CursorTurn[]; userText: string } {
+export function conversationFromOptions(options: GenerateOptions): CursorConversation {
   const messages = [...options.messages]
   let systemPrompt = options.system ?? ''
   if (messages[0]?.role === 'system') {
@@ -262,11 +331,103 @@ export function conversationFromOptions(options: GenerateOptions): { systemPromp
     }
   }
   const last = turns[turns.length - 1]
-  if (last === undefined) return { systemPrompt, completed: [], userText: '' }
+  if (last === undefined) return { systemPrompt, turns: [], action: { kind: 'userMessage', text: '' } }
   if (last.steps.length === 0) {
-    return { systemPrompt, completed: turns.slice(0, -1), userText: last.userText }
+    return { systemPrompt, turns: turns.slice(0, -1), action: { kind: 'userMessage', text: last.userText } }
   }
-  return { systemPrompt, completed: turns, userText: '' }
+  return { systemPrompt, turns, action: { kind: 'continue' } }
+}
+
+/**
+ * Rules Cursor renders inside its own system prompt when the Run asks for the
+ * request context. Only {@link NATIVE_TOOLS_RULE} travels here: a rule carrying
+ * the harness system prompt lost its always-apply instructions once replayed
+ * history was present, while the `<rules>` user prompt message kept them.
+ * @returns the adapter's global rule.
+ */
+export function buildRules(): CursorRule[] {
+  return [create(CursorRuleSchema, {
+    fullPath: ADAPTER_RULE_PATH,
+    content: NATIVE_TOOLS_RULE,
+    source: 0,
+    type: create(CursorRuleTypeSchema, { type: { case: 'global', value: create(CursorRuleTypeGlobalSchema, {}) } }),
+  })]
+}
+
+/**
+ * Render the system prompt and prior turns as the prompt messages Cursor shows
+ * the model. The system prompt becomes a `<rules>` user message because the
+ * server discards `system` entries in favour of its own prompt. Each turn
+ * becomes a `<user_query>` user message, assistant messages holding text and
+ * `tool-call` parts, and `tool` messages holding the results, with MCP tools
+ * named `mcp_dsh_<tool>` as Cursor names them. Thinking is not replayed.
+ * @param systemPrompt - rendered harness system prompt; `''` adds no rules.
+ * @param turns - turns to replay, oldest first.
+ * @returns prompt messages in order.
+ */
+export function buildPromptMessages(systemPrompt: string, turns: readonly CursorTurn[]): CursorPromptMessage[] {
+  const messages: CursorPromptMessage[] = []
+  if (systemPrompt.trim().length > 0) {
+    messages.push({ role: 'user', content: [{ type: 'text', text: `<rules>\n${systemPrompt}\n</rules>` }] })
+  }
+  for (const turn of turns) {
+    const query = turn.userText.trim()
+    if (query.length > 0) {
+      messages.push({ role: 'user', content: [{ type: 'text', text: `<user_query>\n${query}\n</user_query>` }] })
+    }
+    let assistant: CursorPromptPart[] = []
+    let results: CursorPromptPart[] = []
+    const flush = (): void => {
+      if (assistant.length > 0) messages.push({ role: 'assistant', content: assistant })
+      if (results.length > 0) messages.push({ role: 'tool', content: results })
+      assistant = []
+      results = []
+    }
+    for (const step of turn.steps) {
+      if (step.kind === 'thinking') continue
+      if (step.kind === 'assistantText') {
+        if (step.text.length === 0) continue
+        if (results.length > 0) flush()
+        assistant.push({ type: 'text', text: step.text })
+        continue
+      }
+      const toolName = `${MCP_PROMPT_TOOL_PREFIX}${step.toolName}`
+      assistant.push({ type: 'tool-call', toolCallId: step.toolCallId, toolName, args: step.arguments })
+      if (step.result !== undefined) {
+        results.push({
+          type: 'tool-result',
+          toolCallId: step.toolCallId,
+          toolName,
+          result: step.result.content,
+          ...step.result.isError ? { isError: true } : {},
+        })
+      }
+    }
+    flush()
+  }
+  return messages
+}
+
+function estimateInputTokens(
+  rules: readonly CursorRule[],
+  promptMessages: readonly CursorPromptMessage[],
+  actionText: string,
+  mcpTools: readonly McpToolDefinition[],
+): number {
+  let chars = actionText.length
+  for (const rule of rules) chars += rule.content.length
+  for (const message of promptMessages) chars += JSON.stringify(message).length
+  for (const tool of mcpTools) chars += tool.name.length + tool.description.length + tool.inputSchema.byteLength
+  return Math.ceil(chars / 4)
+}
+
+function actionText(action: CursorRunAction): string {
+  switch (action.kind) {
+    case 'userMessage': return action.text
+    case 'continue': return TOOL_RESULT_CONTINUATION_TEXT
+    /* v8 ignore next -- CursorRunAction is closed; the compiler owns exhaustiveness. */
+    default: return assertNever(action, 'CursorRunAction')
+  }
 }
 
 /**
@@ -275,14 +436,17 @@ export function conversationFromOptions(options: GenerateOptions): { systemPromp
  * @returns protobuf bytes and the blob store.
  */
 export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
-  const { systemPrompt, completed, userText } = conversationFromOptions(options)
+  const { systemPrompt, turns, action } = conversationFromOptions(options)
   const mcpTools = buildMcpToolDefinitions(options.tools)
   const blobStore = new Map<string, Uint8Array>()
-  const systemBytes = new TextEncoder().encode(JSON.stringify({ role: 'system', content: systemPrompt }))
-  const systemBlobId = storeAsBlob(systemBytes, blobStore)
+  const encoder = new TextEncoder()
+  const systemBlobId = storeAsBlob(encoder.encode(JSON.stringify({ role: 'system', content: systemPrompt })), blobStore)
+  const rules = buildRules()
+  const promptMessages = buildPromptMessages(systemPrompt, turns)
+  const promptBlobIds = promptMessages.map(message => storeAsBlob(encoder.encode(JSON.stringify(message)), blobStore))
   const selectedCtxBlob = storeAsBlob(new Uint8Array(), blobStore)
   const turnBlobIds: Uint8Array[] = []
-  for (const turn of completed) {
+  for (const turn of turns) {
     const userMsg = createUserMessage(turn.userText, selectedCtxBlob)
     const userMsgBlobId = storeAsBlob(toBinary(UserMessageSchema, userMsg), blobStore)
     const stepBlobIds = turn.steps.map(step => storeAsBlob(buildTurnStepBytes(step), blobStore))
@@ -297,7 +461,7 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
     turnBlobIds.push(storeAsBlob(toBinary(ConversationTurnStructureSchema, turnStructure), blobStore))
   }
   const conversationState = create(ConversationStateStructureSchema, {
-    rootPromptMessagesJson: [systemBlobId],
+    rootPromptMessagesJson: [systemBlobId, ...promptBlobIds],
     turns: turnBlobIds,
     todos: [],
     pendingToolCalls: [],
@@ -312,14 +476,14 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
     readPaths: [],
     clientName: 'dsh',
   })
-  const userMessage = createUserMessage(userText, selectedCtxBlob)
-  const action = create(ConversationActionSchema, {
-    action: { case: 'userMessageAction', value: create(UserMessageActionSchema, { userMessage }) },
-  })
+  const text = actionText(action)
+  const userMessage = createUserMessage(text, selectedCtxBlob)
   const requestedModel = create(RequestedModelSchema, { modelId: options.model, maxMode: false, parameters: [] })
   const runRequest = create(AgentRunRequestSchema, {
     conversationState,
-    action,
+    action: create(ConversationActionSchema, {
+      action: { case: 'userMessageAction', value: create(UserMessageActionSchema, { userMessage }) },
+    }),
     requestedModel,
     conversationId: options.sessionId ?? randomUUID(),
     mcpTools: create(McpToolsSchema, { mcpTools }),
@@ -331,6 +495,8 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
     requestBytes: toBinary(AgentClientMessageSchema, clientMessage),
     blobStore,
     mcpTools,
+    rules,
+    inputTokenEstimate: estimateInputTokens(rules, promptMessages, text, mcpTools),
   }
 }
 

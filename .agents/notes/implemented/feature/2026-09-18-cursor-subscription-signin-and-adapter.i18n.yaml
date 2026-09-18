@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-18-cursor-subscription-signin-and-adapter.md
-2026-09-18-cursor-subscription-signin-and-adapter.md: 3fce7316863954e4a1e8a80d91451c0c54d3eaf4
-2026-09-18-cursor-subscription-signin-and-adapter.zh.md: b0f0423a853eb5b806701a43dd349b27b293d9bb
+2026-09-18-cursor-subscription-signin-and-adapter.md: 35a7d41753c2efc81ed3d318db280c2617c4c808
+2026-09-18-cursor-subscription-signin-and-adapter.zh.md: 8b55c6f993a05aa44c3c42a4a0944334ab5dc838

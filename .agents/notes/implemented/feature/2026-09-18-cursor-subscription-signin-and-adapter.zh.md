@@ -28,6 +28,10 @@ harness 已能通过 `dsh-authorization` 登录 pi-ai 目录中的订阅（ChatG
 
 DSH 的每一步模型调用是一次 HTTP/2 Connect `AgentService/Run`。适配器把 harness 历史、系统提示与工具映射为 MCP 工具定义，再把文本、thinking、用量与 MCP 工具调用映射为 `StreamChunk`。一次 MCP 工具调用结束该流；DSH 在本地执行工具，下一步是新的 Run。Cursor 原生工作区 exec（`read`、`shell` 及同类）在链路上拒绝，以免该轮停住。pi-cursor 的会话 journal、挂起的 bridge 以及原生工具执行不在范围内。
 
+Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示。2026-09-18 的实测探针表明 `conversation_state.turns` 从不到达模型，且根条目中的 `{"role":"system"}` 会被丢弃而使用 Cursor 自己的提示：重建的请求以一个没有系统提示、也不记得先前助手文本和工具结果的新问题到达，而在一次工具调用之后模型看到的是一条空的用户消息。因此 `buildPromptMessages` 把系统提示作为 `<rules>` user 消息发布，并把每个先前轮次重放为 `<user_query>` user 消息、带 `text` 和名为 `mcp_dsh_<tool>` 的 `tool-call` 部分的 assistant 消息，以及带结果的 `tool` 消息，这与 pi-cursor 针对同一发现采用的渲染一致；轮次结构仍一同发送，供服务端记账。本地执行工具调用之后，进行中的轮次连同其结果被重放，Run 必需的用户消息是固定提示 `TOOL_RESULT_CONTINUATION_TEXT`。流解码器把模型回显的 `mcp_dsh_` 前缀还原为 harness 工具名。
+
+Cursor 仍在 MCP 工具之外提供其内建的 `read`、`shell`、`grep` 及同类，而 harness 工具名与之冲突，因此请求上下文的应答带一条全局 Cursor 规则 `NATIVE_TOOLS_RULE`，指出应调用 `mcp_dsh_` 工具；实测探针显示模型读到该规则并跳过了原生工具。当模型仍调用原生工具时，`stream.ts` 以该 exec 的类型化拒绝应答（`readResult.rejected`、`shellResult.rejected`、`grepResult.error` 等），拒绝原因指出对应的 harness 工具；线上服务端保持 Run 开启，模型把该拒绝当作工具结果读取。本构建不认识的 exec 仍作为线路漂移使该步失败。Cursor 不报告提示用量，因此 `inputTokens` 是 payload 基于字符数的估算；token meter 在自身估算更大时保留自己的值，TUI 上下文计量则显示适配器的数字而不是零。
+
 一次 Cursor Run 只有一个当前 `userMessageAction`。loop 在人类提示之后追加的 harness `user/message` 事件——运行时上下文快照、技能目录、技能指令正文、会话引用上下文——是连续的 user 角色消息。`conversationFromOptions` 按顺序把这些无助手步骤的轮次拼进该动作，并在已完成轮次内同样拼接连续的用户消息，这样注入的上下文就不能替换提示。
 
 `LlmAdapter` 要求的归属头出现在每一次 HTTP/2 请求上。挂载时注册捆绑的回退模型；存在令牌后 `GetUsableModels` 替换它们，缓存在 `$DSH_HOME` 下。
@@ -52,6 +56,12 @@ TUI `/login` 已经列出每条 flow；Cursor 行是 `llm-cursor/cursor`，没�
 
 **像目录型 pi-ai 提供方那样，在出现 `llm-cursor:` 设置之前保持休眠路由。** 这与「哪些提供方在跑由用户的 settings 文档决定」一致，也可以避免在无人关心时把 Cursor 显示在 `/model` 里。pi-cursor 与 `deepseek-official` 都在插件挂载后立即出现；在 `/login cursor` 之后还要 `/settings`，正是这篇记录的 TUI 兄弟已经要为 Codex 写进文档的陷阱。Cursor 适配器除采集外没有有用的配置，因此路由始终注册。
 
+**在工具调用之后的 Run 使用 `resumeAction`。** 协议提供它，Cursor CLI 也用它重试失败的轮次。对着线上服务端，它从该轮的用户消息重新开始：步骤 blob 未被读取，模型以新 id 发出了新的工具调用，而把该调用列入 `pending_tool_calls` 会让 Run 以 `internal` 失败。它无法携带本地产生的工具结果。
+
+**把 harness 系统提示作为 `requestContext` 的 Cursor 规则。** Cursor 把规则渲染进自己的系统提示，一条短规则在新会话上被遵守。但在存在重放历史时，它在两个模型、多种规则路径下都丢掉了一条始终适用的指令，而 `<rules>` user 提示消息保住了它，因此只有适配器的工具提示以规则形式发送。
+
+**把工具结果作为工具调用之后那条用户消息的文本，不发 `tool` 提示消息。** 这是 pi-cursor 的降级恢复路径，不需要适配器自有的提示。它让 assistant 的 `tool-call` 后面直接跟着一条用户消息，而 OpenAI 与 Anthropic 风格的请求校验会在其他 Cursor 模型上拒绝这种序列，所以结果留在 `tool` 消息里，由提示填补必需的用户位置。
+
 **默认 `reuseInstalledCursorLogin` 为 false。** 对并非 Cursor 的产品更安全：不会静默读取另一个应用的令牌。它也丢掉 Pi「若 Cursor 应用已登录则直接可用」的路径，而这正是要看 pi-cursor 的主要原因。退出开关仍是该配置字段。
 
 **把 `~/.pi/agent/auth.json` 或 Cursor 的文件当作存储。** 拿到可用令牌最快，其它提供方也已有 pi-ai 式的环境发现。它把 DSH 绑到另一个工具为单一厂商准备的私有文件，跳过授权 seam，并让 Web/TUI 没有「已登录」可展示。采集只是请求时的回退；持久授权是 harness 记录。
@@ -64,4 +74,4 @@ Cursor 可能不预先通知就改 `agent.v1`、认证 URL 或头；包 README �
 
 ## Testing
 
-包测试覆盖 OAuth、采集、登录提交、目录回退、fixture 原生帧、归属头、中止 HTTP/2、插件 last-good 设置、Loader 组合，以及 `llm-cursor/cursor` 的 Models 卡片联接。真实 Cursor e2e 在没有 `CURSOR_ACCESS_TOKEN` 时跳过。`models-settings` Web e2e golden 包含 Cursor 卡片与登录控件。没有 `SessionEventMap` 或 SDK snapshot 变更。`pi-cursor` 不在 `package.json` 中。
+包测试覆盖 OAuth、采集、登录提交、目录回退、fixture 原生帧、归属头、中止 HTTP/2、插件 last-good 设置、Loader 组合，以及 `llm-cursor/cursor` 的 Models 卡片联接。真实 Cursor e2e 在没有 `CURSOR_ACCESS_TOKEN` 时跳过，覆盖文本回复、对系统提示和先前助手轮次的回忆，以及工具结果继续；当账户的可用列表变化时，`DSH_CURSOR_E2E_MODEL` 覆盖模型 id。`models-settings` Web e2e golden 包含 Cursor 卡片与登录控件。没有 `SessionEventMap` 或 SDK snapshot 变更。`pi-cursor` 不在 `package.json` 中。

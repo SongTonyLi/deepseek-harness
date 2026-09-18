@@ -15,27 +15,57 @@ import type { ConnectFrame, ConnectHttp2, CursorConnectStream } from './connect.
 import {
   AgentClientMessageSchema,
   AgentServerMessageSchema,
+  BackgroundShellSpawnResultSchema,
+  ComputerUseErrorSchema,
+  ComputerUseResultSchema,
+  DeleteRejectedSchema,
+  DeleteResultSchema,
+  DiagnosticsRejectedSchema,
+  DiagnosticsResultSchema,
   ExecClientControlMessageSchema,
   ExecClientMessageSchema,
   ExecClientThrowSchema,
+  FetchErrorSchema,
+  FetchResultSchema,
   GetBlobResultSchema,
+  GrepErrorSchema,
+  GrepResultSchema,
   InteractionResponseSchema,
   KvClientMessageSchema,
+  ListMcpResourcesExecResultSchema,
+  ListMcpResourcesRejectedSchema,
+  LsRejectedSchema,
+  LsResultSchema,
+  ReadMcpResourceExecResultSchema,
+  ReadMcpResourceRejectedSchema,
+  ReadRejectedSchema,
+  ReadResultSchema,
+  RecordScreenFailureSchema,
+  RecordScreenResultSchema,
   RequestContextEnvSchema,
   RequestContextResultSchema,
   RequestContextSchema,
   RequestContextSuccessSchema,
   SetBlobResultSchema,
+  ShellRejectedSchema,
+  ShellResultSchema,
+  ShellStreamSchema,
   WebSearchRequestResponse_ApprovedSchema,
   WebSearchRequestResponseSchema,
+  WriteRejectedSchema,
+  WriteResultSchema,
+  WriteShellStdinErrorSchema,
+  WriteShellStdinResultSchema,
   type AgentServerMessage,
+  type ExecClientMessage,
   type ExecServerMessage,
   type InteractionQuery,
   type KvServerMessage,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
-import { CURSOR_RUN_PATH } from './protocol.ts'
+import { CURSOR_RUN_PATH, MCP_PROMPT_TOOL_PREFIX } from './protocol.ts'
 import { buildCursorRun, decodeMcpArgsMap } from './request.ts'
+import type { CursorRunPayload } from './request.ts'
 
 /** Open a Connect stream; tests inject a fake. */
 export type OpenCursorStream = (input: {
@@ -90,13 +120,13 @@ function answerKv(stream: CursorConnectStream, kv: KvServerMessage, blobStore: M
   throw new LlmError('llm-cursor: unanswered Cursor KV message', 'STREAM_CLOSED')
 }
 
-function answerRequestContext(stream: CursorConnectStream, exec: ExecServerMessage, mcpTools: McpToolDefinition[]): void {
+function answerRequestContext(stream: CursorConnectStream, exec: ExecServerMessage, payload: CursorRunPayload): void {
   const env = create(RequestContextEnvSchema, { workspacePaths: [pathToFileURL(process.cwd()).href] })
   const requestContext = create(RequestContextSchema, {
-    rules: [],
+    rules: payload.rules,
     env,
     repositoryInfo: [],
-    tools: mcpTools,
+    tools: payload.mcpTools,
     gitRepos: [],
     projectLayouts: [],
     mcpInstructions: [],
@@ -120,7 +150,168 @@ function answerRequestContext(stream: CursorConnectStream, exec: ExecServerMessa
   })
 }
 
-function rejectNativeExec(stream: CursorConnectStream, exec: ExecServerMessage): void {
+/** Harness tools that stand in for each Cursor-native exec, in preference order. */
+const NATIVE_TOOL_ALTERNATIVES: Readonly<Record<string, readonly string[]>> = {
+  readArgs: ['read'],
+  lsArgs: ['glob'],
+  grepArgs: ['grep'],
+  writeArgs: ['write', 'edit'],
+  deleteArgs: ['bash', 'pwsh'],
+  shellArgs: ['bash', 'pwsh'],
+  shellStreamArgs: ['bash', 'pwsh'],
+  backgroundShellSpawnArgs: ['bash', 'pwsh'],
+  writeShellStdinArgs: ['bash', 'pwsh'],
+  fetchArgs: ['web_fetch'],
+  diagnosticsArgs: ['lsp'],
+  listMcpResourcesExecArgs: ['list_mcp_resources'],
+  readMcpResourceExecArgs: ['read_mcp_resource'],
+}
+
+function nativeRejectionReason(execCase: string, mcpTools: readonly McpToolDefinition[]): string {
+  const offered = new Set(mcpTools.map(tool => tool.name))
+  const alternative = (NATIVE_TOOL_ALTERNATIVES[execCase] ?? []).find(name => offered.has(name))
+  const refusal = `Cursor's built-in ${execCase.replace(/Args$/, '')} tool is not available in DeepSeek Harness.`
+  return alternative === undefined
+    ? `${refusal} Use the tools whose names start with ${MCP_PROMPT_TOOL_PREFIX} instead.`
+    : `${refusal} Call the ${MCP_PROMPT_TOOL_PREFIX}${alternative} tool instead.`
+}
+
+/**
+ * The typed rejection one Cursor-native exec expects, so the Run stays alive
+ * and the model reads the reason as a tool outcome. Unknown execs, which
+ * signal wire drift, get no reply here.
+ */
+function nativeRejection(exec: ExecServerMessage, reason: string): ExecClientMessage['message'] | undefined {
+  const args = exec.message
+  const shellRejected = (command: string, workingDirectory: string) =>
+    create(ShellRejectedSchema, { command, workingDirectory, reason, isReadonly: false })
+  switch (args.case) {
+    case 'shellArgs':
+      return {
+        case: 'shellResult',
+        value: create(ShellResultSchema, {
+          result: { case: 'rejected', value: shellRejected(args.value.command, args.value.workingDirectory) },
+        }),
+      }
+    case 'shellStreamArgs':
+      return {
+        case: 'shellStream',
+        value: create(ShellStreamSchema, {
+          event: { case: 'rejected', value: shellRejected(args.value.command, args.value.workingDirectory) },
+        }),
+      }
+    case 'backgroundShellSpawnArgs':
+      return {
+        case: 'backgroundShellSpawnResult',
+        value: create(BackgroundShellSpawnResultSchema, {
+          result: { case: 'rejected', value: shellRejected(args.value.command, args.value.workingDirectory) },
+        }),
+      }
+    case 'writeShellStdinArgs':
+      return {
+        case: 'writeShellStdinResult',
+        value: create(WriteShellStdinResultSchema, {
+          result: { case: 'error', value: create(WriteShellStdinErrorSchema, { error: reason }) },
+        }),
+      }
+    case 'writeArgs':
+      return {
+        case: 'writeResult',
+        value: create(WriteResultSchema, {
+          result: { case: 'rejected', value: create(WriteRejectedSchema, { path: args.value.path, reason }) },
+        }),
+      }
+    case 'deleteArgs':
+      return {
+        case: 'deleteResult',
+        value: create(DeleteResultSchema, {
+          result: { case: 'rejected', value: create(DeleteRejectedSchema, { path: args.value.path, reason }) },
+        }),
+      }
+    case 'grepArgs':
+      return {
+        case: 'grepResult',
+        value: create(GrepResultSchema, { result: { case: 'error', value: create(GrepErrorSchema, { error: reason }) } }),
+      }
+    case 'readArgs':
+      return {
+        case: 'readResult',
+        value: create(ReadResultSchema, {
+          result: { case: 'rejected', value: create(ReadRejectedSchema, { path: args.value.path, reason }) },
+        }),
+      }
+    case 'lsArgs':
+      return {
+        case: 'lsResult',
+        value: create(LsResultSchema, {
+          result: { case: 'rejected', value: create(LsRejectedSchema, { path: args.value.path, reason }) },
+        }),
+      }
+    case 'diagnosticsArgs':
+      return {
+        case: 'diagnosticsResult',
+        value: create(DiagnosticsResultSchema, {
+          result: { case: 'rejected', value: create(DiagnosticsRejectedSchema, { path: args.value.path, reason }) },
+        }),
+      }
+    case 'listMcpResourcesExecArgs':
+      return {
+        case: 'listMcpResourcesExecResult',
+        value: create(ListMcpResourcesExecResultSchema, {
+          result: { case: 'rejected', value: create(ListMcpResourcesRejectedSchema, { reason }) },
+        }),
+      }
+    case 'readMcpResourceExecArgs':
+      return {
+        case: 'readMcpResourceExecResult',
+        value: create(ReadMcpResourceExecResultSchema, {
+          result: { case: 'rejected', value: create(ReadMcpResourceRejectedSchema, { uri: args.value.uri, reason }) },
+        }),
+      }
+    case 'fetchArgs':
+      return {
+        case: 'fetchResult',
+        value: create(FetchResultSchema, {
+          result: { case: 'error', value: create(FetchErrorSchema, { url: args.value.url, error: reason }) },
+        }),
+      }
+    case 'recordScreenArgs':
+      return {
+        case: 'recordScreenResult',
+        value: create(RecordScreenResultSchema, {
+          result: { case: 'failure', value: create(RecordScreenFailureSchema, { error: reason }) },
+        }),
+      }
+    case 'computerUseArgs':
+      return {
+        case: 'computerUseResult',
+        value: create(ComputerUseResultSchema, {
+          result: {
+            case: 'error',
+            value: create(ComputerUseErrorSchema, { error: reason, actionCount: args.value.actions.length, durationMs: 0 }),
+          },
+        }),
+      }
+    default:
+      // requestContextArgs and mcpArgs are answered before this point; anything else is wire drift.
+      return undefined
+  }
+}
+
+/** Answer a Cursor-native exec with its typed rejection; false when the exec is unknown. */
+function answerNativeExec(stream: CursorConnectStream, exec: ExecServerMessage, mcpTools: readonly McpToolDefinition[]): boolean {
+  const reply = nativeRejection(exec, nativeRejectionReason(exec.message.case ?? '', mcpTools))
+  if (reply === undefined) return false
+  sendClient(stream, {
+    message: {
+      case: 'execClientMessage',
+      value: create(ExecClientMessageSchema, { id: exec.id, execId: exec.execId, message: reply }),
+    },
+  })
+  return true
+}
+
+function rejectUnknownExec(stream: CursorConnectStream, exec: ExecServerMessage): void {
   sendClient(stream, {
     message: {
       case: 'execClientControlMessage',
@@ -129,7 +320,7 @@ function rejectNativeExec(stream: CursorConnectStream, exec: ExecServerMessage):
           case: 'throw',
           value: create(ExecClientThrowSchema, {
             id: exec.id,
-            error: 'This native Cursor tool is not available in DeepSeek Harness. Use the MCP tools provided instead.',
+            error: 'This Cursor exec is not supported by DeepSeek Harness. Use the MCP tools provided instead.',
           }),
         },
       }),
@@ -172,6 +363,12 @@ function* emitToolCall(index: number, id: string, name: string, args: Record<str
     index,
     block: { type: 'tool-call', id: ToolCallId(id), name, arguments: argumentsText },
   }
+}
+
+/** The harness tool name behind one Cursor MCP exec; a model may echo the replayed `mcp_dsh_` form. */
+function harnessToolName(mcp: { name: string; toolName: string }): string {
+  const name = mcp.toolName.length > 0 ? mcp.toolName : mcp.name
+  return name.startsWith(MCP_PROMPT_TOOL_PREFIX) ? name.slice(MCP_PROMPT_TOOL_PREFIX.length) : name
 }
 
 function settledOnAbort(signal: AbortSignal): Promise<never> {
@@ -242,7 +439,7 @@ export async function* streamCursorRun(
       }
       if (item.done) break
       const message = fromBinary(AgentServerMessageSchema, item.value.payload)
-      const chunks = handleServerMessage(message, stream, payload.blobStore, payload.mcpTools, {
+      const chunks = handleServerMessage(message, stream, payload, {
         nextIndex,
         open,
         outputTokens,
@@ -255,7 +452,7 @@ export async function* streamCursorRun(
       yield* chunks.chunks
       if (chunks.done !== undefined) {
         yield* closeOpen(open)
-        const usage: TokenUsage = { inputTokens: 0, outputTokens }
+        const usage: TokenUsage = { inputTokens: payload.inputTokenEstimate, outputTokens }
         yield { type: 'usage', usage }
         yield chunks.done
         return
@@ -271,8 +468,7 @@ export async function* streamCursorRun(
 function handleServerMessage(
   message: AgentServerMessage,
   stream: CursorConnectStream,
-  blobStore: Map<string, Uint8Array>,
-  mcpTools: McpToolDefinition[],
+  payload: CursorRunPayload,
   state: { nextIndex: number; open: OpenBlock | undefined; outputTokens: number; sawContent: boolean },
 ): {
   chunks: StreamChunk[]
@@ -331,22 +527,21 @@ function handleServerMessage(
     return { chunks, nextIndex, open, outputTokens, sawContent }
   }
   if (msgCase === 'kvServerMessage') {
-    answerKv(stream, message.message.value, blobStore)
+    answerKv(stream, message.message.value, payload.blobStore)
     return { chunks, nextIndex, open, outputTokens, sawContent }
   }
   if (msgCase === 'execServerMessage') {
     const exec = message.message.value
     const execCase = exec.message.case
     if (execCase === 'requestContextArgs') {
-      answerRequestContext(stream, exec, mcpTools)
+      answerRequestContext(stream, exec, payload)
       return { chunks, nextIndex, open, outputTokens, sawContent }
     }
     if (execCase === 'mcpArgs') {
       const mcp = exec.message.value
-      const toolName = mcp.toolName.length > 0 ? mcp.toolName : mcp.name
       chunks.push(...closeOpen(open))
       open = undefined
-      chunks.push(...emitToolCall(nextIndex, mcp.toolCallId || `cursor-${exec.id}`, toolName, decodeMcpArgsMap(mcp.args)))
+      chunks.push(...emitToolCall(nextIndex, mcp.toolCallId || `cursor-${exec.id}`, harnessToolName(mcp), decodeMcpArgsMap(mcp.args)))
       nextIndex += 1
       sawContent = true
       return {
@@ -358,9 +553,12 @@ function handleServerMessage(
         done: { type: 'finish', reason: { kind: 'tool-calls' } },
       }
     }
-    rejectNativeExec(stream, exec)
+    if (answerNativeExec(stream, exec, payload.mcpTools)) {
+      return { chunks, nextIndex, open, outputTokens, sawContent }
+    }
+    rejectUnknownExec(stream, exec)
     throw new LlmError(
-      `llm-cursor: native Cursor exec "${execCase ?? 'unknown'}" is not executed by this adapter`,
+      `llm-cursor: Cursor exec "${execCase ?? 'unknown'}" is not supported by this adapter`,
       'UNSUPPORTED_CONTENT',
     )
   }
