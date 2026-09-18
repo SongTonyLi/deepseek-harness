@@ -89,6 +89,84 @@ describe('conversationFromOptions', () => {
     expect(parsed.completed).toHaveLength(1)
     expect(parsed.userText).toBe('second')
   })
+
+  it('joins trailing runtime-context and skill-catalog user messages into the current action', () => {
+    const parsed = conversationFromOptions({
+      provider: 'cursor',
+      model: 'composer-2',
+      messages: [
+        createUserMessage({
+          content: [{ type: 'text', text: 'what does @AuditZoo-spring26/ do' }],
+          source: { kind: 'user' },
+        }),
+        createUserMessage({
+          content: [{
+            type: 'text',
+            text: 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nsandbox:policy',
+          }],
+          source: {
+            kind: 'plugin',
+            plugin: '@deepseek-ai/dsh-system-prompt',
+            form: 'snapshot',
+            sections: [{ name: 'sandbox:policy', text: 'sandbox:policy' }],
+          },
+        }),
+        createUserMessage({
+          content: [{
+            type: 'text',
+            text: '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
+          }],
+          source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-tool-skill', form: 'catalog' },
+        }),
+      ],
+    })
+    expect(parsed.completed).toEqual([])
+    expect(parsed.userText).toBe([
+      'what does @AuditZoo-spring26/ do',
+      'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nsandbox:policy',
+      '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
+    ].join('\n\n'))
+  })
+
+  it('joins consecutive user-role messages in completed history and skips empty fragments', () => {
+    const parsed = conversationFromOptions({
+      provider: 'cursor',
+      model: 'composer-2',
+      messages: [
+        createUserMessage({ content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }),
+        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'plugin', plugin: 'pad' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: 'snapshot-v1' }],
+          source: {
+            kind: 'plugin',
+            plugin: '@deepseek-ai/dsh-system-prompt',
+            form: 'snapshot',
+            sections: [{ name: 'sandbox:policy', text: 'snapshot-v1' }],
+          },
+        }),
+        createMessage({
+          role: 'assistant',
+          source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
+          content: [{ type: 'text', text: 'hi' }],
+        }),
+        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'plugin', plugin: 'pad' } }),
+        createUserMessage({ content: [{ type: 'text', text: 'next' }], source: { kind: 'user' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: 'snapshot-v2' }],
+          source: {
+            kind: 'plugin',
+            plugin: '@deepseek-ai/dsh-system-prompt',
+            form: 'snapshot',
+            sections: [{ name: 'sandbox:policy', text: 'snapshot-v2' }],
+          },
+        }),
+      ],
+    })
+    expect(parsed.completed).toEqual([
+      { userText: 'hello\n\nsnapshot-v1', steps: [{ kind: 'assistantText', text: 'hi' }] },
+    ])
+    expect(parsed.userText).toBe('next\n\nsnapshot-v2')
+  })
 })
 
 describe('buildCursorRun', () => {

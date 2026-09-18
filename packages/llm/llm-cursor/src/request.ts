@@ -81,6 +81,21 @@ function textOf(message: Message): string {
     .join('')
 }
 
+function joinUserTexts(left: string, right: string): string {
+  if (left.length === 0) return right
+  if (right.length === 0) return left
+  return `${left}\n\n${right}`
+}
+
+function appendUserTurn(turns: CursorTurn[], text: string): void {
+  const last = turns[turns.length - 1]
+  if (last !== undefined && last.steps.length === 0) {
+    last.userText = joinUserTexts(last.userText, text)
+    return
+  }
+  turns.push({ userText: text, steps: [] })
+}
+
 function parseArguments(raw: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(raw)
@@ -183,6 +198,11 @@ function createUserMessage(text: string, selectedContextBlob: Uint8Array) {
 
 /**
  * Split harness messages into completed Cursor turns plus the current user text.
+ *
+ * Consecutive user-role messages with no assistant steps between them join in
+ * order into one Cursor user text. A Run has a single `userMessageAction`, so
+ * runtime-context snapshots and skill catalogs that follow the human prompt
+ * ride that action instead of replacing it.
  * @param options - assembled model request.
  * @returns conversation turns and the new user action text.
  */
@@ -218,7 +238,7 @@ export function conversationFromOptions(options: GenerateOptions): { systemPromp
       continue
     }
     if (message.role === 'user') {
-      turns.push({ userText: textOf(message), steps: [] })
+      appendUserTurn(turns, textOf(message))
       continue
     }
     if (turns.length === 0) turns.push({ userText: '', steps: [] })

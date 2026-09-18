@@ -28,6 +28,8 @@ Request-time `token.ts` resolves in this order: launch-environment `CURSOR_ACCES
 
 Each DSH model step is one HTTP/2 Connect `AgentService/Run`. The adapter maps harness history, system prompt, and tools to MCP tool definitions, then maps text, thinking, usage, and MCP tool calls to `StreamChunk`. An MCP tool call finishes the stream; DSH executes the tool locally and the next step is a new Run. Cursor-native workspace execs (`read`, `shell`, and kin) are rejected on the wire so the turn cannot park. Pi-cursor's conversation journal, parked bridge, and native-tool execution are out of scope.
 
+A Cursor Run has one current `userMessageAction`. Harness `user/message` events that the loop appends after the human prompt — runtime-context snapshots, skill catalogs, skill instruction bodies, session-reference context — are consecutive user-role messages. `conversationFromOptions` joins those empty-step turns in order into the action, and joins consecutive users inside a completed turn the same way, so injected context cannot replace the prompt.
+
 Attribution headers required by `LlmAdapter` go on every HTTP/2 request. Bundled fallback models register at mount; `GetUsableModels` replaces them after a token exists, with a cache under `$DSH_HOME`.
 
 ### Web and TUI surfaces
