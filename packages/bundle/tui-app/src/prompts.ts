@@ -117,6 +117,14 @@ abstract class ListPrompt<T> implements ModalPrompt<T> {
     this.list.setSelectedIndex(index)
   }
 
+  /**
+   * The row the highlight sits on.
+   * @returns that row, or null while the list shows no row.
+   */
+  protected selected(): SelectItem | null {
+    return this.list.getSelectedItem()
+  }
+
   abstract withdraw(): void
 
   handleInput(data: string): void {
@@ -190,6 +198,12 @@ export interface PickOptions {
    * the description column aligned.
    */
   layout?: SelectListLayoutOptions
+  /**
+   * Answer `Ctrl+S` with the highlighted row while the picker stays open;
+   * absent, the key does nothing here.
+   * @param item - the highlighted row.
+   */
+  onSave?: (item: PickItem) => void
 }
 
 /** Marks the row a picker opened on, so it stays visible after the highlight moves. */
@@ -214,6 +228,7 @@ function rowText(row: SelectItem): string {
  * once the query is empty. The visible rows are the query's fuzzy matches
  * against each row's label and description, best match first; the row in
  * force keeps its mark and stays highlighted only while the query is empty.
+ * `Ctrl+S` hands the highlighted row to `onSave` without closing the picker.
  */
 export class PickPrompt extends ListPrompt<PickItem | undefined> {
   /** Every row in declared order, without the mark, as matched against. */
@@ -226,8 +241,10 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
   private query = ''
   /** The rows the list shows: all of them, or the query's matches. */
   private visible: readonly SelectItem[]
+  /** What `Ctrl+S` does with the highlighted row, when the caller gave it a meaning. */
+  private readonly onSave: ((item: PickItem) => void) | undefined
 
-  constructor(palette: Palette, title: string, items: readonly PickItem[], options: PickOptions = {}) {
+  constructor(palette: Palette, title: string, private readonly items: readonly PickItem[], options: PickOptions = {}) {
     const rows = items.map((item): SelectItem => ({ ...item }))
     const inForce = items.findIndex(item => item.value === options.current)
     const markedRows = rows.map((row, index) => index === inForce ? { ...row, label: `${row.label}${CURRENT_MARK}` } : row)
@@ -244,6 +261,7 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
     this.markedRows = markedRows
     this.inForce = inForce
     this.visible = markedRows
+    this.onSave = options.onSave
     if (inForce > 0) this.highlight(inForce)
   }
 
@@ -274,6 +292,12 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
     }
     if (matchesKey(data, 'ctrl+u')) {
       this.setQuery('')
+      return
+    }
+    if (matchesKey(data, 'ctrl+s')) {
+      const row = this.selected()
+      const item = row === null ? undefined : this.items.find(candidate => candidate.value === row.value)
+      if (item !== undefined) this.onSave?.(item)
       return
     }
     const typed = typedText(data)

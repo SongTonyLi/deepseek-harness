@@ -43,6 +43,34 @@ function markerColumn(line: string): number {
 }
 
 describe('BarCursorEditor', () => {
+  it('moves across space-separated words with Shift+Left and Shift+Right', () => {
+    const editor = new BarCursorEditor(
+      new TuiMainScreen(new FakeTerminal()),
+      editorTheme(createPalette(false)),
+      { paddingX: 1 },
+    )
+    editor.setText('I want to do')
+    editor.handleInput(KEY.shiftLeft)
+    editor.handleInput('|')
+    expect(editor.getText()).toBe('I want to |do')
+    editor.handleInput(KEY.backspace)
+    editor.handleInput(KEY.shiftRight)
+    editor.handleInput('|')
+    expect(editor.getText()).toBe('I want to do|')
+  })
+
+  it('recognizes Kitty Shift+Arrow reports for word movement', () => {
+    const editor = new BarCursorEditor(
+      new TuiMainScreen(new FakeTerminal()),
+      editorTheme(createPalette(false)),
+    )
+    editor.setText('I want to do')
+    editor.handleInput('\u001b[57417;2u')
+    expect(editor.getCursor()).toEqual({ line: 0, col: 10 })
+    editor.handleInput('\u001b[57418;2u')
+    expect(editor.getCursor()).toEqual({ line: 0, col: 12 })
+  })
+
   it('removes the block a caret inside the text sits on and keeps the character', () => {
     const { stock, bar } = renderBoth('hello', [KEY.left, KEY.left])
     expect(stock[1]).toContain(`${REVERSE_VIDEO}l${RESET}`)

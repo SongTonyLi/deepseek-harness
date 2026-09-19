@@ -1,6 +1,7 @@
 /**
  * Session facts the terminal shows and switches between: the persisted
- * session list with titles, and the label rows of the `/sessions` picker.
+ * session list with titles, and the label rows of the `/sessions` and
+ * `/resume` picker.
  * @module @deepseek-ai/dsh-tui-app/sessions
  */
 

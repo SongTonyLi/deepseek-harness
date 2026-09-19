@@ -233,7 +233,7 @@ describe('tui runner', () => {
     await settled()
     expect(observed.created).toHaveLength(3)
     expect(observed.created[2]?.meta).toEqual({ cwd: process.cwd() })
-    typeLine(observed.terminal, '/sessions')
+    typeLine(observed.terminal, '/resume')
     await settled()
     observed.terminal.type(KEY.enter)
     await settled()

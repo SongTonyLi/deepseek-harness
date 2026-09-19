@@ -20,7 +20,7 @@ import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
 import { markdownTheme, type CodeHighlighter, type Palette } from './style.ts'
-import { foldMarker, foldRows, type ToolCallText } from './transcript.ts'
+import { foldMarker, foldRows, paintCodeRows, type CodeSpan, type ToolCallText } from './transcript.ts'
 
 /** Columns the focus gutter takes from the width a block's content wraps at. */
 const GUTTER_WIDTH = 2
@@ -47,7 +47,7 @@ export interface BlockTheme {
   toolPreviewLines: number
   /** Collapsed body rows of a system prompt or an injected context block. */
   contextPreviewLines: number
-  /** Colours fenced code in a reply; absent draws every block plain. */
+  /** Colours fenced code in a reply and the file rows of a `read` or `diff` tool card; absent draws them plain. */
   codeHighlight?: CodeHighlighter
 }
 
@@ -570,6 +570,8 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   readonly foldable = true as const
   private status: ToolCardStatus = 'running'
   private resultLines: string[] = []
+  /** The code span behind each result row, for a `read` or `diff` result; absent otherwise. */
+  private resultCode: (CodeSpan | undefined)[] | undefined
   private expanded = false
   private fade: BlockFade | undefined
   private resultFade: BlockFade | undefined
@@ -649,9 +651,11 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    * Attach the result rows and settle the status.
    * @param lines - the result rows before preview truncation.
    * @param isError - whether the tool reported failure.
+   * @param code - the span behind each row, for a result the card colours as code.
    */
-  setResult(lines: string[], isError: boolean): void {
+  setResult(lines: string[], isError: boolean, code?: (CodeSpan | undefined)[]): void {
     this.resultLines = lines
+    this.resultCode = code
     this.status = isError ? 'error' : 'done'
   }
 
@@ -681,11 +685,21 @@ export class ToolBlock implements Component, ToolSection, Foldable {
       : this.status === 'done' ? palette.success('●') : palette.error('●')
     const header = `${glyph} ${palette.bold(this.name)}${this.call.title === '' ? '' : ` ${palette.dim(this.call.title)}`}`
     const body = [...this.call.lines, ...this.resultLines]
+    // The spans align with the body by index; a half with no code gets a
+    // run of undefined so the result spans keep their offsets.
+    const code = this.call.code === undefined && this.resultCode === undefined
+      ? undefined
+      : [
+        ...this.call.code ?? new Array<undefined>(this.call.lines.length).fill(undefined),
+        ...this.resultCode ?? new Array<undefined>(this.resultLines.length).fill(undefined),
+      ]
     // Truncation runs over the whole body, so the kept rows can stop inside
     // the call rows; how many of them survived splits the two fade groups.
-    const shown = this.expanded
+    // The fold marker is past every span, so it always draws plain.
+    const kept = this.expanded
       ? body
       : foldRows(body, this.theme.toolPreviewLines, hidden => foldMarker(hidden, marked ? 'marked' : 'transcript'))
+    const shown = paintCodeRows(kept, code, this.theme.codeHighlight)
     const callCount = Math.min(this.call.lines.length, shown.length)
     const inner = Math.max(1, outer - 4)
     const rows = (lines: readonly string[]): string[] =>

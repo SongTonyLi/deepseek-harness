@@ -46,13 +46,14 @@ describe('the editor', () => {
     expect(key('editor', KEY.shiftDown)).toEqual({ kind: 'leave', direction: 'down' })
   })
 
-  it('claims steering and the effort cycle', () => {
+  it('claims steering and the effort picker', () => {
     expect(key('editor', KEY.ctrlS)).toEqual({ kind: 'steer' })
     expect(key('editor', KEY.shiftTab)).toEqual({ kind: 'effort' })
+    expect(key('editor', '\u001b[9;2u')).toEqual({ kind: 'effort' })
   })
 
   it('claims nothing pi-tui\'s own editor answers', () => {
-    for (const data of [KEY.up, KEY.down, KEY.left, KEY.right, KEY.enter, KEY.tab, KEY.space, KEY.home, KEY.end, 'a']) {
+    for (const data of [KEY.up, KEY.down, KEY.left, KEY.right, KEY.shiftLeft, KEY.shiftRight, KEY.enter, KEY.tab, KEY.space, KEY.home, KEY.end, 'a']) {
       expect(key('editor', data)).toBeUndefined()
     }
   })

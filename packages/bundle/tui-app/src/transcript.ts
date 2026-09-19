@@ -144,12 +144,43 @@ export function describeFailure(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/**
+ * The source behind one card row, so the card can draw it in syntax colour:
+ * the row is `prefix + source`, and only `source` is coloured.
+ */
+export interface CodeSpan {
+  /** The language hint the highlighter resolves; unknown hints draw plain. */
+  lang: string
+  /** The row's own text before the source: a line number, a diff sign, an indent. */
+  prefix: string
+  /** The source text, one line without its newline. */
+  source: string
+}
+
+/** Card body rows with, per row, the code span a highlighter may colour. */
+export interface ToolBody {
+  /** The plain rows, as the inspector and the keyboard walk read them. */
+  lines: string[]
+  /** One entry per row; absent, or undefined at an index, for a row that is not code. */
+  code?: (CodeSpan | undefined)[]
+}
+
 /** A tool card's call half. */
-export interface ToolCallText {
+export interface ToolCallText extends ToolBody {
   /** The card headline after the tool name; empty when the tool declares no presenter. */
   title: string
-  /** Detail rows under the headline; may be empty. */
-  lines: string[]
+}
+
+/**
+ * The extension of a path, lowercased, as a language hint for its content.
+ * @param path - a file path in either separator style.
+ * @returns the extension without its dot, or undefined for a dotfile or an
+ * extensionless name.
+ */
+function extensionOf(path: string): string | undefined {
+  const base = path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1)
+  const dot = base.lastIndexOf('.')
+  return dot <= 0 ? undefined : base.slice(dot + 1).toLowerCase()
 }
 
 /**
@@ -172,12 +203,47 @@ export function parseArguments(argumentsJson: string): unknown {
  * @returns rows prefixed with `+`, `-`, or two spaces, plus `…` gap markers.
  */
 export function diffRows(diff: FileDiff): string[] {
+  return diffBody(diff).lines
+}
+
+/**
+ * Render a diff for a card body, with the code span behind each changed or
+ * context row so the card can colour the file's own language.
+ * @param diff - one file's old and new text.
+ * @returns the rows and their spans; the `…` gap markers carry no span.
+ */
+export function diffBody(diff: FileDiff): Required<ToolBody> {
+  const lang = extensionOf(diff.path)
   const rows = hunks(diffLines(diff.oldText, diff.newText), DIFF_CONTEXT_LINES)
-  return rows.map((row) => {
-    if (row === undefined) return '  …'
+  const lines: string[] = []
+  const code: (CodeSpan | undefined)[] = []
+  for (const row of rows) {
+    if (row === undefined) {
+      lines.push('  …')
+      code.push(undefined)
+      continue
+    }
     const prefix = row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '- ' : '  '
-    return prefix + row.text
-  })
+    lines.push(prefix + row.text)
+    code.push(lang === undefined ? undefined : { lang, prefix, source: row.text })
+  }
+  return { lines, code }
+}
+
+/**
+ * Concatenate bodies: a heading row per diff, then that diff's rows.
+ * @param diffs - the files in display order.
+ * @returns one body for the whole card half.
+ */
+function diffsBody(diffs: readonly FileDiff[]): ToolBody {
+  const lines: string[] = []
+  const code: (CodeSpan | undefined)[] = []
+  for (const diff of diffs) {
+    const body = diffBody(diff)
+    lines.push(diff.path, ...body.lines)
+    code.push(undefined, ...body.code)
+  }
+  return { lines, code }
 }
 
 /**
@@ -206,7 +272,7 @@ export function toolCallText(argumentsJson: string, view: ToolCallView | undefin
       return { title: view.title, lines }
     }
     case 'diff':
-      return { title: view.title, lines: view.diffs.flatMap(diff => [diff.path, ...diffRows(diff)]) }
+      return { title: view.title, ...diffsBody(view.diffs) }
     default:
       return assertNever(view, 'tui tool call view')
   }
@@ -220,37 +286,92 @@ export function toolCallText(argumentsJson: string, view: ToolCallView | undefin
  * @returns the rows, before any preview truncation.
  */
 export function toolResultLines(view: ToolResultView | undefined, content: readonly ContentBlock[]): string[] {
-  if (view === undefined) return contentText(content).split('\n').filter(line => line !== '')
+  return toolResultBody(view, content).lines
+}
+
+/**
+ * {@link toolResultLines} with the code span behind each row of a `read` or
+ * `diff` card, so the card draws the file's own language in colour.
+ * @param view - the tool's `presentResult` view, when it has one.
+ * @param content - the model-facing result content.
+ * @returns the rows and, for the two code cards, their spans.
+ */
+export function toolResultBody(view: ToolResultView | undefined, content: readonly ContentBlock[]): ToolBody {
+  if (view === undefined) return { lines: contentText(content).split('\n').filter(line => line !== '') }
   switch (view.card) {
     case 'generic':
-      return contentText(view.content ?? content).split('\n').filter(line => line !== '')
+      return { lines: contentText(view.content ?? content).split('\n').filter(line => line !== '') }
     case 'terminal': {
       const lines = (view.output ?? '').split('\n')
       while (lines.length > 0 && lines.at(-1) === '') lines.pop()
       if (view.exitCode !== undefined && view.exitCode !== 0) lines.push(`exit ${String(view.exitCode)}`)
       if (view.signal !== undefined) lines.push(`signal ${view.signal}`)
-      return lines
+      return { lines }
     }
     case 'diff':
-      return view.diffs.flatMap(diff => [diff.path, ...diffRows(diff)])
+      return diffsBody(view.diffs)
     case 'search': {
       const lines = view.shape === 'matches'
         ? view.files.flatMap(file => file.matches.map(match => `${file.path}:${String(match.lineNumber)}: ${match.line}`))
         : [...view.paths]
       if (view.truncated) lines.push(`… ${String(view.total)} total`)
-      return lines
+      return { lines }
     }
-    case 'read':
-      return view.lines.map(line => `${String(line.number).padStart(4)}│ ${line.text}`)
+    case 'read': {
+      const lang = view.lang
+      const rows = view.lines.map(line => ({ prefix: `${String(line.number).padStart(4)}│ `, source: line.text }))
+      return {
+        lines: rows.map(row => `${row.prefix}${row.source}`),
+        ...lang === undefined ? {} : { code: rows.map(row => ({ lang, ...row })) },
+      }
+    }
     case 'web': {
-      if (view.kind === 'fetch') return [`${view.url} (${String(view.statusCode)})`]
+      if (view.kind === 'fetch') return { lines: [`${view.url} (${String(view.statusCode)})`] }
       const lines = view.sources.map(source => source.title === undefined ? source.url : `${source.title} — ${source.url}`)
       if (view.answer !== undefined) lines.unshift(view.answer)
-      return lines
+      return { lines }
     }
     default:
       return assertNever(view, 'tui tool result view')
   }
+}
+
+/**
+ * Draw card rows in syntax colour where a highlighter and a span allow it.
+ * Consecutive spans of one language are coloured as one block, so a comment
+ * or string that spans rows keeps its colour; a group the highlighter cannot
+ * colour yet, or colours to a different row count, draws plain and is drawn
+ * again once its grammar lands.
+ * @param lines - the plain rows.
+ * @param code - the span behind each row, aligned by index; absent rows draw plain.
+ * @param highlight - the highlighter; absent draws every row plain.
+ * @returns the rows to draw, same length as `lines`.
+ */
+export function paintCodeRows(
+  lines: readonly string[],
+  code: readonly (CodeSpan | undefined)[] | undefined,
+  highlight: { lines(code: string, lang: string | undefined): string[] | undefined } | undefined,
+): string[] {
+  if (code === undefined || highlight === undefined) return [...lines]
+  const out = [...lines]
+  let index = 0
+  while (index < lines.length) {
+    const span = code[index]
+    if (span === undefined) {
+      index += 1
+      continue
+    }
+    let end = index + 1
+    while (end < lines.length && code[end]?.lang === span.lang) end += 1
+    const group = code.slice(index, end) as CodeSpan[]
+    const coloured = highlight.lines(group.map(row => row.source).join('\n'), span.lang)
+    if (coloured !== undefined && coloured.length === group.length) {
+      // One coloured line per row, as the length check just established.
+      coloured.forEach((text, offset) => { out[index + offset] = `${(group[offset] as CodeSpan).prefix}${text}` })
+    }
+    index = end
+  }
+  return out
 }
 
 /**

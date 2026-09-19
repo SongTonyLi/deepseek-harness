@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你的终端里启动一个多轮会话，没有浏览器、也没有服务器。回复流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/` 命令与 Web 共用注册表。方向键在停靠的检视面板中走遍对话记录；`Ctrl+G` 把它整屏读出、各轮次并排。会话持久化：`/sessions`、`/new` 与 `/fork` 在会话间切换，`/export` 写出浏览器的 ZIP，`--resume` 稍后继续。它运行 `dsh web` 的模型、工具与安全默认值，同一时间一个会话。
+`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你的终端里启动一个多轮会话，没有浏览器、也没有服务器。回复流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/` 命令与 Web 共用注册表。方向键在停靠的检视面板中走遍对话记录；`Ctrl+G` 把它整屏读出、各轮次并排。持久化会话可通过 `/resume`、`/sessions` 或启动参数 `--resume` 恢复；`/new` 与 `/fork` 创建会话，`/export` 写出 ZIP。它运行 `dsh web` 的模型、工具与安全默认值，同一时间一个会话。
 
 ## 目录
 
@@ -36,11 +36,11 @@ dsh tui --resume <session-id>             # continue an earlier session
 dsh tui --no-open                         # print sign-in URLs without opening a browser
 ```
 
-退出时应用在 stderr 为当时绑定的会话打印 `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>`。恢复的会话会在接受输入前先重绘其持久化历史；在终端内，`/sessions` 打开覆盖所有持久化根会话的选择器，`/new` 开始一个新会话，`/fork` 把当前会话复制到其最后一个完成轮次并作为新会话，切割点与浏览器的 fork 相同。切换会释放先前的 Agent 并重绘下一个会话的对话记录。
+退出时应用在 stderr 为当时绑定的会话打印 `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>`。恢复的会话会在接受输入前先重绘其持久化历史；在终端内，`/resume` 与 `/sessions` 打开覆盖所有持久化根会话的同一个选择器，并恢复选中的先前会话，`/new` 开始一个新会话，`/fork` 把当前会话复制到其最后一个完成轮次并作为新会话，切割点与浏览器的 fork 相同。切换会释放先前的 Agent 并重绘下一个会话的对话记录。
 
 ### 屏幕布局
 
-页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。非空的系统提示词与每一条注入的上下文——instructions、catalogs、snapshots、notices、relays 与 recalls——绘制为暗色 `⬡` 标题，其下是面向模型文本的前 `contextPreviewLines` 行，快照的每一份贡献具名写在其自身各行上方；空的系统提示词与压缩替换则省略。承载的行数多于其绘制行数的工具卡片与上下文块，结尾都是同一条标记：该块被对话记录的焦点持有时为 `… <n> more rows · Space expands`，否则为 `… <n> more rows · Ctrl+O expands`。回复中的围栏代码会以语法高亮绘制，配色主题由终端自身的背景在明暗之间选定；某种语言的语法会在第一个用到它的代码块出现时才加载，因此该块先以纯文本绘制、随后被重绘为彩色；这里没有对应语法的语言、既不支持 24 位也不支持 256 色的终端，以及 `codeHighlight: false`，都会把每个代码块画成纯文本。流式回复文字会淡入，而且每个词各走各的时钟：一个词以接近终端背景色的亮度出现，并经 `streamFadeSteps` 次、每次 `streamFadeStepMs` 提亮到它最终稳定的颜色，因此流得更快只会留下更长的一串正在提亮的词，而不会更暗。流式推理与工具卡片在同一时长内浮出：它们以抬高的颜色出现，再退回到稳定时的暗色斜体或调色板颜色；从持久化历史重绘的卡片不带淡入，已经稳定下来的文字也不会再被调暗。
+页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。非空的系统提示词与每一条注入的上下文——instructions、catalogs、snapshots、notices、relays 与 recalls——绘制为暗色 `⬡` 标题，其下是面向模型文本的前 `contextPreviewLines` 行，快照的每一份贡献具名写在其自身各行上方；空的系统提示词与压缩替换则省略。承载的行数多于其绘制行数的工具卡片与上下文块，结尾都是同一条标记：该块被对话记录的焦点持有时为 `… <n> more rows · Space expands`，否则为 `… <n> more rows · Ctrl+O expands`。回复中的围栏代码、`read` 卡片的文件行，以及 `edit` 或 `write` diff 卡片的变更行——在其行号与 `+` / `-` 符号之后，按文件扩展名对应的语言——都以语法高亮绘制，配色主题由终端自身的背景在明暗之间选定；某种语言的语法会在第一个用到它的代码块出现时才加载，因此该块先以纯文本绘制、随后被重绘为彩色；这里没有对应语法的语言、既不支持 24 位也不支持 256 色的终端，以及 `codeHighlight: false`，都会把每个代码块画成纯文本。流式回复文字会淡入，而且每个词各走各的时钟：一个词以接近终端背景色的亮度出现，并经 `streamFadeSteps` 次、每次 `streamFadeStepMs` 提亮到它最终稳定的颜色，因此流得更快只会留下更长的一串正在提亮的词，而不会更暗。流式推理与工具卡片在同一时长内浮出：它们以抬高的颜色出现，再退回到稳定时的暗色斜体或调色板颜色；从持久化历史重绘的卡片不带淡入，已经稳定下来的文字也不会再被调暗。
 
 对话记录下方依次是 agent 工作时的旋转指示、任何打开的提示、编辑器、子 agent 面板，以及页脚：未聚焦时是一行由两端向内构建的状态栏。编辑器的光标是终端自身的闪烁竖条：应用在启动时请求这一形状，退出时把你的默认形状还回去，而状态栏或面板持有键盘期间完全不绘制光标。模型锚定在左端且永不丢弃——超过 20 列时退回到裸模型名，只有仍然过宽的标签才会被省略号截断——离开编辑器的那两个按键则锚定在右端，写作 `Shift+↑ read · Shift+↓ status`，窄到一定程度收缩为 `Shift+↑↓ nav`，不足 40 列时整体丢弃。关键事实填满剩下的中间部分，按状态栏顺序排列：推理强度（选择把推理交给模型时标为 `effort default`）、进行中轮次的已用时间、上下文窗口百分比、todo 计数，以及 workspace 路径（过长时以 `~` 与 `…/` 缩短）。中间部分容纳不下的每个分段都折进末尾的 `+N`，未聚焦行从不绘制的那些分段也一并折入——权限预设、累计 token 用量、来自投影接缝的目标与计划模式标记，以及待发送附件的数量。压缩与模型请求重试以通知形式出现，与浏览器标记承载的事实相同。
 
@@ -58,18 +58,19 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 ### 按键与命令
 
-对话记录、编辑器、子 agent 面板与状态栏按屏幕绘制它们的顺序排布，`Up` / `Down` 穿过编辑器走遍这一序列：在最新小节上按 `Down`、在面板第一行上按 `Up`、在没有绘制面板时于状态栏上按 `Up`，都会落到光标处。`Tab` 与 `Shift+Tab` 走遍已绘制的各区域，并在两端环绕。在其中任何一个区域按下可打印键都会回到编辑器并在那里输入，因此在阅读时开始写的句子会落在它所指向的地方；对话记录中的 `Space` 是唯一的例外，它折叠被标记的工具卡片或上下文块。`Ctrl+G` 与 `Ctrl+O` 在这些区域中含义完全相同，而 `Ctrl+C` 与 `Ctrl+D` 会先把键盘交还编辑器再行动。提示与阅读器则各自持有整条按键流，并以交还键盘的方式应答 `Ctrl+C`。
+对话记录、编辑器、子 agent 面板与状态栏按屏幕绘制它们的顺序排布，`Up` / `Down` 穿过编辑器走遍这一序列：在最新小节上按 `Down`、在面板第一行上按 `Up`、在没有绘制面板时于状态栏上按 `Up`，都会落到光标处。编辑器以外的区域持有键盘时，`Tab` 与 `Shift+Tab` 走遍已绘制的各区域，并在两端环绕；在编辑器中，`Tab` 采用给出的补全，`Shift+Tab` 打开推理强度选择器。在其中任何一个区域按下可打印键都会回到编辑器并在那里输入，因此在阅读时开始写的句子会落在它所指向的地方；对话记录中的 `Space` 是唯一的例外，它折叠被标记的工具卡片或上下文块。`Ctrl+G` 与 `Ctrl+O` 在这些区域中含义完全相同，而 `Ctrl+C` 与 `Ctrl+D` 会先把键盘交还编辑器再行动。提示与阅读器则各自持有整条按键流，并以交还键盘的方式应答 `Ctrl+C`。
 
 编辑器持有键盘时：
 
 | 按键 | 效果 |
 |---|---|
-| `Enter` | 发送编辑器文本；轮次进行中时它排队到下一轮次 |
+| `Enter` | 发送编辑器文本；轮次进行中时它排队到下一轮次，并作为一行暗色的 `⏳ next turn` 停在编辑器上方，直到循环领取它后才进入对话 |
 | `Shift+Enter` | 插入换行 |
 | `Ctrl+S` | 轮次进行中时，把编辑器文本引导（steer）进当前轮次的下一步 |
 | `Up` / `Down` | 调出先前的提示 |
+| `Shift+Left` / `Shift+Right` | 用 pi-tui 的编辑器导航向左 / 右移动一个词；在 `I want to do` 末尾按 `Shift+Left` 会落在 `do` 之前 |
 | `Tab` | 采用编辑器给出的补全 |
-| `Shift+Tab` | 循环切换当前模型的推理强度，从下一次请求生效 |
+| `Shift+Tab` | 打开当前模型的推理强度选择器，从下一次请求生效；与空参数 `/effort` 打开的是同一个选择器 |
 | `Shift+Up` | 把焦点放到对话记录上、停在走查上次停下的小节；首次进入以及切换会话后的首次进入停在最新小节 |
 | `Shift+Down` | 面板已绘制时把焦点放到子 agent 面板的第一行，否则放到状态栏 |
 | `Ctrl+G` | 整屏读出对话记录，停在其最新小节 |
@@ -139,20 +140,22 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 到达阅读器的其他每个按键都被消费，而关闭它同样打开那 750 ms 的交接窗口，因此连按多少次 `Esc` 都到不了编辑器的停止。
 
-每个聚焦的分段都在第二行展开其最重要的事实。除 `todo` 之外，`Enter` 把这些事实打印到对话记录，并指出改变它们的方式：模型分段指出 `/model`，推理强度分段指出 `Shift+Tab`，权限分段指出其预设；`turn` 分段——绘制在权限与用量分段之间、形如 `turn <elapsed>`，且只在轮次进行时出现——给出轮次编号、其开始时间、已用时间与排队消息数量；用量、上下文、目标与计划分段打印 `/status` 报告中对应的小节，workspace 分段显示完整路径，附件分段列出待发送的附件。`todo` 分段展开按状态统计的计数以及正在进行的条目（若无正在进行的条目则为下一条待办），`Enter` 打开 agent 的 todo 列表，与 `/todos` 打开的是同一个列表。
+每个聚焦的分段都在第二行展开其最重要的事实。除 `todo` 之外，`Enter` 把这些事实打印到对话记录，并指出改变它们的方式：模型分段指出 `/model`，推理强度分段指出 `Shift+Tab` 与 `/effort` 共用的选择器，权限分段指出其预设；`turn` 分段——绘制在权限与用量分段之间、形如 `turn <elapsed>`，且只在轮次进行时出现——给出轮次编号、其开始时间、已用时间与排队消息数量；用量、上下文、目标与计划分段打印 `/status` 报告中对应的小节，workspace 分段显示完整路径，附件分段列出待发送的附件。`todo` 分段展开按状态统计的计数以及正在进行的条目（若无正在进行的条目则为下一条待办），`Enter` 打开 agent 的 todo 列表，与 `/todos` 打开的是同一个列表。
 
 在编辑器开头输入 `/` 会补全终端自身的命令与共享注册表的命令；任意位置的 `@` 补全引用。
 
 | 命令 | 效果 |
 |---|---|
 | `/help` | 列出命令，以及每个焦点状态所应答的按键 |
-| `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认 |
-| `/sessions` | 选择另一个持久化会话并切换过去 |
+| `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认，在模型列表中按 `Ctrl+S` 则把高亮的模型存为下次启动的默认而不关闭列表 |
+| `/effort [id]` | 不带参数时为下一次请求打开当前模型的推理强度选择器，与编辑器中的 `Shift+Tab` 打开的是同一个；id 直接选择，`/effort default` 恢复提供方默认值 |
+| `/resume` | 打开与 `/sessions` 相同的持久化会话选择器，并恢复选中的先前会话 |
+| `/sessions` | 打开持久化会话选择器，并切换到选中的会话 |
 | `/new` | 开始新会话 |
 | `/fork [turn]` | 在本会话最后一个完成轮次处 fork，或在第 `turn` 轮之后 fork |
 | `/title <text>` | 重命名本会话；单独使用时显示当前标题 |
 | `/attach <path>` | 把图片或文件附加到下一条提示；`/attach` 列出，`/attach clear` 丢弃 |
-| `/queue` | 显示为下一轮次与下一步排队的消息；`/queue clear` 丢弃它们 |
+| `/queue` | 显示为下一轮次与下一步排队的消息；`/queue clear` 丢弃它们，编辑器上方的对应行也随之消失 |
 | `/skills` | 列出 agent 可加载的技能 |
 | `/signin` | 通过提供方的通知与提示登录；`/signin <key>` 跳过选择器 |
 | `/login` | 用提供方订阅登录（隐藏仅收集密钥的登录）；`/login <key>` 跳过选择器 |
@@ -171,7 +174,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 其他每条 `/name` 行都交给共享命令注册表，因此 `/compact`、`/permission`、`/goal` 与插件命令的行为和浏览器中一致。
 
-终端打开的每个选择器——`/model` 的模型列表与推理强度列表、`/sessions`、`/subagents` 与 `/todos` 的列表，以及 `/signin` 与 `/login` 引出的各行——都随输入过滤其行：查询同时匹配每行的标签与描述，其以空白与斜杠分隔的各段必须全部匹配，各行按最佳匹配在前排序，因此 `dsk chat` 与 `deepseek/chat` 都能找到 `deepseek/deepseek-chat`，`gpt5` 能找到 `gpt-5`。`Backspace` 删除最后一个字符，`Ctrl+U` 清空查询，`Esc` 在查询非空时清空查询、在查询为空时取消选择器，`Up` / `Down` 在匹配行之间移动，`Enter` 选中高亮行。行上方的暗色行在查询为空时显示 `type to filter · Enter selects · Esc cancels`，此后显示 `filter: <query> · <kept>/<total>`；无任何行匹配的查询会以 `no row matches "<query>"` 取代这些行，而生效行上的 `✓`——也就是选择器打开时定位的那一行——只在查询为空时显示。
+终端打开的每个选择器——`/model` 的模型列表与推理强度列表、空参数 `/effort` 与编辑器 `Shift+Tab` 共用的当前模型推理强度列表、`/resume` 与 `/sessions` 共用的持久化会话列表、`/subagents` 与 `/todos` 的列表，以及 `/signin` 与 `/login` 引出的各行——都随输入过滤其行：查询同时匹配每行的标签与描述，其以空白与斜杠分隔的各段必须全部匹配，各行按最佳匹配在前排序，因此 `dsk chat` 与 `deepseek/chat` 都能找到 `deepseek/deepseek-chat`，`gpt5` 能找到 `gpt-5`。`Backspace` 删除最后一个字符，`Ctrl+U` 清空查询，`Esc` 在查询非空时清空查询、在查询为空时取消选择器，`Up` / `Down` 在匹配行之间移动，`Enter` 选中高亮行。行上方的暗色行在查询为空时显示 `type to filter · Enter selects · Esc cancels`，此后显示 `filter: <query> · <kept>/<total>`；无任何行匹配的查询会以 `no row matches "<query>"` 取代这些行，而生效行上的 `✓`——也就是选择器打开时定位的那一行——只在查询为空时显示。
 
 `/subagents`、`/todos` 与状态栏的 `todo` 分段共用同一套先列表、后详情的交互：选择器列出各条目，`Enter` 把高亮条目作为只读页面打开，`Up` / `Down` 与 `PageUp` / `PageDown` 滚动该页面，`Enter`、`Esc` 或 `Left` 返回列表并停在刚读过的条目上，因此连续查看多个条目无需重新输入命令；在列表上按 `Esc` 返回编辑器。详情无法读取的条目会在其页面上说明原因，而不会关闭列表。
 
@@ -197,7 +200,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `contextPreviewLines` | `4` | 在被标记的块上按 `Space` 或按 `Ctrl+O` 展开之前，系统提示词或注入的 `⬡` 上下文块绘制的行数 |
 | `focusPreviewLines` | `12` | 停靠的检视面板为聚焦小节显示的行数，其后由折叠标记把剩余部分交给阅读器；对每一种小节都适用 |
 | `readerMinColumns` | `60` | 阅读器把被选中的轮次画在轮次列表旁边所需的列数；不足时一次只画一个面板 |
-| `codeHighlight` | `true` | 以语法高亮绘制回复中的围栏代码，配色主题由终端背景选定 |
+| `codeHighlight` | `true` | 以语法高亮绘制回复中的围栏代码以及 `read` 与 diff 工具卡片的文件行，配色主题由终端背景选定 |
 | `toastMs` | `2000` | 临时按键提示行以全亮度保持多久后淡出，这同时也是第二次 `Esc` 停止正在进行轮次的窗口 |
 | `liveRefreshMs` | `1000` | 重绘周期：推进 `turn` 分段与面板中的已用时间，并重新读取已过期的子 agent 列表 |
 | `streamFadeSteps` | `12` | 一次淡入或浮出持续多少拍：回复文字淡入，推理与工具卡片浮出，时长为 `streamFadeSteps × streamFadeStepMs` |
@@ -219,7 +222,7 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。Shift+Tab 循环切换绑定模型的适配器自有推理强度，并在提供方默认值处回绕；`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。
 
 ### 渲染模型
 
@@ -237,7 +240,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/startup.ts`](src/startup.ts) | `tui-app-startup` 提供方：提示位置参数、`--resume`、`--no-open` 与 `--help` |
 | [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、停止装填，以及它挂载的各浮层 |
 | [`src/keys.ts`](src/keys.ts) | 按键模型：各焦点区域、一次按键在每个区域中的含义、它们逐级收缩的按键提示、进入用的按键、`/help` 的各行，以及交接窗口 |
-| [`src/sessions.ts`](src/sessions.ts) | 基于查询引擎的 `/sessions` 列表及其选择器行 |
+| [`src/sessions.ts`](src/sessions.ts) | `/resume` 与 `/sessions` 共用的持久化会话列表及选择器行 |
+| [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行 |
 | [`src/attach.ts`](src/attach.ts) | `/attach`：本地文件经附件存储成为图片或文件块 |
 | [`src/export.ts`](src/export.ts) | `/export`：通过导出包的归档辅助函数写出会话日志 ZIP |
 | [`src/blocks.ts`](src/blocks.ts) | 对话记录组件：用户提示、assistant 回复、工具卡片、系统提示词与注入上下文、通知；可导航的块暴露其各小节并绘制焦点标记条，可折叠的块则承载两个折叠键共用的那条标记 |
@@ -257,7 +261,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/style.ts`](src/style.ts) | 调色板与派生的 pi-tui 主题 |
 | [`src/highlight.ts`](src/highlight.ts) | 围栏代码的语法高亮：某个围栏可能加载的语法、由背景选定的配色主题，以及一个 token 所用的 SGR |
 | [`src/completion.ts`](src/completion.ts) | 编辑器的斜杠命令与 `@` 引用补全 |
-| [`src/editor.ts`](src/editor.ts) | 去掉 pi-tui 自绘块状光标的提示编辑器，以及终端自身光标所用的 DECSCUSR 序列 |
+| [`src/editor.ts`](src/editor.ts) | 提示编辑器的终端光标，以及把 `Shift+Left` / `Shift+Right` 映射到 pi-tui 词导航的逻辑 |
 | [`src/status.ts`](src/status.ts) | 投影接缝的事实，以及 `/status` 报告与分段详情共享的小节；压缩与重试通知 |
 | [`src/footer.ts`](src/footer.ts) | 状态栏：有序的各分段、每个分段的详情行、未聚焦时由两端向内构建的一行，以及聚焦时的滑动窗口 |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | 实时子 agent 面板：一次后代列表加上采样到的实时事实构成其各行、未聚焦时的摘要行，以及聚焦时的列表 |
@@ -265,14 +269,16 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/todos.ts`](src/todos.ts) | todo 列表：状态符号、选择器行与单个条目的详情行 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |
 | — | 不发布运行时不变量伴随模块；应用只在一个 Agent 上注册监听器，不持有其他观察者可能与之矛盾的可变关系。 |
-| [`tests/app.spec.ts`](tests/app.spec.ts) | 基于伪终端的渲染、按键、命令、停止装填与两个接缝 |
+| [`tests/app.spec.ts`](tests/app.spec.ts) | 基于伪终端的渲染、按键、命令、停止装填、编辑器上方的排队提示行与两个接缝 |
 | [`tests/keys.spec.ts`](tests/keys.spec.ts) | 每个区域为一个按键认领什么、按键提示的各级，以及一次按键输入的文字 |
+| [`tests/editor.spec.ts`](tests/editor.spec.ts) | 对照 pi-tui 编辑器行为验证终端光标与 `Shift+Left` / `Shift+Right` 词导航 |
 | [`tests/frame.spec.ts`](tests/frame.spec.ts) | 边框线、徽标、正文行，以及某个宽度容纳得下的按键提示 |
 | [`tests/motion.spec.ts`](tests/motion.spec.ts) | 动效时钟的各个级别、它对重绘的要求，以及每一级所绘的抬亮 |
 | [`tests/toast.spec.ts`](tests/toast.spec.ts) | 临时提示行的方框、其保持、其淡出与其提前结算 |
 | [`tests/reader.spec.ts`](tests/reader.spec.ts) | 阅读器的几何布局、其状态机、其过滤，以及它返回的各行 |
 | [`tests/reader-overlay.spec.ts`](tests/reader-overlay.spec.ts) | 挂载的面板：其按键映射、其展开动效、其重新锚定与其退出 |
-| [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的会话、附件、队列、技能、登录、`/login`、Shift+Tab 推理强度循环、导出、引用与推理强度命令 |
+| [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的 `/resume` 与 `/sessions` 选择器、附件、队列、技能、登录、导出、引用、`/effort` 与 `Shift+Tab` 共用的选择器，以及模型列表中的 `Ctrl+S` |
+| [`tests/effort.spec.ts`](tests/effort.spec.ts) | 共用的推理强度名称、选择器行、当前强度提示与输入参数匹配 |
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、可导航的子 agent 与 todo 列表、目录命令、命令提示与审批详情 |
 | [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | 走遍对话记录、区域序列、检视面板、实时会话上的阅读器，以及重绘窗口内的原地标记条 |
 | [`tests/context.spec.ts`](tests/context.spec.ts) | 把系统提示词与注入上下文投影为对话记录小节 |
@@ -321,7 +327,7 @@ runner 不向请求前缀添加任何内容；`/model` 切换像在浏览器中�
 
 这些限制描述随发行版交付的终端表层；它们不是一般的 CLI 比较，也不是任务积压。
 
-- **同一时间一个会话**——`/sessions`、`/new` 与 `/fork` 在会话间切换终端，但只有绑定的 Agent 流式显示；浏览器可并排展示多个会话。
+- **同一时间一个会话**——`/resume`、`/sessions`、`/new` 与 `/fork` 在会话间移动终端，但只有绑定的 Agent 流式显示；浏览器可并排展示多个会话。
 - **审批为一次性**——提示只提供允许一次或拒绝，与审批接缝的词汇一致；没有记忆的授权。
 - **仅浏览器的页面留在浏览器**——workspace 与目录选择器、在应用中打开的链接、轨迹账本与逐条消息的点赞/点踩没有终端对应物；`/settings`、`/plugins`、`/subagents`、`/outline` 与共享的 `/feedback` 以文本覆盖其事实，子 agent 的对话记录通过切换到子会话来阅读。
 - **交付物只列名、不打开**——`/deliverables` 列出交付路径，`/changes` 显示逐行对比；浏览器会预览这些文件。

@@ -13,8 +13,10 @@ import {
   formatTokens,
   formatUsage,
   foldRows,
+  paintCodeRows,
   parseArguments,
   toolCallText,
+  toolResultBody,
   toolResultLines,
   turnEndNotice,
 } from '../src/transcript.ts'
@@ -146,7 +148,13 @@ describe('transcript', () => {
       .toEqual({ title: 'ls', lines: ['list', 'cwd: /w'] })
     expect(toolCallText('{}', { card: 'terminal', title: 'ls' })).toEqual({ title: 'ls', lines: [] })
     expect(toolCallText('{}', { card: 'diff', title: 'Edit', diffs: [{ path: 'f.ts', oldText: 'a\n', newText: 'b\n' }] }))
-      .toEqual({ title: 'Edit', lines: ['f.ts', '- a', '+ b'] })
+      .toEqual({
+        title: 'Edit',
+        lines: ['f.ts', '- a', '+ b'],
+        // The path row is not code; the changed rows carry the file's own
+        // language from its extension, behind the sign the card draws.
+        code: [undefined, { lang: 'ts', prefix: '- ', source: 'a' }, { lang: 'ts', prefix: '+ ', source: 'b' }],
+      })
     expect(() => toolCallText('{}', { card: 'other' } as never)).toThrow()
   })
 
@@ -178,6 +186,48 @@ describe('transcript', () => {
   it('renders diff rows with gap markers', () => {
     expect(diffRows({ path: 'p', oldText: '1\n2\n3\n4\n5\n6\n7', newText: '1\n2\n3\n4\n5\n6\nX' }))
       .toEqual(['  …', '  5', '  6', '- 7', '+ X'])
+  })
+
+  it('carries the code span behind read and diff rows, and none behind the rest', () => {
+    const text = [{ type: 'text' as const, text: 'raw' }]
+    expect(toolResultBody({ card: 'read', path: 'f', offset: 0, totalLines: 2, lang: 'py', lines: [{ number: 7, text: 'x = 1' }, { number: 8, text: '' }] }, text))
+      .toEqual({
+        lines: ['   7│ x = 1', '   8│ '],
+        code: [{ lang: 'py', prefix: '   7│ ', source: 'x = 1' }, { lang: 'py', prefix: '   8│ ', source: '' }],
+      })
+    // No language hint on the read, no span: the rows draw plain.
+    expect(toolResultBody({ card: 'read', path: 'f', offset: 0, totalLines: 1, lines: [{ number: 1, text: 'plain' }] }, text))
+      .toEqual({ lines: ['   1│ plain'] })
+    // A gap marker and a path row are not code; a dotfile has no language.
+    expect(toolResultBody({ card: 'diff', diffs: [{ path: 'a/b.rs', oldText: '1\n2\n3\n4\n5\n6\n7', newText: '1\n2\n3\n4\n5\n6\nX' }] }, text).code)
+      .toEqual([undefined, undefined, { lang: 'rs', prefix: '  ', source: '5' }, { lang: 'rs', prefix: '  ', source: '6' }, { lang: 'rs', prefix: '- ', source: '7' }, { lang: 'rs', prefix: '+ ', source: 'X' }])
+    expect(toolResultBody({ card: 'diff', diffs: [{ path: '.gitignore', oldText: null, newText: 'lib\n' }] }, text))
+      .toEqual({ lines: ['.gitignore', '+ lib'], code: [undefined, undefined] })
+    expect(toolResultBody({ card: 'terminal', output: 'a' }, text)).toEqual({ lines: ['a'] })
+  })
+
+  it('paints consecutive spans of one language as one block and leaves the rest plain', () => {
+    const asked: [string, string | undefined][] = []
+    const highlight = {
+      lines: (code: string, lang: string | undefined) => {
+        asked.push([code, lang])
+        // A grammar that is still loading answers nothing for `py`; a count
+        // that does not match the rows is refused too.
+        if (lang === 'py') return undefined
+        if (lang === 'md') return ['too', 'many', 'rows']
+        return code.split('\n').map(line => `<${line}>`)
+      },
+    }
+    const lines = ['f.ts', '- a', '+ b', '  …', '  c', 'g.py', '+ d', '# h']
+    const code = [
+      undefined, { lang: 'ts', prefix: '- ', source: 'a' }, { lang: 'ts', prefix: '+ ', source: 'b' }, undefined,
+      { lang: 'ts', prefix: '  ', source: 'c' }, undefined, { lang: 'py', prefix: '+ ', source: 'd' }, { lang: 'md', prefix: '', source: '# h' },
+    ]
+    expect(paintCodeRows(lines, code, highlight)).toEqual(['f.ts', '- <a>', '+ <b>', '  …', '  <c>', 'g.py', '+ d', '# h'])
+    expect(asked).toEqual([['a\nb', 'ts'], ['c', 'ts'], ['d', 'py'], ['# h', 'md']])
+    // Without spans or without a highlighter the rows come back as given.
+    expect(paintCodeRows(lines, undefined, highlight)).toEqual(lines)
+    expect(paintCodeRows(lines, code, undefined)).toEqual(lines)
   })
 
   it('cuts rows to a maximum and names what one fold left out', () => {

@@ -1,6 +1,6 @@
 /**
  * Reasoning-effort rows and labels shared by `/effort`, the effort step of
- * `/model`, and the Shift+Tab cycle.
+ * `/model`, and the Shift+Tab picker.
  * @module @deepseek-ai/dsh-tui-app/effort
  */
 
@@ -50,10 +50,10 @@ export function effortItems(reasoning: LlmModelReasoningInfo): PickItem[] {
  * The dim row under the picker heading.
  * @param reasoning - what the model declares.
  * @param effort - the effort in force, or undefined for the provider default.
- * @returns one row naming the effort in force and the keys that change it.
+ * @returns one row naming the effort in force and how to dismiss the picker.
  */
 export function effortHint(reasoning: LlmModelReasoningInfo, effort: ReasoningEffortId | undefined): string {
-  return `current: ${effortName(reasoning, effort)} · Esc keeps it · Shift+Tab cycles`
+  return `current: ${effortName(reasoning, effort)} · Esc keeps it`
 }
 
 /**

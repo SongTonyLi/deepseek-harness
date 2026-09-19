@@ -1,12 +1,12 @@
 /**
- * The prompt editor's caret. pi-tui draws the caret cell itself in reverse
- * video; this module takes that block off the rendered lines and names the
- * DECSCUSR sequences the application writes so the terminal draws the caret
- * instead, as a blinking bar.
+ * The prompt editor's caret and word navigation. pi-tui draws the caret cell
+ * itself in reverse video; this module takes that block off the rendered lines,
+ * names the DECSCUSR sequences for a blinking bar, and maps Shift+Left/Right to
+ * pi-tui's word movement.
  * @module @deepseek-ai/dsh-tui-app/editor
  */
 
-import { CURSOR_MARKER, Editor } from '@earendil-works/pi-tui'
+import { CURSOR_MARKER, Editor, matchesKey } from '@earendil-works/pi-tui'
 
 /**
  * DECSCUSR `CSI 5 SP q` (`\x1b[5 q`): tell the terminal to draw its text
@@ -20,6 +20,12 @@ export const SET_BLINKING_BAR_CURSOR = '\u001b[5 q'
  * before it releases the terminal.
  */
 export const SET_TERMINAL_DEFAULT_CURSOR = '\u001b[0 q'
+
+/** Canonical Ctrl+Left sequence bound to pi-tui's word-backward action. */
+const WORD_LEFT = '\u001b[1;5D'
+
+/** Canonical Ctrl+Right sequence bound to pi-tui's word-forward action. */
+const WORD_RIGHT = '\u001b[1;5C'
 
 /** SGR reverse video on, which pi-tui opens its drawn block cursor with. */
 const REVERSE_VIDEO_ON = '\u001b[7m'
@@ -59,9 +65,11 @@ export function stripBlockCursor(line: string): string {
  * placed from the `CURSOR_MARKER` the editor emits at the same position. This
  * subclass removes that block from the lines `render` returns so the
  * terminal's own cursor - which the application shapes with
- * `SET_BLINKING_BAR_CURSOR` - is the only caret on screen. Everything else is
- * pi-tui's: text, autocomplete, padding, borders, scrolling, submission, and
- * history are untouched, and the component writes to no terminal itself.
+ * `SET_BLINKING_BAR_CURSOR` - is the only caret on screen. It also gives
+ * Shift+Left and Shift+Right the editor's existing word-backward and
+ * word-forward actions. Text, autocomplete, padding, borders, scrolling,
+ * submission, and history otherwise remain pi-tui's, and the component writes
+ * to no terminal itself.
  *
  * pi-tui emits the marker only while the editor is focused, yet it draws the
  * block either way, so an unfocused editor would keep a caret while another
@@ -71,6 +79,22 @@ export function stripBlockCursor(line: string): string {
  * terminal cursor stays with the region that owns the keyboard.
  */
 export class BarCursorEditor extends Editor {
+  /**
+   * Handle Shift+Left and Shift+Right as pi-tui's word movements.
+   * @param data - the bytes the terminal sent.
+   */
+  override handleInput(data: string): void {
+    if (matchesKey(data, 'shift+left')) {
+      super.handleInput(WORD_LEFT)
+      return
+    }
+    if (matchesKey(data, 'shift+right')) {
+      super.handleInput(WORD_RIGHT)
+      return
+    }
+    super.handleInput(data)
+  }
+
   /**
    * Render the editor without pi-tui's drawn block cursor.
    * @param width - the total width to lay the editor out in.

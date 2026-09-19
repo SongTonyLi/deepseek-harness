@@ -27,7 +27,7 @@ describe('reasoning effort rows', () => {
     expect(effortName(reasoning, ReasoningEffortId('high'))).toBe('High')
     expect(effortName(reasoning, ReasoningEffortId('stale'))).toBe('stale')
     expect(effortName(reasoning, undefined)).toBe('Provider default')
-    expect(effortHint(reasoning, ReasoningEffortId('low'))).toBe('current: Low · Esc keeps it · Shift+Tab cycles')
+    expect(effortHint(reasoning, ReasoningEffortId('low'))).toBe('current: Low · Esc keeps it')
   })
 
   it('matches an argument against the declared ids before the default keyword', () => {
