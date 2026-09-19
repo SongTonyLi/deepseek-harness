@@ -16,10 +16,17 @@ const TRUECOLOR = {
  * the app builds towards the white foreground it assumes there.
  * @param level - the ramp level, 0 for the darkest.
  * @param steps - brightness levels the ramp carries; the shipped default by default.
+ * @param background - the terminal background the ramp starts at.
+ * @param foreground - the foreground it climbs to.
  * @returns the SGR sequence a chunk of that age opens with.
  */
-function levelSgr(level: number, steps: number = FADE_STEPS): string {
-  const color = buildFadeRamp({ r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }, steps)[level]
+function levelSgr(
+  level: number,
+  steps: number = FADE_STEPS,
+  background: { r: number; g: number; b: number } = { r: 0, g: 0, b: 0 },
+  foreground: { r: number; g: number; b: number } = { r: 255, g: 255, b: 255 },
+): string {
+  const color = buildFadeRamp(background, foreground, steps)[level]
   if (color === undefined) throw new Error(`the ramp of ${String(steps)} steps has no level ${String(level)}`)
   return `\u001b[38;2;${String(color.r)};${String(color.g)};${String(color.b)}m`
 }
@@ -253,7 +260,7 @@ describe('streaming fade', () => {
     await streamText(test, 'hello')
     // White background, assumed black foreground: the darkest level is the
     // white end of the ramp, one smoothstep level down from it.
-    expect(lineWith(drawn(test), 'hello')).toContain('\u001b[38;2;250;250;250m')
+    expect(lineWith(drawn(test), 'hello')).toContain(levelSgr(0, undefined, { r: 255, g: 255, b: 255 }, { r: 0, g: 0, b: 0 }))
   })
 
   it('drops a background answer that arrives after the user quit', async () => {
@@ -404,7 +411,7 @@ describe('streaming fade', () => {
     await fadeTick(test)
     await fadeTick(test)
     const callMid = lineWith(drawn(test), 'probe')
-    expect(Math.min(...fadeRgbs(callMid).map(rgbLuma))).toBeLessThan(250)
+    expect(Math.min(...fadeRgbs(callMid).map(rgbLuma))).toBeLessThan(254)
     expect(callMid).not.toContain(levelSgr(0))
 
     for (let tick = 2; tick < FADE_STEPS - 1; tick += 1) await fadeTick(test)

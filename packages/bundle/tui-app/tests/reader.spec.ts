@@ -11,6 +11,7 @@ import {
   readerClosesOnEscape,
   readerGeometry,
   readerGeometryFor,
+  readerOutline,
   readerRows,
   reduceReader,
   type ReaderState,
@@ -81,81 +82,123 @@ describe('measurePane', () => {
 })
 
 describe('reduceReader over the turn list', () => {
-  it('steps one turn either way and stops at both ends', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 }, { column: 'list' })
-    const back = reduceReader(state, { kind: 'turn', to: 'previous' }, groups, geometry)
-    expect(back.cursor).toEqual({ block: 0, part: 0 })
-    expect(reduceReader(back, { kind: 'turn', to: 'previous' }, groups, geometry).cursor).toEqual({ block: 0, part: 0 })
-    const on = reduceReader(state, { kind: 'turn', to: 'next' }, groups, geometry)
-    expect(on.cursor).toEqual({ block: 4, part: 0 })
-    expect(reduceReader(on, { kind: 'turn', to: 'next' }, groups, geometry).cursor).toEqual({ block: 4, part: 0 })
+  it('steps one section either way and crosses into the turn either side', () => {
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 }, { column: 'list' })
+    const step = (from: ReaderState, to: 'previous' | 'next'): ReaderState =>
+      reduceReader(from, { kind: 'section', to }, groups, geometry, blocks)
+    expect(step(state, 'previous').cursor).toEqual({ block: 2, part: 0 })
+    expect(step(state, 'next').cursor).toEqual({ block: 3, part: 0 })
+    // The prompt of a turn is one step from the last section of the turn
+    // before it, so the list walks the conversation rather than one turn.
+    const opening = { ...state, cursor: { block: 1, part: 0 } }
+    expect(step(opening, 'previous').cursor).toEqual({ block: 0, part: 0 })
+    expect(step({ ...state, cursor: { block: 0, part: 0 } }, 'previous').cursor).toEqual({ block: 0, part: 0 })
+    expect(step({ ...state, cursor: { block: 5, part: 0 } }, 'next').cursor).toEqual({ block: 5, part: 0 })
   })
 
-  it('reaches either end of the list in one press', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 }, { column: 'list' })
-    expect(reduceReader(state, { kind: 'turn', to: 'first' }, groups, geometry).cursor).toEqual({ block: 0, part: 0 })
-    expect(reduceReader(state, { kind: 'turn', to: 'last' }, groups, geometry).cursor).toEqual({ block: 4, part: 0 })
+  it('reaches either end of the conversation in one press', () => {
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 }, { column: 'list' })
+    expect(reduceReader(state, { kind: 'section', to: 'first' }, groups, geometry, blocks).cursor).toEqual({ block: 0, part: 0 })
+    expect(reduceReader(state, { kind: 'section', to: 'last' }, groups, geometry, blocks).cursor).toEqual({ block: 5, part: 0 })
   })
 
-  it('opens each turn at its first section, whatever of it was read before', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 }, { column: 'list', offset: 30 })
-    expect(reduceReader(state, { kind: 'turn', to: 'first' }, groups, geometry)).toMatchObject({
-      cursor: { block: 0, part: 0 },
+  it('scrolls the panel to the section the list lands on', () => {
+    const { blocks, groups, state, geometry } = reader({ block: 1, part: 0 }, { column: 'list' })
+    // The reply is the turn's third section, four rows into the panel.
+    expect(reduceReader(state, { kind: 'section', to: 'next' }, groups, geometry, blocks)).toMatchObject({
+      cursor: { block: 2, part: 0 },
+      offset: 2,
+    })
+    // A section in another turn is measured in that turn's own panel, which
+    // is shorter than one body and so starts at its top.
+    expect(reduceReader(state, { kind: 'section', to: 'last' }, groups, geometry, blocks)).toMatchObject({
+      cursor: { block: 5, part: 0 },
       offset: 0,
     })
   })
 
-  it('pages the list by a bodyful of turns', () => {
-    const { groups, state, geometry } = reader({ block: 0, part: 0 }, { column: 'list' })
-    expect(reduceReader(state, { kind: 'page', step: 1 }, groups, geometry).cursor).toEqual({ block: 4, part: 0 })
-    expect(reduceReader(state, { kind: 'page', step: -1 }, groups, geometry).cursor).toEqual({ block: 0, part: 0 })
+  it('steps a whole turn with the page keys and stops at both ends', () => {
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 }, { column: 'list', offset: 12 })
+    expect(reduceReader(state, { kind: 'turn', step: -1 }, groups, geometry, blocks)).toMatchObject({
+      cursor: { block: 0, part: 0 },
+      offset: 0,
+    })
+    const last = reduceReader(state, { kind: 'turn', step: 1 }, groups, geometry, blocks)
+    expect(last.cursor).toEqual({ block: 4, part: 0 })
+    expect(reduceReader(last, { kind: 'turn', step: 1 }, groups, geometry, blocks).cursor).toEqual({ block: 4, part: 0 })
+  })
+
+  it('crosses turns on a terminal with no panel drawn beside the list', () => {
+    const blocks = transcript()
+    const groups = turnGroups(blocks)
+    const state: ReaderState = { cursor: { block: 2, part: 1 }, column: 'list', offset: 0 }
+    // The list has the whole body here, so there is no panel to scroll and
+    // no rows to measure in the turn the step lands on.
+    const narrow = readerGeometryFor(state, groups, blocks, 50, 20, READER_MIN_COLUMNS)
+    expect(narrow.pane).toBe(0)
+    expect(reduceReader(state, { kind: 'section', to: 'last' }, groups, narrow, blocks)).toMatchObject({
+      cursor: { block: 5, part: 0 },
+      offset: 0,
+    })
   })
 
   it('hands the keyboard to the turn beside it and takes it back', () => {
-    const { groups, state, geometry } = reader({ block: 1, part: 0 }, { column: 'list' })
-    const opened = reduceReader(state, { kind: 'column', to: 'pane' }, groups, geometry)
-    // The turn the list holds is what the panel was already showing, so the
-    // keyboard moves and nothing else does.
+    const { blocks, groups, state, geometry } = reader({ block: 1, part: 0 }, { column: 'list' })
+    const opened = reduceReader(state, { kind: 'column', to: 'pane' }, groups, geometry, blocks)
+    // The section the list holds is what the panel was already showing, so
+    // the keyboard moves and nothing else does.
     expect(opened).toMatchObject({ column: 'pane', cursor: { block: 1, part: 0 }, offset: 0 })
-    expect(reduceReader(opened, { kind: 'column', to: 'list' }, groups, geometry).column).toBe('list')
+    expect(reduceReader(opened, { kind: 'column', to: 'list' }, groups, geometry, blocks).column).toBe('list')
   })
 
   it('leaves the reading where it is on a transcript with no listed turn', () => {
-    const { state, geometry } = reader({ block: 2, part: 1 }, { column: 'list' })
+    const { blocks, state, geometry } = reader({ block: 2, part: 1 }, { column: 'list' })
     for (const intent of [
-      { kind: 'turn', to: 'next' },
-      { kind: 'page', step: 1 },
+      { kind: 'section', to: 'next' },
+      { kind: 'turn', step: 1 },
       { kind: 'anchor' },
     ] as const) {
-      expect(reduceReader(state, intent, [], geometry)).toBe(state)
+      expect(reduceReader(state, intent, [], geometry, blocks)).toBe(state)
     }
-    expect(reduceReader(state, { kind: 'scroll', to: 'next' }, [], geometry).cursor).toEqual({ block: 2, part: 1 })
+    expect(reduceReader(state, { kind: 'scroll', to: 'next' }, [], geometry, blocks).cursor).toEqual({ block: 2, part: 1 })
+  })
+})
+
+describe('readerOutline', () => {
+  it('lists every turn and opens the one being read', () => {
+    const { groups, state } = reader({ block: 2, part: 1 }, { column: 'list' })
+    const rows = readerOutline(state, groups)
+    expect(rows.map(row => row.kind)).toEqual(['turn', 'turn', 'section', 'section', 'section', 'section', 'section', 'turn'])
+    // One turn is open, and one of its section rows carries the cursor.
+    expect(rows.filter(row => row.kind === 'turn' && row.open)).toHaveLength(1)
+    const held = rows.filter(row => row.kind === 'section' && row.held)
+    expect(held).toEqual([{ kind: 'section', cursor: { block: 2, part: 1 }, held: true }])
   })
 })
 
 describe('reduceReader over the turn panel', () => {
   it('scrolls one row and stops at both ends', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 })
-    expect(reduceReader(state, { kind: 'scroll', to: 'previous' }, groups, geometry).offset).toBe(0)
-    expect(reduceReader(state, { kind: 'scroll', to: 'next' }, groups, geometry).offset).toBe(1)
-    const end = reduceReader(state, { kind: 'scroll', to: 'last' }, groups, geometry)
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 })
+    expect(reduceReader(state, { kind: 'scroll', to: 'previous' }, groups, geometry, blocks).offset).toBe(0)
+    expect(reduceReader(state, { kind: 'scroll', to: 'next' }, groups, geometry, blocks).offset).toBe(1)
+    const end = reduceReader(state, { kind: 'scroll', to: 'last' }, groups, geometry, blocks)
     expect(end.offset).toBe(geometry.measure.total - geometry.body)
-    expect(reduceReader(end, { kind: 'scroll', to: 'next' }, groups, geometry).offset).toBe(end.offset)
-    expect(reduceReader(end, { kind: 'scroll', to: 'first' }, groups, geometry).offset).toBe(0)
+    expect(reduceReader(end, { kind: 'scroll', to: 'next' }, groups, geometry, blocks).offset).toBe(end.offset)
+    expect(reduceReader(end, { kind: 'scroll', to: 'first' }, groups, geometry, blocks).offset).toBe(0)
   })
 
   it('reads the cursor off the row the scroll landed on', () => {
-    const { groups, state, geometry } = reader({ block: 1, part: 0 })
+    const { blocks, groups, state, geometry } = reader({ block: 1, part: 0 })
     // The turn opens on its prompt, with the reasoning two rows down and the
     // reply four: the section under the top row is where the transcript
     // resumes, so the reading itself moves it.
-    expect(reduceReader(state, { kind: 'scroll', to: 'next' }, groups, geometry).cursor).toEqual({ block: 1, part: 0 })
-    expect(reduceReader({ ...state, offset: 1 }, { kind: 'scroll', to: 'next' }, groups, geometry).cursor).toEqual({ block: 2, part: 0 })
-    const reply = reduceReader({ ...state, offset: 3 }, { kind: 'scroll', to: 'next' }, groups, geometry)
+    expect(reduceReader(state, { kind: 'scroll', to: 'next' }, groups, geometry, blocks).cursor).toEqual({ block: 1, part: 0 })
+    expect(reduceReader({ ...state, offset: 1 }, { kind: 'scroll', to: 'next' }, groups, geometry, blocks).cursor).toEqual({ block: 2, part: 0 })
+    const reply = reduceReader({ ...state, offset: 3 }, { kind: 'scroll', to: 'next' }, groups, geometry, blocks)
     expect(reply.cursor).toEqual({ block: 2, part: 1 })
-    expect(reduceReader(reply, { kind: 'scroll', to: 'first' }, groups, geometry).cursor).toEqual({ block: 1, part: 0 })
+    expect(reduceReader(reply, { kind: 'scroll', to: 'first' }, groups, geometry, blocks).cursor).toEqual({ block: 1, part: 0 })
     // The reply is the turn's longest section, so its last page starts in it.
-    expect(reduceReader(reply, { kind: 'scroll', to: 'last' }, groups, geometry).cursor).toEqual({ block: 2, part: 1 })
+    expect(reduceReader(reply, { kind: 'scroll', to: 'last' }, groups, geometry, blocks).cursor).toEqual({ block: 2, part: 1 })
   })
 
   it('pages the turn with one row of overlap', () => {
@@ -163,20 +206,20 @@ describe('reduceReader over the turn panel', () => {
     const groups = turnGroups(blocks)
     const state: ReaderState = { cursor: { block: 2, part: 1 }, column: 'pane', offset: 0 }
     const geometry = readerGeometryFor(state, groups, blocks, 95, 12, READER_MIN_COLUMNS)
-    const page = reduceReader(state, { kind: 'page', step: 1 }, groups, geometry)
+    const page = reduceReader(state, { kind: 'page', step: 1 }, groups, geometry, blocks)
     expect(page.offset).toBe(geometry.body - 1)
-    expect(reduceReader(page, { kind: 'page', step: -1 }, groups, geometry).offset).toBe(0)
+    expect(reduceReader(page, { kind: 'page', step: -1 }, groups, geometry, blocks).offset).toBe(0)
     // The last page stops at the panel's own end rather than past it.
-    const far = reduceReader({ ...state, offset: geometry.measure.total }, { kind: 'page', step: 1 }, groups, geometry)
+    const far = reduceReader({ ...state, offset: geometry.measure.total }, { kind: 'page', step: 1 }, groups, geometry, blocks)
     expect(far.offset).toBe(geometry.measure.total - geometry.body)
   })
 
   it('re-anchors on the turn\'s first section when the one it read is gone', () => {
-    const { groups, geometry } = reader({ block: 2, part: 1 })
+    const { blocks, groups, geometry } = reader({ block: 2, part: 1 })
     // The block is still listed, so its turn is found and the reading comes
     // back to the top of it.
     const state: ReaderState = { cursor: { block: 2, part: 9 }, column: 'pane', offset: 30 }
-    expect(reduceReader(state, { kind: 'anchor' }, groups, geometry).offset).toBe(0)
+    expect(reduceReader(state, { kind: 'anchor' }, groups, geometry, blocks).offset).toBe(0)
   })
 
   it('re-anchors on the section being read after the panel was rewrapped', () => {
@@ -185,38 +228,38 @@ describe('reduceReader over the turn panel', () => {
     const state: ReaderState = { cursor: { block: 2, part: 1 }, column: 'pane', offset: 0 }
     const wide = readerGeometryFor(state, groups, blocks, 95, 40, READER_MIN_COLUMNS)
     // The reply is the turn's third section, which starts four rows down.
-    expect(reduceReader(state, { kind: 'anchor' }, groups, wide).offset).toBe(4)
+    expect(reduceReader(state, { kind: 'anchor' }, groups, wide, blocks).offset).toBe(4)
     // A terminal with no panel at all has no row to anchor on.
     const narrow = readerGeometryFor({ ...state, column: 'list' }, groups, blocks, 50, 20, READER_MIN_COLUMNS)
-    expect(reduceReader(state, { kind: 'anchor' }, groups, narrow).offset).toBe(0)
+    expect(reduceReader(state, { kind: 'anchor' }, groups, narrow, blocks).offset).toBe(0)
   })
 })
 
 describe('reduceReader over the query line', () => {
   it('opens, extends, erases, and commits the query', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 })
-    const open = reduceReader(state, { kind: 'filter' }, groups, geometry)
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 })
+    const open = reduceReader(state, { kind: 'filter' }, groups, geometry, blocks)
     expect(open).toMatchObject({ column: 'filter', query: '' })
-    const typed = reduceReader(reduceReader(open, { kind: 'query', text: 'te' }, groups, geometry), { kind: 'query', text: 'sts' }, groups, geometry)
+    const typed = reduceReader(reduceReader(open, { kind: 'query', text: 'te' }, groups, geometry, blocks), { kind: 'query', text: 'sts' }, groups, geometry, blocks)
     expect(typed.query).toBe('tests')
-    expect(reduceReader(typed, { kind: 'erase', all: false }, groups, geometry).query).toBe('test')
-    expect(reduceReader(typed, { kind: 'erase', all: true }, groups, geometry).query).toBe('')
-    expect(reduceReader(typed, { kind: 'commit' }, groups, geometry)).toMatchObject({ column: 'list', query: 'tests' })
+    expect(reduceReader(typed, { kind: 'erase', all: false }, groups, geometry, blocks).query).toBe('test')
+    expect(reduceReader(typed, { kind: 'erase', all: true }, groups, geometry, blocks).query).toBe('')
+    expect(reduceReader(typed, { kind: 'commit' }, groups, geometry, blocks)).toMatchObject({ column: 'list', query: 'tests' })
   })
 
   it('erases and extends a query line that was never typed into', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 })
-    expect(reduceReader(state, { kind: 'erase', all: false }, groups, geometry).query).toBe('')
-    expect(reduceReader(state, { kind: 'query', text: 'a' }, groups, geometry).query).toBe('a')
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 })
+    expect(reduceReader(state, { kind: 'erase', all: false }, groups, geometry, blocks).query).toBe('')
+    expect(reduceReader(state, { kind: 'query', text: 'a' }, groups, geometry, blocks).query).toBe('a')
   })
 
   it('walks the Escape chain: the query, then the query line, then the reader itself', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 })
-    const typed = reduceReader(reduceReader(state, { kind: 'filter' }, groups, geometry), { kind: 'query', text: 'tests' }, groups, geometry)
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 })
+    const typed = reduceReader(reduceReader(state, { kind: 'filter' }, groups, geometry, blocks), { kind: 'query', text: 'tests' }, groups, geometry, blocks)
     expect(readerClosesOnEscape(typed)).toBe(false)
-    const cleared = reduceReader(typed, { kind: 'escape' }, groups, geometry)
+    const cleared = reduceReader(typed, { kind: 'escape' }, groups, geometry, blocks)
     expect(cleared).toMatchObject({ column: 'filter', query: '' })
-    const closed = reduceReader(cleared, { kind: 'escape' }, groups, geometry)
+    const closed = reduceReader(cleared, { kind: 'escape' }, groups, geometry, blocks)
     expect(closed).toMatchObject({ column: 'list' })
     expect(closed.query).toBeUndefined()
     // Both panels answer the key the same way: it leaves the reader.
@@ -225,8 +268,8 @@ describe('reduceReader over the query line', () => {
   })
 
   it('keeps the query while the query line closes and reopens', () => {
-    const { groups, state, geometry } = reader({ block: 2, part: 1 }, { query: 'tests' })
-    expect(reduceReader(state, { kind: 'filter' }, groups, geometry).query).toBe('tests')
+    const { blocks, groups, state, geometry } = reader({ block: 2, part: 1 }, { query: 'tests' })
+    expect(reduceReader(state, { kind: 'filter' }, groups, geometry, blocks).query).toBe('tests')
   })
 })
 
@@ -291,7 +334,8 @@ describe('readerRows', () => {
     // readout under it states too: the blocks before the first prompt are a
     // row of the list too, so a turn's own number sits one behind its position.
     expect(lines).toContain('turn 2 of 3')
-    expect(lines).toContain('▸ 1  [fix the fade a…]')
+    expect(lines).toContain('  1  [fix the fade a…]')
+    expect(lines).toContain('▸   ¶ reply')
     expect(lines).toContain('⬡1')
     expect(lines).toContain('✻¶⚒1')
     expect(lines).toContain('── ¶ reply · turn 1 ')
@@ -314,11 +358,11 @@ describe('readerRows', () => {
 
   it('names the list\'s own keys while the list holds the keyboard', () => {
     expect(draw({ ...held, column: 'list' }, 95, 40).join('\n'))
-      .toContain('↑↓ turns · → opens · / filters · Esc closes')
+      .toContain('↑↓ sections · PgUp PgDn turns · → opens · / filters · Esc closes')
     // The readout is reserved first, so a narrower rule drops legend words
     // rather than the position.
     const narrow = draw({ ...held, column: 'list' }, 60, 20).join('\n')
-    expect(narrow).toContain('↑↓ turns · → opens · Esc closes')
+    expect(narrow).toContain('↑↓ sections · → opens · Esc closes')
     expect(narrow).toContain('turn 2/3 · row 5/49')
   })
 
@@ -326,7 +370,7 @@ describe('readerRows', () => {
     const lines = draw({ ...held, column: 'filter', query: 'green' }, 95, 40, 'green').join('\n')
     expect(lines).toContain('/ green')
     expect(lines).toContain('1/3 turns')
-    expect(lines).toContain('▸ 2  [run the tests]')
+    expect(lines).toContain('  2  [run the tests]')
   })
 
   it('says so when no turn matches', () => {
@@ -361,7 +405,7 @@ describe('readerRows', () => {
       totalTurns: 1,
     })
     expect(lines).toHaveLength(40)
-    expect(lines.join('\n')).toContain('▸ 9  [gone]')
+    expect(lines.join('\n')).toContain('  9  [gone]')
   })
 
   it('refuses a terminal the frame does not fit in', () => {
@@ -374,14 +418,14 @@ describe('readerRows', () => {
   it('draws the turn alone on a narrow terminal, and the list alone the other way', () => {
     expect(draw(held, 59, 20).join('\n')).toContain('reply row 0')
     const list = draw({ ...held, column: 'list' }, 59, 20).join('\n')
-    expect(list).toContain('▸ 1  [fix the fade at the top]')
+    expect(list).toContain('  1  [fix the fade at the top]')
     expect(list).not.toContain('reply row 0')
   })
 
   it('cuts a listed prompt the width cannot hold, keeping both brackets and its markers', () => {
     const lines = draw({ ...held, column: 'list' }, 60, 20).join('\n')
     expect(lines).toContain('✻¶⚒1')
-    expect(lines).toContain('▸ 1  [fix th…]')
+    expect(lines).toContain('  1  [fix th…]')
     expect(lines).toContain('Esc closes')
   })
 })

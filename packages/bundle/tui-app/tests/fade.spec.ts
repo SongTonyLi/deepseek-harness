@@ -64,8 +64,8 @@ function clock(): { now: () => number; advance: (ms: number) => void } {
 }
 
 describe('defaults', () => {
-  it('ships eight brightness levels, each lasting 33ms', () => {
-    expect(FADE_STEPS).toBe(8)
+  it('ships twelve brightness levels, each lasting 33ms', () => {
+    expect(FADE_STEPS).toBe(12)
     expect(FADE_TICK_MS).toBe(33)
   })
 })
@@ -134,8 +134,8 @@ describe('mixFadeColor', () => {
 
 describe('fadeSgr', () => {
   it('writes 24-bit foreground bytes per ramp level', () => {
-    expect(sgrAt(0)).toBe('\u001b[38;2;44;17;5m')
-    expect(sgrAt(3)).toBe('\u001b[38;2;146;71;34m')
+    expect(sgrAt(0)).toBe('\u001b[38;2;28;8;2m')
+    expect(sgrAt(3)).toBe('\u001b[38;2;108;51;22m')
     expect(sgrAt(FADE_STEPS - 1)).toBe('\u001b[38;2;200;100;50m')
   })
 
@@ -621,10 +621,25 @@ describe('recolorTail', () => {
     expect(painted[1]).toBe(lines[1])
   })
 
-  it('draws a chunk the renderer rewrote at the foreground, together with every older chunk', () => {
+  it('recolors a chunk whose Markdown syntax the renderer consumed', () => {
+    // `**bold**` reaches the screen as `bold`, so the chunk's own asterisks
+    // have no columns: the word still carries its own level, and the chunks
+    // behind it keep theirs instead of snapping to the foreground.
     const spans = [{ text: '**bold** ', age: 3 }, { text: 'and ', age: 1 }, { text: 'tail', age: 0 }]
     expect(recolorTail(['bold and tail'], spans, COLOR)).toEqual([
-      `bold ${sgrAt(1)}and ${sgrAt(0)}tail\u001b[39m`,
+      `${sgrAt(3)}bold ${sgrAt(1)}and ${sgrAt(0)}tail\u001b[39m`,
+    ])
+  })
+
+  it('reads over a mark the renderer drew of its own', () => {
+    // The bullet stands where the stream wrote `-`, so it belongs to no chunk
+    // in particular and takes the level of the one the walk reached it from.
+    // What matters is that it neither ends the walk nor costs the chunks
+    // around it their own levels.
+    const spans = [{ text: 'first ', age: 3 }, { text: '- item', age: 0 }]
+    expect(recolorTail(['first', '• item'], spans, COLOR)).toEqual([
+      `${sgrAt(3)}first\u001b[39m`,
+      `${sgrAt(3)}•${sgrAt(0)} item\u001b[39m`,
     ])
   })
 
@@ -651,8 +666,8 @@ describe('recolorTail float-out', () => {
   it('starts brighter than the dim settle and recedes, then returns the original dim italic bytes', () => {
     const young = recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], COLOR, 0, 'out')
     const mid = recolorTail([DIM_REASONING], [{ text: 'world', age: 4 }], COLOR, 0, 'out')
-    const last = recolorTail([DIM_REASONING], [{ text: 'world', age: 7.9 }], COLOR, 0, 'out')
-    const done = recolorTail([DIM_REASONING], [{ text: 'world', age: 8 }], COLOR, 0, 'out')
+    const last = recolorTail([DIM_REASONING], [{ text: 'world', age: FADE_STEPS - 0.1 }], COLOR, 0, 'out')
+    const done = recolorTail([DIM_REASONING], [{ text: 'world', age: FADE_STEPS }], COLOR, 0, 'out')
     const youngLuma = luminance(fadeRgbs(young[0] ?? '')[0] ?? BLACK)
     const midLuma = luminance(fadeRgbs(mid[0] ?? '')[0] ?? BLACK)
     const lastLuma = luminance(fadeRgbs(last[0] ?? '')[0] ?? BLACK)
@@ -669,7 +684,7 @@ describe('recolorTail float-out', () => {
     expect(recolorTail([DIM_REASONING], [], DIM_STYLE, 0, 'out')).toEqual([DIM_REASONING])
     expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], { capability: 'none', ramp: COLOR.ramp }, 0, 'out')).toEqual([DIM_REASONING])
     expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], { capability: 'truecolor', ramp: [] }, 0, 'out')).toEqual([DIM_REASONING])
-    expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 8 }], { capability: 'ansi256', ramp: COLOR.ramp }, 0, 'out')).toEqual([DIM_REASONING])
+    expect(recolorTail([DIM_REASONING], [{ text: 'world', age: FADE_STEPS }], { capability: 'ansi256', ramp: COLOR.ramp }, 0, 'out')).toEqual([DIM_REASONING])
     expect(recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], { capability: 'ansi256', ramp: COLOR.ramp }, 0, 'out')[0]).toMatch(/\u001b\[38;5;\d+m/)
   })
 })

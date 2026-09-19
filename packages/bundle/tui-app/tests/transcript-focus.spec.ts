@@ -911,6 +911,24 @@ describe('the reader and the scrollback', () => {
     expect(await test.screen()).not.toContain(' ● READER ')
   })
 
+  it('covers the whole viewport after the frame shrank under it', async () => {
+    const test = await tallConversation()
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    // Esc unmounts the inspector, so the frame shrinks and the top of the
+    // viewport falls out of the renderer's own reach.
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    // pi-tui composites an overlay into the frame's last `rows` lines, so a
+    // reader that covers the terminal owns every one of them: the blank rows
+    // the frame gained put the viewport's top back within reach.
+    const viewport = (await test.screen()).split('\n').slice(-test.terminal.rows)
+    expect(viewport[0]).toContain(' ● READER ')
+    expect(viewport.at(-1)).toContain('╰')
+  })
+
   it('steps aside for a seam the agent is blocked on and comes back over the same conversation', async () => {
     const test = await tallConversation()
     test.terminal.type(KEY.shiftUp)

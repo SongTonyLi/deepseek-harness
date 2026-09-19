@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Component } from '@earendil-works/pi-tui'
-import { GuardedMainScreen, repaintFloor } from '../src/screen.ts'
+import { GuardedMainScreen, ViewportPad, repaintFloor } from '../src/screen.ts'
 import { FakeTerminal } from './bench.ts'
 
 /** A child that counts its renders and draws whatever it was last given. */
@@ -124,5 +124,21 @@ describe('GuardedMainScreen', () => {
     child.lines = child.lines.slice(0, 30)
     screen.renderNow()
     expect(tops).toEqual([22, 22])
+  })
+})
+
+describe('ViewportPad', () => {
+  it('draws the rows it is asked for, and nothing where none are needed', () => {
+    let rows = 0
+    const pad = new ViewportPad(() => rows)
+    expect(pad.render()).toEqual([])
+    rows = 3
+    expect(pad.render()).toEqual(['', '', ''])
+    // A negative shortfall is no shortfall at all.
+    rows = -2
+    expect(pad.render()).toEqual([])
+    // The pad holds no state of its own to invalidate.
+    pad.invalidate()
+    expect(pad.render()).toEqual([])
   })
 })

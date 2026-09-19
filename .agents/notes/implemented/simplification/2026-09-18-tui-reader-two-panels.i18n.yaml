@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/simplification/2026-09-18-tui-reader-two-panels.md
-2026-09-18-tui-reader-two-panels.md: 3079c3641cf013e19ec950d7a1956a470dd4dd94
-2026-09-18-tui-reader-two-panels.zh.md: 94918be8566948b4d950006f85cc77faaff2a3fb
+2026-09-18-tui-reader-two-panels.md: 58d0b2e3b673b836cbe684cd4210c100e55de744
+2026-09-18-tui-reader-two-panels.zh.md: 376c1b55df526e806582be0555fd8ba8fc44ce24
