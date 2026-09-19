@@ -19,7 +19,7 @@ import { Markdown, Text, wrapTextWithAnsi, type Component } from '@earendil-work
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
-import { markdownTheme, type Palette } from './style.ts'
+import { markdownTheme, type CodeHighlighter, type Palette } from './style.ts'
 import { foldMarker, foldRows, type ToolCallText } from './transcript.ts'
 
 /** Columns the focus gutter takes from the width a block's content wraps at. */
@@ -47,6 +47,8 @@ export interface BlockTheme {
   toolPreviewLines: number
   /** Collapsed body rows of a system prompt or an injected context block. */
   contextPreviewLines: number
+  /** Colours fenced code in a reply; absent draws every block plain. */
+  codeHighlight?: CodeHighlighter
 }
 
 /**
@@ -389,7 +391,7 @@ export class AssistantBlock implements Component, AssistantSection {
 
   constructor(private readonly theme: BlockTheme, readonly turn: number) {
     const palette = theme.palette
-    this.markdown = new Markdown('', 0, 0, markdownTheme(palette))
+    this.markdown = new Markdown('', 0, 0, markdownTheme(palette, theme.codeHighlight))
     this.reasoningText = new Text('', 0, 0)
   }
 

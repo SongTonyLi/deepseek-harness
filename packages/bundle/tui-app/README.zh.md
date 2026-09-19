@@ -40,7 +40,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 ### 屏幕布局
 
-页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。非空的系统提示词与每一条注入的上下文——instructions、catalogs、snapshots、notices、relays 与 recalls——绘制为暗色 `⬡` 标题，其下是面向模型文本的前 `contextPreviewLines` 行，快照的每一份贡献具名写在其自身各行上方；空的系统提示词与压缩替换则省略。承载的行数多于其绘制行数的工具卡片与上下文块，结尾都是同一条标记：该块被对话记录的焦点持有时为 `… <n> more rows · Space expands`，否则为 `… <n> more rows · Ctrl+O expands`。流式回复文字会淡入，而且每个词各走各的时钟：一个词以接近终端背景色的亮度出现，并经 `streamFadeSteps` 次、每次 `streamFadeStepMs` 提亮到它最终稳定的颜色，因此流得更快只会留下更长的一串正在提亮的词，而不会更暗。流式推理与工具卡片在同一时长内浮出：它们以抬高的颜色出现，再退回到稳定时的暗色斜体或调色板颜色；从持久化历史重绘的卡片不带淡入，已经稳定下来的文字也不会再被调暗。
+页眉在标题生成或设置后以标题命名会话，并在旁边显示 id。对话记录在终端自身的回滚区中增长：你的提示以 `›` 开头（附件列在其下），assistant 的推理以暗色显示在 Markdown 回复上方，每次工具调用是一张卡片，含状态符号、工具名、呈现器标题，以及折叠到 `toolPreviewLines` 行的正文。非空的系统提示词与每一条注入的上下文——instructions、catalogs、snapshots、notices、relays 与 recalls——绘制为暗色 `⬡` 标题，其下是面向模型文本的前 `contextPreviewLines` 行，快照的每一份贡献具名写在其自身各行上方；空的系统提示词与压缩替换则省略。承载的行数多于其绘制行数的工具卡片与上下文块，结尾都是同一条标记：该块被对话记录的焦点持有时为 `… <n> more rows · Space expands`，否则为 `… <n> more rows · Ctrl+O expands`。回复中的围栏代码会以语法高亮绘制，配色主题由终端自身的背景在明暗之间选定；某种语言的语法会在第一个用到它的代码块出现时才加载，因此该块先以纯文本绘制、随后被重绘为彩色；这里没有对应语法的语言、既不支持 24 位也不支持 256 色的终端，以及 `codeHighlight: false`，都会把每个代码块画成纯文本。流式回复文字会淡入，而且每个词各走各的时钟：一个词以接近终端背景色的亮度出现，并经 `streamFadeSteps` 次、每次 `streamFadeStepMs` 提亮到它最终稳定的颜色，因此流得更快只会留下更长的一串正在提亮的词，而不会更暗。流式推理与工具卡片在同一时长内浮出：它们以抬高的颜色出现，再退回到稳定时的暗色斜体或调色板颜色；从持久化历史重绘的卡片不带淡入，已经稳定下来的文字也不会再被调暗。
 
 对话记录下方依次是 agent 工作时的旋转指示、任何打开的提示、编辑器、子 agent 面板，以及页脚：未聚焦时是一行由两端向内构建的状态栏。编辑器的光标是终端自身的闪烁竖条：应用在启动时请求这一形状，退出时把你的默认形状还回去，而状态栏或面板持有键盘期间完全不绘制光标。模型锚定在左端且永不丢弃——超过 20 列时退回到裸模型名，只有仍然过宽的标签才会被省略号截断——离开编辑器的那两个按键则锚定在右端，写作 `Shift+↑ read · Shift+↓ status`，窄到一定程度收缩为 `Shift+↑↓ nav`，不足 40 列时整体丢弃。关键事实填满剩下的中间部分，按状态栏顺序排列：推理强度（选择把推理交给模型时标为 `effort default`）、进行中轮次的已用时间、上下文窗口百分比、todo 计数，以及 workspace 路径（过长时以 `~` 与 `…/` 缩短）。中间部分容纳不下的每个分段都折进末尾的 `+N`，未聚焦行从不绘制的那些分段也一并折入——权限预设、累计 token 用量、来自投影接缝的目标与计划模式标记，以及待发送附件的数量。压缩与模型请求重试以通知形式出现，与浏览器标记承载的事实相同。
 
@@ -197,6 +197,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `contextPreviewLines` | `4` | 在被标记的块上按 `Space` 或按 `Ctrl+O` 展开之前，系统提示词或注入的 `⬡` 上下文块绘制的行数 |
 | `focusPreviewLines` | `12` | 停靠的检视面板为聚焦小节显示的行数，其后由折叠标记把剩余部分交给阅读器；对每一种小节都适用 |
 | `readerMinColumns` | `60` | 阅读器把被选中的轮次画在轮次列表旁边所需的列数；不足时一次只画一个面板 |
+| `codeHighlight` | `true` | 以语法高亮绘制回复中的围栏代码，配色主题由终端背景选定 |
 | `toastMs` | `2000` | 临时按键提示行以全亮度保持多久后淡出，这同时也是第二次 `Esc` 停止正在进行轮次的窗口 |
 | `liveRefreshMs` | `1000` | 重绘周期：推进 `turn` 分段与面板中的已用时间，并重新读取已过期的子 agent 列表 |
 | `streamFadeSteps` | `12` | 一次淡入或浮出持续多少拍：回复文字淡入，推理与工具卡片浮出，时长为 `streamFadeSteps × streamFadeStepMs` |
@@ -254,6 +255,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/transcript.ts`](src/transcript.ts) | 呈现视图、用量与轮次结束原因的纯文本折叠，以及每条标记共用的那一套折叠措辞 |
 | [`src/diff.ts`](src/diff.ts) | diff 卡片的行 diff 与 hunk 选择 |
 | [`src/style.ts`](src/style.ts) | 调色板与派生的 pi-tui 主题 |
+| [`src/highlight.ts`](src/highlight.ts) | 围栏代码的语法高亮：某个围栏可能加载的语法、由背景选定的配色主题，以及一个 token 所用的 SGR |
 | [`src/completion.ts`](src/completion.ts) | 编辑器的斜杠命令与 `@` 引用补全 |
 | [`src/editor.ts`](src/editor.ts) | 去掉 pi-tui 自绘块状光标的提示编辑器，以及终端自身光标所用的 DECSCUSR 序列 |
 | [`src/status.ts`](src/status.ts) | 投影接缝的事实，以及 `/status` 报告与分段详情共享的小节；压缩与重试通知 |

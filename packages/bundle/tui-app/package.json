@@ -61,7 +61,10 @@
     "@deepseek-ai/dsh-workspace-changes": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
     "@earendil-works/pi-tui": "^0.85.1",
-    "commander": "^15.0.0"
+    "@shikijs/langs": "^4.3.1",
+    "@shikijs/themes": "^4.3.1",
+    "commander": "^15.0.0",
+    "shiki": "^4.3.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",

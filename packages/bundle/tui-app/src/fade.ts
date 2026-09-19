@@ -587,7 +587,7 @@ function ansi256Rgb(index: number): RgbColor {
  * @param color - the mixed RGB.
  * @returns an index in 0..255.
  */
-function nearestAnsi256(color: RgbColor): number {
+export function nearestAnsi256(color: RgbColor): number {
   let best = 0
   let bestDist = Infinity
   for (let n = 0; n < 256; n += 1) {

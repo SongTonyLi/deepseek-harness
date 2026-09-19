@@ -555,3 +555,42 @@ describe('streaming fade', () => {
     expect(test.tickArmed(25)).toBe(false)
   })
 })
+
+describe('syntax colour', () => {
+  /** Whether a drawn line carries a colour off the fade's own gray ramp. */
+  function hasSyntaxColor(line: string): boolean {
+    return fadeRgbs(line).some(color => color.r !== color.g || color.g !== color.b)
+  }
+
+  it('repaints a fenced block in colour once its grammar has landed', async () => {
+    const test = await bench(TRUECOLOR)
+    await test.settle()
+    // A committed message carries no fade, so the only colours on its lines
+    // are the ones the highlighter put there. The grammar is a real import:
+    // the block draws plain first and the highlighter asks for the frame
+    // again once it is there.
+    const since = writesFrom(test)
+    test.appendAssistant([{ type: 'text', text: 'here:\n\n```ts\nconst rows = 42\n```' }])
+    await test.settle()
+    // Each token opens with its own colour, so the row is matched on one word.
+    let line: string | undefined
+    for (let pass = 0; pass < 200 && line === undefined; pass += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await test.settle()
+      line = since().split('\n').findLast(row => row.includes('const') && hasSyntaxColor(row))
+    }
+    expect(line, 'the fenced block was never repainted in colour').toBeDefined()
+    expect(line).toContain('rows')
+  }, 20_000)
+
+  it('draws every fence plain where the setting is off', async () => {
+    const test = await bench({ ...TRUECOLOR, codeHighlight: false })
+    await test.settle()
+    const since = writesFrom(test)
+    test.appendAssistant([{ type: 'text', text: '```ts\nconst rows = 42\n```' }])
+    await test.settle()
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await test.settle()
+    expect(since().split('\n').some(row => row.includes('const') && hasSyntaxColor(row))).toBe(false)
+  }, 20_000)
+})

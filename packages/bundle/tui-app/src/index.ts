@@ -80,6 +80,14 @@ export interface Config {
    */
   readerMinColumns: number
   /**
+   * Draw fenced code in a reply in syntax colours, from a theme picked by the
+   * terminal's own background. The grammars load on the first block that asks
+   * for one, so a session with no code in it loads none; a language with no
+   * grammar here, and a terminal that reports neither 24-bit nor 256 colours,
+   * draw the block plain. Turn it off to read every block in one colour.
+   */
+  codeHighlight: boolean
+  /**
    * How long a transient key-feedback line - `press Esc again to stop turn
    * <n>`, `press Ctrl+C again to quit` - holds at full strength before it
    * fades out, in milliseconds. It is also the window in which a second `Esc`
@@ -145,6 +153,7 @@ export const Config: z<Config> = z.object({
   contextPreviewLines: z.natural().min(1).default(CONTEXT_PREVIEW_LINES),
   focusPreviewLines: z.natural().min(1).default(FOCUS_PREVIEW_LINES),
   readerMinColumns: z.natural().min(40).default(READER_MIN_COLUMNS),
+  codeHighlight: z.boolean().default(true),
   toastMs: z.natural().min(500).default(TOAST_MS),
   liveRefreshMs: z.natural().min(100).default(1000),
   streamFadeSteps: z.natural().min(2).default(FADE_STEPS),
@@ -330,6 +339,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     contextPreviewLines: config.contextPreviewLines,
     focusPreviewLines: config.focusPreviewLines,
     readerMinColumns: config.readerMinColumns,
+    codeHighlight: config.codeHighlight,
     toastMs: config.toastMs,
     liveRefreshMs: config.liveRefreshMs,
     fadeSteps: config.streamFadeSteps,
