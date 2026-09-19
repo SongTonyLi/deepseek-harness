@@ -432,7 +432,7 @@ describe('TuiApp', () => {
     await test.settle()
     const reading = await test.screen()
     expect(reading).toContain(' ● READER ')
-    expect(reading).toContain('▸ 1  [read the spec]')
+    expect(reading).toContain('  1  [read the spec]')
     expect(reading).toContain('the reply')
     test.terminal.type(KEY.ctrlG)
     await test.settle()

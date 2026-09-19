@@ -85,8 +85,8 @@ export const TOO_SMALL = `terminal too small for the reader (needs ${String(READ
  */
 export const READER_HINTS: Record<'list' | 'pane', readonly [string, ...string[]]> = {
   list: [
-    '↑↓ turns · → opens · / filters · Esc closes',
-    '↑↓ turns · → opens · Esc closes',
+    '↑↓ sections · PgUp PgDn turns · → opens · / filters · Esc closes',
+    '↑↓ sections · → opens · Esc closes',
     'Esc closes',
   ],
   pane: [
@@ -145,11 +145,13 @@ export interface ReaderGeometry {
 
 /** What one key press means inside the reader. */
 export type ReaderIntent =
-  /** Step the list's selection along the turns. */
-  | { kind: 'turn'; to: MoveTarget }
+  /** Step the list's selection along the sections, crossing turns at their ends. */
+  | { kind: 'section'; to: MoveTarget }
+  /** Step the list's selection to the first section of the turn either side. */
+  | { kind: 'turn'; step: 1 | -1 }
   /** Move the turn panel one row, or to either of its ends. */
   | { kind: 'scroll'; to: MoveTarget }
-  /** A page: of the panel's rows with one row of overlap, or of the list's turns. */
+  /** A page of the panel's rows, with one row of overlap. */
   | { kind: 'page'; step: 1 | -1 }
   /** Give the keyboard to the list or to the turn beside it. */
   | { kind: 'column'; to: 'list' | 'pane' }
@@ -341,6 +343,45 @@ export function readerGeometryFor(
   return { ...layout, measure: measurePane(group, blocks, layout.pane) }
 }
 
+/** One row of the turn list: a turn, or one section of the turn being read. */
+export type OutlineRow =
+  /** A turn, named by its number and its prompt. */
+  | { kind: 'turn'; group: TurnGroup; open: boolean }
+  /** A section of the turn being read, named the way the panel heads it. */
+  | { kind: 'section'; cursor: TranscriptCursor; held: boolean }
+
+/**
+ * The rows the turn list draws: every turn, with the sections of the one being
+ * read listed under it. Only that turn opens, so the list stays a timeline a
+ * long session can still be walked through, and the sections of another turn
+ * are one step away rather than behind a key of their own.
+ * @param state - where the reader is.
+ * @param groups - the turns the list names.
+ * @returns the rows in drawing order, each marked when the cursor holds it.
+ */
+export function readerOutline(state: ReaderState, groups: readonly TurnGroup[]): OutlineRow[] {
+  const held = groupIndex(state, groups)
+  return groups.flatMap((group, index) => {
+    const turn: OutlineRow = { kind: 'turn', group, open: index === held }
+    if (index !== held) return [turn]
+    return [turn, ...group.sections.map((cursor): OutlineRow => ({
+      kind: 'section',
+      cursor,
+      held: sameCursor(cursor, state.cursor),
+    }))]
+  })
+}
+
+/**
+ * Every section of every listed turn, in reading order, which is what the
+ * list's own `Up` and `Down` step along.
+ * @param groups - the turns the list names.
+ * @returns one cursor per section.
+ */
+function allSections(groups: readonly TurnGroup[]): TranscriptCursor[] {
+  return groups.flatMap(group => [...group.sections])
+}
+
 /**
  * The largest first visible panel row; 0 while the whole turn fits at once.
  * @param geometry - the reader's geometry.
@@ -384,6 +425,53 @@ function targetIndex(to: MoveTarget, index: number, count: number): number {
 }
 
 /**
+ * The panel measure of one turn, which is the geometry's own while the cursor
+ * stays in the turn it was measured for and a fresh one once it crosses into
+ * another.
+ * @param group - the turn to measure.
+ * @param held - the turn the geometry was measured for.
+ * @param geometry - the reader's geometry.
+ * @param blocks - the navigable blocks.
+ * @returns where each of that turn's sections starts.
+ */
+function measureOf(
+  group: TurnGroup,
+  held: TurnGroup | undefined,
+  geometry: ReaderGeometry,
+  blocks: readonly SectionSource[],
+): PaneMeasure {
+  if (group === held) return geometry.measure
+  return geometry.pane === 0 ? EMPTY_MEASURE : measurePane(group, blocks, geometry.pane)
+}
+
+/**
+ * Put the reader on one section, with the panel scrolled to its header.
+ * @param state - where the reader is.
+ * @param cursor - the section to read.
+ * @param groups - the turns the list names.
+ * @param geometry - the reader's geometry.
+ * @param blocks - the navigable blocks.
+ * @returns the state on that section.
+ */
+function readSection(
+  state: ReaderState,
+  cursor: TranscriptCursor,
+  groups: readonly TurnGroup[],
+  geometry: ReaderGeometry,
+  blocks: readonly SectionSource[],
+): ReaderState {
+  const held = groups[groupIndex(state, groups)]
+  const next = groups[turnIndexOf(cursor, groups)]
+  /* v8 ignore next -- every cursor the list steps to comes from a listed turn */
+  if (next === undefined) return state
+  const measure = measureOf(next, held, geometry, blocks)
+  const index = next.sections.findIndex(section => sameCursor(section, cursor))
+  /* v8 ignore next -- the cursor came from this turn's own sections, so the measure has its row */
+  const header = measure.headers[index] ?? 0
+  return { ...state, cursor, offset: Math.min(header, Math.max(0, measure.total - geometry.body)) }
+}
+
+/**
  * The state without its query.
  * @param state - where the reader is.
  * @returns the same state with the list naming every turn again.
@@ -419,27 +507,9 @@ function readAt(state: ReaderState, offset: number, groups: readonly TurnGroup[]
  */
 function selectTurn(state: ReaderState, index: number, groups: readonly TurnGroup[]): ReaderState {
   const cursor = cursorAt(groups, index, 0)
-  /* v8 ignore next -- both callers refuse an empty list first */
+  /* v8 ignore next -- the caller refuses an empty list first */
   if (cursor === undefined) return state
   return { ...state, cursor, offset: 0 }
-}
-
-/**
- * Answer one page key: a page of the panel's rows with one row of overlap, or
- * a list's worth of turns.
- * @param state - where the reader is.
- * @param step - 1 for the next page, -1 for the previous one.
- * @param groups - the turns the list names.
- * @param geometry - the reader's geometry.
- * @returns the state after the page.
- */
-function pageBy(state: ReaderState, step: 1 | -1, groups: readonly TurnGroup[], geometry: ReaderGeometry): ReaderState {
-  if (state.column === 'pane') {
-    const by = Math.max(1, geometry.body - 1)
-    return readAt(state, clamp(state.offset + step * by, 0, maxOffset(geometry)), groups, geometry)
-  }
-  if (groups.length === 0) return state
-  return selectTurn(state, clamp(groupIndex(state, groups) + step * Math.max(1, geometry.body), 0, groups.length - 1), groups)
 }
 
 /**
@@ -470,6 +540,9 @@ export function readerClosesOnEscape(state: ReaderState): boolean {
  * @param intent - what the key meant.
  * @param groups - the turns the list names, already narrowed by the query.
  * @param geometry - the reader's geometry, with the turn panel measured.
+ * @param blocks - the navigable blocks, for the panel rows of a turn the
+ * geometry was not measured for, which is what the list crossing a turn
+ * boundary lands on.
  * @returns the state after the press; the state itself when nothing moves.
  */
 export function reduceReader(
@@ -477,14 +550,23 @@ export function reduceReader(
   intent: ReaderIntent,
   groups: readonly TurnGroup[],
   geometry: ReaderGeometry,
+  blocks: readonly SectionSource[],
 ): ReaderState {
   switch (intent.kind) {
+    case 'section': {
+      const sections = allSections(groups)
+      const at = sections.findIndex(section => sameCursor(section, state.cursor))
+      const cursor = sections[targetIndex(intent.to, Math.max(0, at), sections.length)]
+      return cursor === undefined ? state : readSection(state, cursor, groups, geometry, blocks)
+    }
     case 'turn':
-      return groups.length === 0 ? state : selectTurn(state, targetIndex(intent.to, groupIndex(state, groups), groups.length), groups)
+      return groups.length === 0
+        ? state
+        : selectTurn(state, clamp(groupIndex(state, groups) + intent.step, 0, groups.length - 1), groups)
     case 'scroll':
       return readAt(state, targetIndex(intent.to, state.offset, maxOffset(geometry) + 1), groups, geometry)
     case 'page':
-      return pageBy(state, intent.step, groups, geometry)
+      return readAt(state, clamp(state.offset + intent.step * Math.max(1, geometry.body - 1), 0, maxOffset(geometry)), groups, geometry)
     case 'column':
       return { ...state, column: intent.to }
     case 'filter':
@@ -571,34 +653,68 @@ function cell(text: string, width: number): string {
  * One row of the turn list: the mark, the turn number, its prompt, and what
  * the turn contributed.
  * @param group - the turn.
- * @param selected - whether the list's selection is on it.
+ * @param open - whether this is the turn being read, whose sections follow it.
  * @param focused - whether the list itself has the keyboard.
  * @param palette - the palette the row is styled with.
  * @param width - the list's columns.
  * @returns the row, exactly `width` columns.
  */
-function listRow(group: TurnGroup, selected: boolean, focused: boolean, palette: Palette, width: number): string {
+function listRow(group: TurnGroup, open: boolean, focused: boolean, palette: Palette, width: number): string {
   const marks = markerStrip(group.markers)
   const room = Math.max(1, width - visibleWidth(marks))
-  const lead = `${selected ? LIST_MARK : '  '}${String(group.turn)}  `
+  // The turn being read heads its own sections, so its row carries no mark of
+  // its own: the mark is on the section row the cursor holds.
+  const lead = `  ${String(group.turn)}  `
   // The prompt is cut before it is bracketed, so the selected row keeps both
   // brackets however narrow the list is.
-  const label = truncateToWidth(group.label, Math.max(1, room - visibleWidth(lead) - (selected ? 2 : 0)), ELLIPSIS)
-  const head = `${lead}${selected ? `[${label}]` : label}`
-  // The selection stays visible while the turn beside it has the keyboard,
+  const label = truncateToWidth(group.label, Math.max(1, room - visibleWidth(lead) - (open ? 2 : 0)), ELLIPSIS)
+  const head = `${lead}${open ? `[${label}]` : label}`
+  // The open turn stays legible while the panel beside it has the keyboard,
   // and only the focused list draws it bold.
   const paint = (text: string): string => {
-    if (!selected) return palette.dim(text)
+    if (!open) return palette.dim(text)
     return focused ? palette.bold(palette.accent(text)) : palette.accent(text)
   }
   const text = truncateToWidth(paint(head), room, ELLIPSIS)
   return `${text}${' '.repeat(Math.max(0, room - visibleWidth(text)))}${palette.dim(marks)}`
 }
 
+/** Columns a section row is indented by, so the turn it belongs to reads as its heading. */
+const SECTION_INDENT = '  '
+
 /**
- * The turn list's rows, windowed so the selected turn is always drawn.
- * @param groups - the turns the list names.
- * @param selected - the selected turn's index.
+ * One section row of the turn list: the mark, the indent, and the label the
+ * panel heads that section with.
+ * @param cursor - the section.
+ * @param blocks - the navigable blocks.
+ * @param selected - whether the cursor holds it.
+ * @param focused - whether the list itself has the keyboard.
+ * @param palette - the palette the row is styled with.
+ * @param width - the list's columns.
+ * @returns the row, exactly `width` columns.
+ */
+function sectionRow(
+  cursor: TranscriptCursor,
+  blocks: readonly SectionSource[],
+  selected: boolean,
+  focused: boolean,
+  palette: Palette,
+  width: number,
+): string {
+  const found = sectionAt(cursor, blocks)
+  const label = found === undefined ? '' : paneLabel(found.block, found.part)
+  const head = `${selected ? LIST_MARK : '  '}${SECTION_INDENT}${label}`
+  const paint = (text: string): string => {
+    if (!selected) return palette.dim(text)
+    return focused ? palette.bold(palette.accent(text)) : palette.accent(text)
+  }
+  return cell(paint(head), width)
+}
+
+/**
+ * The turn list's rows, windowed so the row the cursor holds is always drawn.
+ * @param rows - the outline the list draws.
+ * @param blocks - the navigable blocks, for each section's own label.
  * @param focused - whether the list itself has the keyboard.
  * @param palette - the palette the rows are styled with.
  * @param width - the list's columns.
@@ -606,17 +722,18 @@ function listRow(group: TurnGroup, selected: boolean, focused: boolean, palette:
  * @returns the rows to draw, oldest first.
  */
 function listColumn(
-  groups: readonly TurnGroup[],
-  selected: number,
+  rows: readonly OutlineRow[],
+  blocks: readonly SectionSource[],
   focused: boolean,
   palette: Palette,
   width: number,
   body: number,
 ): string[] {
-  const start = clamp(selected - Math.floor(Math.max(0, body - 1) / 2), 0, Math.max(0, groups.length - body))
-  return groups
-    .slice(start, start + body)
-    .map((group, index) => listRow(group, start + index === selected, focused, palette, width))
+  const cursor = rows.findIndex(row => row.kind === 'section' && row.held)
+  const start = clamp(Math.max(0, cursor) - Math.floor(Math.max(0, body - 1) / 2), 0, Math.max(0, rows.length - body))
+  return rows.slice(start, start + body).map(row => row.kind === 'turn'
+    ? listRow(row.group, row.open, focused, palette, width)
+    : sectionRow(row.cursor, blocks, row.held, focused, palette, width))
 }
 
 /**
@@ -765,7 +882,7 @@ export function readerRows(state: ReaderState, groups: readonly TurnGroup[], ren
       width: geometry.list,
       rows: groups.length === 0
         ? [palette.dim(`no turn matches "${state.query ?? ''}"`)]
-        : listColumn(groups, selected, state.column !== 'pane', palette, geometry.list, geometry.body),
+        : listColumn(readerOutline(state, groups), blocks, state.column !== 'pane', palette, geometry.list, geometry.body),
     })
   }
   if (geometry.pane > 0) {

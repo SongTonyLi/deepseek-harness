@@ -20,7 +20,7 @@
  * @module @deepseek-ai/dsh-tui-app/screen
  */
 
-import { TuiMainScreen, type Terminal } from '@earendil-works/pi-tui'
+import { TuiMainScreen, type Component, type Terminal } from '@earendil-works/pi-tui'
 
 /**
  * How many times one frame is offered to the guard before it is written. Two
@@ -40,6 +40,40 @@ const SETTLE_PASSES = 2
  */
 export function repaintFloor(start: number, viewportTop: number): number {
   return Math.max(0, viewportTop - start)
+}
+
+/**
+ * Blank rows at the foot of the frame, which a surface mounts while it needs
+ * the whole viewport.
+ *
+ * The renderer repaints a line only at or after {@link repaintFloor}'s own
+ * `viewportTop`, a high-water mark a taller frame raises for good. A frame
+ * that has since shrunk therefore leaves the top of the viewport out of
+ * reach, and an overlay that may not draw there stops short of the screen.
+ * These rows push the frame back up to that mark: the terminal scrolls by
+ * exactly the shortfall, every line of the viewport becomes repaintable
+ * again, and an overlay composited into the frame's last `terminal.rows`
+ * lines covers all of them. They are never seen - the overlay is drawn over
+ * them, and they are gone before it is.
+ *
+ * pi-tui's `Text` drops blank lines, so the rows are a component of their own.
+ */
+export class ViewportPad implements Component {
+  /**
+   * @param rows - how many blank lines to draw, read on every render.
+   */
+  constructor(private readonly rows: () => number) {}
+
+  invalidate(): void {}
+
+  /**
+   * Draw the pad.
+   * @returns that many empty lines, and none at all where the frame already
+   * reaches the mark.
+   */
+  render(): string[] {
+    return Array.from({ length: Math.max(0, this.rows()) }, () => '')
+  }
 }
 
 /**

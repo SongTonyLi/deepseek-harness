@@ -61,24 +61,33 @@ describe('the reader pane', () => {
     expect(test.type(KEY.right)).toContain('landed after opening')
   })
 
-  it('walks the turn list and opens the turn beside it', () => {
+  it('walks every turn\'s sections in the list and opens the turn beside it', () => {
     const test = mounted()
-    expect(test.type(KEY.left)).toContain('↑↓ turns')
-    expect(test.type(KEY.up)).toContain('▸ 0  [session start]')
-    expect(test.type(KEY.down)).toContain('▸ 1  [fix the fade a…]')
-    expect(test.type(KEY.end)).toContain('▸ 2  [run the tests]')
-    expect(test.type(KEY.home)).toContain('▸ 0  [session start]')
-    expect(test.type(KEY.pageDown)).toContain('▸ 2  [run the tests]')
-    expect(test.type(KEY.pageUp)).toContain('▸ 0  [session start]')
+    // The list opens on the section the reader was reading, with that turn's
+    // own sections under it and every other turn still one row each.
+    const listed = test.type(KEY.left)
+    expect(listed).toContain('↑↓ sections')
+    expect(listed).toContain('  1  [fix the fade a…]')
+    expect(listed).toContain('▸   ¶ reply')
+    // Up and Down walk the sections, crossing into the turn either side.
+    expect(test.type(KEY.up)).toContain('▸   ✻ reasoning')
+    expect(test.type(KEY.up)).toContain('▸   you')
+    const crossed = test.type(KEY.up)
+    expect(crossed).toContain('▸   ⬡ system prompt')
+    expect(crossed).toContain('  0  [session start]')
+    // Page steps a whole turn, and Home and End reach the conversation's ends.
+    expect(test.type(KEY.pageDown)).toContain('  1  [fix the fade a…]')
+    expect(test.type(KEY.end)).toContain('  2  [run the tests]')
+    expect(test.type(KEY.home)).toContain('  0  [session start]')
     // Right opens the turn the list holds; Tab and Enter cross the same way.
     const opened = test.type(KEY.right)
     expect(opened).toContain('── ⬡ system prompt · turn 0 ')
     expect(opened).toContain('↑↓ scrolls')
-    expect(test.type(KEY.tab)).toContain('↑↓ turns')
+    expect(test.type(KEY.tab)).toContain('↑↓ sections')
     expect(test.type(KEY.enter)).toContain('↑↓ scrolls')
-    expect(test.type(KEY.shiftTab)).toContain('↑↓ turns')
+    expect(test.type(KEY.shiftTab)).toContain('↑↓ sections')
     // A printable key the list claims nothing for leaves it where it was.
-    expect(test.type('z')).toContain('↑↓ turns')
+    expect(test.type('z')).toContain('↑↓ sections')
   })
 
   it('scrolls and pages the turn it opened on', () => {
@@ -106,13 +115,13 @@ describe('the reader pane', () => {
     expect(test.type(KEY.ctrlU)).toContain('/ ')
     expect(test.type('green')).toContain('/ green')
     // Enter keeps the narrowed list and closes the query line.
-    expect(test.type(KEY.enter)).toContain('↑↓ turns')
+    expect(test.type(KEY.enter)).toContain('↑↓ sections')
     expect(test.draw()).toContain('1/3 turns')
     test.pane.handleInput(KEY.slash)
     // A key the query line types nothing for leaves the query alone.
     expect(test.type(KEY.up)).toContain('/ ')
     expect(test.type(KEY.escape)).toContain('/ ')
-    expect(test.type(KEY.escape)).toContain('↑↓ turns')
+    expect(test.type(KEY.escape)).toContain('↑↓ sections')
     expect(test.draw()).not.toContain('turns ┤')
   })
 
@@ -132,7 +141,7 @@ describe('the reader pane', () => {
     expect(test.draw()).toContain('reply row 0')
     // Left gives the keyboard back to the list, which takes the whole body.
     const listed = test.type(KEY.left)
-    expect(listed).toContain('▸ 1  [fix the fade at the top]')
+    expect(listed).toContain('  1  [fix the fade at the top]')
     expect(listed).not.toContain('reply row 0')
     expect(test.type(KEY.right)).toContain('reply row 0')
   })

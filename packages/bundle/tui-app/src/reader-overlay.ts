@@ -132,7 +132,7 @@ export class ReaderPane implements Component {
       this.layout = layout
       // A rewrap moves every row number, so the reader re-anchors on the
       // section it was reading rather than on the row it had reached.
-      this.state = reduceReader(this.state, { kind: 'anchor' }, visible, geometry)
+      this.state = reduceReader(this.state, { kind: 'anchor' }, visible, geometry, blocks)
     }
     const full = readerRows(this.state, visible, {
       palette: this.options.palette,
@@ -185,7 +185,7 @@ export class ReaderPane implements Component {
     }
     const intent = this.intentOf(data)
     if (intent === undefined) return
-    this.state = reduceReader(this.state, intent, visible, geometry)
+    this.state = reduceReader(this.state, intent, visible, geometry, blocks)
   }
 
   /** Close the reader from outside, which is what quitting and `Ctrl+C` do. */
@@ -256,12 +256,12 @@ function filterIntent(data: string): ReaderIntent | undefined {
  * @returns the intent, or undefined for a key the list ignores.
  */
 function listIntent(data: string): ReaderIntent | undefined {
-  if (matchesKey(data, 'up')) return { kind: 'turn', to: 'previous' }
-  if (matchesKey(data, 'down')) return { kind: 'turn', to: 'next' }
-  if (matchesKey(data, 'home')) return { kind: 'turn', to: 'first' }
-  if (matchesKey(data, 'end')) return { kind: 'turn', to: 'last' }
-  if (matchesKey(data, 'pageUp')) return { kind: 'page', step: -1 }
-  if (matchesKey(data, 'pageDown')) return { kind: 'page', step: 1 }
+  if (matchesKey(data, 'up')) return { kind: 'section', to: 'previous' }
+  if (matchesKey(data, 'down')) return { kind: 'section', to: 'next' }
+  if (matchesKey(data, 'home')) return { kind: 'section', to: 'first' }
+  if (matchesKey(data, 'end')) return { kind: 'section', to: 'last' }
+  if (matchesKey(data, 'pageUp')) return { kind: 'turn', step: -1 }
+  if (matchesKey(data, 'pageDown')) return { kind: 'turn', step: 1 }
   if (matchesKey(data, 'right') || matchesKey(data, 'tab') || matchesKey(data, 'enter')) return { kind: 'column', to: 'pane' }
   return typedText(data) === FILTER_KEY ? { kind: 'filter' } : undefined
 }

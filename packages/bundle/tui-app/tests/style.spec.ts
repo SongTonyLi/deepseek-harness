@@ -29,11 +29,16 @@ describe('palette', () => {
   it('derives complete themes', () => {
     const palette = createPalette(true)
     const markdown = markdownTheme(palette)
-    for (const style of Object.values(markdown)) {
+    const { highlightCode, ...styles } = markdown
+    for (const style of Object.values(styles)) {
       expect(typeof style).toBe('function')
       expect((style as (text: string) => string)('t')).toContain('t')
     }
     expect(markdown.codeBlock('code')).toBe('code')
+    // With no highlighter the fence draws exactly the source lines, which is
+    // what the renderer would have drawn without the hook at all.
+    expect(highlightCode?.('one\ntwo', 'ts')).toEqual(['one', 'two'])
+    expect(markdownTheme(palette, { lines: () => ['lit'] }).highlightCode?.('one', 'ts')).toEqual(['lit'])
     const select = selectListTheme(palette)
     expect(select.selectedText('s')).toContain('s')
     expect(editorTheme(palette).borderColor('b')).toContain('b')

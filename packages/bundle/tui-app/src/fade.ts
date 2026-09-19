@@ -46,8 +46,12 @@ import { sliceByColumn, stripTerminalSequences, visibleWidth, type RgbColor } fr
  * `ramp[min(a, steps - 1)]`, and leaves the tail once its age reaches `steps`.
  * Fewer than two levels leaves no visible ramp, so the application's config
  * field should require at least 2.
+ *
+ * Twelve at {@link FADE_TICK_MS} is a ramp of about four hundred milliseconds,
+ * one level per repaint: enough levels that a word climbs rather than steps,
+ * and short enough that a settled line is never waited for.
  */
-export const FADE_STEPS = 8
+export const FADE_STEPS = 12
 
 /** Duration of one brightness level in milliseconds, and so the repaint period of fading text: about 30 frames per second. */
 export const FADE_TICK_MS = 33
@@ -583,7 +587,7 @@ function ansi256Rgb(index: number): RgbColor {
  * @param color - the mixed RGB.
  * @returns an index in 0..255.
  */
-function nearestAnsi256(color: RgbColor): number {
+export function nearestAnsi256(color: RgbColor): number {
   let best = 0
   let bestDist = Infinity
   for (let n = 0; n < 256; n += 1) {
@@ -864,10 +868,14 @@ interface LineRun {
  * Whitespace is skipped on both sides while matching, so a chunk still matches
  * after the renderer turned its space into a line break or trimmed it.
  *
- * Markdown rewrites text, so a chunk may not appear in the rendered output at
- * all. Matching then stops: that chunk and every older chunk of the tail draw
- * at the foreground, unchanged. Because older chunks are already the brightest
- * levels, the degradation is the least visible one available.
+ * Markdown rewrites text, so a chunk's characters may reach the screen without
+ * the syntax around them, or not at all. The rendered text is therefore matched
+ * as a subsequence of what was streamed: a character the renderer consumed is
+ * skipped and the columns keep their alignment, so a delta that closes a bold
+ * run or a code span no longer drops the whole tail to the foreground for one
+ * frame. Matching stops at a chunk fewer than half of whose characters are
+ * there at all - text this tail never reached; that chunk and every older one
+ * then draw at the foreground, unchanged.
  *
  * Styling inside a recolored run survives. The run reasserts the sequences in
  * force at its start, so an enclosing bold or italic continues across it; an
@@ -897,7 +905,7 @@ export function recolorTail(
   mode: RecolorMode = 'in',
 ): string[] {
   if (spans.length === 0 || lines.length === 0) return [...lines]
-  const cells = cellsFromEnd(lines)
+  const cells = new CellWalk(cellsFromEnd(lines))
   const runs: LineRun[] = []
   for (const span of [...spans].reverse()) {
     const covered = consumeSpan(cells, span.text)
@@ -939,26 +947,101 @@ function* cellsFromEnd(lines: readonly string[]): Generator<Cell, void, void> {
 }
 
 /**
+ * The backwards cell walk with one cell of pushback, so a chunk that hands a
+ * cell back leaves it for the chunk before it rather than eating it.
+ */
+class CellWalk {
+  private pending: Cell | undefined
+
+  /**
+   * @param cells - the backwards walk over the rendered lines.
+   */
+  constructor(private readonly cells: Generator<Cell, void, void>) {}
+
+  /**
+   * The next cell towards the start of the text.
+   * @returns the cell, or undefined once the walk is spent.
+   */
+  next(): Cell | undefined {
+    const held = this.pending
+    if (held !== undefined) {
+      this.pending = undefined
+      return held
+    }
+    const step = this.cells.next()
+    return step.done ? undefined : step.value
+  }
+
+  /**
+   * Put one cell back for the next read.
+   * @param cell - the cell the caller did not claim.
+   */
+  back(cell: Cell): void {
+    this.pending = cell
+  }
+}
+
+/**
  * Take the cells one chunk covers off the walk.
+ *
+ * Markdown is rendered, not echoed: `**bold**` reaches the screen as `bold`,
+ * a fence and a bullet disappear, and a link keeps its text and drops its
+ * target. A character of the chunk that the renderer consumed therefore has no
+ * cell, and it is skipped rather than failing the whole tail - the rendered
+ * text is matched as a subsequence of what was streamed. Only a chunk whose
+ * cells have run out ends the walk, because past that point the columns
+ * belong to text this tail never appended.
  * @param cells - the backwards walk, positioned at the end of the region still unclaimed.
  * @param text - the chunk's text as it was appended.
  * @returns the cells the chunk covers, whitespace included, or undefined when
- * the chunk's visible characters are not there.
+ * the walk reached the start of the rendered text mid-chunk.
  */
-function consumeSpan(cells: Generator<Cell, void, void>, text: string): Cell[] | undefined {
+function consumeSpan(cells: CellWalk, text: string): Cell[] | undefined {
   const wanted = Array.from(GRAPHEMES.segment(text), part => part.segment).filter(part => !isBlank(part)).reverse()
   const covered: Cell[] = []
-  for (const want of wanted) {
-    let step = cells.next()
-    while (!step.done && isBlank(step.value.grapheme)) {
-      covered.push(step.value)
-      step = cells.next()
+  let index = 0
+  let matched = 0
+  while (index < wanted.length) {
+    let cell = cells.next()
+    while (cell !== undefined && isBlank(cell.grapheme)) {
+      covered.push(cell)
+      cell = cells.next()
     }
-    if (step.done || step.value.grapheme !== want) return undefined
-    covered.push(step.value)
+    // The rendered text ran out. Whether this chunk still claims its columns
+    // is the same question as for any other partial match, one rule below.
+    if (cell === undefined) break
+    /* v8 ignore next -- the loop condition holds the index inside the list */
+    const want = wanted[index] ?? ''
+    if (cell.grapheme === want) {
+      covered.push(cell)
+      matched += 1
+      index += 1
+    } else if (wanted.includes(cell.grapheme, index + 1) || MARKDOWN_SYNTAX.test(want)) {
+      // Either this cell belongs to a character further along, or the
+      // character in hand is syntax the renderer consumed: drop the character
+      // and keep the cell.
+      cells.back(cell)
+      index += 1
+    } else {
+      // The cell is the renderer's own - a bullet, a rule, a quote mark - so
+      // it belongs to this chunk's columns and the character still stands.
+      covered.push(cell)
+    }
   }
-  return covered
+  // Half the chunk's own characters must be there. Rendering drops syntax and
+  // adds marks of its own, but it does not replace a word: a chunk matched
+  // below that is text this tail never reached, and colouring the columns it
+  // landed on would paint a neighbour's brightness onto them.
+  return matched * 2 >= wanted.length ? covered : undefined
 }
+
+/**
+ * Characters a Markdown renderer consumes rather than draws: emphasis and code
+ * fences, headings and rules, list and quote markers, and link brackets. A
+ * chunk's own character that the rendered text does not carry is one of these
+ * far more often than it is text the renderer dropped outright.
+ */
+const MARKDOWN_SYNTAX = /^[*_`~#>[\]()|\\!+=-]$/u
 
 /**
  * Whether a grapheme draws nothing.

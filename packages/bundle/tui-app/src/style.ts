@@ -80,13 +80,27 @@ export function colorEnabled(env: NodeJS.ProcessEnv, isTty: boolean): boolean {
   return isTty
 }
 
+/** What a Markdown theme asks of a syntax highlighter. */
+export interface CodeHighlighter {
+  /**
+   * Colour one fenced block.
+   * @param code - the block's source.
+   * @param lang - the fence's info string, if it carried one.
+   * @returns one styled line per source line, or undefined to draw it plain.
+   */
+  lines(code: string, lang: string | undefined): string[] | undefined
+}
+
 /**
  * The Markdown theme derived from the palette.
  * @param palette - the active palette.
+ * @param highlight - colours fenced code; omitted draws every block plain,
+ * which is also what a block whose language has no grammar here draws as.
  * @returns a complete pi-tui Markdown theme.
  */
-export function markdownTheme(palette: Palette): MarkdownTheme {
+export function markdownTheme(palette: Palette, highlight?: CodeHighlighter): MarkdownTheme {
   return {
+    highlightCode: (code, lang) => highlight?.lines(code, lang) ?? code.split('\n'),
     heading: text => palette.bold(palette.accent(text)),
     link: palette.accent,
     linkUrl: palette.dim,

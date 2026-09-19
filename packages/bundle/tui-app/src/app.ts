@@ -126,7 +126,8 @@ import {
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
 import { READER_HINTS } from './reader.ts'
 import { ReaderPane, type ReaderExit } from './reader-overlay.ts'
-import { GuardedMainScreen, repaintFloor } from './screen.ts'
+import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
+import { GuardedMainScreen, ViewportPad, repaintFloor } from './screen.ts'
 import { describeSession, listSessionChoices } from './sessions.ts'
 import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
 import {
@@ -352,6 +353,8 @@ export interface TuiAppDeps {
   focusPreviewLines: number
   /** Columns the reader needs before it draws the held turn beside the turn list. */
   readerMinColumns: number
+  /** Whether fenced code in a reply is drawn in syntax colours. */
+  codeHighlight: boolean
   /**
    * How long one transient key-feedback line holds at full strength before it
    * fades out, in milliseconds. It is also the window a second `Escape` stops
@@ -496,6 +499,12 @@ export class TuiApp {
   private readonly editor: BarCursorEditor
   /** Holds {@link panel} exactly while the bound session has subagent rows. */
   private readonly panelSlot = new Container()
+  /** Blank rows that give the mounted reader the whole viewport; see {@link ViewportPad}. */
+  private readonly pad = new ViewportPad(() => this.readerPad)
+  /** Colours fenced code in replies; see {@link SyntaxHighlighter}. */
+  private readonly codeHighlight: SyntaxHighlighter
+  /** The terminal's background once it answered; undefined until then, and on a terminal that answers none. */
+  private background: RgbColor | undefined
   private readonly panel: Text
   private readonly footer: FooterBar
   private readonly modals: ModalQueue
@@ -565,6 +574,8 @@ export class TuiApp {
   private panelLift: MotionLevel = 0
   /** The reader on screen right now, while one is open. */
   private reader: { handle: OverlayHandle; pane: ReaderPane } | undefined
+  /** Blank rows {@link ViewportPad} draws so the mounted reader covers the whole viewport. */
+  private readerPad = 0
   /** The motion growing the open reader into place; settled or absent draws it whole. */
   private readerOpening: Motion | undefined
   /** The reader shrinking away, still mounted until its motion settles. */
@@ -604,7 +615,25 @@ export class TuiApp {
   constructor(private readonly deps: TuiAppDeps) {
     const palette = deps.palette
     this.bound = deps.initial
-    this.theme = { palette, toolPreviewLines: deps.toolPreviewLines, contextPreviewLines: deps.contextPreviewLines }
+    this.codeHighlight = new SyntaxHighlighter({
+      depth: deps.codeHighlight ? resolveColorDepth({ paletteEnabled: palette.enabled, env: deps.env }) : 'none',
+      // Read per build: the background is a round trip to the terminal, and
+      // the first fenced block almost always follows the answer.
+      background: () => this.background,
+      // A rendered Markdown block holds its lines, so the conversation is
+      // told to build them again: the fence that drew plain is the one the
+      // grammar just arrived for.
+      changed: () => {
+        this.chat.invalidate()
+        this.tui.requestRender()
+      },
+    })
+    this.theme = {
+      palette,
+      toolPreviewLines: deps.toolPreviewLines,
+      contextPreviewLines: deps.contextPreviewLines,
+      codeHighlight: this.codeHighlight,
+    }
     // The second parameter is `showHardwareCursor`: the editor draws no block
     // of its own, so the terminal's own cursor is the caret. Setting it here
     // rather than through `setShowHardwareCursor` keeps the constructor from
@@ -634,7 +663,9 @@ export class TuiApp {
       },
     }))
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
-    const tree = [this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.editor, this.panelSlot, this.footer]
+    const tree = [
+      this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.editor, this.panelSlot, this.footer, this.pad,
+    ]
     for (const child of tree) this.tui.addChild(child)
   }
 
@@ -724,6 +755,7 @@ export class TuiApp {
   private async resolveFadeRamp(capability: Exclude<FadeCapability, 'none'>): Promise<void> {
     const background = await this.tui.queryTerminalBackgroundColor({ timeoutMs: BACKGROUND_QUERY_TIMEOUT_MS })
     if (this.stopped) return
+    this.background = background
     this.fadeStyle = background === undefined
       ? { capability: 'dim', ramp: [] }
       : { capability, ramp: buildFadeRamp(background, assumedForeground(background), this.deps.fadeSteps) }
@@ -2916,7 +2948,19 @@ export class TuiApp {
    */
   private settleFrame(viewportTop: number, width: number, frameLines: number): boolean {
     const rows = this.deps.terminal.rows
-    this.viewportFloor = repaintFloor(Math.max(frameLines, rows) - rows, viewportTop)
+    // The pad is measured against the frame without it, so the rows it adds
+    // are the shortfall itself rather than a count that feeds on its own
+    // effect; a terminal that resized under an open reader settles on the new
+    // shortfall the same way.
+    const floor = repaintFloor(Math.max(frameLines - this.readerPad, rows) - rows, viewportTop)
+    const pad = this.reader === undefined && this.readerClosing === undefined ? 0 : floor
+    this.viewportFloor = floor - pad
+    if (pad !== this.readerPad) {
+      this.readerPad = pad
+      // The frame changed length, so every decision below is taken on the
+      // frame that replaces this one.
+      return true
+    }
     const section = this.focusedSection()
     const wanted: HeldSection | undefined = section !== undefined && this.focus === 'transcript'
       ? { block: section.block, part: section.cursor.part, level: this.markLift() }

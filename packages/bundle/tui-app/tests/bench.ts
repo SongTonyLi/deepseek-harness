@@ -291,6 +291,8 @@ export async function bench(options: {
   focusPreviewLines?: number
   /** Columns the reader needs before it draws two sections side by side. */
   readerMinColumns?: number
+  /** Whether fenced code draws in syntax colours; on by default, as it ships. */
+  codeHighlight?: boolean
   /** How long a transient key-feedback line holds before it fades out. */
   toastMs?: number
   color?: boolean
@@ -445,6 +447,7 @@ export async function bench(options: {
     contextPreviewLines: options.contextPreviewLines ?? CONTEXT_PREVIEW_LINES,
     focusPreviewLines: options.focusPreviewLines ?? FOCUS_PREVIEW_LINES,
     readerMinColumns: options.readerMinColumns ?? READER_MIN_COLUMNS,
+    codeHighlight: options.codeHighlight ?? true,
     toastMs: options.toastMs ?? TOAST_MS,
     liveRefreshMs,
     fadeSteps: options.fadeSteps ?? FADE_STEPS,
