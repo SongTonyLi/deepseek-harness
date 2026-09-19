@@ -15,10 +15,14 @@ const testToolSignal = new AbortController().signal
 /**
  * Behavior suite for the repeat-tool-call guard: chain semantics (identical /
  * different-tracked / untracked-transparent / per-agent / resets), threshold
- * escalation incl. the `thresholds[0]` gentle-text rule, canonicalization,
+ * escalation incl. the `thresholds[0]` gentle-text rule, optional
+ * `blockThreshold` deny-before-execute, canonicalization,
  * fold-onto-downstream-decision, and fail-loud config validation — all driven
  * through a real agent loop against a scripted mock adapter (no network).
  */
+
+/** First line of the model-visible deny reason when `blockThreshold` fires. */
+const IDENTICAL_DENY_LINE = 'identical to your previous call; no state changed'
 
 /** Boot the core spine + the guard; the caller registers adapters and extra listeners. */
 async function harness(config: Config = {}): Promise<Context> {
@@ -53,6 +57,31 @@ const guardSource = (tool: string, count: number) => ({
   form: 'notice',
   summary: `${tool} × ${count}`,
 })
+
+/** Register a tool whose `execute` increments `executions` so a deny can be observed as a skipped body. */
+function registerCounted(ctx: Context, name: string): { executions: number } {
+  const state = { executions: 0 }
+  ctx.tools.register(defineContentToolFixture({
+    name,
+    description: 'counted',
+    parameters: {},
+    async execute() {
+      state.executions += 1
+      return [{ type: 'text', text: 'ok' }]
+    },
+  }))
+  return state
+}
+
+function toolResults(agent: Agent): SessionEvent<'tool/result'>[] {
+  return agent.session.snapshotEvents().filter((e): e is SessionEvent<'tool/result'> => e.type === 'tool/result')
+}
+
+function resultText(event: SessionEvent<'tool/result'>): string {
+  return event.data.message.content[0].content
+    .map(block => block.type === 'text' ? block.text : '')
+    .join('|')
+}
 
 describe('threshold escalation', () => {
   it('reminds gently at the first default threshold (3) and in detail at the second (5)', async () => {
@@ -308,6 +337,140 @@ describe('chain semantics', () => {
   })
 })
 
+describe('blockThreshold', () => {
+  it('denies the second identical tracked call and does not run the tool body', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2 })
+    const counted = registerCounted(ctx, 'loop')
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'loop', { q: 1 }),
+      toolCallResponse('c2', 'loop', { q: 1 }),
+      textResponse('done'),
+    ])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+
+    expect(counted.executions).toBe(1)
+    const results = toolResults(agent)
+    expect(results).toHaveLength(2)
+    expect(results[0]!.data.message.content[0].isError).toBe(false)
+    expect(results[1]!.data.message.content[0].isError).toBe(true)
+    const denied = resultText(results[1]!)
+    expect(denied.split('\n')[0]).toBe(`Error: ${IDENTICAL_DENY_LINE}`)
+    expect(denied).toContain('tool: loop')
+  })
+
+  it('allows identical tracked calls until the block count is reached', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 3 })
+    const counted = registerCounted(ctx, 'loop')
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'loop', { q: 1 }),
+      toolCallResponse('c2', 'loop', { q: 1 }),
+      textResponse('done'),
+    ])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+
+    expect(counted.executions).toBe(2)
+    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+  })
+
+  it('a different tracked call still runs', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2 })
+    const counted = registerCounted(ctx, 'loop')
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'loop', { q: 1 }),
+      toolCallResponse('c2', 'loop', { q: 2 }),
+      textResponse('done'),
+    ])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+
+    expect(counted.executions).toBe(2)
+    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+  })
+
+  it('untracked and excluded tools still run', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2, include: ['loop'], exclude: ['sidecar'] })
+    const loop = registerCounted(ctx, 'loop')
+    const sidecar = registerCounted(ctx, 'sidecar')
+    const stray = registerCounted(ctx, 'stray')
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'sidecar', { q: 1 }),
+      toolCallResponse('c2', 'sidecar', { q: 1 }),
+      toolCallResponse('c3', 'stray', { q: 1 }),
+      toolCallResponse('c4', 'stray', { q: 1 }),
+      toolCallResponse('c5', 'loop', { q: 1 }),
+      toolCallResponse('c6', 'loop', { q: 1 }),
+      textResponse('done'),
+    ])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+
+    expect(sidecar.executions).toBe(2)
+    expect(stray.executions).toBe(2)
+    expect(loop.executions).toBe(1)
+    expect(resultText(toolResults(agent)[5]!).split('\n')[0]).toBe(`Error: ${IDENTICAL_DENY_LINE}`)
+  })
+
+  it('a denied identical call still advances the chain so a reminder threshold can fire', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2, thresholds: [2] })
+    const counted = registerCounted(ctx, 'loop')
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'loop', { q: 1 }),
+      toolCallResponse('c2', 'loop', { q: 1 }),
+      textResponse('done'),
+    ])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+
+    expect(counted.executions).toBe(1)
+    const found = reminders(agent)
+    expect(found).toHaveLength(1)
+    expect(found[0]!.text).toContain('repeating the exact same tool call')
+    expect(found[0]!.source).toEqual(guardSource('loop', 2))
+  })
+
+  it('a new user prompt clears the chain so the next identical call is not denied', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2 })
+    const counted = registerCounted(ctx, 'loop')
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'loop', { q: 1 }),
+      textResponse('turn one done'),
+      toolCallResponse('c2', 'loop', { q: 1 }),
+      textResponse('turn two done'),
+    ])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'again' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+
+    expect(counted.executions).toBe(2)
+    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+  })
+
+  it('does not block a direct execute with no agent', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2 })
+    const counted = registerCounted(ctx, 'loop')
+    const first = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('d1'), name: 'loop', arguments: { q: 1 } })
+    const second = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('d2'), name: 'loop', arguments: { q: 1 } })
+    expect(first.isError).toBe(false)
+    expect(second.isError).toBe(false)
+    expect(counted.executions).toBe(2)
+  })
+})
+
 describe('fold onto the downstream decision', () => {
   it('folds the reminder onto a downstream block and keeps its feedback', async () => {
     const ctx = await harness({ thresholds: [2] })
@@ -399,5 +562,78 @@ describe('config validation fails loud', () => {
     await expect(ctx.plugin(RepeatToolGuard, { argumentsPreviewChars: 0 })).rejects.toThrow(/argumentsPreviewChars/)
     const ctx2 = await spine()
     await expect(ctx2.plugin(RepeatToolGuard, { argumentsPreviewChars: 12.5 })).rejects.toThrow(/argumentsPreviewChars/)
+  })
+
+  it('rejects a blockThreshold below 2 or a non-integer', async () => {
+    const ctx = await spine()
+    await expect(ctx.plugin(RepeatToolGuard, { blockThreshold: 1 })).rejects.toThrow(/blockThreshold/)
+    const ctx2 = await spine()
+    await expect(ctx2.plugin(RepeatToolGuard, { blockThreshold: 2.5 })).rejects.toThrow(/integer >= 2/)
+  })
+
+  it('rejects an empty blockProviders entry', async () => {
+    const ctx = await spine()
+    await expect(ctx.plugin(RepeatToolGuard, { blockProviders: [''] })).rejects.toThrow(/blockProviders/)
+  })
+})
+
+describe('blockProviders Cursor subscription default', () => {
+  it('does not deny a mock-provider agent when blockProviders stays at cursor', async () => {
+    const ctx = await harness({ blockThreshold: 2 })
+    const counted = registerCounted(ctx, 'loop')
+    ctx.llm.registerAdapter(['mock'], new MockAdapter([
+      toolCallResponse('c1', 'loop', { q: 1 }),
+      toolCallResponse('c2', 'loop', { q: 1 }),
+      textResponse('done'),
+    ]))
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+    expect(counted.executions).toBe(2)
+    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+  })
+
+  it('does not deny when the agent has no routed provider', async () => {
+    const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2 })
+    const counted = registerCounted(ctx, 'loop')
+    const agent = {
+      session: { requestHeader() { return undefined } },
+      options: {},
+    } as Agent
+    const first = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('n1'),
+      name: 'loop',
+      arguments: { q: 1 },
+      agent,
+    })
+    const second = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('n2'),
+      name: 'loop',
+      arguments: { q: 1 },
+      agent,
+    })
+    expect(first.isError).toBe(false)
+    expect(second.isError).toBe(false)
+    expect(counted.executions).toBe(2)
+  })
+
+  it('denies when the routed provider is the Cursor subscription route', async () => {
+    const ctx = await harness({ blockThreshold: 2 })
+    const counted = registerCounted(ctx, 'loop')
+    ctx.llm.registerAdapter(['cursor'], new MockAdapter([
+      toolCallResponse('c1', 'loop', { q: 1 }),
+      toolCallResponse('c2', 'loop', { q: 1 }),
+      textResponse('done'),
+    ]))
+    const agent = await ctx.agentLoop.create(SessionId('cursor-block'), {
+      provider: 'cursor',
+      model: 'composer-2',
+    })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, agent)
+    expect(counted.executions).toBe(1)
+    expect(resultText(toolResults(agent)[1]!).split('\n')[0]).toBe(`Error: ${IDENTICAL_DENY_LINE}`)
   })
 })

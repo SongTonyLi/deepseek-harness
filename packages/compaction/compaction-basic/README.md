@@ -134,6 +134,7 @@ The transaction validates the surface span and the durable lock, appends `compac
 | [`src/index.ts`](src/index.ts) | Plugin entry: `BasicCompactionEngine`, automatic listeners, entry-point dispatch |
 | [`src/region.ts`](src/region.ts) | Retention selection and the shared bracket-first compaction transaction |
 | [`src/summarizer.ts`](src/summarizer.ts) | Default `ctx.llm.stream()` summarization, checkpoint framing, safe-summary projection |
+| [`src/work-state.ts`](src/work-state.ts) | Model-switch work-state notice admitted after a `model-selection` notice whose incoming route is `cursor` |
 | [`src/config.ts`](src/config.ts) | Load-time validation and routed-model policy resolution |
 | [`src/types.ts`](src/types.ts) | `BasicCompactionConfig` and resolved policy vocabulary |
 | — | No runtime invariant companion is published; this package exposes no independent event sequence or mutable data relation beyond contracts enforced at its owning seam. The durable bracket remains observable in the session log. |
@@ -163,12 +164,24 @@ Read these pages when the package-level contract is not enough; they move from t
 
 #### What the model sees
 
-After a successful step crosses the threshold, oversized tool results are first rewritten when the optional pruner is loaded. If summarization remains necessary, the next request receives the checkpoint preamble below, a blank line, `<compacted-summary>`, the data-dependent summary, and `</compacted-summary>`. Overflow recovery rebuilds the immediate retry from whatever replacement advanced the surface. A checkpoint replaces the selected older range and is followed by the retained recent units.
+After a successful step crosses the threshold, oversized tool results are first rewritten when the optional pruner is loaded. If summarization remains necessary, the next request receives the checkpoint preamble below, a blank line, `<compacted-summary>`, the data-dependent summary, and `</compacted-summary>`. Overflow recovery rebuilds the immediate retry from whatever replacement advanced the surface. A checkpoint replaces the selected older range and is followed by the retained recent units. When an admitted step already includes a `model-selection` notice whose incoming route is the Cursor subscription (`cursor`), this backend appends one more user-role notice sourced `{ kind: 'plugin', plugin: 'compaction-basic', form: 'notice', summary: 'work state' }`. Cross-provider notices name `cursor/<model>`; a same-provider Cursor switch keeps a bare model id and uses the previous request header. A switch onto DeepSeek or a pi-ai catalog route does not receive the notice. That notice tells the successor to treat the latest `<compacted-summary>` (when history has one) and durable session/workspace state as authority, not to re-inspect completed work or re-derive a recorded plan, and to take the checkpoint Next Step or a state-changing tool (read only if a named file is missing). If the previous turn made no successful `edit`, `write`, or `bash` call, the notice includes `the previous turn made no file changes; do not repeat its plan`.
 
 ##### Conversation checkpoint preamble
 
 ```markdown
 This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.
+```
+
+##### Model-switch work-state notice with a checkpoint
+
+```markdown
+[work state: treat the latest <compacted-summary> and durable session/workspace state as authority; do not re-inspect completed work or re-derive a plan already recorded; the next action is the checkpoint's Next Step, or a state-changing tool (read only if a named file is missing); the previous turn made no file changes; do not repeat its plan]
+```
+
+##### Model-switch work-state notice without a checkpoint
+
+```markdown
+[work state: do not re-inspect completed work or re-derive a plan already recorded; the next action is a state-changing tool (read only if a named file is missing); the previous turn made no file changes; do not repeat its plan]
 ```
 
 #### Token effect
@@ -208,10 +221,25 @@ Output EXACTLY the Markdown structure below: keep every section, in order. Use t
 - [explicitly requested work not yet completed]
 
 ## Current Work
-- [precisely what was in progress at this checkpoint]
+- [precisely what was in progress at this checkpoint; if inspection of owners/files already happened, state that explicitly so a successor must NOT reopen "inspect owners"]
 
 ## Next Step
 - [the single next action, directly in line with the most recent request, or "(none)"]
+
+## Files Read
+- [exact path: key facts already extracted; do not tell the successor to re-read unless the file changed]
+
+## Decisions Taken
+- [decision: what was chosen and why it is binding]
+
+## Edits Applied
+- [path: what changed]
+
+## Edits Planned But Not Applied
+- [path or area: what remains to write]
+
+## Last Tool Results
+- [last few tool names + one-line outcomes; quote error text verbatim]
 
 ## Critical Context
 - [decisions and their rationale, constraints, user preferences, open questions, data needed to continue]
@@ -221,7 +249,8 @@ Rules:
 - Capture user feedback and explicit instructions faithfully, especially corrections.
 - Do NOT mention this summarization request or that the context was compacted.
 - Output only the checkpoint text: do not call any tool or take any other action.
-- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.
+- If inspection of owners/files already happened, state that explicitly under Current Work so a successor must NOT reopen "inspect owners".
+- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts and still-true decisions, drop stale ones, and merge newer information into a single consolidated summary under the same structure.
 ```
 
 #### Token effect

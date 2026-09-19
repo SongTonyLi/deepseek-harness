@@ -52,6 +52,10 @@ function text(result: { content: { type: string; text?: string }[] }): string {
   return result.content.filter(b => b.type === 'text').map(b => b.text).join('')
 }
 
+function todoWrites(agent: { session: Session }) {
+  return agent.session.snapshotEvents().filter(event => event.type === 'todo/write')
+}
+
 describe('dsh-tool-todo', () => {
   it('registers a `todo_write` tool whose schema is an array of {content,status}', async () => {
     const ctx = await setup(true)
@@ -79,11 +83,86 @@ describe('dsh-tool-todo', () => {
     expect(result.value).toEqual({
       todos,
       counts: { pending: 1, inProgress: 1, completed: 0 },
+      unchanged: false,
     })
-    expect(text(result)).toContain('1 pending, 1 in progress, 0 completed')
+    expect(text(result)).toBe('Updated todo list: 1 pending, 1 in progress, 0 completed.')
 
     const event = agent.session.snapshotEvents().findLast(e => e.type === 'todo/write')!
     expect(event.data.todos).toEqual(todos)
+  })
+
+  it('appends the first write on an empty session', async () => {
+    const ctx = await setup(true)
+    const agent = agentWithSession('empty-first')
+    expect(todoWrites(agent)).toHaveLength(0)
+    const todos: TodoItem[] = [{ content: 'plan', status: 'pending' }]
+    const result = await callTodo(ctx, { todos }, { agent })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected todo_write success')
+    expect(result.value).toEqual({
+      todos,
+      counts: { pending: 1, inProgress: 0, completed: 0 },
+      unchanged: false,
+    })
+    expect(text(result)).toBe('Updated todo list: 1 pending, 0 in progress, 0 completed.')
+    expect(todoWrites(agent)).toHaveLength(1)
+  })
+
+  it('does not append when the canonical list equals the latest snapshot', async () => {
+    const ctx = await setup(true)
+    const agent = agentWithSession('noop')
+    const todos: TodoItem[] = [
+      { content: 'plan', status: 'in_progress' },
+      { content: 'build', status: 'pending' },
+    ]
+    await callTodo(ctx, { todos }, { agent })
+    const firstWrites = todoWrites(agent)
+    expect(firstWrites).toHaveLength(1)
+
+    const result = await callTodo(ctx, { todos: [
+      { content: '  plan  ', status: 'in_progress' },
+      { content: 'build', status: 'pending' },
+    ] }, { agent })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected todo_write success')
+    expect(result.value).toEqual({
+      todos,
+      counts: { pending: 1, inProgress: 1, completed: 0 },
+      unchanged: true,
+    })
+    expect(text(result)).toBe('todo list unchanged')
+    const writes = todoWrites(agent)
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toBe(firstWrites[0])
+  })
+
+  it.each([
+    {
+      label: 'status',
+      first: [{ content: 'plan', status: 'pending' as const }],
+      second: [{ content: 'plan', status: 'in_progress' as const }],
+      counts: { pending: 0, inProgress: 1, completed: 0 },
+      updated: 'Updated todo list: 0 pending, 1 in progress, 0 completed.',
+    },
+    {
+      label: 'content',
+      first: [{ content: 'plan', status: 'pending' as const }],
+      second: [{ content: 'build', status: 'pending' as const }],
+      counts: { pending: 1, inProgress: 0, completed: 0 },
+      updated: 'Updated todo list: 1 pending, 0 in progress, 0 completed.',
+    },
+  ])('appends when $label differs from the latest snapshot', async ({ first, second, counts, updated }) => {
+    const ctx = await setup(true)
+    const agent = agentWithSession(`changed-${counts.inProgress}-${counts.pending}`)
+    await callTodo(ctx, { todos: first }, { agent })
+    const result = await callTodo(ctx, { todos: second }, { agent })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected todo_write success')
+    expect(result.value).toEqual({ todos: second, counts, unchanged: false })
+    expect(text(result)).toBe(updated)
+    const writes = todoWrites(agent)
+    expect(writes).toHaveLength(2)
+    expect(writes[1]!.data.todos).toEqual(second)
   })
 
   it('stores the trimmed content (the dedupe/length key), not the raw input', async () => {
@@ -138,6 +217,7 @@ describe('dsh-tool-todo', () => {
     expect(result.value).toEqual({
       todos,
       counts: { pending: 1, inProgress: 2, completed: 0 },
+      unchanged: false,
     })
     expect(agent.session.snapshotEvents().findLast(e => e.type === 'todo/write')!.data.todos).toEqual(todos)
   })

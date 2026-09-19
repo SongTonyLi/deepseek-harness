@@ -54,7 +54,7 @@ Round 只在整个 agent 进入 idle 时启动；完成、暂停和阻塞会阻�
 
 ### resume、fork 或卸载之后
 
-把驱动器挂载到现有 agent 上绝不会启用任何 goal 的续行；会话 resume 或 fork 后，active 的 goal 会保持停用续行，直到用户明确授权 resume——驱动器绝不会自行复活工作。卸载插件会取消进行中的 Round，并确保不再启动后续 Round。
+把驱动器挂载到现有 agent 上绝不会启用任何 goal 的续行；会话 resume 或 fork 后，active 的 goal 会保持停用续行，直到用户明确授权 resume。驱动器不会在插件挂载或会话 resume 时自行重新启用续行。直接的人类 continue-intent——整段文本或首行恰好是 `continue`、`keep going`、`resume`、`go on`、`continue the work` 或 `continue with the work`（可带一个尾随句号）的用户消息——会为仍有 Round 额度的 active-disarmed goal 重新启用续行，并追加一条通知，说明 goal 已 resume、本已 armed，或因 paused、blocked、complete 而未 resume，以及上一已关闭轮次是否改动了工作区。持久 paused 的 goal 保持暂停；由 `/goal resume` 负责恢复。卸载插件会取消进行中的 Round，并确保不再启动后续 Round。
 
 -----
 
@@ -69,7 +69,7 @@ Round 只在整个 agent 进入 idle 时启动；完成、暂停和阻塞会阻�
 ### 设计
 
 - **先预留，后准入。** idle 时驱动器为当前 `{ goalId, revision }` 预留 `roundsStarted + 1`，排入一条携带 goal 消息来源的 `<goal_round>` 提示词；只有进入步骤的 `user/message` 才会增加 `roundsStarted`。因陈旧而被拒绝的预留不会消耗 Round 编号。
-- **竞态防护。** `agent/pre-step` 监听器会在下游监听器前后验证完整的已领取记录与当前 goal，因此陈旧、已取消或竞争中的提示词会在其步骤进入前被拒绝。在预留前到达的人类工作会让自动工作让行，直到 agent 重新进入 idle。
+- **竞态防护。** `agent/pre-step` 监听器会在下游监听器前后验证完整的已领取记录与当前 goal，因此陈旧、已取消或竞争中的提示词会在其步骤进入前被拒绝。不含 goal-round 来源的已领取批次可按人类 continue-intent 重新启用续行，且该路径必须调用 `next()`。在预留前到达的人类工作会让自动工作让行，直到 agent 重新进入 idle。
 - **持久性检查点。** `goal/changed` 会产生持久性义务：排队工作前，驱动器会等待 `ctx.sessions.flush()`，并在等待后重新检查 goal revision 与竞争输入。通过 `agent/error` 到达的 flush 失败会停用续行，避免另一 Round 启动。
 - **fail-closed teardown。** Teardown 会关闭准入、停用所有活跃 goal 的续行、以 `parent` 原因取消进行中的工作，并在事件防护仍生效的情况下等待驱动器和 agent 完全停稳。
 
@@ -78,6 +78,7 @@ Round 只在整个 agent 进入 idle 时启动；完成、暂停和阻塞会阻�
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：驱动器状态机、竞态防护、teardown |
+| [`src/continue.ts`](src/continue.ts) | 人类 continue-intent 检测、重新启用续行与通知 |
 | [`src/prompt.ts`](src/prompt.ts) | 保留的 `<goal_round>` 续行提示词 |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式伴生：goal-round 消息必须与包自有提示词一致 |
 
@@ -115,6 +116,20 @@ Round 只在整个 agent 进入 idle 时启动；完成、暂停和阻塞会阻�
 #### KV Cache 影响
 
 在一个 epoch 内仅追加：每个已准入 Round 都会在可复用前缀后扩展现有对话。压缩可能替换派生历史后缀，并移动可复用边界。
+
+### Continue-intent 通知
+
+#### 模型看到的内容
+
+当已领取的人类消息是 continue-intent 且当前存在 goal 时，驱动器会追加一条插件通知。通知会说明 goal 已 resume、本已 armed，或因 paused、blocked、complete 而未 resume。它还会恰好包含以下子句之一：`the previous turn made no file changes; do not repeat its plan` 或 `the previous turn changed the workspace; continue from the current files`。
+
+#### Token 影响
+
+该被接受的步骤会额外追加一条用户角色通知。后续请求会重新发送它，直到压缩（compaction）将其遮蔽。
+
+#### KV Cache 影响
+
+在当前 epoch 内仅追加：该通知会在可复用前缀后扩展对话。
 
 ## 已知限制与延期工作
 

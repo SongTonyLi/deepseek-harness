@@ -49,7 +49,7 @@ kind: "package-reference"
 
 ### 每次调用做什么
 
-agent 每次更新都发送完整列表；新列表替换旧列表，因此没有部分更新或逐项编辑。每个条目是一句简短的任务描述，外加 `pending`、`in_progress` 或 `completed` 状态。成功的更新会返回新的计数——`Updated todo list: <pending> pending, <inProgress> in progress, <completed> completed.`——UI 随即展示新计划。任务描述为空或重复、条目带有描述与状态之外的字段、或（禁用并行时）多个任务被标记为进行中，这些情况下更新都会明确失败。
+agent 每次更新都发送完整列表；新列表替换旧列表，因此没有部分更新或逐项编辑。每个条目是一句简短的任务描述，外加 `pending`、`in_progress` 或 `completed` 状态。改变列表的成功更新会返回 `Updated todo list: <pending> pending, <inProgress> in progress, <completed> completed.`，UI 随即展示新计划；重写同一份规范列表则返回 `todo list unchanged`，且不再追加快照。任务描述为空或重复、条目带有描述与状态之外的字段、或（禁用并行时）多个任务被标记为进行中，这些情况下更新都会明确失败。
 
 ### 单一所有者
 
@@ -99,7 +99,7 @@ agent 每次更新都发送完整列表；新列表替换旧列表，因此没�
 
 ### 调用机制
 
-每次调用都会先校验提交的列表是否符合 schema，拒绝不一致的输入，成功后把完整快照作为 `todo/write` 会话事件追加并返回新的计数；当前列表始终是日志中最近一次 `todo/write`（回放时后写覆盖先写）。确切的校验与追加步骤见 [src/index.ts](src/index.ts)。
+每次调用都会先校验提交的列表是否符合 schema，并拒绝不一致的输入。与最近一次 `todo/write` 快照不同的列表会追加新快照并返回更新后的计数；规范匹配——去空白后的唯一 content 加 status、顺序相同——则成功返回且不追加。当前列表始终是日志中最近一次 `todo/write`（回放时后写覆盖先写）。确切的校验与追加步骤见 [src/index.ts](src/index.ts)。
 
 </details>
 
@@ -140,7 +140,7 @@ agent 每次更新都发送完整列表；新列表替换旧列表，因此没�
 
 #### 模型看到什么
 
-每次 assistant 工具调用都会在参数中保留整个替换列表。成功时原样返回 `Updated todo list: <pending> pending, <inProgress> in progress, <completed> completed.`。稳定失败文本为 ``Error: invalid todo: `content` must be a non-empty string``、`Error: invalid todos: duplicate content "<content>"`、`Error: todo_write requires an owning agent session`，以及——仅在部署设置 `allowParallelInProgress: false` 时——`Error: invalid todos: at most one task may be in_progress (got <n>)`。完整的 `todo/write` 会话事件是 UI 与回放状态，而非第二条模型消息。
+每次 assistant 工具调用都会在参数中保留整个替换列表。成功时，列表已变化则原样返回 `Updated todo list: <pending> pending, <inProgress> in progress, <completed> completed.`，规范列表已与最近快照相同则原样返回 `todo list unchanged`。稳定失败文本为 ``Error: invalid todo: `content` must be a non-empty string``、`Error: invalid todos: duplicate content "<content>"`、`Error: todo_write requires an owning agent session`，以及——仅在部署设置 `allowParallelInProgress: false` 时——`Error: invalid todos: at most one task may be in_progress (got <n>)`。完整的 `todo/write` 会话事件是 UI 与回放状态，而非第二条模型消息。
 
 #### Token 影响
 

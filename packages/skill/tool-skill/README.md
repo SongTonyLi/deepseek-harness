@@ -33,7 +33,7 @@ Use it when agents should discover and load skills during a session. Skip it whe
 
 ### Mount and configure
 
-Load the plugin together with the skill registry and at least one provider. The only configuration caps the normalized description length rendered in the catalog.
+Load the plugin together with the skill registry and at least one provider. Configuration caps the catalog description length and names the provider routes that receive the unknown-skill hard-stop.
 
 ```yaml
 - name: '@deepseek-ai/dsh-skill'
@@ -44,6 +44,7 @@ Load the plugin together with the skill registry and at least one provider. The 
 | Field | Default | Meaning |
 |---|---|---|
 | `catalogDescriptionMaxLength` | `500` | Maximum normalized description length rendered in the session catalog; minimum 3 |
+| `closedCatalogProviders` | `['cursor']` | Provider routes that receive the per-turn unknown-skill hard-stop; empty disables the stop. Suggestions still run for every provider. |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-skill) is the exhaustive source for every accepted field.
 
@@ -56,7 +57,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### Observable success and failures
 
-Loading a listed skill returns its full instructions; the model sees one canonical shape whether the load came from the tool or from a user's explicit invocation. An invalid name reports `Error: invalid skill name "<name>"`, an unknown name reports the skill is unknown or no longer available, and a skill disabled for model invocation reports it is not available for model invocation. The catalog is omitted entirely when no catalog was ever published and either no model-invocable skills exist or the `skill` tool is hidden or shadowed; after a catalog has been published, either visibility loss — the `skill` tool hidden or shadowed by a same-name scoped tool — or removal of every skill instead appends an empty catalog that retires older names.
+Loading a listed skill returns its full instructions; the model sees one canonical shape whether the load came from the tool or from a user's explicit invocation. An invalid name reports `Error: invalid skill name "<name>"`, an unknown or vanished name reports `Error: skill "<name>" is unknown or no longer available` plus closest catalog names, a capped list of model-invocable names, and the closed-catalog rule, and a skill disabled for model invocation reports it is not available for model invocation. After three consecutive unknown loads on the same live agent in the same turn, further `skill` calls in that turn — including valid names — report that the catalog is closed this turn and the next action must be a task tool when the agent's current or selected provider is in `closedCatalogProviders` (default the Cursor subscription route `cursor`); an invalid name, a model-disabled skill, a successful load, a new turn, a provider outside that list, or direct execution without an agent never applies it. The catalog is omitted entirely when no catalog was ever published and either no model-invocable skills exist or the `skill` tool is hidden or shadowed; after a catalog has been published, either visibility loss — the `skill` tool hidden or shadowed by a same-name scoped tool — or removal of every skill instead appends an empty catalog that retires older names.
 
 -----
 
@@ -77,6 +78,7 @@ The package is built on two ideas. First, the catalog is a durable projection, d
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: tool registration, catalog and gesture pre-step listeners, rendering and digest |
+| [`src/unknown-skill.ts`](src/unknown-skill.ts) | Closest-name ranker and unknown-skill error text |
 | — | No runtime invariant companion is published; this model-facing adapter has no independent lifecycle stream; execution relations are owned by the capability seam it calls. |
 
 ### Catalog lifecycle
@@ -209,11 +211,26 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 #### What the model sees
 
-Invalid or stale selections return exactly `Error: invalid skill name "<name>"`, `Error: skill "<name>" is unknown or no longer available`, or `Error: skill "<name>" is not available for model invocation`. Provider-thrown lookup text is data-dependent and receives the same `Error: <message>` wrapper.
+Invalid names return `Error: invalid skill name "<name>"`. A skill disabled for model invocation returns `Error: skill "<name>" is not available for model invocation`. An unknown or vanished name keeps the first line `Error: skill "<name>" is unknown or no longer available` and appends closest catalog names, the model-invocable name list, and the closed-catalog rule. When no catalog name is close enough, the second line is `No close catalog name matches.` When the catalog is empty, the third line is `The skill catalog is empty.` instead of a `Valid skill names:` list. A list longer than 40 names ends with `(+N more)`. After three consecutive unknown loads on the same live agent in the same turn, further `skill` calls in that turn — including valid names — return the closed-catalog refusal. Provider-thrown lookup text is data-dependent and receives the same `Error: <message>` wrapper. An invalid name or a model-disabled skill does not count toward the per-turn stop. Direct `skill` execution without an agent never applies that stop.
+
+##### Unknown skill error
+
+```markdown
+Error: skill "<name>" is unknown or no longer available
+Closest catalog names: `<near-1>`, `<near-2>`
+Valid skill names: `<name-1>`, `<name-2>`
+The skill catalog is closed: use only listed names. Do not invent names.
+```
+
+##### Closed catalog this turn
+
+```markdown
+Error: The skill catalog is closed this turn. The next action must be a task tool (read/edit/write/bash), not another skill load.
+```
 
 #### Token effect
 
-Only a failing call adds these retained tokens.
+Only a failing call adds these retained tokens. An unknown-skill error includes a catalog list capped at 40 names; the per-turn refusal is one fixed sentence.
 
 #### KV Cache effect
 
