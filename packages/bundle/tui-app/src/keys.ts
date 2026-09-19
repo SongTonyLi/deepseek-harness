@@ -70,7 +70,7 @@ export type KeyAction =
   | { kind: 'escape' }
   /** Steer the running turn with the editor's text. */
   | { kind: 'steer' }
-  /** Cycle the current model's reasoning effort. */
+  /** Open the current model's reasoning-effort picker. */
   | { kind: 'effort' }
   /** Type these characters at the editor's caret, wherever the keyboard was. */
   | { kind: 'type'; text: string }
@@ -155,7 +155,8 @@ export function widestHint(region: FocusRegion): string {
  */
 export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
   editor: [
-    'Enter sends · Shift+Enter newline · ↑↓ history · Ctrl+S steers · Shift+Tab effort',
+    'Enter sends · Shift+Enter newline · ↑↓ history · Ctrl+S steers',
+    'Shift+Tab effort list · Shift+←→ words',
     '@ completes paths and sessions · / completes commands · Tab takes one',
     `${ENTRY_KEYS} · Ctrl+G reader`,
     'Ctrl+O folds every tool card and context row',

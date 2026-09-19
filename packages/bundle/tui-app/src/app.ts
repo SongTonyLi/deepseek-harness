@@ -18,6 +18,7 @@ import {
   Container,
   Loader,
   Text,
+  isKeyRelease,
   matchesKey,
   visibleWidth,
   type OverlayHandle,
@@ -128,7 +129,7 @@ import { READER_HINTS } from './reader.ts'
 import { ReaderPane, type ReaderExit } from './reader-overlay.ts'
 import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
 import { GuardedMainScreen, ViewportPad, repaintFloor } from './screen.ts'
-import { describeSession, listSessionChoices } from './sessions.ts'
+import { describeSession, listSessionChoices, type SessionChoice } from './sessions.ts'
 import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
 import {
   renderSubagentPanel,
@@ -158,13 +159,29 @@ import {
   formatUsage,
   parseArguments,
   toolCallText,
-  toolResultLines,
+  toolResultBody,
   turnEndNotice,
   type UsageTotals,
 } from './transcript.ts'
 
 /** A second Ctrl+C inside this window quits. */
 const QUIT_DOUBLE_PRESS_MS = 600
+
+/** What input reports while the host is opening another session. */
+const SESSION_SWITCH_WAIT = 'wait for the session switch to finish'
+
+/** The one extra key the model picker answers, stated above its rows. */
+const MODEL_PICKER_HINT = 'Ctrl+S saves the highlighted model as the default for the next launch'
+
+/**
+ * Read a picker row value back into a selection.
+ * @param value - `provider/model`, as {@link TuiApp.modelItems} writes it.
+ * @returns the provider and model.
+ */
+function splitModelValue(value: string): ModelSelection {
+  const slash = value.indexOf('/')
+  return { provider: value.slice(0, slash), model: value.slice(slash + 1) }
+}
 
 /** What the transcript is told when a session switch took the conversation the reader was showing. */
 const READER_GONE = 'the transcript changed · reader closed'
@@ -414,6 +431,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'model', description: 'Pick the model and reasoning effort for the next request (/model provider/model, /model save)' },
   { name: 'effort', description: 'Pick the current model\'s reasoning effort for the next request (/effort <id>, /effort default)' },
   { name: 'sessions', description: 'Switch to another session' },
+  { name: 'resume', description: 'Resume a previous session' },
   { name: 'new', description: 'Start a new session' },
   { name: 'fork', description: 'Fork this session at its last completed turn (/fork <turn> for an earlier one)' },
   { name: 'title', description: 'Rename this session (/title <text>)' },
@@ -451,6 +469,17 @@ type Tone = 'dim' | 'error' | 'success'
 
 /** How a message submitted while a turn runs reaches the Agent. */
 type SubmitMode = 'queue' | 'steer'
+
+/** One cancellable asynchronous operation and its shared settlement. */
+interface CancellableOperation {
+  controller: AbortController
+  done: Promise<void>
+}
+
+/** One current-model effort operation; equal arguments share its settlement. */
+interface EffortOperation extends CancellableOperation {
+  argument: string
+}
 
 /**
  * What the terminal remembers about one todo line across writes. The todo
@@ -497,6 +526,10 @@ export class TuiApp {
   /** Draws the focused transcript section, and nothing at all while the keyboard is elsewhere. */
   private readonly inspector: InspectorPane
   private readonly editor: BarCursorEditor
+  /** Holds {@link queue} exactly while the bound Agent's inbox has a prompt waiting. */
+  private readonly queueSlot = new Container()
+  /** The prompts queued for the next turn or step, drawn above the editor until the loop claims them. */
+  private readonly queue: Text
   /** Holds {@link panel} exactly while the bound session has subagent rows. */
   private readonly panelSlot = new Container()
   /** Blank rows that give the mounted reader the whole viewport; see {@link ViewportPad}. */
@@ -604,8 +637,10 @@ export class TuiApp {
   private toolsExpanded = false
   /** Set while a session switch awaits the host, so input cannot target the session being left. */
   private switching = false
-  /** Serializes Shift+Tab effort cycles so rapid presses apply in order. */
-  private effortCycle = Promise.resolve()
+  /** The current-model effort command, including its lookup and optional picker. */
+  private effortOperation: EffortOperation | undefined
+  /** The persisted-session picker shared by `/resume` and `/sessions`, including its listing. */
+  private sessionPicker: CancellableOperation | undefined
   /** Serializes `/attach` reads so pending attachments keep the typed order. */
   private attaching = Promise.resolve()
   private usage: UsageTotals = EMPTY_USAGE
@@ -652,6 +687,7 @@ export class TuiApp {
       references: (query, quoted, signal) => this.references(query, quoted, signal),
     }))
     this.editor.onSubmit = (text) => { this.onSubmit(text) }
+    this.queue = new Text('', 0, 0)
     this.panel = new Text('', 0, 0)
     this.footer = new FooterBar(() => ({
       segments: this.segments,
@@ -664,7 +700,8 @@ export class TuiApp {
     }))
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
     const tree = [
-      this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.editor, this.panelSlot, this.footer, this.pad,
+      this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.queueSlot,
+      this.editor, this.panelSlot, this.footer, this.pad,
     ]
     for (const child of tree) this.tui.addChild(child)
   }
@@ -700,6 +737,11 @@ export class TuiApp {
       // fire for out-of-process children too.
       ctx.on('subagent/start', () => { this.markSubagentsStale() }),
       ctx.on('subagent/end', () => { this.markSubagentsStale() }),
+      // A prompt waits above the editor from the moment it enters the inbox
+      // until the loop claims it for a turn or step, or `/queue clear` drops it.
+      ctx.on('agent/inbox/inserted', ({ agent: subject }) => { if (subject === this.agent) this.refreshQueue() }),
+      ctx.on('agent/inbox/claimed', ({ agent: subject }) => { if (subject === this.agent) this.refreshQueue() }),
+      ctx.on('agent/inbox/discarded', ({ agent: subject }) => { if (subject === this.agent) this.refreshQueue() }),
       ctx.on('approval/request', (request, next) => {
         if (request.agent !== this.agent) return next()
         return this.askApproval(request.toolName, request.reason, request.callId, request.signal)
@@ -767,6 +809,7 @@ export class TuiApp {
     this.stopped = true
     this.updateTicker()
     this.updateFadeTicker()
+    this.cancelPickers()
     for (const dispose of this.disposers.splice(0)) dispose()
     this.modals.withdrawActive()
     this.dropReader()
@@ -822,6 +865,7 @@ export class TuiApp {
     this.replaying = false
     if (reading) this.notice(READER_GONE)
     this.refreshHeader()
+    this.refreshQueue()
     this.refreshFooter()
     this.refreshSubagentPanel()
     // Seeding the panel is a listing of its own, not an event handler's read.
@@ -838,6 +882,7 @@ export class TuiApp {
       this.notice('stop the running turn (Esc twice) before switching sessions', 'error')
       return
     }
+    this.cancelPickers()
     this.switching = true
     let next: BoundSession
     try {
@@ -961,6 +1006,30 @@ export class TuiApp {
       home: this.home,
       attachments: this.pending.map(attachment => ({ name: attachment.name, kind: attachment.block.type })),
     })
+    this.tui.requestRender()
+  }
+
+  /**
+   * Redraw the queued prompts above the editor from the bound Agent's inbox.
+   * The slot is mounted exactly while a prompt waits, so the editor sits
+   * directly under the conversation the rest of the time.
+   */
+  private refreshQueue(): void {
+    const palette = this.deps.palette
+    const inbox = this.agent.inbox
+    const row = (label: string, message: UserMessage): string =>
+      `${palette.dim(`⏳ ${label}`)} ${contentText(message.content).split('\n', 1).join('')}`
+    const rows = [
+      ...inbox.nextStep.map(message => row('next step', message)),
+      ...inbox.nextTurn.map(message => row('next turn', message)),
+    ]
+    const mounted = this.queueSlot.children.length > 0
+    if (rows.length === 0) {
+      if (mounted) this.queueSlot.removeChild(this.queue)
+    } else {
+      this.queue.setText(rows.join('\n'))
+      if (!mounted) this.queueSlot.addChild(this.queue)
+    }
     this.tui.requestRender()
   }
 
@@ -1148,6 +1217,26 @@ export class TuiApp {
   private showBlock(rows: readonly string[]): void {
     this.chat.addChild(new Text(rows.join('\n'), 0, 1))
     this.tui.requestRender()
+  }
+
+  /** Retire and withdraw current-model effort work. */
+  private cancelEffortOperation(): void {
+    const operation = this.effortOperation
+    this.effortOperation = undefined
+    operation?.controller.abort()
+  }
+
+  /** Retire and withdraw persisted-session picker work. */
+  private cancelSessionPicker(): void {
+    const operation = this.sessionPicker
+    this.sessionPicker = undefined
+    operation?.controller.abort()
+  }
+
+  /** Withdraw picker work before quit or a session switch. */
+  private cancelPickers(): void {
+    this.cancelEffortOperation()
+    this.cancelSessionPicker()
   }
 
   /**
@@ -1382,8 +1471,8 @@ export class TuiApp {
     this.showBlock(statusReport(this.statusFacts()))
   }
 
-  private currentSelection(): ModelSelection {
-    const { selection, agent } = this.bound
+  private currentSelection(bound: BoundSession = this.bound): ModelSelection {
+    const { selection, agent } = bound
     const selected = selection.current ?? agent.session.requestHeader()?.config
     if (selected !== undefined) return selected
     return { provider: agent.options.provider ?? 'default', model: agent.options.model ?? 'default' }
@@ -1392,8 +1481,9 @@ export class TuiApp {
   // ── keyboard ────────────────────────────────────────────────────────────
 
   /**
-   * Answer one key press.
+   * Answer one terminal key report.
    *
+   * Kitty release reports are consumed before they can repeat the press.
    * A visible prompt owns the whole key stream; `Ctrl+C` and `Ctrl+D` keep
    * their global meaning wherever the keyboard is; everything else is what
    * {@link resolveKey} makes of the key in the region that holds it.
@@ -1407,6 +1497,7 @@ export class TuiApp {
    * editor answers.
    */
   private onKey(data: string): { consume: true } | undefined {
+    if (isKeyRelease(data)) return { consume: true }
     this.finishReaderClose()
     if (this.modals.isActive()) {
       if (!matchesKey(data, 'ctrl+c')) return undefined
@@ -1498,11 +1589,11 @@ export class TuiApp {
         this.onSubmit(this.editor.getText(), 'steer')
         return { consume: true }
       case 'effort':
-        this.effortCycle = this.effortCycle.then(
-          () => this.cycleEffort(),
-          /* v8 ignore next -- cycleEffort handles its own failures; this recovers a rejected chain */
-          () => this.cycleEffort(),
-        )
+        if (this.switching) {
+          this.notice(SESSION_SWITCH_WAIT, 'error')
+          return { consume: true }
+        }
+        void this.dispatchCommand('/effort')
         return { consume: true }
       case 'type':
         this.focusEditor()
@@ -2078,17 +2169,26 @@ export class TuiApp {
     const text = raw.trim()
     if (text === '') return
     if (this.switching) {
-      this.notice('wait for the session switch to finish', 'error')
+      this.notice(SESSION_SWITCH_WAIT, 'error')
       return
     }
     this.editor.setText('')
     this.editor.addToHistory(text)
     if (text.startsWith('/')) {
-      const name = text.slice(0, text.indexOf(' ') === -1 ? undefined : text.indexOf(' '))
-      this.runCommand(text).catch((error: unknown) => { this.notice(`${name} failed: ${describeFailure(error)}`, 'error') })
+      void this.dispatchCommand(text)
       return
     }
     this.submit(text, mode)
+  }
+
+  /**
+   * Run one slash command and turn a rejection into a terminal notice.
+   * @param line - the complete slash-command line.
+   * @returns when the command or its failure notice settles.
+   */
+  private dispatchCommand(line: string): Promise<void> {
+    const name = line.slice(0, line.indexOf(' ') === -1 ? undefined : line.indexOf(' '))
+    return this.runCommand(line).catch((error: unknown) => { this.notice(`${name} failed: ${describeFailure(error)}`, 'error') })
   }
 
   private submit(text: string, mode: SubmitMode = 'queue'): void {
@@ -2098,18 +2198,23 @@ export class TuiApp {
       content: [...attachments.map(attachment => attachment.block), { type: 'text', text }],
       source: { kind: 'user' },
     })
-    this.submittedIds.add(message.id)
-    const shown = attachments.length === 0 ? text : `${text}\n${attachments.map(attachment => `[${attachment.block.type}: ${attachment.name}]`).join(' ')}`
-    this.chat.addChild(new UserBlock(this.theme, shown, this.turn))
     if (agent.status !== 'running') {
+      // An idle Agent takes the prompt at once, so it is drawn here and the
+      // durable `user/message` that follows is not drawn a second time.
+      this.submittedIds.add(message.id)
+      const shown = attachments.length === 0 ? text : `${text}\n${attachments.map(attachment => `[${attachment.block.type}: ${attachment.name}]`).join(' ')}`
+      this.chat.addChild(new UserBlock(this.theme, shown, this.turn))
       agent.followup(message)
     } else if (mode === 'steer') {
+      // A prompt that waits in the inbox is drawn above the editor instead,
+      // and enters the conversation through its `user/message` when claimed.
       agent.steer(message)
       this.notice('steering the running turn: it reaches the next step')
     } else {
       agent.followup(message)
       this.notice('queued for the next turn (Ctrl+S steers the running turn instead)')
     }
+    this.refreshQueue()
     this.refreshFooter()
   }
 
@@ -2134,13 +2239,15 @@ export class TuiApp {
         this.openReader()
         return
       case 'model':
+        this.cancelEffortOperation()
         await this.chooseModel(argument)
         return
       case 'effort':
-        await this.chooseCurrentEffort(argument)
+        await this.runCurrentEffort(argument)
         return
       case 'sessions':
-        await this.chooseSession()
+      case 'resume':
+        await this.openSessionPicker()
         return
       case 'new':
         await this.switchSession(() => this.deps.host.create(), 'new session')
@@ -2253,15 +2360,7 @@ export class TuiApp {
   private async chooseModel(argument: string): Promise<void> {
     const { selection } = this.bound
     if (argument === 'save') {
-      const defaults = this.deps.ctx.get('agentDefaultModel')
-      /* v8 ignore next 4 -- the runner injects the default-model service; only teardown can remove it */
-      if (defaults === undefined) {
-        this.notice('no default model service is composed', 'error')
-        return
-      }
-      const current = this.currentSelection()
-      await defaults.saveSelection(current)
-      this.notice(`default model saved: ${current.provider}/${current.model}`, 'success')
+      await this.saveDefaultModel(this.currentSelection())
       return
     }
     let next: ModelSelection | undefined
@@ -2280,17 +2379,42 @@ export class TuiApp {
       }
       const current = this.currentSelection()
       const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Model for the next request', items, {
+        body: [MODEL_PICKER_HINT],
         current: `${current.provider}/${current.model}`,
+        // The save leaves the picker open: the highlighted model becomes the
+        // next launch's default whether or not Enter then applies it here.
+        onSave: (item) => { void this.saveDefaultModel(splitModelValue(item.value)) },
       }))
       if (picked === undefined) return
-      const slash = picked.value.indexOf('/')
-      next = { provider: picked.value.slice(0, slash), model: picked.value.slice(slash + 1) }
+      next = splitModelValue(picked.value)
     }
     const effort = await this.chooseEffort(next)
     if (effort === null) return
+    this.cancelEffortOperation()
     selection.current = effort === undefined ? next : { ...next, reasoningEffort: effort }
     this.notice(`model: ${next.provider}/${next.model}${effort === undefined ? '' : ` · effort ${effort}`} from the next request`, 'success')
     this.refreshFooter()
+  }
+
+  /**
+   * Record `model` as the default every later launch starts from. The
+   * reasoning effort rides along when the selection carries one.
+   * @param model - the provider and model to save.
+   */
+  private async saveDefaultModel(model: ModelSelection): Promise<void> {
+    const defaults = this.deps.ctx.get('agentDefaultModel')
+    /* v8 ignore next 4 -- the runner injects the default-model service; only teardown can remove it */
+    if (defaults === undefined) {
+      this.notice('no default model service is composed', 'error')
+      return
+    }
+    try {
+      await defaults.saveSelection(model)
+    } catch (error: unknown) {
+      this.notice(`default model not saved: ${describeFailure(error)}`, 'error')
+      return
+    }
+    this.notice(`default model saved: ${model.provider}/${model.model}`, 'success')
   }
 
   /**
@@ -2324,16 +2448,62 @@ export class TuiApp {
   }
 
   /**
+   * Whether asynchronous command or picker work may no longer affect its
+   * originating session.
+   * @param bound - the session binding that started the work.
+   * @param signal - cancellation owned by the picker operation.
+   * @returns true after cancellation, quit, or a session switch.
+   */
+  private operationAbandoned(bound: BoundSession, signal?: AbortSignal): boolean {
+    return this.stopped || this.switching || this.bound !== bound || signal?.aborted === true
+  }
+
+  /**
+   * Whether current-model effort work lost either its session or selection.
+   * @param bound - the session binding that started the work.
+   * @param selected - that binding's explicit selection when the work began.
+   * @param signal - cancellation owned by the effort operation.
+   * @returns true when applying the result would overwrite newer state.
+   */
+  private effortAbandoned(
+    bound: BoundSession,
+    selected: ModelSelection | undefined,
+    signal: AbortSignal,
+  ): boolean {
+    return bound.selection.current !== selected || this.operationAbandoned(bound, signal)
+  }
+
+  /**
+   * Run one current-model effort command; equal active arguments share it and
+   * a different argument supersedes it.
+   * @param argument - a declared effort id, `default`, or empty for the picker.
+   * @returns when this effort operation settles.
+   */
+  private runCurrentEffort(argument: string): Promise<void> {
+    if (this.effortOperation?.argument === argument) return this.effortOperation.done
+    this.cancelEffortOperation()
+    const controller = new AbortController()
+    const operation: EffortOperation = { argument, controller, done: Promise.resolve() }
+    this.effortOperation = operation
+    operation.done = this.chooseCurrentEffort(argument, this.bound, controller.signal).finally(() => {
+      if (this.effortOperation === operation) this.effortOperation = undefined
+    })
+    return operation.done
+  }
+
+  /**
    * Choose the bound model's reasoning effort for the next request: an empty
    * argument opens the picker on the effort in force, `default` restores the
    * provider default, and anything else names a declared effort.
    * @param argument - a declared effort id, `default`, or empty.
+   * @param bound - the session binding whose selection the lookup describes.
+   * @param signal - withdraws an empty-argument picker when the session changes.
    */
-  private async chooseCurrentEffort(argument: string): Promise<void> {
-    const current = this.currentSelection()
+  private async chooseCurrentEffort(argument: string, bound: BoundSession, signal: AbortSignal): Promise<void> {
+    const selected = bound.selection.current
+    const current = this.currentSelection(bound)
     const lookup = await this.lookupEfforts(current)
-    // The lookup can settle after the user quits.
-    if (this.stopped) return
+    if (this.effortAbandoned(bound, selected, signal)) return
     if (lookup.kind !== 'ready') {
       this.reportEffortLookup(lookup, current)
       return
@@ -2357,29 +2527,9 @@ export class TuiApp {
         body: [effortHint(reasoning, current.reasoningEffort)],
         current: current.reasoningEffort ?? PROVIDER_DEFAULT,
       },
-    ))
-    if (picked === undefined) return
+    ), signal)
+    if (picked === undefined || this.effortAbandoned(bound, selected, signal)) return
     this.applyEffort(current, picked.value === PROVIDER_DEFAULT ? undefined : ReasoningEffortId(picked.value))
-  }
-
-  /**
-   * Advance the bound selection to the next reasoning effort, wrapping through
-   * the provider default. A model with fewer than two efforts has nothing to cycle.
-   */
-  private async cycleEffort(): Promise<void> {
-    if (this.stopped || this.modals.isActive()) return
-    const current = this.currentSelection()
-    const lookup = await this.lookupEfforts(current)
-    // The lookup can settle after the user quits, past the entry guard.
-    // oxlint-disable-next-line typescript/no-unnecessary-condition -- The entry guard's narrowing does not survive the await above.
-    if (this.stopped) return
-    if (lookup.kind !== 'ready') {
-      this.reportEffortLookup(lookup, current)
-      return
-    }
-    const steps: Array<ReasoningEffortId | undefined> = [undefined, ...lookup.reasoning.efforts.map(effort => effort.id)]
-    const index = steps.findIndex(step => step === current.reasoningEffort)
-    this.applyEffort(current, steps[index === -1 ? 1 : (index + 1) % steps.length])
   }
 
   /**
@@ -2460,16 +2610,44 @@ export class TuiApp {
     return items
   }
 
-  private async chooseSession(): Promise<void> {
+  /**
+   * Open the one persisted-session picker shared by `/sessions` and `/resume`.
+   * @returns when the active picker operation settles.
+   */
+  private openSessionPicker(): Promise<void> {
+    if (this.sessionPicker !== undefined) return this.sessionPicker.done
+    const controller = new AbortController()
+    const operation: CancellableOperation = { controller, done: Promise.resolve() }
+    this.sessionPicker = operation
+    operation.done = this.chooseSession(this.bound, controller.signal).finally(() => {
+      if (this.sessionPicker === operation) this.sessionPicker = undefined
+    })
+    return operation.done
+  }
+
+  /**
+   * List and open sessions for one still-current binding.
+   * @param bound - the session that was current when listing began.
+   * @param signal - cancels listing and withdraws its queued or visible picker.
+   */
+  private async chooseSession(bound: BoundSession, signal: AbortSignal): Promise<void> {
     this.notice('listing sessions…')
-    const choices = await listSessionChoices(this.deps.ctx, this.agent.session.id, new AbortController().signal)
+    let choices: SessionChoice[]
+    try {
+      choices = await listSessionChoices(this.deps.ctx, bound.agent.session.id, signal)
+    } catch (error: unknown) {
+      if (signal.aborted) return
+      throw error
+    }
+    if (this.operationAbandoned(bound, signal)) return
     if (choices.length === 0) {
       this.notice('no persisted sessions are listed by the composed query engine', 'error')
       return
     }
     const items = choices.map((choice): PickItem => ({ value: choice.id, ...describeSession(choice) }))
-    const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Switch to a session', items))
-    const target = choices.find(choice => choice.id === picked?.value)
+    const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Switch to a session', items), signal)
+    if (picked === undefined || this.operationAbandoned(bound, signal)) return
+    const target = choices.find(choice => choice.id === picked.value)
     if (target === undefined || target.current) return
     await this.switchSession(() => this.deps.host.resume(target.id), 'resumed')
   }
@@ -2541,6 +2719,7 @@ export class TuiApp {
     const inbox = this.agent.inbox
     if (argument === 'clear') {
       inbox.clear()
+      this.refreshQueue()
       this.notice('queue cleared', 'success')
       return
     }
@@ -3113,7 +3292,8 @@ export class TuiApp {
         if (block === undefined) break
         const isError = result.isError === true
         const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
-        block.setResult(toolResultLines(view, result.content), isError)
+        const body = toolResultBody(view, result.content)
+        block.setResult(body.lines, isError, body.code)
         this.fadeBlock((fade) => { block.setResultFade(fade) })
         this.loader.setMessage('thinking')
         break

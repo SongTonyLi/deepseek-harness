@@ -150,13 +150,13 @@ describe('buildFooterSegments', () => {
     ])
     expect(rows(unset, 'effort')).toEqual([
       'reasoning effort: the model\'s own default',
-      'Shift+Tab cycles it · /effort picks one',
+      'Shift+Tab or /effort opens the effort list',
     ])
     const selected = buildFooterSegments(inputs({ selection: { ...model, reasoningEffort: ReasoningEffortId('high') } }))
     expect(rows(selected, 'model')).toContain('reasoning effort: high')
     expect(rows(selected, 'effort')).toEqual([
       'reasoning effort: high',
-      'Shift+Tab cycles it · /effort picks one',
+      'Shift+Tab or /effort opens the effort list',
     ])
   })
 

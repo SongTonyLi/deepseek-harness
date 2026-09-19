@@ -8,7 +8,7 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, AssistantStreamFrame, CreateAgentOptions, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { LlmAttemptId, createAssistantMessage, createToolResultMessage, type StreamChunk, type ContentBlock, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage, type StreamChunk, type ContentBlock, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionEventType, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
@@ -269,6 +269,11 @@ export interface Bench {
     chunk(chunk: StreamChunk): void
     end(outcome: Extract<AssistantStreamFrame, { type: 'end' }>['outcome']): void
   }
+  /**
+   * Append one durable user prompt, as the loop logs a prompt it has claimed
+   * from the inbox; a running bench's typed prompts wait in the queue instead.
+   */
+  appendPrompt(text: string): void
   /** Append a durable turn around `content` from the model. */
   appendAssistant(content: ContentBlock[], options?: { usage?: { inputTokens: number; outputTokens: number }; interrupted?: true }): void
   appendToolCall(callId: string, name: string, args: unknown): void
@@ -542,6 +547,9 @@ export async function bench(options: {
       start: () => { emit({ type: 'start', attemptId, revision: ++revision, turn: 1, step: 1 }) },
       chunk: (chunk) => { emit({ type: 'chunk', attemptId, revision: ++revision, index: index++, time: Date.now(), chunk }) },
       end: (outcome) => { emit({ type: 'end', attemptId, revision: ++revision, index: index++, outcome }) },
+    },
+    appendPrompt(text) {
+      session.append('user/message', createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }), { surfaceOp: 'append' })
     },
     appendAssistant(content, extra = {}) {
       turn += 1

@@ -1,5 +1,5 @@
 /** The terminal's session, attachment, queue, skill, sign-in, `/login`,
- *  Shift+Tab effort cycling, export, and reference commands over scripted services. */
+ *  Shift+Tab effort picker, export, and reference commands over scripted services. */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -35,7 +35,7 @@ function sessionList(ctx: Context): void {
 }
 
 describe('session commands', () => {
-  it('switches through the picker, binds the new session, and releases the previous one', async () => {
+  it('resumes through the picker, binds the selected session, and releases the previous one', async () => {
     const test = await bench({
       before: sessionList,
       openedHistory: [{
@@ -45,7 +45,7 @@ describe('session commands', () => {
         data: createUserMessage({ content: [{ type: 'text', text: 'earlier prompt' }], source: { kind: 'user' } }),
       }] as never[],
     })
-    typeLine(test.terminal, '/sessions')
+    typeLine(test.terminal, '/resume')
     await test.settle()
     expect(test.terminal.text()).toContain('Older chat')
     expect(test.terminal.text()).toContain('/elsewhere')
@@ -62,6 +62,45 @@ describe('session commands', () => {
     expect(test.quits[0]?.agent.session.id).toBe('session-older')
   })
 
+  it('cancels an effort picker queued behind /resume before binding its target', async () => {
+    let releaseSessions: ((records: unknown[]) => void) | undefined
+    let releaseEffort: ((info: { reasoning: { efforts: { id: string; name: string }[] } }) => void) | undefined
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          listSessions: () => new Promise<unknown[]>((resolve) => { releaseSessions = resolve }),
+          readTitleSnapshots: () => Promise.resolve([
+            { status: 'fulfilled', value: {} },
+            { status: 'fulfilled', value: { title: { title: 'Older chat' } } },
+          ]),
+        } as never)
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: () => new Promise((resolve) => { releaseEffort = resolve }),
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/resume')
+    await Promise.resolve()
+    test.terminal.type(KEY.shiftTab)
+    await Promise.resolve()
+    releaseSessions?.([
+      { header: { id: 'session-tui-test', createdAt: 20, cwd: '/work' } },
+      { header: { id: 'session-older', createdAt: 10, cwd: '/elsewhere' } },
+    ])
+    await test.settle()
+    expect(test.terminal.text()).toContain('Switch to a session')
+    releaseEffort?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+    await Promise.resolve()
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.hostCalls).toEqual(['resume:session-older'])
+    expect(test.opened[1]?.bound.selection.current).toEqual({ provider: 'test-provider', model: 'opened-model' })
+    expect(await test.screen()).not.toContain('Reasoning effort ·')
+  })
+
   it('keeps the current session when the picker picks it or is dismissed', async () => {
     const test = await bench({ before: sessionList })
     typeLine(test.terminal, '/sessions')
@@ -76,11 +115,103 @@ describe('session commands', () => {
     expect(test.opened[0]?.disposed).toBe(0)
   })
 
-  it('reports an empty session list', async () => {
+  it('coalesces the session commands and drops stale listings after another switch starts or completes', async () => {
+    let listings = 0
+    let releaseSessions: ((records: unknown[]) => void) | undefined
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          listSessions: () => {
+            listings += 1
+            return new Promise<unknown[]>((resolve) => { releaseSessions = resolve })
+          },
+          readTitleSnapshots: () => Promise.resolve([
+            { status: 'fulfilled', value: {} },
+            { status: 'fulfilled', value: { title: { title: 'Older chat' } } },
+          ]),
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/resume')
+    await Promise.resolve()
+    typeLine(test.terminal, '/sessions')
+    expect(listings).toBe(1)
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    expect(test.hostCalls).toEqual(['create'])
+    releaseSessions?.([
+      { header: { id: 'session-tui-test', createdAt: 20, cwd: '/work' } },
+      { header: { id: 'session-older', createdAt: 10, cwd: '/elsewhere' } },
+    ])
+    await test.settle()
+    expect(await test.screen()).not.toContain('Switch to a session')
+    expect(test.hostCalls).toEqual(['create'])
+
+    const aborted = await bench({
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          listSessions: (signal: AbortSignal) => new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => { reject(new Error('listing aborted')) }, { once: true })
+          }),
+          readTitleSnapshots: () => Promise.resolve([]),
+        } as never)
+      },
+    })
+    typeLine(aborted.terminal, '/resume')
+    await Promise.resolve()
+    typeLine(aborted.terminal, '/new')
+    await aborted.settle()
+    expect(aborted.terminal.text()).not.toContain('/resume failed')
+    expect(aborted.hostCalls).toEqual(['create'])
+  })
+
+  it('silences effort and session listings canceled by a failed switch', async () => {
+    let releaseSessions: ((records: unknown[]) => void) | undefined
+    let releaseEffort: ((info: { reasoning: { efforts: { id: string; name: string }[] } }) => void) | undefined
+    const test = await bench({
+      hostFailure: 'store offline',
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          listSessions: () => new Promise<unknown[]>((resolve) => { releaseSessions = resolve }),
+          readTitleSnapshots: () => Promise.resolve([]),
+        } as never)
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: () => new Promise((resolve) => { releaseEffort = resolve }),
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/resume')
+    await Promise.resolve()
+    test.terminal.type(KEY.shiftTab)
+    await Promise.resolve()
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    expect(test.terminal.text()).toContain('new session failed: store offline')
+    releaseSessions?.([])
+    releaseEffort?.({ reasoning: { efforts: [{ id: 'only', name: 'Only' }] } })
+    await test.settle()
+    expect(test.terminal.text()).not.toContain('no persisted sessions are listed')
+    expect(test.terminal.text()).not.toContain('no selectable reasoning efforts')
+  })
+
+  it('reports an empty session list or a listing failure', async () => {
     const test = await bench()
     typeLine(test.terminal, '/sessions')
     await test.settle()
     expect(test.terminal.text()).toContain('no persisted sessions are listed')
+
+    const failed = await bench({
+      before: (ctx) => {
+        ctx.provide('sessionQuery', {
+          listSessions: () => Promise.reject(new Error('query offline')),
+        } as never)
+      },
+    })
+    typeLine(failed.terminal, '/resume')
+    await failed.settle()
+    expect(failed.terminal.text()).toContain('/resume failed: query offline')
   })
 
   it('starts and forks sessions through the host and refuses while a turn runs', async () => {
@@ -110,14 +241,27 @@ describe('session commands', () => {
 
   it('refuses input and a second switch while the host opens, and releases a session opened after quit', async () => {
     const gate = { release: () => {} }
-    const test = await bench({ hostGate: gate })
+    let effortLookups = 0
+    const test = await bench({
+      hostGate: gate,
+      before: (ctx) => {
+        ctx.provide('llm', {
+          resolveModelInfo: () => {
+            effortLookups += 1
+            return Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+          },
+        } as never)
+      },
+    })
     typeLine(test.terminal, '/new')
     await test.settle()
     expect(test.hostCalls).toEqual(['create'])
+    test.terminal.type(KEY.shiftTab)
     typeLine(test.terminal, 'too early')
     typeLine(test.terminal, '/fork')
     await test.settle()
-    expect(test.terminal.text().split('wait for the session switch to finish')).toHaveLength(3)
+    expect(test.terminal.text().split('wait for the session switch to finish')).toHaveLength(4)
+    expect(effortLookups).toBe(0)
     expect(test.calls.followups).toHaveLength(0)
     expect(test.hostCalls).toEqual(['create'])
     gate.release()
@@ -305,6 +449,7 @@ describe('command failures and aliases', () => {
     typeLine(test.terminal, '/help')
     await test.settle()
     expect(test.terminal.text()).toContain('/exit')
+    expect(test.terminal.text()).toContain('/resume')
     typeLine(test.terminal, '/exit')
     expect(test.quits).toHaveLength(1)
   })
@@ -727,53 +872,177 @@ describe('references and model', () => {
     expect(test.terminal.text()).toContain('default model saved: p/blank')
   })
 
-  it('cycles the current model reasoning effort on Shift+Tab', async () => {
+  it('saves the highlighted model as the next launch\'s default on Ctrl+S without closing the picker', async () => {
+    const saved: unknown[] = []
+    let failSave = false
     const test = await bench({
       before: (ctx) => {
         ctx.provide('llm', {
           listProviders: () => [{ id: 'p', name: 'P' }],
+          listModels: () => Promise.resolve([{ provider: 'p', id: 'one', name: 'One' }, { provider: 'p', id: 'two', name: 'Two' }]),
+          resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: [] } }),
+        } as never)
+        ctx.provide('settings', {
+          replace: (namespace: string, value: unknown) => {
+            if (failSave) return Promise.reject(new Error('disk full'))
+            saved.push([namespace, value])
+            return Promise.resolve()
+          },
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/model')
+    await test.settle()
+    expect(test.terminal.text()).toContain('Ctrl+S saves the highlighted model as the default for the next launch')
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.ctrlS)
+    await test.settle()
+    // The default is the highlighted row, not the session's model, and the
+    // picker is still open: the session keeps its own model until Enter.
+    expect(saved).toEqual([['agent-default-model', { provider: 'p', model: 'two' }]])
+    expect(test.terminal.text()).toContain('default model saved: p/two')
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    expect(test.terminal.text()).toContain('Model for the next request')
+    // A failed save says so and the picker stays open; Esc then changes nothing.
+    failSave = true
+    test.terminal.type(KEY.ctrlS)
+    await test.settle()
+    expect(test.terminal.text()).toContain('default model not saved: disk full')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    expect(saved).toHaveLength(1)
+    // Ctrl+S on a filter that matches nothing has no row to save.
+    typeLine(test.terminal, '/model')
+    await test.settle()
+    for (const character of 'zzz') test.terminal.type(character)
+    test.terminal.type(KEY.ctrlS)
+    await test.settle()
+    expect(saved).toHaveLength(1)
+    test.terminal.type(KEY.escape)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+  })
+
+  it('opens the same reasoning-effort picker on Shift+Tab as /effort', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [],
           listModels: () => Promise.resolve([]),
-          resolveModelInfo: (_provider: string, model: string) => {
-            if (model === 'broken') return Promise.reject(new Error('no such model'))
-            if (model === 'plain') return Promise.resolve({ reasoning: { efforts: [{ id: 'only', name: 'Only' }] } })
-            if (model === 'blank') return Promise.resolve({ reasoning: { efforts: [] } })
-            return Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+          resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
+        } as never)
+      },
+    })
+    for (const character of 'draft prompt') test.terminal.type(character)
+    test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen).toContain('Reasoning effort · test-provider/test-model')
+    expect(screen).toContain('current: Provider default · Esc keeps it')
+    expect(screen).toContain('Provider default ✓')
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' })
+    expect(test.terminal.text()).toContain('effort high from the next request')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.calls.followups[0]?.content).toEqual([{ type: 'text', text: 'draft prompt' }])
+  })
+
+  it('ignores a Kitty Shift+Tab release after handling its press', async () => {
+    const test = await bench()
+    test.terminal.type('\u001b[9;2u')
+    await test.settle()
+    test.terminal.type('\u001b[9;2:3u')
+    await test.settle()
+    expect(test.terminal.text().split('no model catalog is composed')).toHaveLength(2)
+  })
+
+  it('coalesces Shift+Tab and empty /effort while the lookup is pending and opens nothing after quit', async () => {
+    let lookups = 0
+    let release: ((info: { reasoning: { efforts: { id: string; name: string }[] } }) => void) | undefined
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: () => {
+            lookups += 1
+            return new Promise((resolve) => { release = resolve })
           },
         } as never)
       },
     })
     test.terminal.type(KEY.shiftTab)
-    await test.settle()
-    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
-    expect(test.terminal.text()).toContain('effort low from the next request')
+    await Promise.resolve()
     test.terminal.type(KEY.shiftTab)
-    test.terminal.type(KEY.shiftTab)
+    typeLine(test.terminal, '/effort')
+    expect(lookups).toBe(1)
+    test.app.stop()
+    release?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
     await test.settle()
+    expect(test.terminal.text()).not.toContain('Reasoning effort ·')
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
-    expect(test.terminal.text()).toContain('effort: provider default from the next request')
-    test.selection.current = { provider: 'test-provider', model: 'test-model', reasoningEffort: 'stale' as never }
+  })
+
+  it('keeps a later explicit effort when an older Shift+Tab lookup settles', async () => {
+    const releases: Array<(info: { reasoning: { efforts: { id: string; name: string }[] } }) => void> = []
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: () => new Promise((resolve) => { releases.push(resolve) }),
+        } as never)
+      },
+    })
     test.terminal.type(KEY.shiftTab)
+    await Promise.resolve()
+    typeLine(test.terminal, '/effort high')
+    await Promise.resolve()
+    expect(releases).toHaveLength(2)
+    releases[1]?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
     await test.settle()
-    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
-    test.selection.current = { provider: 'p', model: 'plain' }
-    test.terminal.type(KEY.shiftTab)
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' })
+    releases[0]?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
     await test.settle()
-    expect(test.terminal.text()).toContain('p/plain has no selectable reasoning efforts')
-    expect(test.selection.current).toEqual({ provider: 'p', model: 'plain' })
-    test.selection.current = { provider: 'p', model: 'blank' }
-    test.terminal.type(KEY.shiftTab)
-    await test.settle()
-    expect(test.terminal.text()).toContain('p/blank has no selectable reasoning efforts')
-    test.selection.current = { provider: 'p', model: 'broken' }
-    test.terminal.type(KEY.shiftTab)
-    await test.settle()
-    expect(test.terminal.text()).toContain('p/broken: no such model')
-    const bare = await bench()
-    bare.terminal.type(KEY.shiftTab)
-    await bare.settle()
-    expect(bare.terminal.text()).toContain('no model catalog is composed')
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' })
+    expect(await test.screen()).not.toContain('Reasoning effort ·')
+  })
+
+  it('keeps a later model when an older Shift+Tab lookup settles', async () => {
     let release: ((info: { reasoning: { efforts: { id: string; name: string }[] } }) => void) | undefined
-    const quitting = await bench({
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: (_provider: string, model: string) => model === 'next'
+            ? Promise.resolve({})
+            : new Promise((resolve) => { release = resolve }),
+        } as never)
+      },
+    })
+    test.terminal.type(KEY.shiftTab)
+    await Promise.resolve()
+    typeLine(test.terminal, '/model p/next')
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'p', model: 'next' })
+    release?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+    await test.settle()
+    expect(test.selection.current).toEqual({ provider: 'p', model: 'next' })
+    expect(await test.screen()).not.toContain('Reasoning effort · test-provider/test-model')
+  })
+
+  it('drops a pending Shift+Tab picker when a session switch starts', async () => {
+    const gate = { release: () => {} }
+    let release: ((info: { reasoning: { efforts: { id: string; name: string }[] } }) => void) | undefined
+    const test = await bench({
+      hostGate: gate,
       before: (ctx) => {
         ctx.provide('llm', {
           listProviders: () => [],
@@ -782,13 +1051,47 @@ describe('references and model', () => {
         } as never)
       },
     })
-    quitting.terminal.type(KEY.shiftTab)
+    test.terminal.type(KEY.shiftTab)
     await Promise.resolve()
-    quitting.terminal.type(KEY.shiftTab)
-    quitting.app.stop()
+    typeLine(test.terminal, '/new')
+    await Promise.resolve()
     release?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
-    await quitting.settle()
-    expect(quitting.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    await test.settle()
+    expect(test.terminal.text()).not.toContain('Reasoning effort ·')
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    gate.release()
+    await test.settle()
+    expect(test.hostCalls).toEqual(['create'])
+    expect(test.terminal.text()).toContain('new session: session session-opened-1')
+  })
+
+  it('retires a pending Shift+Tab lookup so the new session can open its own picker', async () => {
+    const releases: Array<(info: { reasoning: { efforts: { id: string; name: string }[] } }) => void> = []
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [],
+          listModels: () => Promise.resolve([]),
+          resolveModelInfo: () => new Promise((resolve) => { releases.push(resolve) }),
+        } as never)
+      },
+    })
+    test.terminal.type(KEY.shiftTab)
+    await Promise.resolve()
+    typeLine(test.terminal, '/new')
+    await test.settle()
+    expect(test.hostCalls).toEqual(['create'])
+    expect(test.terminal.text()).toContain('new session: session session-opened-1')
+    test.terminal.type(KEY.shiftTab)
+    await Promise.resolve()
+    expect(releases).toHaveLength(2)
+    releases[0]?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+    await Promise.resolve()
+    releases[1]?.({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } })
+    await test.settle()
+    expect(test.terminal.text()).toContain('Reasoning effort · test-provider/opened-model')
+    test.terminal.type(KEY.escape)
+    await test.settle()
   })
 })
 
@@ -817,7 +1120,7 @@ describe('the effort command', () => {
     await test.settle()
     const screen = test.terminal.text()
     expect(screen).toContain('Reasoning effort · test-provider/test-model')
-    expect(screen).toContain('current: Provider default · Esc keeps it · Shift+Tab cycles')
+    expect(screen).toContain('current: Provider default · Esc keeps it')
     expect(screen).toContain('Provider default ✓')
     expect(screen).toContain('resolves to Low')
     test.terminal.type(KEY.down)

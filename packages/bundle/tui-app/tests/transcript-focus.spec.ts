@@ -468,7 +468,9 @@ describe('Esc and the running turn', () => {
         onChanged: () => () => {},
       },
     })
-    prompt(test, 'read the spec')
+    // The turn is running, so a typed prompt would wait above the editor;
+    // the block to read is the prompt the running turn already claimed.
+    test.appendPrompt('read the spec')
     const kid = await test.createChild({ id: 'session-kid' })
     kid.setStatus('running')
     test.tick()
@@ -611,7 +613,7 @@ const LONG_REPLY = Array.from({ length: 20 }, (_, index) => `- reply line ${Stri
 async function tallConversation(options: Parameters<typeof bench>[0] = {}): Promise<Bench> {
   const test = await bench({ focusPreviewLines: 1, ...options })
   test.terminal.rows = 36
-  for (let index = 0; index < 10; index += 1) prompt(test, `prompt number ${String(index)}`)
+  for (let index = 0; index < 10; index += 1) test.appendPrompt(`prompt number ${String(index)}`)
   test.appendAssistant([{ type: 'text', text: LONG_REPLY }])
   await test.settle()
   return test

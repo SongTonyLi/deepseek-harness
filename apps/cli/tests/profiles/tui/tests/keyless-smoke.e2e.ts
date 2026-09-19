@@ -2,7 +2,7 @@
  * The shipped tui profile through the real `dsh` launcher: a keyless mock
  * model drives the production shell tool, the terminal renders the turn, the
  * keyboard walks it and reads it full screen, the session persists on quit,
- * and `--resume` redraws it in a second process.
+ * and both the session picker and `--resume` redraw it in fresh processes.
  *
  * The launch is pinned to the built `lib` bundles. In `src` mode the launcher
  * loads the profile's rows through its installation route (built `lib/`) while
@@ -20,12 +20,17 @@ import { describe, expect, it } from 'vitest'
 import { resolveExampleLaunch } from '@deepseek-ai/dsh-loader-smoke'
 
 const PROCESS_TIMEOUT_MS = 60_000
-const TEST_TIMEOUT_MS = PROCESS_TIMEOUT_MS * 2 + 15_000
+const TEST_TIMEOUT_MS = PROCESS_TIMEOUT_MS * 3 + 15_000
 const binScript = fileURLToPath(new URL('../../../../src/bin.ts', import.meta.url))
 const configPath = fileURLToPath(new URL('./fixtures/cli.patch.yml', import.meta.url))
+const ENTER = '\r'
 const CTRL_D = '\u0004'
 const CTRL_G = '\u0007'
+const DOWN = '\u001b[B'
+const SHIFT_TAB = '\u001b[Z'
 const SHIFT_UP = '\u001b[1;2A'
+const SHIFT_LEFT = '\u001b[1;2D'
+const SHIFT_RIGHT = '\u001b[1;2C'
 const ESCAPE = '\u001b'
 
 /**
@@ -147,24 +152,32 @@ async function runScript(cwd: string, args: readonly string[], steps: readonly S
 }
 
 describe('tui profile keyless smoke', () => {
-  it('runs a tool turn in the terminal, walks and reads it, saves the session on Ctrl+D, and resumes it', async () => {
+  it('edits a prompt, picks an effort, reads the turn, and resumes it through both paths', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-smoke-'))
     try {
-      // The keyboard enters the conversation on the newest section, reads it
-      // full screen, and comes back before the session is saved.
-      const first = await runScript(cwd, ['prove the tool path'], [
-        { marker: 'CLI tool round trip complete', keys: SHIFT_UP },
+      // The `!` inserted after Shift+Right distinguishes an end-of-word jump
+      // from an ignored key before the mock turn gates the remaining keys.
+      const first = await runScript(cwd, [], [
+        {
+          marker: 'cli-mock/cli-mock',
+          keys: `I want to do${SHIFT_LEFT}quickly ${SHIFT_RIGHT}!${ENTER}`,
+        },
+        { marker: 'CLI tool round trip complete', keys: SHIFT_TAB },
+        { marker: 'Reasoning effort · cli-mock/cli-mock', keys: `${DOWN}${ENTER}` },
+        { marker: 'effort off from the next request', keys: SHIFT_UP },
         { marker: ' ● READ ', keys: CTRL_G },
         { marker: ' ● READER ', keys: ESCAPE },
         { marker: ' ● READ ', keys: '' },
       ])
       expect(first.exitCode, `stderr:\n${first.stderr}\nstdout:\n${first.stdout}`).toBe(0)
-      expect(first.stdout).toContain('› prove the tool path')
+      expect(first.stdout).toContain('› I want to quickly do!')
       expect(first.stdout).toContain('Inspecting the task before the tool call.')
       expect(first.stdout).toContain(process.platform === 'win32' ? 'pwsh' : 'bash')
       expect(first.stdout).toContain('CLI_TOOL_ROUND_TRIP')
       expect(first.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(first.stdout).toContain('cli-mock/cli-mock')
+      expect(first.stdout).toContain('Reasoning effort · cli-mock/cli-mock')
+      expect(first.stdout).toContain('effort off from the next request')
       // Read mode is docked chrome with its own legend; the reader is the
       // full-screen overlay over the same conversation.
       expect(first.stdout).toContain(' ● READ ')
@@ -181,17 +194,28 @@ describe('tui profile keyless smoke', () => {
       expect(saved, first.stderr).not.toBeNull()
       const sessionId = saved![1]!
 
-      const second = await runScript(cwd, ['--resume', sessionId], [
+      const viaPicker = await runScript(cwd, [], [
+        { marker: 'cli-mock/cli-mock', keys: `/resume${ENTER}` },
+        { marker: 'Switch to a session', keys: `${DOWN}${ENTER}` },
+        { marker: `resumed: session ${sessionId}`, keys: '' },
+      ])
+      expect(viaPicker.exitCode, `stderr:\n${viaPicker.stderr}\nstdout:\n${viaPicker.stdout}`).toBe(0)
+      expect(viaPicker.stdout).toContain('Switch to a session')
+      expect(viaPicker.stdout).toContain(`resumed: session ${sessionId}`)
+      expect(viaPicker.stdout).toContain('› I want to quickly do!')
+      expect(viaPicker.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
+
+      const explicitResume = await runScript(cwd, ['--resume', sessionId], [
         { marker: 'CLI tool round trip complete', keys: '' },
       ])
-      expect(second.exitCode, `stderr:\n${second.stderr}\nstdout:\n${second.stdout}`).toBe(0)
+      expect(explicitResume.exitCode, `stderr:\n${explicitResume.stderr}\nstdout:\n${explicitResume.stdout}`).toBe(0)
       // The resumed header carries the generated title with the id; the
       // unfocused footer keeps the model id on its one key-facts line.
-      expect(second.stdout).toContain(`prove the tool path (${sessionId})`)
-      expect(second.stdout).toContain('cli-mock/cli-mock')
-      expect(second.stdout).toContain('› prove the tool path')
-      expect(second.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
-      expect(second.stderr).toContain(`--resume ${sessionId}`)
+      expect(explicitResume.stdout).toContain(`I want to quickly do! (${sessionId})`)
+      expect(explicitResume.stdout).toContain('cli-mock/cli-mock')
+      expect(explicitResume.stdout).toContain('› I want to quickly do!')
+      expect(explicitResume.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
+      expect(explicitResume.stderr).toContain(`--resume ${sessionId}`)
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }

@@ -73,6 +73,50 @@ describe('TuiApp', () => {
     await test.settle()
   })
 
+  it('holds a queued prompt above the editor until the loop claims it, and draws it in the conversation then', async () => {
+    const test = await bench({ running: true })
+    // The inbox is scripted, so the bench appends what the Agent's followup
+    // would have and emits the insertion the live inbox emits.
+    const later = createUserMessage({ content: [{ type: 'text', text: 'later on\nsecond line' }], source: { kind: 'user' } })
+    const soon = createUserMessage({ content: [{ type: 'text', text: 'right now' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', later)
+    test.agent.inbox.append('next-step', soon)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: later })
+    await test.settle()
+    let screen = await test.screen()
+    // The steer row comes first, as the loop takes it first; a multi-line
+    // prompt shows its first line. Neither is a conversation block yet.
+    expect(screen).toContain('⏳ next step right now')
+    expect(screen).toContain('⏳ next turn later on')
+    expect(screen).not.toContain('second line')
+    expect(screen).not.toContain('› later on')
+    expect(screen.indexOf('⏳ next step')).toBeLessThan(screen.indexOf('⏳ next turn'))
+    // Claimed: it leaves the queue and its durable message draws the block.
+    test.agent.inbox.remove(soon.id)
+    test.agent.ctx.emit('agent/inbox/claimed', { agent: test.agent, message: soon, turn: 1 })
+    test.session.append('user/message', soon, { surfaceOp: 'append' })
+    await test.settle()
+    screen = await test.screen()
+    expect(screen).not.toContain('⏳ next step')
+    expect(screen).toContain('› right now')
+    expect(screen).toContain('⏳ next turn later on')
+    // Discarded: the row goes and no block is drawn for it.
+    test.agent.inbox.remove(later.id)
+    test.agent.ctx.emit('agent/inbox/discarded', { agent: test.agent, message: later })
+    await test.settle()
+    screen = await test.screen()
+    expect(screen).not.toContain('⏳')
+    expect(screen).not.toContain('later on')
+    // Another Agent's inbox is not this terminal's queue, whichever way it moves.
+    const other = { id: 'other' } as never
+    test.agent.inbox.append('next-turn', later)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: other, message: later })
+    test.agent.ctx.emit('agent/inbox/claimed', { agent: other, message: later, turn: 1 })
+    test.agent.ctx.emit('agent/inbox/discarded', { agent: other, message: later })
+    await test.settle()
+    expect(await test.screen()).not.toContain('⏳')
+  })
+
   it('streams reasoning and text, then replaces them with the committed message and its usage', async () => {
     const test = await bench()
     test.stream.start()
@@ -863,7 +907,10 @@ describe('TuiApp', () => {
     const test = await bench({ initialPrompt: 'first task', color: true, running: true })
     await test.settle()
     expect(test.calls.followups).toHaveLength(1)
-    expect(test.terminal.text()).toContain('› first task')
+    // The running turn has not claimed the prompt, so it is not yet a
+    // transcript block; it enters through its `user/message` when claimed.
+    expect(test.terminal.text()).not.toContain('› first task')
+    expect(test.terminal.text()).toContain('queued for the next turn')
     expect(test.terminal.text()).toContain('thinking')
     test.setStatus('running')
     test.terminal.resize(60)
@@ -1084,7 +1131,7 @@ describe('the status bar', () => {
     expect(screen).not.toContain('workspace: /work · ←→ segments')
   })
 
-  it('cycles the reasoning effort with Shift+Tab only while the editor has focus', async () => {
+  it('opens the effort picker with Shift+Tab only while the editor has focus', async () => {
     const test = await bench({
       before: (ctx) => {
         ctx.provide('llm', {
@@ -1093,6 +1140,11 @@ describe('the status bar', () => {
       },
     })
     test.terminal.type(KEY.shiftTab)
+    await test.settle()
+    expect(test.terminal.text()).toContain('Reasoning effort · test-provider/test-model')
+    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
     test.terminal.type(KEY.shiftDown)
@@ -1216,7 +1268,7 @@ describe('the status bar', () => {
     expect(test.terminal.text()).toContain('provider: test-provider')
   })
 
-  it('lands Right on the effort in force after Shift+Tab cycles it', async () => {
+  it('lands Right on the effort picked through Shift+Tab', async () => {
     const test = await bench({
       before: (ctx) => {
         ctx.provide('llm', {
@@ -1226,12 +1278,16 @@ describe('the status bar', () => {
     })
     test.terminal.type(KEY.shiftTab)
     await test.settle()
+    expect(test.terminal.text()).toContain('Reasoning effort · test-provider/test-model')
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.terminal.text()).toContain('reasoning effort: low')
-    expect(test.terminal.text()).toContain('Shift+Tab cycles it')
+    expect(test.terminal.text()).toContain('Shift+Tab or /effort opens the effort list')
     expect(test.terminal.text()).not.toContain('provider: test-provider')
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
   })
@@ -1254,15 +1310,18 @@ describe('the status bar', () => {
     expect(await test.screen()).toContain('workspace: /work · ←→ segments')
   })
 
-  it('leaves Shift+Right with the editor while the editor has the keyboard', async () => {
+  it('moves by words with Shift+Left and Shift+Right while the editor has the keyboard', async () => {
     const test = await bench()
-    for (const char of 'ab') test.terminal.type(char)
+    for (const char of 'I want to do') test.terminal.type(char)
+    test.terminal.type(KEY.shiftLeft)
+    for (const char of 'quickly ') test.terminal.type(char)
     test.terminal.type(KEY.shiftRight)
+    test.terminal.type('!')
     await test.settle()
     expect(test.terminal.text()).not.toContain('←→ segments')
     typeLine(test.terminal, '')
     await test.settle()
-    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'ab' }]])
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'I want to quickly do!' }]])
   })
 })
 

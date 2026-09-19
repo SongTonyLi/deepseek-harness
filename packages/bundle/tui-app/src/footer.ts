@@ -253,7 +253,7 @@ function effortSegment(effort: ModelSelection['reasoningEffort']): FooterSegment
     label: unset ? 'effort default' : `effort ${effort}`,
     detail: printed([
       unset ? 'reasoning effort: the model\'s own default' : `reasoning effort: ${effort}`,
-      `Shift+Tab cycles it${SEPARATOR}/effort picks one`,
+      'Shift+Tab or /effort opens the effort list',
     ]),
   }
 }

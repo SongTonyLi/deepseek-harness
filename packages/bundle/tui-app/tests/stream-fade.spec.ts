@@ -1,6 +1,8 @@
 /** Streamed assistant text fading in, and reasoning and tool cards floating out. */
 
 import { describe, expect, it } from 'vitest'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { FADE_STEPS, FADE_TICK_MS, buildFadeRamp } from '../src/fade.ts'
 import { KEY, bench, type Bench } from './bench.ts'
 
@@ -581,6 +583,57 @@ describe('syntax colour', () => {
     }
     expect(line, 'the fenced block was never repainted in colour').toBeDefined()
     expect(line).toContain('rows')
+  }, 20_000)
+
+  it('repaints the file rows of a read card and an edit diff in the file\'s language', async () => {
+    // Reduced motion attaches no card fade, so the only colours on the rows
+    // are the highlighter's; colour is not motion, so it is still drawn.
+    const test = await bench({
+      ...TRUECOLOR,
+      reducedMotion: true,
+      toolPreviewLines: 8,
+      before: async (ctx) => {
+        await ctx.plugin(SystemPrompt)
+        await ctx.plugin(ToolRuntime)
+        const output = { schema: { type: 'string' as const }, render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: String(value) }] }
+        ctx.tools.register({
+          name: 'read', description: 'read', parameters: { type: 'object', properties: {} }, output,
+          execute: () => Promise.resolve('unused'),
+          presentResult: () => ({ card: 'read', path: 'a.ts', offset: 1, totalLines: 1, lang: 'ts', lines: [{ number: 1, text: 'const rows = 42' }] }),
+        })
+        ctx.tools.register({
+          name: 'edit', description: 'edit', parameters: { type: 'object', properties: {} }, output,
+          execute: () => Promise.resolve('unused'),
+          presentCall: () => ({ card: 'diff', title: 'Edit b.ts', diffs: [{ path: 'b.ts', oldText: 'let old = 1\n', newText: 'const fresh = 2\n' }] }),
+        })
+      },
+    })
+    await test.settle()
+    const since = writesFrom(test)
+    test.appendToolCall('call-1', 'read', {})
+    test.appendToolResult('call-1', [{ type: 'text', text: '1: const rows = 42' }])
+    test.appendToolCall('call-2', 'edit', {})
+    await test.settle()
+    // The grammar is a real import, so the rows draw plain first and are
+    // painted once the highlighter asks for the frame again; the line number
+    // and the diff sign stay outside the colour.
+    let read: string | undefined
+    let removed: string | undefined
+    let added: string | undefined
+    for (let pass = 0; pass < 200 && (read === undefined || removed === undefined || added === undefined); pass += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await test.settle()
+      const rows = since().split('\n')
+      read ??= rows.findLast(row => row.includes('rows') && hasSyntaxColor(row))
+      removed ??= rows.findLast(row => row.includes('old') && hasSyntaxColor(row))
+      added ??= rows.findLast(row => row.includes('fresh') && hasSyntaxColor(row))
+    }
+    expect(read, 'the read rows were never painted').toBeDefined()
+    expect(removed, 'the removed diff rows were never painted').toBeDefined()
+    expect(added, 'the added diff rows were never painted').toBeDefined()
+    expect(read).toMatch(/1│ \u001b\[/u)
+    expect(removed).toMatch(/- \u001b\[/u)
+    expect(added).toMatch(/\+ \u001b\[/u)
   }, 20_000)
 
   it('draws every fence plain where the setting is off', async () => {

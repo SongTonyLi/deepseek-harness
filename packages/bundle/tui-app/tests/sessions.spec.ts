@@ -1,4 +1,4 @@
-/** The `/sessions` list: root sessions newest first, titles folded from the query engine. */
+/** The `/sessions` and `/resume` list: root sessions newest first with query-engine titles. */
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
