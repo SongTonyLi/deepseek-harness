@@ -1236,6 +1236,7 @@ describe('continue-intent helpers', () => {
         type: 'tool/result',
         seq: 1 as never,
         time: 2,
+        surfaceOp: 'append',
         data: {
           turn: 1,
           step: 1,
