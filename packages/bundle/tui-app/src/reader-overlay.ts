@@ -17,7 +17,7 @@
  *
  * The pane holds no copy of the transcript: it re-reads the blocks and their
  * turns on every render, so a reply that is still streaming grows inside it,
- * a tool result that lands appears, and a new turn joins the rail, all with
+ * a tool result that lands appears, and a new turn joins the list, all with
  * no push and no second clock.
  * @module @deepseek-ai/dsh-tui-app/reader-overlay
  */
@@ -38,13 +38,10 @@ import {
 } from './reader.ts'
 import type { Palette } from './style.ts'
 
-/** Which digits select a section of the held turn directly. */
-const SECTION_DIGIT = /^[1-9]$/u
-
 /** The key that opens the query line. */
 const FILTER_KEY = '/'
 
-/** Where the reader left the keyboard and the walk when it closed. */
+/** Where the reader left the keyboard and the reading when it closed. */
 export interface ReaderExit {
   /** The section last read, which the transcript resumes on. */
   cursor: TranscriptCursor
@@ -54,7 +51,7 @@ export interface ReaderExit {
 
 /** What the reader pane reads from the application. */
 export interface ReaderPaneOptions {
-  /** The palette the frame, the rail, and the headers are styled with. */
+  /** The palette the frame, the list, and the headers are styled with. */
   palette: Palette
   /**
    * The navigable blocks right now.
@@ -66,7 +63,7 @@ export interface ReaderPaneOptions {
    * @returns the rows, re-read on every render so a resize needs no notification.
    */
   rows(): number
-  /** Columns compare needs before the body splits in two. */
+  /** Columns the reader needs before it draws the held turn beside the list. */
   minColumns: number
   /** The section the reader opens on. */
   cursor: TranscriptCursor
@@ -84,7 +81,7 @@ export interface ReaderPaneOptions {
  * to one {@link ReaderIntent}, and settles once when the reader closes.
  */
 export class ReaderPane implements Component {
-  /** Where the reader left the keyboard and the walk. */
+  /** Where the reader left the keyboard and the reading. */
   readonly settled: Promise<ReaderExit>
   private resolve!: (exit: ReaderExit) => void
   /** Whether the reader is still open; a second close is ignored. */
@@ -128,13 +125,13 @@ export class ReaderPane implements Component {
     const groups = turnGroups(blocks)
     const visible = filterTurns(groups, blocks, this.state.query)
     const geometry = this.geometryFor(visible, blocks, rows)
-    // The walking pane's own columns and rows, which pinning and unpinning
-    // change without the terminal changing size at all.
-    const layout = `${geometry.panes.join(',')}x${String(geometry.body)}`
+    // The turn panel's own columns and rows, which a terminal the list stops
+    // fitting beside changes without the reader moving at all.
+    const layout = `${String(geometry.pane)}x${String(geometry.body)}`
     if (this.layout !== layout) {
       this.layout = layout
       // A rewrap moves every row number, so the reader re-anchors on the
-      // section itself rather than on the row the walk had reached.
+      // section it was reading rather than on the row it had reached.
       this.state = reduceReader(this.state, { kind: 'anchor' }, visible, geometry)
     }
     const full = readerRows(this.state, visible, {
@@ -182,7 +179,7 @@ export class ReaderPane implements Component {
       if (matchesKey(data, 'escape')) this.close('transcript')
       return
     }
-    if (matchesKey(data, 'escape') && readerClosesOnEscape(this.state, geometry)) {
+    if (matchesKey(data, 'escape') && readerClosesOnEscape(this.state)) {
       this.close('transcript')
       return
     }
@@ -226,8 +223,8 @@ export class ReaderPane implements Component {
     switch (this.state.column) {
       case 'filter':
         return filterIntent(data)
-      case 'rail':
-        return railIntent(data)
+      case 'list':
+        return listIntent(data)
       case 'pane':
         return paneIntent(data)
       /* v8 ignore next 2 -- closed-union exhaustiveness guard */
@@ -252,11 +249,13 @@ function filterIntent(data: string): ReaderIntent | undefined {
 }
 
 /**
- * What one key means while the turn rail owns the keyboard.
+ * What one key means while the turn list owns the keyboard. `Escape` is not
+ * among them: it leaves the reader, which {@link ReaderPane.handleInput}
+ * answers before a key reaches this map.
  * @param data - the raw key bytes.
- * @returns the intent, or undefined for a key the rail ignores.
+ * @returns the intent, or undefined for a key the list ignores.
  */
-function railIntent(data: string): ReaderIntent | undefined {
+function listIntent(data: string): ReaderIntent | undefined {
   if (matchesKey(data, 'up')) return { kind: 'turn', to: 'previous' }
   if (matchesKey(data, 'down')) return { kind: 'turn', to: 'next' }
   if (matchesKey(data, 'home')) return { kind: 'turn', to: 'first' }
@@ -264,27 +263,21 @@ function railIntent(data: string): ReaderIntent | undefined {
   if (matchesKey(data, 'pageUp')) return { kind: 'page', step: -1 }
   if (matchesKey(data, 'pageDown')) return { kind: 'page', step: 1 }
   if (matchesKey(data, 'right') || matchesKey(data, 'tab') || matchesKey(data, 'enter')) return { kind: 'column', to: 'pane' }
-  if (matchesKey(data, 'escape')) return { kind: 'escape' }
   return typedText(data) === FILTER_KEY ? { kind: 'filter' } : undefined
 }
 
 /**
- * What one key means while the sections own the keyboard.
+ * What one key means while the turn panel owns the keyboard.
  * @param data - the raw key bytes.
- * @returns the intent, or undefined for a key the pane ignores.
+ * @returns the intent, or undefined for a key the panel ignores.
  */
 function paneIntent(data: string): ReaderIntent | undefined {
-  if (matchesKey(data, 'shift+up')) return { kind: 'scroll', step: -1 }
-  if (matchesKey(data, 'shift+down')) return { kind: 'scroll', step: 1 }
-  if (matchesKey(data, 'up')) return { kind: 'section', to: 'previous' }
-  if (matchesKey(data, 'down') || matchesKey(data, 'right')) return { kind: 'section', to: 'next' }
+  if (matchesKey(data, 'up')) return { kind: 'scroll', to: 'previous' }
+  if (matchesKey(data, 'down')) return { kind: 'scroll', to: 'next' }
+  if (matchesKey(data, 'home')) return { kind: 'scroll', to: 'first' }
+  if (matchesKey(data, 'end')) return { kind: 'scroll', to: 'last' }
   if (matchesKey(data, 'pageUp')) return { kind: 'page', step: -1 }
   if (matchesKey(data, 'pageDown')) return { kind: 'page', step: 1 }
-  if (matchesKey(data, 'home')) return { kind: 'section', to: 'first' }
-  if (matchesKey(data, 'end')) return { kind: 'section', to: 'last' }
-  if (matchesKey(data, 'left') || matchesKey(data, 'tab') || matchesKey(data, 'shift+tab')) return { kind: 'column', to: 'rail' }
-  if (matchesKey(data, 'enter')) return { kind: 'pin' }
-  if (matchesKey(data, 'escape')) return { kind: 'escape' }
-  const digit = typedText(data)
-  return digit !== undefined && SECTION_DIGIT.test(digit) ? { kind: 'section-at', index: Number(digit) - 1 } : undefined
+  if (matchesKey(data, 'left') || matchesKey(data, 'tab') || matchesKey(data, 'shift+tab')) return { kind: 'column', to: 'list' }
+  return undefined
 }

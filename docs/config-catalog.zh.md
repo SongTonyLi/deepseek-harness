@@ -3565,13 +3565,12 @@ export interface Config {
    */
   focusPreviewLines: number
   /**
-   * Columns the full-screen reader needs before it draws two sections side by
-   * side. `Ctrl+G` reads the conversation full screen and `Enter` on a
-   * section pins it beside the one the keyboard walks, so two prompts can be
-   * compared; below this width the pin is still recorded but one pane is
-   * drawn and the reader's legend says how many columns compare would need.
-   * A lower value splits a narrower terminal at the cost of two cramped
-   * columns of text.
+   * Columns the full-screen reader needs before it draws the held turn beside
+   * the turn list. `Ctrl+G` reads the conversation full screen in two panels:
+   * every turn listed on the left, the turn the list holds scrolling on the
+   * right. Below this width one panel is drawn at a time — the list, or the
+   * turn `Right` opens from it — so a narrow terminal keeps readable text
+   * instead of two cramped columns. A lower value splits a narrower terminal.
    */
   readerMinColumns: number
   /**

@@ -180,11 +180,11 @@ describe('walking the transcript', () => {
     // its turn under their own headers.
     expect(reading).toContain(' ● READER ')
     expect(reading).toContain('✻ reasoning · turn 1')
-    expect(reading).toContain('▌weighing it up')
+    expect(reading).toContain('weighing it up')
     expect(reading).toContain('¶ reply · turn 1')
     expect(reading).toContain('⚒ bash · call · turn 1')
     expect(reading).toContain('⚒ bash · result · turn 1')
-    expect(reading).toContain('Enter pins')
+    expect(reading).toContain('↑↓ scrolls')
     test.terminal.type(KEY.escape)
     await test.settle()
     // Esc returns to the conversation on the section last read, with the
@@ -205,8 +205,8 @@ describe('walking the transcript', () => {
     await test.settle()
     const reading = await test.screen()
     expect(reading).toContain(' ● READER ')
-    // The walk had reached the reasoning, which is the section the reader holds.
-    expect(reading).toContain('▌weighing it up')
+    // The walk had reached the reasoning, which is the section the reader opens on.
+    expect(reading).toContain('✻ reasoning · turn 1')
     test.terminal.type(KEY.ctrlG)
     await test.settle()
     const back = await test.screen()
@@ -785,7 +785,7 @@ describe('folding the block the focus holds', () => {
     await test.settle()
     expect(test.terminal.text()).toContain('above the repaint window · opened in the reader')
     // The reader reaches rows the folded block above the window never drew.
-    expect(test.terminal.text()).toContain('▌rule 9')
+    expect(test.terminal.text()).toContain('rule 9')
     expect(test.terminal.written.slice(before)).not.toContain(CLEAR_SCROLLBACK)
     test.terminal.type(KEY.escape)
     await test.settle()
@@ -854,12 +854,12 @@ describe('the coarse walk and the scrollback', () => {
 })
 
 describe('the reader and the scrollback', () => {
-  /** Every key the reader answers, in one walk through its rail, its sections, its pin, and its query. */
+  /** Every key the reader answers, in one walk through its turn list, its query line, and the turn beside them. */
   const READER_WALK = [
     KEY.left, KEY.up, KEY.down, KEY.home, KEY.end, KEY.pageUp, KEY.pageDown,
     KEY.slash, 'r', 'e', KEY.backspace, KEY.ctrlU, 'a', KEY.escape, KEY.escape,
-    KEY.right, KEY.down, KEY.shiftDown, KEY.shiftUp, KEY.pageDown, KEY.pageUp, KEY.digit1,
-    KEY.enter, KEY.tab, KEY.shiftTab, KEY.enter, KEY.escape,
+    KEY.enter, KEY.down, KEY.up, KEY.pageDown, KEY.pageUp, KEY.home, KEY.end,
+    KEY.tab, KEY.shiftTab, KEY.right,
   ]
 
   it('opens, walks, and closes over a short transcript without clearing the scrollback', async () => {
@@ -1119,13 +1119,13 @@ describe('the chrome motions', () => {
     // draws the rows it has where they will settle: the bottom rule is in
     // place first and the top rule arrives last.
     expect(growing).toContain('╰')
-    expect(growing).not.toContain('Enter pins')
+    expect(growing).not.toContain('↑↓ scrolls')
     expect(growing).not.toContain(' ● READER ')
 
     test.runTick(FADE_TICK_MS, HALF_OPEN_MS)
     await test.settle()
     const half = (await paint(test)).shown
-    expect(half).toContain('Enter pins')
+    expect(half).toContain('↑↓ scrolls')
     expect(half).not.toContain(' ● READER ')
 
     test.runTick(FADE_TICK_MS, READER_OPEN_TICKS * FADE_TICK_MS)
@@ -1140,12 +1140,12 @@ describe('the chrome motions', () => {
     // the conversation: nothing waits for the motion.
     const shrinking = (await paint(test)).shown
     expect(shrinking).not.toContain(' ● READER ')
-    expect(shrinking).toContain('Enter pins')
+    expect(shrinking).toContain('↑↓ scrolls')
 
     test.runTick(FADE_TICK_MS, READER_CLOSE_TICKS * FADE_TICK_MS)
     await test.settle()
     const back = (await paint(test)).shown
-    expect(back).not.toContain('Enter pins')
+    expect(back).not.toContain('↑↓ scrolls')
     expect(back).toContain('3/3 · turn 1 · bash · result')
     // The conversation took the keyboard back, so its own landing is still
     // moving; once that settles too, nothing holds the tick.

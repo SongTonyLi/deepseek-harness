@@ -275,7 +275,7 @@ const HELP_LABEL_GAP = 2
 function helpKeyLines(): string[] {
   const states: readonly (readonly [string, readonly string[]])[] = [
     ...FOCUS_REGIONS.map(region => [REGION_LABELS[region], KEY_LINES[region]] as const),
-    [READER_LABEL, [READER_HINTS.rail[0], READER_HINTS.pane[0]]],
+    [READER_LABEL, [READER_HINTS.list[0], READER_HINTS.pane[0]]],
   ]
   const column = Math.max(...states.map(([label]) => visibleWidth(label))) + HELP_LABEL_GAP
   return states.flatMap(([label, lines]) =>
@@ -350,7 +350,7 @@ export interface TuiAppDeps {
   contextPreviewLines: number
   /** Rows of the focused transcript section the docked inspector shows. */
   focusPreviewLines: number
-  /** Columns the reader needs before it draws two sections side by side. */
+  /** Columns the reader needs before it draws the held turn beside the turn list. */
   readerMinColumns: number
   /**
    * How long one transient key-feedback line holds at full strength before it

@@ -54,14 +54,14 @@ describe('the reader pane', () => {
     const test = mounted()
     expect(test.draw()).not.toContain('landed after opening')
     test.blocks.push(source('assistant', [{ kind: 'reply', rows: ['landed after opening'] }], { turn: 3 }))
-    // The reply joined the newest turn, which the rail renumbers at once.
+    // The reply joined the newest turn, which the list renumbers at once.
     expect(test.draw()).toContain('3  run the tests')
     test.pane.handleInput(KEY.left)
     test.pane.handleInput(KEY.end)
     expect(test.type(KEY.right)).toContain('landed after opening')
   })
 
-  it('walks the rail and the sections with their own keys', () => {
+  it('walks the turn list and opens the turn beside it', () => {
     const test = mounted()
     expect(test.type(KEY.left)).toContain('↑↓ turns')
     expect(test.type(KEY.up)).toContain('▸ 0  [session start]')
@@ -70,42 +70,33 @@ describe('the reader pane', () => {
     expect(test.type(KEY.home)).toContain('▸ 0  [session start]')
     expect(test.type(KEY.pageDown)).toContain('▸ 2  [run the tests]')
     expect(test.type(KEY.pageUp)).toContain('▸ 0  [session start]')
-    // Right enters the sections of the held turn, Tab goes back to the rail.
-    expect(test.type(KEY.right)).toContain('── ⬡ system prompt · turn 0 ')
+    // Right opens the turn the list holds; Tab and Enter cross the same way.
+    const opened = test.type(KEY.right)
+    expect(opened).toContain('── ⬡ system prompt · turn 0 ')
+    expect(opened).toContain('↑↓ scrolls')
     expect(test.type(KEY.tab)).toContain('↑↓ turns')
-    expect(test.type(KEY.enter)).toContain('Enter pins')
+    expect(test.type(KEY.enter)).toContain('↑↓ scrolls')
     expect(test.type(KEY.shiftTab)).toContain('↑↓ turns')
+    // A printable key the list claims nothing for leaves it where it was.
+    expect(test.type('z')).toContain('↑↓ turns')
   })
 
-  it('scrolls, pages, and picks a numbered section inside one turn', () => {
+  it('scrolls and pages the turn it opened on', () => {
     const test = mounted()
-    expect(test.type(KEY.shiftDown)).toContain('row 2/49')
-    expect(test.type(KEY.shiftUp)).toContain('row 1/49')
-    // A page stops at the pane's own end, which is twelve rows down here.
+    // The reader opens on the reply, which starts four rows into its turn.
+    expect(test.draw()).toContain('row 5/49')
+    expect(test.type(KEY.down)).toContain('row 6/49')
+    expect(test.type(KEY.up)).toContain('row 5/49')
+    // A page stops at the panel's own end, which is twelve rows down here.
     expect(test.type(KEY.pageDown)).toContain('row 13/49')
     expect(test.type(KEY.pageUp)).toContain('row 1/49')
-    expect(test.type(KEY.digit1)).toContain('section 1/5')
-    expect(test.type(KEY.down)).toContain('section 2/5')
-    expect(test.type(KEY.up)).toContain('section 1/5')
-    expect(test.type(KEY.right)).toContain('section 2/5')
-    expect(test.type(KEY.end)).toContain('section 5/5')
-    expect(test.type(KEY.home)).toContain('section 1/5')
-    // A key the pane claims nothing for leaves it exactly where it was.
-    expect(test.type('z')).toContain('section 1/5')
+    expect(test.type(KEY.end)).toContain('row 13/49')
+    expect(test.type(KEY.home)).toContain('row 1/49')
+    // A key the panel claims nothing for leaves it exactly where it was.
+    expect(test.type('z')).toContain('row 1/49')
   })
 
-  it('pins a section beside the walk and unpins it with Escape', () => {
-    const test = mounted()
-    const pinned = test.type(KEY.enter)
-    expect(pinned).toContain('▌reply row 0')
-    expect(test.type(KEY.home)).toContain('fix the fade at the top')
-    expect(test.type(KEY.escape)).not.toContain('compare')
-    // The pin is gone, so a further Escape closes the reader instead.
-    test.pane.handleInput(KEY.escape)
-    return expect(test.exit).resolves.toMatchObject({ target: 'transcript' })
-  })
-
-  it('narrows the rail with a query and clears it again', () => {
+  it('narrows the list with a query and clears it again', () => {
     const test = mounted()
     test.pane.handleInput(KEY.left)
     expect(test.type(KEY.slash)).toContain('/ ')
@@ -114,7 +105,7 @@ describe('the reader pane', () => {
     expect(test.type(KEY.backspace)).toContain('/ gree')
     expect(test.type(KEY.ctrlU)).toContain('/ ')
     expect(test.type('green')).toContain('/ green')
-    // Enter keeps the narrowed rail and closes the query line.
+    // Enter keeps the narrowed list and closes the query line.
     expect(test.type(KEY.enter)).toContain('↑↓ turns')
     expect(test.draw()).toContain('1/3 turns')
     test.pane.handleInput(KEY.slash)
@@ -123,31 +114,30 @@ describe('the reader pane', () => {
     expect(test.type(KEY.escape)).toContain('/ ')
     expect(test.type(KEY.escape)).toContain('↑↓ turns')
     expect(test.draw()).not.toContain('turns ┤')
-    // A printable key that is not the filter key does nothing in the rail.
-    expect(test.type('z')).toContain('↑↓ turns')
   })
 
-  it('unpins from the rail, where Escape is not yet the way out', async () => {
-    const test = mounted()
-    test.pane.handleInput(KEY.enter)
-    expect(test.type(KEY.tab)).toContain('↑↓ turns')
-    expect(test.type(KEY.escape)).toContain('↑↓ turns')
-    // The pin is gone, so the next Escape closes the reader.
-    test.pane.handleInput(KEY.escape)
-    await expect(test.exit).resolves.toMatchObject({ target: 'transcript' })
+  it('closes on Escape from the turn it was reading and from the list', async () => {
+    const reading = mounted()
+    reading.pane.handleInput(KEY.escape)
+    await expect(reading.exit).resolves.toMatchObject({ target: 'transcript' })
+
+    const listed = mounted()
+    listed.pane.handleInput(KEY.left)
+    listed.pane.handleInput(KEY.escape)
+    await expect(listed.exit).resolves.toMatchObject({ target: 'transcript' })
   })
 
-  it('steps back to the rail on Escape while a narrow terminal draws one column', async () => {
+  it('draws one panel at a time on a terminal too narrow for both', () => {
     const test = mounted({ width: 50 })
-    expect(test.draw()).toContain('Esc back')
-    // The rail is not drawn beside the sections here, so Escape reaches it
-    // first and only the next press closes the reader.
-    expect(test.type(KEY.escape)).toContain('Esc closes')
-    test.pane.handleInput(KEY.escape)
-    await expect(test.exit).resolves.toMatchObject({ target: 'transcript' })
+    expect(test.draw()).toContain('reply row 0')
+    // Left gives the keyboard back to the list, which takes the whole body.
+    const listed = test.type(KEY.left)
+    expect(listed).toContain('▸ 1  [fix the fade at the top]')
+    expect(listed).not.toContain('reply row 0')
+    expect(test.type(KEY.right)).toContain('reply row 0')
   })
 
-  it('re-anchors on the held section when the terminal is rewrapped', () => {
+  it('re-anchors on the section being read when the terminal is rewrapped', () => {
     const blocks = transcript()
     let rows = 40
     const pane = new ReaderPane({
@@ -159,43 +149,10 @@ describe('the reader pane', () => {
     })
     const drawn = pane.render(95).map(stripTerminalSequences).join('\n')
     // The tool result is the turn's last section, far past one body of rows.
-    expect(drawn).toContain('▌clean tree')
+    expect(drawn).toContain('clean tree')
     rows = 12
-    expect(pane.render(95).map(stripTerminalSequences).join('\n')).toContain('▌clean tree')
-    expect(pane.render(60).map(stripTerminalSequences).join('\n')).toContain('▌clean tree')
-  })
-
-  it('re-anchors on the held section when a pin rewraps the walking pane', () => {
-    // Rows wider than one pane, so halving the pane's columns doubles every
-    // row number under the walk - what a pin does without the terminal
-    // changing size at all.
-    const wide = Array.from({ length: 30 }, (_, index) => `reasoning ${String(index)} ${'word '.repeat(12)}`)
-    const blocks = [source('assistant', [
-      { kind: 'reasoning', rows: wide },
-      { kind: 'reply', rows: ['the held reply'] },
-    ], { turn: 1 })]
-    const pane = new ReaderPane({
-      palette: PLAIN,
-      blocks: () => blocks,
-      rows: () => 20,
-      minColumns: READER_MIN_COLUMNS,
-      cursor: { block: 0, part: 1 },
-    })
-    const draw = (): string => pane.render(95).map(stripTerminalSequences).join('\n')
-    // The overlay renders before the first key reaches it, as pi-tui does.
-    draw()
-    // Pin the reply, then walk to the reasoning beside it and read down it.
-    pane.handleInput(KEY.enter)
-    pane.handleInput(KEY.up)
-    expect(draw()).toContain('reasoning 0 ')
-    for (let page = 0; page < 3; page += 1) pane.handleInput(KEY.pageDown)
-    expect(draw()).not.toContain('reasoning 0 ')
-    // Unpinning gives the walk its columns back, which rewraps every row
-    // under it: the reader holds the section rather than the row number.
-    pane.handleInput(KEY.escape)
-    const widened = draw()
-    expect(widened).not.toContain('the held reply')
-    expect(widened).toContain('reasoning 0 ')
+    expect(pane.render(95).map(stripTerminalSequences).join('\n')).toContain('clean tree')
+    expect(pane.render(60).map(stripTerminalSequences).join('\n')).toContain('clean tree')
   })
 
   it('answers only the keys that leave on a terminal it cannot draw in', async () => {

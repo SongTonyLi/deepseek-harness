@@ -170,10 +170,10 @@ describe('tui profile keyless smoke', () => {
       expect(first.stdout).toContain(' ● READ ')
       expect(first.stdout).toContain('Esc input')
       expect(first.stdout).toContain(' ● READER ')
-      // It opened on the section the walk held, so the pane owns the keyboard
-      // and the readout states where that section sits in the session.
-      expect(first.stdout).toContain('Enter pins · Esc back')
-      expect(first.stdout).toMatch(/turn \d+\/\d+ · section \d+\/\d+ · row \d+\/\d+/u)
+      // It opened on the section the walk held, so the turn panel owns the
+      // keyboard and the readout states how far into that turn the reading is.
+      expect(first.stdout).toContain('↑↓ scrolls · PgUp PgDn pages · ← turns · Esc closes')
+      expect(first.stdout).toMatch(/turn \d+\/\d+ · row \d+\/\d+/u)
       // The reader closed back onto the section it was opened from.
       const reader = first.stdout.indexOf(' ● READER ')
       expect(first.stdout.indexOf(' ● READ ', reader)).toBeGreaterThan(reader)
