@@ -130,7 +130,7 @@ function config(overrides: Partial<Config> = {}): Config {
     toolPreviewLines: 8,
     contextPreviewLines: 4,
     focusPreviewLines: 12,
-    readerMinColumns: 80,
+    readerMinColumns: 60,
     toastMs: 2000,
     liveRefreshMs: 1000,
     streamFadeSteps: 8,
@@ -380,7 +380,7 @@ describe('the presentation tunables', () => {
       toolPreviewLines: 8,
       contextPreviewLines: 4,
       focusPreviewLines: 12,
-      readerMinColumns: 80,
+      readerMinColumns: 60,
       toastMs: 2000,
       liveRefreshMs: 1000,
       streamFadeSteps: 8,
@@ -390,9 +390,9 @@ describe('the presentation tunables', () => {
     })
   })
 
-  it('refuse a reader narrower than two readable panes', () => {
+  it('refuse a reader narrower than two readable panels', () => {
     expect(() => validate({ readerMinColumns: 39 })).toThrow()
-    expect(validate({ readerMinColumns: 60 })).toMatchObject({ readerMinColumns: 60 })
+    expect(validate({ readerMinColumns: 90 })).toMatchObject({ readerMinColumns: 90 })
   })
 
   it('refuse a fold that would draw no row of what it folds', () => {

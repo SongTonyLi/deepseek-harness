@@ -433,14 +433,14 @@ describe('TuiApp', () => {
     const reading = await test.screen()
     expect(reading).toContain(' ● READER ')
     expect(reading).toContain('▸ 1  [read the spec]')
-    expect(reading).toContain('▌the reply')
+    expect(reading).toContain('the reply')
     test.terminal.type(KEY.ctrlG)
     await test.settle()
     expect(await test.screen()).not.toContain(' ● READER ')
 
     typeLine(test.terminal, '/turns')
     await test.settle()
-    expect(await test.screen()).toContain('▌the reply')
+    expect(await test.screen()).toContain('¶ reply · turn 1')
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(await test.screen()).not.toContain(' ● READER ')
@@ -668,7 +668,7 @@ describe('TuiApp', () => {
       expect(rowOf(widestHint(region)), region).toBeDefined()
     }
     // The reader is a focus state of its own, with both its columns named.
-    expect(rowOf(READER_HINTS.rail[0])?.startsWith('reader')).toBe(true)
+    expect(rowOf(READER_HINTS.list[0])?.startsWith('reader')).toBe(true)
     expect(rowOf(READER_HINTS.pane[0])).toBeDefined()
     const shown = lines.join('\n')
     for (const key of ['Space folds', 'Ctrl+G reader', 'Tab regions', 'PgUp PgDn turns', 'Home End ends']) {
@@ -697,8 +697,7 @@ describe('TuiApp', () => {
       ...[...HINTS.transcript, ...HINTS.panel, ...HINTS.bar, ...ENTRY_HINTS, ...KEY_LINES.transcript,
         ...KEY_LINES.editor.filter(line => !line.startsWith(ENTRY_HINTS[0] as string))]
         .map(step => [step, 'keys.ts'] as const),
-      ...[...READER_HINTS.rail, ...READER_HINTS.pane].map(step => [step, 'reader.ts'] as const),
-      ['compare needs ', 'reader.ts'],
+      ...[...READER_HINTS.list, ...READER_HINTS.pane].map(step => [step, 'reader.ts'] as const),
       ['terminal too small for the reader (needs ', 'reader.ts'],
       [QUIT_TOAST, 'toast.ts'],
       [NOTHING_TO_READ_TOAST, 'toast.ts'],
