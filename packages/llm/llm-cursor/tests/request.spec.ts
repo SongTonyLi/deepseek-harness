@@ -67,7 +67,7 @@ describe('conversationFromOptions', () => {
       provider: 'cursor',
       model: 'composer-2',
       system: 'sys',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
     })
     expect(fromOption.systemPrompt).toBe('sys')
     expect(fromOption.action).toEqual({ kind: 'userMessage', text: 'hi' })
@@ -78,7 +78,7 @@ describe('conversationFromOptions', () => {
       model: 'composer-2',
       messages: [
         createMessage({ role: 'system', content: [{ type: 'text', text: 'be brief' }], source: { kind: 'plugin', plugin: 'x' } }),
-        createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } }),
+        createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
       ],
     })
     expect(fromMessage.systemPrompt).toBe('be brief')
@@ -89,7 +89,7 @@ describe('conversationFromOptions', () => {
       system: 'sys',
       messages: [
         createMessage({ role: 'system', content: [{ type: 'text', text: 'ignored' }], source: { kind: 'plugin', plugin: 'x' } }),
-        createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } }),
+        createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
       ],
     })
     expect(fromBoth.systemPrompt).toBe('sys')
@@ -118,13 +118,13 @@ describe('conversationFromOptions', () => {
       provider: 'cursor',
       model: 'composer-2',
       messages: [
-        createUserMessage({ content: [{ type: 'text', text: 'first' }], source: { kind: 'plugin', plugin: 'test' } }),
+        createUserMessage({ content: [{ type: 'text', text: 'first' }], source: { kind: 'user' } }),
         createMessage({
           role: 'assistant',
           source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
           content: [{ type: 'text', text: 'ok' }],
         }),
-        createUserMessage({ content: [{ type: 'text', text: 'second' }], source: { kind: 'plugin', plugin: 'test' } }),
+        createUserMessage({ content: [{ type: 'text', text: 'second' }], source: { kind: 'user' } }),
       ],
     })
     expect(parsed.turns).toHaveLength(1)
@@ -150,7 +150,7 @@ describe('conversationFromOptions', () => {
     expect(parsed.action).toEqual({ kind: 'userMessage', text: 'thanks, now stop' })
   })
 
-  it('joins trailing runtime-context and skill-catalog user messages into the current action', () => {
+  it('keeps trailing runtime-context and skill-catalog text out of the current user action', () => {
     const parsed = conversationFromOptions({
       provider: 'cursor',
       model: 'composer-2',
@@ -183,12 +183,12 @@ describe('conversationFromOptions', () => {
     expect(parsed.turns).toEqual([])
     expect(parsed.action).toEqual({
       kind: 'userMessage',
-      text: [
-        'what does @AuditZoo-spring26/ do',
-        'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nsandbox:policy',
-        '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
-      ].join('\n\n'),
+      text: 'what does @AuditZoo-spring26/ do',
     })
+    expect(parsed.actionContext).toBe([
+      'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nsandbox:policy',
+      '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
+    ].join('\n\n'))
   })
 
   it('joins consecutive user-role messages in completed history and skips empty fragments', () => {
@@ -207,6 +207,7 @@ describe('conversationFromOptions', () => {
             sections: [{ name: 'sandbox:policy', text: 'snapshot-v1' }],
           },
         }),
+        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'plugin', plugin: 'pad-after' } }),
         createMessage({
           role: 'assistant',
           source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
@@ -226,9 +227,10 @@ describe('conversationFromOptions', () => {
       ],
     })
     expect(parsed.turns).toEqual([
-      { userText: 'hello\n\nsnapshot-v1', steps: [{ kind: 'assistantText', text: 'hi' }] },
+      { userText: 'hello', contextText: 'snapshot-v1', steps: [{ kind: 'assistantText', text: 'hi' }] },
     ])
-    expect(parsed.action).toEqual({ kind: 'userMessage', text: 'next\n\nsnapshot-v2' })
+    expect(parsed.action).toEqual({ kind: 'userMessage', text: 'next' })
+    expect(parsed.actionContext).toBe('snapshot-v2')
   })
 })
 
@@ -236,6 +238,7 @@ describe('buildPromptMessages', () => {
   it('renders rules, user queries, grouped assistant text and tool calls, and tool results; skips thinking', () => {
     expect(buildPromptMessages('sys', [{
       userText: 'use echo',
+      contextText: '',
       steps: [
         { kind: 'thinking', text: 'private' },
         { kind: 'assistantText', text: 'calling' },
@@ -268,6 +271,7 @@ describe('buildPromptMessages', () => {
   it('omits rules for an empty system prompt, blank user queries, and empty assistant text', () => {
     expect(buildPromptMessages('', [{
       userText: '  ',
+      contextText: '',
       steps: [
         { kind: 'assistantText', text: '' },
         { kind: 'toolCall', toolName: 'echo', toolCallId: 'c3', arguments: {} },
@@ -278,8 +282,26 @@ describe('buildPromptMessages', () => {
     expect(buildPromptMessages('', [])).toEqual([])
   })
 
+  it('replays harness context outside <user_query> so a skill catalog is not the user task', () => {
+    expect(buildPromptMessages('', [{
+      userText: 'continue',
+      contextText: '<system-reminder>\ncall the skill tool before acting\n</system-reminder>',
+      steps: [],
+    }], '<system-reminder>\nreplacement catalog\n</system-reminder>')).toEqual([
+      { role: 'user', content: [{ type: 'text', text: '<user_query>\ncontinue\n</user_query>' }] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<system-reminder>\ncall the skill tool before acting\n</system-reminder>' }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<system-reminder>\nreplacement catalog\n</system-reminder>' }],
+      },
+    ])
+  })
+
   it('replays only the query for a turn whose steps are all thinking', () => {
-    expect(buildPromptMessages('', [{ userText: 'q', steps: [{ kind: 'thinking', text: 'private' }] }])).toEqual([
+    expect(buildPromptMessages('', [{ userText: 'q', contextText: '', steps: [{ kind: 'thinking', text: 'private' }] }])).toEqual([
       { role: 'user', content: [{ type: 'text', text: '<user_query>\nq\n</user_query>' }] },
     ])
   })
@@ -291,7 +313,7 @@ describe('buildCursorRun', () => {
       provider: 'cursor',
       model: 'composer-2',
       system: 'sys',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
       tools: [{ name: 'echo', description: 'echo', parameters: { type: 'object', properties: {} } }],
     })
     const run = decodeRun(payload)
@@ -311,7 +333,7 @@ describe('buildCursorRun', () => {
       provider: 'cursor',
       model: 'composer-2',
       system: 'sys',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
     })
     expect(payload.rules.map(rule => ({ fullPath: rule.fullPath, content: rule.content, type: rule.type?.type.case }))).toEqual([
       { fullPath: 'dsh/cursor-adapter', content: NATIVE_TOOLS_RULE, type: 'global' },
@@ -323,7 +345,7 @@ describe('buildCursorRun', () => {
     const short = buildCursorRun({
       provider: 'cursor',
       model: 'composer-2',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
     })
     const long = buildCursorRun({
       provider: 'cursor',
@@ -334,6 +356,28 @@ describe('buildCursorRun', () => {
     })
     expect(short.inputTokenEstimate).toBeGreaterThan(0)
     expect(long.inputTokenEstimate).toBeGreaterThan(short.inputTokenEstimate + 1_000)
+  })
+
+  it('sends the human prompt as the Run action and the skill catalog as a non-query root message', () => {
+    const catalog = '<system-reminder>\nUse only names in this replacement catalog. call the skill tool before acting.\n</system-reminder>'
+    const payload = buildCursorRun({
+      provider: 'cursor',
+      model: 'composer-2',
+      messages: [
+        createUserMessage({ content: [{ type: 'text', text: 'continue' }], source: { kind: 'user' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: catalog }],
+          source: { kind: 'skill-catalog', form: 'catalog' } as never,
+        }),
+      ],
+    })
+    expect(userActionText(payload)).toBe('continue')
+    expect(userActionText(payload)).not.toContain('skill')
+    expect(rootPromptOf(payload)).toEqual([
+      { role: 'system', content: '' },
+      { role: 'user', content: [{ type: 'text', text: catalog }] },
+    ])
+    expect(JSON.stringify(rootPromptOf(payload))).not.toContain('<user_query>')
   })
 
   it('replays the in-flight turn with its tool results and sends the continuation notice after local tool results', () => {
@@ -461,7 +505,7 @@ describe('conversation edge cases', () => {
           source: { kind: 'tool', callId: ToolCallId('early') },
           content: [{ type: 'tool-result', toolCallId: ToolCallId('early'), content: [{ type: 'text', text: 'early' }] }],
         }),
-        createUserMessage({ content: [{ type: 'text', text: 'use echo' }], source: { kind: 'plugin', plugin: 'test' } }),
+        createUserMessage({ content: [{ type: 'text', text: 'use echo' }], source: { kind: 'user' } }),
         createMessage({
           role: 'assistant',
           source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
@@ -502,7 +546,7 @@ describe('conversation edge cases', () => {
       provider: 'cursor',
       model: 'composer-2',
       messages: [],
-    })).toEqual({ systemPrompt: '', turns: [], action: { kind: 'userMessage', text: '' } })
+    })).toEqual({ systemPrompt: '', turns: [], action: { kind: 'userMessage', text: '' }, actionContext: '' })
     expect(conversationFromOptions({
       provider: 'cursor',
       model: 'composer-2',
@@ -512,7 +556,7 @@ describe('conversation edge cases', () => {
           content: [{ type: 'text', text: '' }],
           source: { kind: 'plugin', plugin: 'x' },
         }),
-        createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } }),
+        createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
       ],
     }).systemPrompt).toBe('')
   })
@@ -522,7 +566,7 @@ describe('conversation edge cases', () => {
       provider: 'cursor',
       model: 'composer-2',
       sessionId: 'sess-1' as never,
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
     })
     expect(decodeRun(payload).conversationId).toBe('sess-1')
   })

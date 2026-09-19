@@ -54,7 +54,7 @@ A round starts only at whole-agent idle, and completion, pause, and blocking sup
 
 ### After resume, fork, or unload
 
-Mounting the driver over an existing agent never arms a goal, and after session resume or fork an active goal stays disarmed until an explicit human-authorized resume — the driver never revives work on its own. Unloading the plugin cancels any in-flight round and ensures no later round starts.
+Mounting the driver over an existing agent never arms a goal, and after session resume or fork an active goal stays disarmed until an explicit human-authorized resume. The driver does not rearm on plugin mount or session resume by itself. A direct human continue-intent — a user message whose whole text or first line is exactly `continue`, `keep going`, `resume`, `go on`, `continue the work`, or `continue with the work`, optionally with a trailing period — rearms an active-disarmed goal that still has round capacity and appends a notice stating whether the goal was resumed, already armed, or not resumed because it is paused, blocked, or complete, plus whether the last closed turn mutated the workspace. Durable paused goals stay paused; `/goal resume` owns those. Unloading the plugin cancels any in-flight round and ensures no later round starts.
 
 -----
 
@@ -69,7 +69,7 @@ This section explains how the driver schedules rounds without races; the observa
 ### Design
 
 - **Reservation, then admission.** At idle the driver reserves `roundsStarted + 1` for the current `{ goalId, revision }`, queues one `<goal_round>` prompt with a goal message source, and only an entered `user/message` increments `roundsStarted`. A reservation rejected as stale does not consume the round number.
-- **Race fences.** The `agent/pre-step` listener verifies the complete claimed record against the current goal both before and after downstream listeners, so a stale, cancelled, or competing prompt is rejected before its step enters. Human work that arrives before a reservation makes automatic work yield until the agent is idle again.
+- **Race fences.** The `agent/pre-step` listener verifies the complete claimed record against the current goal both before and after downstream listeners, so a stale, cancelled, or competing prompt is rejected before its step enters. A claimed batch without a goal-round source may rearm from a human continue-intent, and that path always calls `next()`. Human work that arrives before a reservation makes automatic work yield until the agent is idle again.
 - **Durability checkpoint.** `goal/changed` creates a durability obligation: before queuing work the driver awaits `ctx.sessions.flush()` and rechecks the goal revision and competing input after the await. A flush failure arriving through `agent/error` disarms continuation before another round can start.
 - **Fail-closed teardown.** Teardown closes admission, disarms every live goal, cancels active work with the `parent` cause, and awaits the driver plus agent quiescence while its event fence remains installed.
 
@@ -78,6 +78,7 @@ This section explains how the driver schedules rounds without races; the observa
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: driver state machine, race fences, teardown |
+| [`src/continue.ts`](src/continue.ts) | Human continue-intent detection, rearm, and notice |
 | [`src/prompt.ts`](src/prompt.ts) | The retained `<goal_round>` continuation prompt |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion: goal-round messages must match the package-owned prompt |
 
@@ -115,6 +116,20 @@ One fixed instruction block plus the objective is added per admitted round. Late
 #### KV Cache effect
 
 Append-only within an epoch: each admitted round extends the existing conversation after its reusable prefix. Compaction may replace the derived-history suffix and move the reusable boundary.
+
+### Continue-intent notice
+
+#### What the model sees
+
+When a claimed human message is a continue-intent and a current goal exists, the driver appends one plugin notice. The notice states that the goal was resumed, is already armed, or was not resumed because it is paused, blocked, or complete. It also includes exactly one of these clauses: `the previous turn made no file changes; do not repeat its plan` or `the previous turn changed the workspace; continue from the current files`.
+
+#### Token effect
+
+One additional user-role notice is appended to that accepted step. Later requests resend it until compaction shadows it.
+
+#### KV Cache effect
+
+Append-only within the current epoch: the notice extends the conversation after the reusable prefix.
 
 ## Known Limitations and Deferred Work
 

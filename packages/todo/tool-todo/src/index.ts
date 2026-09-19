@@ -1,7 +1,8 @@
 /**
- * Model-facing whole-list replacement. Each call appends a `todo/write` snapshot to the calling
- * agent's session; replay is last-write-wins, and UIs render from session events. A non-agent
- * caller has no owning list and is rejected. Named exports preserve loader injection metadata.
+ * Model-facing whole-list replacement. A changing write appends a `todo/write` snapshot to the
+ * calling agent's session; an identical canonical list succeeds without appending. Replay is
+ * last-write-wins, and UIs render from session events. A non-agent caller has no owning list and
+ * is rejected. Named exports preserve loader injection metadata.
  * @module @deepseek-ai/dsh-tool-todo
  */
 
@@ -10,6 +11,7 @@ import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { Session } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from './types.ts'
 // Type-only: resolves the required ctx.sessionProjections service declaration.
 import type {} from '@deepseek-ai/dsh-session-projection'
@@ -110,6 +112,26 @@ function toTodoList(raw: { content: string; status: string }[], allowParallel: b
   return todos
 }
 
+/**
+ * Compare two canonical lists: trimmed unique content plus status, same order.
+ * @param left - one canonical list.
+ * @param right - the other canonical list.
+ * @returns whether every item matches at the same index.
+ */
+function sameTodoList(left: readonly TodoItem[], right: readonly TodoItem[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/**
+ * Read the latest whole-list snapshot from the owning session log. The standing-plan
+ * projection is not this source: `turn/start` clears it while the durable write remains.
+ * @param session - the calling agent's session.
+ * @returns the latest `todo/write` list, or `undefined` before the first write.
+ */
+function latestWrittenTodos(session: Session): TodoItem[] | undefined {
+  return session.snapshotEvents().findLast(event => event.type === 'todo/write')?.data.todos
+}
+
 /** Wire payload schema of the `todos` projection (whole list or pre-first-write null). */
 const todosProjectionSchema: ZodType<TodoItem[] | null> = zod.union([
   zod.array(zod.object({
@@ -193,11 +215,14 @@ export function apply(ctx: Context, config: Config): void {
               completed: { type: 'integer', required: true },
             },
           },
+          unchanged: { type: 'boolean', required: true },
         },
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Updated todo list: ${value.counts.pending} pending, ${value.counts.inProgress} in progress, ${value.counts.completed} completed.`,
+        text: value.unchanged
+          ? 'todo list unchanged'
+          : `Updated todo list: ${value.counts.pending} pending, ${value.counts.inProgress} in progress, ${value.counts.completed} completed.`,
       }],
     },
     execute(args, exec) {
@@ -207,7 +232,9 @@ export function apply(ctx: Context, config: Config): void {
         // session) has nowhere to write it. Reject rather than silently no-op.
         throw new Error('todo_write requires an owning agent session')
       }
-      exec.agent.session.append('todo/write', { todos })
+      const previous = latestWrittenTodos(exec.agent.session)
+      const unchanged = previous !== undefined && sameTodoList(previous, todos)
+      if (!unchanged) exec.agent.session.append('todo/write', { todos })
       const count = (status: TodoItem['status']): number => todos.filter(t => t.status === status).length
       return Promise.resolve({
         todos: todos.map(todo => ({ content: todo.content, status: todo.status })),
@@ -216,6 +243,7 @@ export function apply(ctx: Context, config: Config): void {
           inProgress: count('in_progress'),
           completed: count('completed'),
         },
+        unchanged,
       })
     },
     presentCall: args => ({ card: 'generic', title: 'Update todo list', kind: 'other', rawInput: args.todos }),

@@ -6,10 +6,13 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
-import { createUserMessage, LlmAdapter, LlmError  } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, LlmAdapter, LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
+import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import { applyContinueIntent, attachContinueNotice } from '../src/continue.ts'
 import * as goalSession from '../src/index.ts'
 
 type ScriptEntry = StreamChunk[] | Error | 'hang' | ((options: GenerateOptions) => StreamChunk[])
@@ -140,6 +143,64 @@ async function waitForRequests(adapter: ScriptedAdapter, count: number): Promise
   await vi.waitFor(() => {
     expect(adapter.requests).toHaveLength(count)
   })
+}
+
+/** One successful tool-call stream used to close a prior turn with named tools. */
+function toolCallResponse(rawCallId: string, name: string, args: object = {}): StreamChunk[] {
+  const callId = ToolCallId(rawCallId)
+  const argumentsJson = JSON.stringify(args)
+  return [
+    { type: 'block-start', index: 0, blockType: 'tool-call' },
+    { type: 'block-end', index: 0, block: { type: 'tool-call', id: callId, name, arguments: argumentsJson } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ]
+}
+
+/** Register a named fixture tool that returns text or throws. */
+function registerNamedTool(ctx: Context, name: string, result: 'ok' | 'throw'): void {
+  ctx.tools.register(defineContentToolFixture({
+    name,
+    description: name,
+    parameters: {},
+    async execute() {
+      if (result === 'throw') throw new Error(`${name} failed`)
+      return [{ type: 'text', text: `${name} ok` }]
+    },
+  }))
+}
+
+/** Create an active goal and disarm it before the driver can reserve a round. */
+function createDisarmedGoal(
+  test: Harness,
+  objective: string,
+  maxGoalRounds = 2,
+): ReturnType<Context['goals']['create']> {
+  const stop = test.ctx.on('goal/changed', ({ agent, change }) => {
+    if (agent === test.agent && change.operation === 'create') test.ctx.goals.disarm(agent)
+  })
+  const created = test.ctx.goals.create(test.agent, { objective, maxGoalRounds })
+  stop()
+  return created
+}
+
+/** Queue one human user message. */
+function followUser(test: Harness, text: string): void {
+  test.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
+}
+
+/** Notice bodies from one model request. */
+function requestNoticeTexts(request: GenerateOptions): string[] {
+  return request.messages.flatMap(message =>
+    message.source.kind === 'plugin' && message.source.form === 'notice'
+      ? message.content.filter(block => block.type === 'text').map(block => block.text)
+      : [])
+}
+
+/** Notices from the first request that includes the given user text. */
+function continueNoticeTexts(adapter: ScriptedAdapter, text: string): string[] {
+  const request = adapter.requests.find(entry => requestText(entry).includes(text))
+  if (request === undefined) throw new Error(`missing request containing ${JSON.stringify(text)}`)
+  return requestNoticeTexts(request)
 }
 
 describe('goal-round outcome policy', () => {
@@ -1114,5 +1175,349 @@ describe('same-session goal driving', () => {
     await handle.dispose()
 
     expect(test.ctx.agents.get(handle.agent.id)).toBeUndefined()
+  })
+})
+
+describe('continue-intent helpers', () => {
+  const continueMessage = createUserMessage({
+    content: [{ type: 'text', text: 'continue' }],
+    source: { kind: 'user' },
+  })
+  const notice = createUserMessage({
+    content: [{ type: 'text', text: 'notice' }],
+    source: { kind: 'plugin', plugin: 'goal-round-driver', form: 'notice', summary: 'notice' },
+  })
+
+  it('skips attaching a notice when the step is rejected or aborted', () => {
+    expect(attachContinueNotice({ kind: 'reject' }, notice, false)).toEqual({ kind: 'reject' })
+    expect(attachContinueNotice({ kind: 'enter', messages: [] }, notice, true))
+      .toEqual({ kind: 'enter', messages: [] })
+    expect(attachContinueNotice({ kind: 'enter', messages: [] }, undefined, false))
+      .toEqual({ kind: 'enter', messages: [] })
+  })
+
+  it('names a blocked goal that has no stored reason and stringifies a non-error resume throw', () => {
+    const warn = vi.fn()
+    const blocked: GoalView = {
+      id: GoalId('goal-blocked'),
+      revision: 1,
+      objective: 'blocked without reason',
+      phase: 'blocked',
+      maxGoalRounds: 2,
+      roundsStarted: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      activation: 'disarmed',
+    }
+    const disarmed: GoalView = { ...blocked, phase: 'active', objective: 'resume throws' }
+    const agent = { id: 'goal-continue-helper', session: { snapshotEvents: () => [] } }
+
+    const blockedNotice = applyContinueIntent({
+      goals: { get: () => blocked, resume() { throw new Error('unused') } },
+      logger: { warn },
+    } as never, agent as never, [continueMessage])
+    expect(blockedNotice?.content).toEqual([{
+      type: 'text',
+      text: 'The goal was not resumed because it is blocked: blocked; the previous turn made no file changes; do not repeat its plan.',
+    }])
+
+    expect(applyContinueIntent({
+      goals: {
+        get: () => disarmed,
+        resume() { throw 'resume rejected' },
+      },
+      logger: { warn },
+    } as never, agent as never, [continueMessage])).toBeUndefined()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('resume rejected'))
+
+    const unpaired: SessionEvent[] = [
+      { type: 'turn/start', seq: 0 as never, time: 1, data: { turn: 1 } },
+      {
+        type: 'tool/result',
+        seq: 1 as never,
+        time: 2,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'result-missing' as never,
+            role: 'user',
+            source: { kind: 'tool', callId: ToolCallId('missing') },
+            content: [{ type: 'tool-result', toolCallId: ToolCallId('missing'), content: [], isError: false }],
+          },
+        },
+      },
+      { type: 'turn/end', seq: 2 as never, time: 3, data: { turn: 1, reason: { kind: 'completed' } } },
+    ]
+    const resumed = applyContinueIntent({
+      goals: {
+        get: () => disarmed,
+        resume: () => ({ ...disarmed, activation: 'armed' as const }),
+      },
+      logger: { warn },
+    } as never, { ...agent, session: { snapshotEvents: () => unpaired } } as never, [continueMessage])
+    expect(resumed?.content[0]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('the previous turn made no file changes; do not repeat its plan'),
+    })
+  })
+})
+
+describe('continue-intent rearm', () => {
+  it.each([
+    'continue',
+    'Continue.',
+    'keep going',
+    'resume',
+    'go on',
+    'continue the work',
+    'continue with the work',
+    'continue\nplease fix tests',
+  ])('rearms a disarmed active goal when the user says %j', async (text) => {
+    const test = await harness([textResponse('after continue'), textResponse('goal round')])
+    const created = createDisarmedGoal(test, 'finish after continue', 1)
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({
+      id: created.id,
+      phase: 'active',
+      activation: 'disarmed',
+      roundsStarted: 0,
+    })
+
+    followUser(test, text)
+    const goal = await waitForGoal(test.ctx, test.agent, current => current?.phase === 'blocked')
+
+    expect(goal).toMatchObject({ id: created.id, phase: 'blocked', roundsStarted: 1 })
+    expect(test.adapter.requests).toHaveLength(2)
+    const notices = requestNoticeTexts(test.adapter.requests[0]!)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain('The active goal was resumed')
+    expect(notices[0]).toContain('the previous turn made no file changes; do not repeat its plan')
+    expect(test.adapter.requests[0]!.messages.some(message =>
+      message.source.kind === 'plugin' && message.source.plugin === 'goal-round-driver'
+      && message.source.form === 'notice')).toBe(true)
+    expect(requestText(test.adapter.requests[1]!)).toContain('<goal_round>')
+  })
+
+  it('does not resume a durable paused goal', async () => {
+    const test = await harness([textResponse('acknowledged pause')])
+    const created = test.ctx.goals.create(test.agent, { objective: 'stay paused' })
+    const paused = test.ctx.goals.pause(test.agent, created)
+
+    followUser(test, 'continue')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({
+      id: paused.id,
+      revision: paused.revision,
+      phase: 'paused',
+      activation: 'disarmed',
+    })
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([
+      'The goal was not resumed because it is paused; the previous turn made no file changes; do not repeat its plan.',
+    ])
+    expect(requestText(test.adapter.requests[0]!)).not.toContain('<goal_round>')
+  })
+
+  it('injects the no-progress clause when the last turn used only todo or skill tools', async () => {
+    const test = await harness([
+      toolCallResponse('todo-1', 'todo'),
+      textResponse('listed todos'),
+      textResponse('after continue'),
+      textResponse('goal round'),
+    ])
+    registerNamedTool(test.ctx, 'todo', 'ok')
+    registerNamedTool(test.ctx, 'skill', 'ok')
+    followUser(test, 'list the todos')
+    await test.agent.whenIdle()
+    createDisarmedGoal(test, 'continue after todos')
+
+    followUser(test, 'keep going')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'active', activation: 'armed' })
+    const notices = continueNoticeTexts(test.adapter, 'keep going')
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain('the previous turn made no file changes; do not repeat its plan')
+    expect(notices[0]).not.toContain('the previous turn changed the workspace; continue from the current files')
+  })
+
+  it('injects the mutation clause after a successful edit in the last closed turn', async () => {
+    const test = await harness([
+      toolCallResponse('edit-1', 'edit'),
+      textResponse('edited'),
+      textResponse('after continue'),
+      textResponse('goal round'),
+    ])
+    registerNamedTool(test.ctx, 'edit', 'ok')
+    followUser(test, 'edit the file')
+    await test.agent.whenIdle()
+    createDisarmedGoal(test, 'continue after edit')
+
+    followUser(test, 'continue')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'active', activation: 'armed' })
+    expect(continueNoticeTexts(test.adapter, 'continue')).toEqual([
+      'The active goal was resumed; the previous turn changed the workspace; continue from the current files.',
+    ])
+  })
+
+  it('does not resume when ordinary user text merely mentions continue', async () => {
+    const test = await harness([textResponse('starting over')])
+    createDisarmedGoal(test, 'do not infer resume')
+
+    followUser(test, 'Please continue working on the remaining tests in this file.')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'active', activation: 'disarmed' })
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([])
+    expect(requestText(test.adapter.requests[0]!)).not.toContain('The active goal was resumed')
+  })
+
+  it('does not resume a blocked goal and names the blocker', async () => {
+    const test = await harness([textResponse('round one'), textResponse('after continue')])
+    test.ctx.goals.create(test.agent, { objective: 'stop at the cap', maxGoalRounds: 1 })
+    await waitForGoal(test.ctx, test.agent, current => current?.phase === 'blocked')
+
+    followUser(test, 'resume')
+    await test.agent.whenIdle()
+
+    const goal = test.ctx.goals.get(test.agent)
+    expect(goal).toMatchObject({ phase: 'blocked', activation: 'disarmed', roundsStarted: 1 })
+    expect(requestNoticeTexts(test.adapter.requests[1]!)).toEqual([
+      'The goal was not resumed because it is blocked: Goal reached its configured limit of 1 rounds.; the previous turn made no file changes; do not repeat its plan.',
+    ])
+  })
+
+  it('does not resume a complete goal', async () => {
+    const test = await harness([textResponse('acknowledged complete')])
+    const created = createDisarmedGoal(test, 'already done')
+    test.ctx.goals.complete(test.agent, created)
+
+    followUser(test, 'continue')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'complete', activation: 'disarmed' })
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([
+      'The goal was not resumed because it is complete; the previous turn made no file changes; do not repeat its plan.',
+    ])
+  })
+
+  it('notices that an already-armed goal stays armed', async () => {
+    const test = await harness([textResponse('human continue'), textResponse('goal round')])
+    test.ctx.goals.create(test.agent, { objective: 'already armed', maxGoalRounds: 1 })
+    followUser(test, 'go on')
+
+    await waitForGoal(test.ctx, test.agent, current => current?.phase === 'blocked')
+
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([
+      'The active goal is already armed; the previous turn made no file changes; do not repeat its plan.',
+    ])
+    expect(requestText(test.adapter.requests[1]!)).toContain('<goal_round>')
+  })
+
+  it('does not treat a failed edit as a workspace mutation', async () => {
+    const test = await harness([
+      toolCallResponse('edit-fail', 'edit'),
+      textResponse('edit failed'),
+      textResponse('after continue'),
+      textResponse('goal round'),
+    ])
+    registerNamedTool(test.ctx, 'edit', 'throw')
+    followUser(test, 'edit the file')
+    await test.agent.whenIdle()
+    createDisarmedGoal(test, 'continue after failed edit')
+
+    followUser(test, 'continue the work')
+    await test.agent.whenIdle()
+
+    expect(continueNoticeTexts(test.adapter, 'continue the work')[0])
+      .toContain('the previous turn made no file changes; do not repeat its plan')
+  })
+
+  it('does not rearm from a plugin-sourced continue phrase', async () => {
+    const test = await harness([textResponse('plugin text')])
+    createDisarmedGoal(test, 'ignore plugin continue')
+    test.agent.followup(createUserMessage({
+      content: [{ type: 'text', text: 'continue' }],
+      source: { kind: 'plugin', plugin: 'test' },
+    }))
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'active', activation: 'disarmed' })
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([])
+  })
+
+  it('leaves the human step intact when resume throws', async () => {
+    const test = await harness([textResponse('still answered')])
+    createDisarmedGoal(test, 'resume failed')
+    vi.spyOn(test.ctx.goals, 'resume').mockImplementationOnce(() => {
+      throw new Error('resume rejected')
+    })
+
+    followUser(test, 'continue')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'active', activation: 'disarmed' })
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([])
+    expect(requestText(test.adapter.requests[0]!)).toContain('continue')
+  })
+
+  it('ignores a continue-intent when no goal is current', async () => {
+    const test = await harness([textResponse('plain continue')])
+    followUser(test, 'continue')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toBeUndefined()
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([])
+  })
+
+  it('still admits a continue message when continue-intent handling throws', async () => {
+    const test = await harness([textResponse('answered')])
+    createDisarmedGoal(test, 'projection failed')
+    const realGet = test.ctx.goals.get.bind(test.ctx.goals)
+    vi.spyOn(test.ctx.goals, 'get').mockImplementation((agent) => {
+      if (agent.status === 'running') throw new Error('projection failed')
+      return realGet(agent)
+    })
+
+    followUser(test, 'continue')
+    await test.agent.whenIdle()
+
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(requestText(test.adapter.requests[0]!)).toContain('continue')
+    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([])
+  })
+
+  it('does not resume an active goal that has no remaining round capacity', async () => {
+    const test = await harness([textResponse('round one'), textResponse('after continue')])
+    let disarmed = false
+    test.ctx.on('session/event', (session, event) => {
+      if (disarmed || session !== test.agent.session || event.type !== 'turn/end') return
+      disarmed = true
+      test.ctx.goals.disarm(test.agent)
+    })
+    const created = test.ctx.goals.create(test.agent, { objective: 'cap already spent', maxGoalRounds: 2 })
+    await waitForRequests(test.adapter, 1)
+    await test.agent.whenIdle()
+    const current = test.ctx.goals.get(test.agent)
+    if (current === undefined) throw new Error('missing goal after first round')
+    test.ctx.goals.edit(test.agent, current, { maxGoalRounds: 1 })
+
+    followUser(test, 'continue')
+    await test.agent.whenIdle()
+
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({
+      id: created.id,
+      phase: 'active',
+      activation: 'disarmed',
+      roundsStarted: 1,
+      maxGoalRounds: 1,
+    })
+    expect(requestNoticeTexts(test.adapter.requests[1]!)).toEqual([])
   })
 })

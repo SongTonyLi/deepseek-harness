@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包帮助模型跳出以相同参数反复调用同一工具却没有进展的循环。达到配置的重复次数时，它会要求模型检查上一次结果并改变方法或结束任务。提醒只是建议，绝不会阻止或延迟合理的重复调用。每个 agent 的重复分别跟踪，新的用户消息会清除计数。`dsh` 基础组合包默认启用本包，并在重复 3、5、8 次时提醒。
+本包帮助模型跳出以相同参数反复调用同一工具却没有进展的循环。达到配置的重复次数时，它会要求模型检查上一次结果并改变方法或结束任务。提醒只是建议，绝不会延迟调用；可选的 `blockThreshold` 会拒绝下一次相同的受跟踪调用，使工具本体不运行。每个 agent 的重复分别跟踪，新的用户消息会清除计数。`dsh` 基础组合包默认启用本包，并在重复 3、5、8 次时提醒。
 
 ## 目录
 
@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 何时选择
 
-当模型长时间自主工作、且卡住的循环是你想用建议而非强制来打破的失败模式时，选择它。当相同的重复是合理且必须不受打扰地运行时——guard 只会提醒，提醒只是重复调用之后的一条小消息——以及必须捕获近似变体时（因为只有精确重复——同一工具、同一参数且与属性顺序无关——才会被检测到），避免使用它。
+当模型长时间自主工作、且卡住的循环是你想用建议、或在设置 `blockThreshold` 后用拒绝来打破的失败模式时，选择它。当相同的重复是合理且必须运行时，不要设置 `blockThreshold`——提醒只是重复调用之后的一条小消息——以及必须捕获近似变体时（因为只有精确重复——同一工具、同一参数且与属性顺序无关——才会被检测到），避免使用本包。
 
 ### 设置阈值与范围
 
@@ -42,6 +42,8 @@ kind: "package-reference"
     include: []                  # track every tool; list patterns to track only some
     exclude: [todo_write]        # never track these tools
     argumentsPreviewChars: 500   # cap on arguments shown in the detailed reminder
+    blockThreshold: 12           # deny at this consecutive count; omit to stay advisory-only
+    blockProviders: [cursor]     # routes that honor blockThreshold; default is the Cursor subscription route
 ```
 
 | 字段 | 默认值 | 含义 |
@@ -50,12 +52,14 @@ kind: "package-reference"
 | `include` | `[]` | 只跟踪这些工具；空表示所有工具 |
 | `exclude` | `[]` | 绝不跟踪这些工具；对它们的调用既不计数也不重置 |
 | `argumentsPreviewChars` | `500` | 详细提醒中显示多少字符的重复参数 |
+| `blockThreshold` | 未设置 | 在该连续重复次数拒绝相同的受跟踪调用（执行前）；省略则保持仅建议 |
+| `blockProviders` | `['cursor']` | 遵守 `blockThreshold` 的提供方路由；空列表不拒绝任何路由。提醒仍对每个提供方生效 |
 
-无效配置会在启动时以清晰错误失败——空的 `thresholds` 列表、小于 2 的重复次数或重复值——绝不会静默改变行为。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-repeat-tool-reminder)记录每个受支持的值。
+无效配置会在启动时以清晰错误失败——空的 `thresholds` 列表、小于 2 的重复次数、重复值或无效的 `blockThreshold`——绝不会静默改变行为。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-repeat-tool-reminder)记录每个受支持的值。
 
 ### 你会得到什么
 
-按默认值，以相同参数重复同一调用的模型会在第三次重复时收到简短提醒——先分析上一次结果再调用——并在第五次和第八次收到详细提醒，列出工具与重复参数，使其决定改变方法、收集更多证据还是结束任务。新的用户消息会清零计数，因此全新指令绝不会被当作循环。提醒出现在重复调用的结果之后、归属于插件，模型像阅读任何其他消息一样阅读它。
+按默认值，以相同参数重复同一调用的模型会在第三次重复时收到简短提醒——先分析上一次结果再调用——并在第五次和第八次收到详细提醒，列出工具与重复参数，使其决定改变方法、收集更多证据还是结束任务。设置 `blockThreshold` 后，若智能体当前或所选提供方在 `blockProviders` 中（默认为 Cursor 订阅路由 `cursor`），将达到该次数的调用会在工具本体运行前被拒绝；模型看到拒绝原因，且链仍会计入这次被拒绝的尝试。DeepSeek 或 pi-ai 目录路由不会被拒绝。新的用户消息会清零计数，因此全新指令绝不会被当作循环。提醒出现在重复调用的结果之后、归属于插件，模型像阅读任何其他消息一样阅读它。
 
 -----
 
@@ -71,17 +75,18 @@ kind: "package-reference"
 
 guard 建立在四项承诺之上：
 
-- **仅建议，不否决。** guard 用模型上下文丰富 post-execute 决策；它从不阻止或改写调用，因此 `PostToolDecision` 阻止仍是后续监听器的事。
-- **在 post-execute 中计数。** 检测运行在 `tools/post-execute` 上，被拒绝的调用同样会经过它；在那里计数让一个监听器即可覆盖所有尝试，无需跨事件状态。
+- **默认仅建议；可选拒绝。** 提醒用模型上下文丰富 post-execute 决策，且从不改写调用。设置 `blockThreshold` 后，`tools/pre-execute` 会拒绝相同的受跟踪调用；`PostToolDecision` 阻止仍是后续监听器的事。
+- **在 post-execute 中计数。** 检测仍运行在 `tools/post-execute` 上，被拒绝的调用同样会经过它；pre-execute 只查看上一次的键与计数，因此拒绝不会重复递增。
 - **精确匹配规范化。** 参数以循环的 `JSON.parse` 输出（或畸形参数 JSON 的原始字符串回退）到达 guard，因此 JSON 的值域就是全部输入域，深度键排序加 `JSON.stringify` 是完整、确定性的同一性判定——不存在 bigint、循环引用或 `undefined` 处理，因为没有输入路径能产生它们。
-- **加载时快速失败。** `thresholds` 与 `argumentsPreviewChars` 在 `apply` 中校验并抛出错误，绝不回退到默认值。
+- **加载时快速失败。** `thresholds`、`argumentsPreviewChars` 与 `blockThreshold` 在 `apply` 中校验并抛出错误，绝不回退到默认值。
 
 ### 检测：重复链
 
 每个 agent 的链以「`(tool name, canonical arguments)`」为键——同一工具且规范化后参数相同（忽略属性顺序）的两次调用计为连续，换成另一条受跟踪调用则把计数重置为 1。链保存在 `WeakMap<Agent, Chain>` 中。
 
 - **不受跟踪的调用对链透明。** 被 `include`／`exclude` 排除的调用既不递增也不重置计数器，因此 `grep X → todo_write → grep X` 在 `todo_write` 被排除时仍算作连续两次 `grep X`——穿插进循环的记录类工具不能掩盖循环。
-- **被拒绝的调用也计数。** 检测位于 `tools/post-execute`，被 `tools/pre-execute` 监听器拒绝的调用同样会经过它；模型反复尝试被拒绝的调用，恰恰是需要打破的循环。
+- **被拒绝的调用也计数。** 检测位于 `tools/post-execute`，被 `tools/pre-execute` 监听器拒绝的调用同样会经过它——包括本 guard 自己的 `blockThreshold` 拒绝；模型反复尝试被拒绝的调用，恰恰是需要打破的循环。
+- **阻止先查看，再在 post-execute 中计数。** 设置 `blockThreshold` 后，若匹配链的 `count + 1` 将达到该值，`tools/pre-execute` 会拒绝且不递增。被拒绝的尝试仍会经过 post-execute，后者推进计数，并可能同时附上提醒。
 - **忽略没有 agent 的调用。** 直接调用 `ctx.tools.execute()` 的调用方没有需要提醒的模型，也没有可作为键的活跃 agent 对象。
 - **按 agent 分键，用户提示词时重置。** 一个 agent 的重复绝不会触发另一个 agent 的提醒；用户提示词（`agent/pre-step`）会删除提交该提示词的 agent 链，对象生命周期限制弱引用条目的寿命，无需 dispose（资源释放）监听器。
 - **仅驻留内存。** 从持久化恢复的会话以全新链开始——guard 是启发式提醒，而非记录在案的不变量，因此恢复后的提醒延后是可接受的代价。
@@ -95,7 +100,7 @@ guard 建立在四项承诺之上：
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config` schema、快速失败校验、链监听器 |
-| — | 不发布运行时不变式配套组件；重复链私有于一个 post-execute 监听器，且不公开任何可供独立配套组件观察的包自有事件或快照。 |
+| — | 不发布运行时不变式配套组件；重复链私有于本插件的监听器，且不公开任何可供独立配套组件观察的包自有事件或快照。 |
 
 </details>
 
@@ -159,6 +164,26 @@ The repeated calls are not making progress. Do not call this tool with these exa
 
 仅追加；新出现的内容位于可复用请求前缀之后，不会使现有 KV Cache 条目失效。
 
+### 被阻止的相同调用结果
+
+#### 模型看到什么
+
+设置 `blockThreshold` 且下一次相同的受跟踪调用将达到该次数时，调用会在工具本体运行前被拒绝。拒绝原因以下面的句子开头；第二行会给出工具名。
+
+##### 相同调用的拒绝原因
+
+```markdown
+identical to your previous call; no state changed
+```
+
+#### Token 影响
+
+被拒绝的调用仍会在历史中产生一条 tool-result 错误。未设置或尚未达到 `blockThreshold` 时，不增加额外 token。
+
+#### KV Cache 影响
+
+仅追加；新出现的内容位于可复用请求前缀之后，不会使现有 KV Cache 条目失效。
+
 ## 已知限制与延期工作
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -168,9 +193,9 @@ The repeated calls are not making progress. Do not call this tool with these exa
 
 - **仅精确匹配检测**——规范化是深度键排序，因此近似变体（稍作修改的路径、值内多余的空白）会绕过链；在没有需求证据前，不采用模糊匹配。
 - **压缩（compaction）不会重置链**——跨越压缩检查点的链会继续计数。
-- **仅提供建议**——尚未实现高阈值时升级为阻止形式，但 `PostToolDecision` 已支持阻止。
+- **轮询工具**——必须重复相同调用的工具（状态轮询）应留在 `exclude` 中，或不要设置 `blockThreshold`；一旦设置该阈值，达到次数后就会拒绝这些重复。
 - **subagent 之间不共享链**——链始终按 agent 隔离；父 agent 与其 subagent 重复相同调用也绝不合并。
-- **合理的幂等轮询超过阈值后仍会收到提醒**——可通过 `thresholds`／`exclude` 配置释放压力。
+- **合理的幂等轮询超过提醒阈值后仍会收到提醒**——`thresholds`／`exclude` 仍是提醒阀门；`blockThreshold` 是拒绝阀门。
 - **超过最高阈值后链不再提醒**——提醒只在精确达到所配置的次数时触发，超过后不会继续发送。
 
 <a id="dev-note"></a>

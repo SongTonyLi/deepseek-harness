@@ -17,9 +17,31 @@ import {
   isSkillName,
   isUserInvocable,
   renderSkillContent,
+  type SkillDefinition,
   type SkillInvocationSource,
+  type SkillViewOptions,
   type SkillSummary,
 } from '@deepseek-ai/dsh-skill'
+import {
+  CLOSED_SKILL_CATALOG_THIS_TURN,
+  UNKNOWN_SKILL_STREAK_LIMIT,
+  formatUnknownSkillError,
+} from './unknown-skill.ts'
+
+export {
+  CLOSED_SKILL_CATALOG_LINE,
+  CLOSED_SKILL_CATALOG_THIS_TURN,
+  MAX_CLOSE_SKILL_DISTANCE,
+  MAX_CLOSE_SKILL_SUGGESTIONS,
+  MAX_LISTED_CATALOG_NAMES,
+  UNKNOWN_SKILL_STREAK_LIMIT,
+  compareCatalogNames,
+  formatUnknownSkillError,
+  isSubsequenceOf,
+  levenshteinDistance,
+  rankClosestCatalogNames,
+  unknownSkillLine,
+} from './unknown-skill.ts'
 
 export const name = 'tool-skill'
 export const inject = ['agents', 'tools', 'skills']
@@ -57,15 +79,25 @@ function catalogSourceEntries(
   }))
 }
 
+/** Default routed providers that receive the per-turn unknown-skill hard-stop. */
+const DEFAULT_CLOSED_CATALOG_PROVIDERS = ['cursor']
+
 /** Model-facing skill catalog configuration. */
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /**
+   * Provider routes whose live agents receive the per-turn unknown-skill
+   * hard-stop. Default `['cursor']` — the Cursor subscription adapter.
+   * Suggestions still run for every provider. An empty list disables the stop.
+   */
+  closedCatalogProviders?: string[]
 }
 
 /** Validate and default the model-facing skill catalog configuration. */
 export const Config: z<Config> = z.object({
   catalogDescriptionMaxLength: z.number().default(DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH),
+  closedCatalogProviders: z.array(z.string()).default(DEFAULT_CLOSED_CATALOG_PROVIDERS),
 })
 
 /**
@@ -77,6 +109,17 @@ export const Config: z<Config> = z.object({
 export function apply(ctx: Context, config: Config = {}): void {
   const catalogDescriptionMaxLength = config.catalogDescriptionMaxLength ?? DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH
   assertPositiveInteger('catalogDescriptionMaxLength', catalogDescriptionMaxLength, 3)
+  const closedCatalogProviders = validateProviderList(
+    'closedCatalogProviders',
+    config.closedCatalogProviders ?? DEFAULT_CLOSED_CATALOG_PROVIDERS,
+  )
+
+  const unknownStreaks = new WeakMap<object, UnknownSkillStreak>()
+  ctx.on('session/event', (session, event) => {
+    if (event.type !== 'turn/start') return
+    const streak = unknownStreaks.get(session)
+    if (streak !== undefined) streak.consecutiveUnknown = 0
+  })
 
   const skillTool = defineTool({
     name: 'skill',
@@ -125,34 +168,20 @@ export function apply(ctx: Context, config: Config = {}): void {
       render: (_args, value) => [{ type: 'text', text: renderSkillContent(value) }],
     },
     async execute(args, exec) {
+      const streak = streakFor(exec.agent, unknownStreaks, closedCatalogProviders)
+      if (streak !== undefined && streak.consecutiveUnknown >= UNKNOWN_SKILL_STREAK_LIMIT) {
+        throw new Error(CLOSED_SKILL_CATALOG_THIS_TURN)
+      }
       if (!isSkillName(args.name)) {
         throw new Error(`invalid skill name "${args.name}"`)
       }
       // The agent is its own scope key, so the lookup resolves the layered
       // registry exactly as this agent's composition sees it.
-      const lookup = { cwd: exec.agent?.session.header.cwd, signal: exec.signal, scope: exec.agent }
-      const summary = (await ctx.skills.list(lookup)).find(skill => skill.name === args.name)
-      if (!summary) {
-        throw new Error(`skill "${args.name}" is unknown or no longer available`)
-      }
-      if (!isModelInvocable(summary)) {
-        throw new Error(`skill "${args.name}" is not available for model invocation`)
-      }
-      const skill = await ctx.skills.get(args.name, lookup)
-      if (!skill) {
-        throw new Error(`skill "${args.name}" is unknown or no longer available`)
-      }
-      if (!isModelInvocable(skill)) {
-        throw new Error(`skill "${args.name}" is not available for model invocation`)
-      }
-      return {
-        name: skill.name,
-        provider: skill.provider,
-        ...skill.resourceBase !== undefined ? {
-          resourceBase: { ...skill.resourceBase },
-        } : {},
-        content: skill.content,
-      }
+      return await loadModelInvocableSkill(ctx, args.name, {
+        cwd: exec.agent?.session.header.cwd,
+        signal: exec.signal,
+        scope: exec.agent,
+      }, streak)
     },
     presentCall(args) {
       return { card: 'generic', title: `Load skill ${args.name}`, kind: 'read', rawInput: args.name }
@@ -249,6 +278,82 @@ export function apply(ctx: Context, config: Config = {}): void {
         : decision.messages.map(message => message.id === existing.message.id ? catalog : message),
     }
   })
+}
+
+interface UnknownSkillStreak {
+  consecutiveUnknown: number
+}
+
+function streakFor(
+  agent: Agent | undefined,
+  streaks: WeakMap<object, UnknownSkillStreak>,
+  providers: readonly string[],
+): UnknownSkillStreak | undefined {
+  if (agent === undefined || !isClosedCatalogRoute(agent, providers)) return undefined
+  const existing = streaks.get(agent.session)
+  if (existing !== undefined) return existing
+  const created = { consecutiveUnknown: 0 }
+  streaks.set(agent.session, created)
+  return created
+}
+
+/** Whether this agent's current or selected provider is in the hard-stop list. */
+function isClosedCatalogRoute(agent: Agent, providers: readonly string[]): boolean {
+  const provider = agent.session.requestHeader?.()?.config.provider ?? agent.options?.provider
+  return provider !== undefined && providers.includes(provider)
+}
+
+function validateProviderList(field: string, values: readonly string[]): string[] {
+  for (const value of values) {
+    if (value.length === 0) {
+      throw new Error(`tool-skill: ${field} entries must be non-empty`)
+    }
+  }
+  return [...values]
+}
+
+function throwUnknownSkill(
+  name: string,
+  catalogNames: readonly string[],
+  streak: UnknownSkillStreak | undefined,
+): never {
+  if (streak !== undefined) streak.consecutiveUnknown += 1
+  throw new Error(formatUnknownSkillError(name, catalogNames))
+}
+
+function assertModelInvocable(name: string, skill: Pick<SkillSummary, 'invocation'>): void {
+  if (!isModelInvocable(skill)) {
+    throw new Error(`skill "${name}" is not available for model invocation`)
+  }
+}
+
+function loadedSkill(
+  skill: SkillDefinition,
+): Pick<SkillDefinition, 'name' | 'provider' | 'resourceBase' | 'content'> {
+  return {
+    name: skill.name,
+    provider: skill.provider,
+    ...skill.resourceBase !== undefined ? { resourceBase: { ...skill.resourceBase } } : {},
+    content: skill.content,
+  }
+}
+
+async function loadModelInvocableSkill(
+  ctx: Context,
+  name: string,
+  lookup: SkillViewOptions,
+  streak: UnknownSkillStreak | undefined,
+): Promise<Pick<SkillDefinition, 'name' | 'provider' | 'resourceBase' | 'content'>> {
+  const summaries = await ctx.skills.list(lookup)
+  const catalogNames = summaries.filter(isModelInvocable).map(skill => skill.name)
+  const summary = summaries.find(skill => skill.name === name)
+  if (summary === undefined) throwUnknownSkill(name, catalogNames, streak)
+  assertModelInvocable(name, summary)
+  const skill = await ctx.skills.get(name, lookup)
+  if (skill === undefined) throwUnknownSkill(name, catalogNames, streak)
+  assertModelInvocable(name, skill)
+  if (streak !== undefined) streak.consecutiveUnknown = 0
+  return loadedSkill(skill)
 }
 
 function renderCatalogMessage(entries: SkillCatalogSource['entries']): UserMessage {
@@ -362,7 +467,6 @@ function catalogHistory(agent: Agent): { visibleDigest?: string; published: bool
   const visible = new Set(agent.session.surface.nodes)
   let published = false
   for (let index = agent.session.seq - 1; index >= 0; index -= 1) {
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
     const event = agent.session.eventAt(SessionSeq(index))
     if (event === undefined) {
       throw new Error(`skill catalog cannot read seq ${String(index)} below the current Session length`)

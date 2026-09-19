@@ -1770,6 +1770,42 @@ export interface Config {
 
 来源：[`packages/feedback/message-feedback/src/index.ts:40`](../packages/feedback/message-feedback/src/index.ts)
 
+<a id="deepseek-aidsh-no-progress-reminder"></a>
+
+## `@deepseek-ai/dsh-no-progress-reminder`
+
+需要：`tools` · `agents`
+
+```ts config-catalog
+/**
+ * Plugin config, validated by the same-named schemastery schema plus the
+ * load-time check in `apply` (`idleTurns` must be an integer >= 1; a
+ * non-integer or a value below 1 throws at plugin load). `mutatingTools`
+ * entries are `*`-wildcard predicates over tool names at call time, not
+ * references to registry entries.
+ */
+export interface Config {
+  /** Consecutive counted turns that trigger a notice (default `5`). */
+  idleTurns?: number
+  /** Tool-name patterns whose successful calls reset the idle count. */
+  mutatingTools?: string[]
+  /**
+   * When true (default), only count and inject while `ctx.get('goals')` is
+   * present, the agent is live in that registry, and `goals.get(agent)` has
+   * phase `active`. A missing goals service or a non-live agent is a no-op,
+   * not a throw.
+   */
+  requireGoal?: boolean
+  /**
+   * Provider routes that participate. Default `['cursor']` — the Cursor
+   * subscription adapter. An empty list matches no route.
+   */
+  providers?: string[]
+}
+```
+
+来源：[`packages/guard/no-progress-reminder/src/index.ts:31`](../packages/guard/no-progress-reminder/src/index.ts)
+
 <a id="deepseek-aidsh-office-to-pdf"></a>
 
 ## `@deepseek-ai/dsh-office-to-pdf`
@@ -2042,11 +2078,12 @@ Depends on: [`LocalConfig`](#deepseek-aidsh-pwsh-local)
 /**
  * Plugin config, validated by the same-named schemastery schema plus the
  * load-time checks in `apply` (misconfiguration fails loud: an empty
- * `thresholds` list, a non-integer, a value below 2, or a duplicate throws at
- * plugin load, never a silent fall-back). `include`/`exclude` entries are
- * `*`-wildcard predicates over tool names at call time, not references to
- * registry entries — a pattern matching no currently registered tool is valid
- * (`exclude: [mcp_*]` must stay legal in a deployment that loads no MCP tools).
+ * `thresholds` list, a non-integer, a value below 2, a duplicate, or an
+ * invalid `blockThreshold` throws at plugin load, never a silent fall-back).
+ * `include`/`exclude` entries are `*`-wildcard predicates over tool names at
+ * call time, not references to registry entries — a pattern matching no
+ * currently registered tool is valid (`exclude: [mcp_*]` must stay legal in a
+ * deployment that loads no MCP tools).
  */
 export interface Config {
   /** Consecutive-repeat counts that trigger a reminder (default `[3, 5, 8]`). */
@@ -2063,10 +2100,21 @@ export interface Config {
    * always compares the FULL canonical string).
    */
   argumentsPreviewChars?: number
+  /**
+   * Consecutive-repeat count at which an identical tracked call is denied
+   * before execute. Omitted keeps advisory-only behavior.
+   */
+  blockThreshold?: number
+  /**
+   * Provider routes that honor `blockThreshold`. Default `['cursor']` — the
+   * Cursor subscription adapter. Reminders still run for every provider.
+   * An empty list denies no route. Unused while `blockThreshold` is omitted.
+   */
+  blockProviders?: string[]
 }
 ```
 
-来源：[`packages/guard/repeat-tool-reminder/src/index.ts:28`](../packages/guard/repeat-tool-reminder/src/index.ts)
+来源：[`packages/guard/repeat-tool-reminder/src/index.ts:29`](../packages/guard/repeat-tool-reminder/src/index.ts)
 
 <a id="deepseek-aidsh-sandbox-local"></a>
 
@@ -3311,10 +3359,16 @@ export interface Config {
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /**
+   * Provider routes whose live agents receive the per-turn unknown-skill
+   * hard-stop. Default `['cursor']` — the Cursor subscription adapter.
+   * Suggestions still run for every provider. An empty list disables the stop.
+   */
+  closedCatalogProviders?: string[]
 }
 ```
 
-来源：[`packages/skill/tool-skill/src/index.ts:61`](../packages/skill/tool-skill/src/index.ts)
+来源：[`packages/skill/tool-skill/src/index.ts:86`](../packages/skill/tool-skill/src/index.ts)
 
 <a id="deepseek-aidsh-tool-str-replace-editor"></a>
 
@@ -3443,7 +3497,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/todo/tool-todo/src/index.ts:29`](../packages/todo/tool-todo/src/index.ts)
+来源：[`packages/todo/tool-todo/src/index.ts:31`](../packages/todo/tool-todo/src/index.ts)
 
 <a id="deepseek-aidsh-tool-web"></a>
 

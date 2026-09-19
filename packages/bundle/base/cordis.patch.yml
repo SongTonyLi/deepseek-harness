@@ -302,6 +302,8 @@
 
     - id: tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
+      config:
+        closedCatalogProviders: [cursor]
 
     - id: commands
       name: '@deepseek-ai/dsh-commands'
@@ -456,6 +458,15 @@
       config:
         thresholds: [3, 5, 8]
         argumentsPreviewChars: 500
+        blockThreshold: 2
+        blockProviders: [cursor]
+
+    # Idle-goal turns with no successful edit/write/bash.
+    - id: no-progress-reminder
+      name: '@deepseek-ai/dsh-no-progress-reminder'
+      config:
+        idleTurns: 5
+        providers: [cursor]
 
     # The shared base enables the stable model-facing web_search and web_fetch
     # tools. The Web app disables this host row and composes both tools per agent

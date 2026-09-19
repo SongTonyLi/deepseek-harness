@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, ToolCallId, type Message } from '@deepseek-ai/dsh-llm'
 import { createScope, type Scope } from '@deepseek-ai/dsh-scope'
-import {
+import SessionStore, {
   SESSION_FORMAT_VERSION, Session, SessionId, type SessionEvent, type UserMessage,
 } from '@deepseek-ai/dsh-session'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -69,10 +69,14 @@ function agentForCwd(cwd: string): Agent {
   }
 }
 
-function sessionAgent(session: Session, id = 'tool-skill-agent'): Agent {
+function sessionAgent(
+  session: Session,
+  id = 'tool-skill-agent',
+  options: Agent['options'] = { provider: 'cursor' },
+): Agent {
   const agent: Agent = {
     id: SessionId(id),
-    options: {},
+    options,
     session,
     inbox: unsupportedInbox(),
     status: 'running',
@@ -159,6 +163,36 @@ async function composePrefixForAgent(ctx: Context, agent: Agent, signal = new Ab
     }
   }
   return agent.session.deriveMessages()
+}
+
+function registerRuntimeSkill(ctx: Context, name: string, body = `${name} body.`): void {
+  ctx.skills.register({
+    name,
+    description: `${name} description`,
+    source: 'runtime',
+    content: body,
+  })
+}
+
+async function executeSkill(
+  ctx: Context,
+  name: string,
+  agent?: Agent,
+  callId = name,
+): Promise<Awaited<ReturnType<Context['tools']['execute']>>> {
+  return await ctx.tools.execute({
+    signal: testToolSignal,
+    callId: ToolCallId(callId),
+    name: 'skill',
+    arguments: { name },
+    ...agent === undefined ? {} : { agent },
+  })
+}
+
+function toolText(result: Awaited<ReturnType<Context['tools']['execute']>>): string {
+  const block = result.content[0]
+  if (block?.type !== 'text') throw new Error('expected text tool result')
+  return block.text
 }
 
 async function mintAgentScope(ctx: Context, subject: string | Agent): Promise<{ agent: Agent; scope: Scope }> {
@@ -783,6 +817,18 @@ describe('dsh-tool-skill', () => {
     await expect(ctx.plugin(toolSkill, { catalogDescriptionMaxLength: 2 })).rejects.toThrow('greater than or equal to 3')
   })
 
+  it('rejects an empty closedCatalogProviders entry', async () => {
+    const home = await tempDir('tool-invalid-closed-catalog')
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(SkillRegistry)
+    await ctx.plugin(SkillFileSystem, { dshHome: join(home, '.dsh'), agentsHome: join(home, '.agents'), watch: false })
+
+    await expect(ctx.plugin(toolSkill, { closedCatalogProviders: [''] })).rejects.toThrow(/closedCatalogProviders/)
+  })
+
   it('loads a skill for the calling agent cwd', async () => {
     const home = await tempDir('tool-load')
     const project = await tempDir('tool-project')
@@ -976,6 +1022,253 @@ describe('dsh-tool-skill', () => {
     const vanishedBlock = vanished.content[0]
     if (vanishedBlock?.type !== 'text') throw new Error('expected text tool result')
     expect(vanishedBlock.text).toContain('skill "vanishing-skill" is unknown or no longer available')
+  })
+
+  it('appends closest names and the closed catalog list for an unknown skill', async () => {
+    const home = await tempDir('tool-unknown-suggest')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'code-review')
+    registerRuntimeSkill(ctx, 'code-search')
+    registerRuntimeSkill(ctx, 'other-skill')
+    ctx.skills.register({
+      name: 'user-only-skill',
+      description: 'User-only skill',
+      invocation: { modelInvocable: false, userInvocable: true },
+      source: 'runtime',
+      content: 'User-only body.',
+    })
+
+    const result = await executeSkill(ctx, 'code-reveiw')
+    const text = toolText(result)
+
+    expect(result.isError).toBe(true)
+    expect(text).toContain('skill "code-reveiw" is unknown or no longer available')
+    expect(text).toBe([
+      'Error: skill "code-reveiw" is unknown or no longer available',
+      'Closest catalog names: `code-review`',
+      'Valid skill names: `code-review`, `code-search`, `other-skill`',
+      'The skill catalog is closed: use only listed names. Do not invent names.',
+    ].join('\n'))
+    expect(text).not.toContain('user-only-skill')
+  })
+
+  it('treats a vanished listed skill like an unknown name', async () => {
+    const home = await tempDir('tool-vanished-suggest')
+    const ctx = await setup(home)
+    ctx.skills.registerProvider(() => ({
+      name: 'vanish-probe',
+      async list() {
+        return [
+          {
+            name: 'vanishing-skil',
+            description: 'Still loadable',
+            invocation: { modelInvocable: true, userInvocable: true },
+            provider: 'vanish-probe',
+            source: 'test',
+            rank: 1,
+            locator: 'vanishing-skil',
+          },
+          {
+            name: 'vanishing-skill',
+            description: 'Listed then gone',
+            invocation: { modelInvocable: true, userInvocable: true },
+            provider: 'vanish-probe',
+            source: 'test',
+            rank: 1,
+            locator: 'vanishing-skill',
+          },
+        ]
+      },
+      async get(candidate) {
+        if (candidate.name === 'vanishing-skill') return undefined
+        return { ...candidate, content: 'Still here.' }
+      },
+    }))
+
+    const text = toolText(await executeSkill(ctx, 'vanishing-skill'))
+
+    expect(text).toContain('skill "vanishing-skill" is unknown or no longer available')
+    expect(text).toBe([
+      'Error: skill "vanishing-skill" is unknown or no longer available',
+      'Closest catalog names: `vanishing-skil`',
+      'Valid skill names: `vanishing-skil`, `vanishing-skill`',
+      'The skill catalog is closed: use only listed names. Do not invent names.',
+    ].join('\n'))
+  })
+
+  it('refuses every later skill load after three consecutive unknowns on one live agent turn', async () => {
+    const home = await tempDir('tool-unknown-stop')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'real-skill')
+    const agent = sessionAgent(Session.create(SessionId('unknown-stop')))
+
+    expect(toolText(await executeSkill(ctx, 'nope-one', agent, 'u1')))
+      .toContain('skill "nope-one" is unknown or no longer available')
+    expect(toolText(await executeSkill(ctx, 'nope-two', agent, 'u2')))
+      .toContain('skill "nope-two" is unknown or no longer available')
+    expect(toolText(await executeSkill(ctx, 'nope-three', agent, 'u3')))
+      .toContain('skill "nope-three" is unknown or no longer available')
+
+    const refused = await executeSkill(ctx, 'real-skill', agent, 'u4')
+    expect(refused.isError).toBe(true)
+    expect(toolText(refused)).toBe(
+      'Error: The skill catalog is closed this turn. The next action must be a task tool (read/edit/write/bash), not another skill load.',
+    )
+  })
+
+  it('does not close the catalog on a non-Cursor subscription route', async () => {
+    const home = await tempDir('tool-unknown-not-cursor')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'real-skill')
+    const agent = sessionAgent(
+      Session.create(SessionId('unknown-not-cursor')),
+      'unknown-not-cursor',
+      { provider: 'deepseek-official' },
+    )
+
+    await executeSkill(ctx, 'nope-one', agent, 'd1')
+    await executeSkill(ctx, 'nope-two', agent, 'd2')
+    await executeSkill(ctx, 'nope-three', agent, 'd3')
+    const loaded = await executeSkill(ctx, 'real-skill', agent, 'd4')
+    expect(loaded.isError).toBe(false)
+    expect(JSON.stringify(loaded.content)).toContain('real-skill body.')
+  })
+
+  it('closes the catalog when the request header is the Cursor route and options are not', async () => {
+    const home = await tempDir('tool-unknown-header-cursor')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'real-skill')
+    const session = Session.create(SessionId('unknown-header-cursor'))
+    session.append('request/header', {
+      header: { config: { provider: 'cursor', model: 'composer-2' } },
+      reason: 'initial',
+    })
+    const agent = sessionAgent(session, 'unknown-header-cursor', { provider: 'deepseek-official' })
+
+    await executeSkill(ctx, 'nope-one', agent, 'h1')
+    await executeSkill(ctx, 'nope-two', agent, 'h2')
+    await executeSkill(ctx, 'nope-three', agent, 'h3')
+    expect(toolText(await executeSkill(ctx, 'real-skill', agent, 'h4')))
+      .toContain('closed this turn')
+  })
+
+  it('resets the consecutive-unknown counter after a successful load', async () => {
+    const home = await tempDir('tool-unknown-reset-success')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'real-skill')
+    const agent = sessionAgent(Session.create(SessionId('unknown-reset-success')))
+
+    await executeSkill(ctx, 'nope-one', agent, 'r1')
+    await executeSkill(ctx, 'nope-two', agent, 'r2')
+    const loaded = await executeSkill(ctx, 'real-skill', agent, 'r3')
+    expect(loaded.isError).toBe(false)
+
+    await executeSkill(ctx, 'nope-one', agent, 'r4')
+    await executeSkill(ctx, 'nope-two', agent, 'r5')
+    const stillOpen = await executeSkill(ctx, 'real-skill', agent, 'r6')
+    expect(stillOpen.isError).toBe(false)
+    expect(JSON.stringify(stillOpen.content)).toContain('real-skill body.')
+  })
+
+  it('resets the consecutive-unknown counter when the owning session starts a new turn', async () => {
+    const home = await tempDir('tool-unknown-reset-turn')
+    const ctx = await setup(home)
+    await ctx.plugin(SessionStore)
+    registerRuntimeSkill(ctx, 'real-skill')
+    const session = ctx.sessions.create(SessionId('unknown-reset-turn'), { meta: { cwd: home } })
+    const agent = sessionAgent(session)
+    session.append('turn/start', { turn: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+    await executeSkill(ctx, 'nope-one', agent, 't1')
+    await executeSkill(ctx, 'nope-two', agent, 't2')
+    await executeSkill(ctx, 'nope-three', agent, 't3')
+    expect(toolText(await executeSkill(ctx, 'real-skill', agent, 't4')))
+      .toContain('closed this turn')
+
+    session.append('turn/start', { turn: 2 })
+    const afterTurn = await executeSkill(ctx, 'real-skill', agent, 't5')
+    expect(afterTurn.isError).toBe(false)
+    expect(JSON.stringify(afterTurn.content)).toContain('real-skill body.')
+  })
+
+  it('does not count an invalid skill name toward the per-turn stop', async () => {
+    const home = await tempDir('tool-invalid-no-stop')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'real-skill')
+    const agent = sessionAgent(Session.create(SessionId('invalid-no-stop')))
+
+    await executeSkill(ctx, 'nope-one', agent, 'i1')
+    await executeSkill(ctx, 'nope-two', agent, 'i2')
+    const invalid = await executeSkill(ctx, 'Bad_Name', agent, 'i3')
+    expect(toolText(invalid)).toContain('invalid skill name "Bad_Name"')
+    expect(toolText(invalid)).not.toContain('closed this turn')
+
+    const loaded = await executeSkill(ctx, 'real-skill', agent, 'i4')
+    expect(loaded.isError).toBe(false)
+  })
+
+  it('does not count a model-disabled skill toward the per-turn stop', async () => {
+    const home = await tempDir('tool-disabled-no-stop')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'real-skill')
+    ctx.skills.register({
+      name: 'hidden-skill',
+      description: 'Hidden skill',
+      invocation: { modelInvocable: false, userInvocable: true },
+      source: 'runtime',
+      content: 'Hidden body.',
+    })
+    const agent = sessionAgent(Session.create(SessionId('disabled-no-stop')))
+
+    await executeSkill(ctx, 'nope-one', agent, 'd1')
+    await executeSkill(ctx, 'nope-two', agent, 'd2')
+    const disabled = await executeSkill(ctx, 'hidden-skill', agent, 'd3')
+    expect(toolText(disabled)).toContain('is not available for model invocation')
+    expect(toolText(disabled)).not.toContain('closed this turn')
+
+    const loaded = await executeSkill(ctx, 'real-skill', agent, 'd4')
+    expect(loaded.isError).toBe(false)
+  })
+
+  it('suggests catalog names without a hard-stop when execute has no agent', async () => {
+    const home = await tempDir('tool-unknown-no-agent')
+    const ctx = await setup(home)
+    registerRuntimeSkill(ctx, 'code-review')
+
+    const first = toolText(await executeSkill(ctx, 'code-reveiw', undefined, 'n1'))
+    const second = toolText(await executeSkill(ctx, 'missing-one', undefined, 'n2'))
+    const third = toolText(await executeSkill(ctx, 'missing-two', undefined, 'n3'))
+    const fourth = toolText(await executeSkill(ctx, 'missing-three', undefined, 'n4'))
+    const loaded = await executeSkill(ctx, 'code-review', undefined, 'n5')
+
+    expect(first).toContain('Closest catalog names: `code-review`')
+    expect(second).toContain('skill "missing-one" is unknown or no longer available')
+    expect(third).toContain('Valid skill names: `code-review`')
+    expect(fourth).not.toContain('closed this turn')
+    expect(loaded.isError).toBe(false)
+  })
+
+  it('names an empty catalog and caps the listed names at 40', async () => {
+    const home = await tempDir('tool-unknown-empty-cap')
+    const ctx = await setup(home)
+
+    const empty = toolText(await executeSkill(ctx, 'missing'))
+    expect(empty).toBe([
+      'Error: skill "missing" is unknown or no longer available',
+      'No close catalog name matches.',
+      'The skill catalog is empty.',
+      'The skill catalog is closed: use only listed names. Do not invent names.',
+    ].join('\n'))
+
+    for (let index = 0; index < 42; index += 1) {
+      registerRuntimeSkill(ctx, `skill-${String(index).padStart(2, '0')}`)
+    }
+    const capped = toolText(await executeSkill(ctx, 'missing', undefined, 'cap'))
+    expect(capped).toContain('Valid skill names: `skill-00`')
+    expect(capped).toContain('`skill-39` (+2 more)')
+    expect(capped).not.toContain('`skill-40`')
+    expect(capped).toContain('No close catalog name matches.')
   })
 })
 

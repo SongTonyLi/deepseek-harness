@@ -38,12 +38,18 @@ describe('dsh badge assembled snapshot', () => {
         "result": {
           "content": [
             {
-              "text": "Error: skill "dsh-badge" is unknown or no longer available",
+              "text": "Error: skill "dsh-badge" is unknown or no longer available
+      No close catalog name matches.
+      The skill catalog is empty.
+      The skill catalog is closed: use only listed names. Do not invent names.",
               "type": "text",
             },
           ],
           "error": {
-            "message": "skill "dsh-badge" is unknown or no longer available",
+            "message": "skill "dsh-badge" is unknown or no longer available
+      No close catalog name matches.
+      The skill catalog is empty.
+      The skill catalog is closed: use only listed names. Do not invent names.",
           },
           "isError": true,
         },

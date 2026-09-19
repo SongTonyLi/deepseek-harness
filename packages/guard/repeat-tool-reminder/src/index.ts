@@ -1,8 +1,8 @@
 /**
- * Advisory per-agent repeat-call detector. It enriches post-execute decisions
- * with logged model context without vetoing or rewriting calls. Configuration
- * and chain semantics live in the package README; rationale lives in the
- * repeat-tool-reminder Agent Note.
+ * Per-agent repeat-call detector. It enriches post-execute decisions with
+ * logged model context and, when `blockThreshold` is set, denies an identical
+ * tracked call before execute. Configuration and chain semantics live in the
+ * package README; rationale lives in the repeat-tool-reminder Agent Note.
  * @module @deepseek-ai/dsh-repeat-tool-reminder
  */
 
@@ -12,18 +12,19 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageSource } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
-import type { PostToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { PostToolDecision, PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 
 export const name = 'repeat-tool-reminder'
 
 /**
  * Plugin config, validated by the same-named schemastery schema plus the
  * load-time checks in `apply` (misconfiguration fails loud: an empty
- * `thresholds` list, a non-integer, a value below 2, or a duplicate throws at
- * plugin load, never a silent fall-back). `include`/`exclude` entries are
- * `*`-wildcard predicates over tool names at call time, not references to
- * registry entries — a pattern matching no currently registered tool is valid
- * (`exclude: [mcp_*]` must stay legal in a deployment that loads no MCP tools).
+ * `thresholds` list, a non-integer, a value below 2, a duplicate, or an
+ * invalid `blockThreshold` throws at plugin load, never a silent fall-back).
+ * `include`/`exclude` entries are `*`-wildcard predicates over tool names at
+ * call time, not references to registry entries — a pattern matching no
+ * currently registered tool is valid (`exclude: [mcp_*]` must stay legal in a
+ * deployment that loads no MCP tools).
  */
 export interface Config {
   /** Consecutive-repeat counts that trigger a reminder (default `[3, 5, 8]`). */
@@ -40,6 +41,17 @@ export interface Config {
    * always compares the FULL canonical string).
    */
   argumentsPreviewChars?: number
+  /**
+   * Consecutive-repeat count at which an identical tracked call is denied
+   * before execute. Omitted keeps advisory-only behavior.
+   */
+  blockThreshold?: number
+  /**
+   * Provider routes that honor `blockThreshold`. Default `['cursor']` — the
+   * Cursor subscription adapter. Reminders still run for every provider.
+   * An empty list denies no route. Unused while `blockThreshold` is omitted.
+   */
+  blockProviders?: string[]
 }
 
 export const Config: z<Config> = z.object({
@@ -47,6 +59,8 @@ export const Config: z<Config> = z.object({
   include: z.array(z.string()).default([]),
   exclude: z.array(z.string()).default([]),
   argumentsPreviewChars: z.number().default(500),
+  blockThreshold: z.number(),
+  blockProviders: z.array(z.string()).default(['cursor']),
 })
 
 /**
@@ -65,6 +79,9 @@ const GENTLE_REMINDER =
   + 'Carefully analyze the previous result before calling again: if the task is '
   + 'not complete, try a different approach or different arguments instead of '
   + 'repeating the call.'
+
+/** First line of the pre-execute deny reason; the tools runtime prefixes `Error: `. */
+const IDENTICAL_DENY_LINE = 'identical to your previous call; no state changed'
 
 /** The detailed later-threshold reminder naming the tool, the run length, and the canonical arguments. */
 function detailedReminder(toolName: string, count: number, canonicalArguments: string): string {
@@ -104,6 +121,16 @@ function canonicalize(argumentsValue: unknown): string {
   return JSON.stringify(sortJsonValue(argumentsValue))
 }
 
+/** Chain identity for one call: tool name plus canonical arguments. */
+function identityKey(name: string, argumentsValue: unknown): string {
+  return JSON.stringify([name, canonicalize(argumentsValue)])
+}
+
+/** Model-visible deny reason: stable first line, then the tool name. */
+function identicalDenyReason(toolName: string): string {
+  return `${IDENTICAL_DENY_LINE}\ntool: ${toolName}`
+}
+
 /** Compile one `*`-wildcard pattern to an anchored RegExp (every other regex metacharacter is matched literally). */
 function wildcardToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/g, String.raw`\$&`)
@@ -141,6 +168,27 @@ function validateThresholds(values: number[]): number[] {
 }
 
 /**
+ * Validate optional `blockThreshold` with the same fail-loud integer rule as
+ * `thresholds`. Omitted keeps advisory-only behavior.
+ */
+function validateBlockThreshold(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || value < 2) {
+    throw new Error(`repeat-tool-reminder: invalid blockThreshold ${value} — must be an integer >= 2`)
+  }
+  return value
+}
+
+function validateBlockProviders(values: string[]): string[] {
+  for (const value of values) {
+    if (value.length === 0) {
+      throw new Error('repeat-tool-reminder: blockProviders entries must be non-empty')
+    }
+  }
+  return values
+}
+
+/**
  * Prepend the guard's reminder while preserving every downstream context's
  * source and metadata.
  */
@@ -157,7 +205,7 @@ interface Chain {
 /**
  * Install the guard's listeners.
  * @param ctx - plugin context; listeners are scoped to it and disposed with it.
- * @param config - validated {@link Config}; `thresholds` is re-checked fail-loud here.
+ * @param config - validated {@link Config}; `thresholds` and `blockThreshold` are re-checked fail-loud here.
  */
 export function apply(ctx: Context, config: Config): void {
   // schemastery's .default() guarantees the fields are set after validation.
@@ -166,6 +214,8 @@ export function apply(ctx: Context, config: Config): void {
   const includePatterns = (config.include as string[]).map(wildcardToRegExp)
   const excludePatterns = (config.exclude as string[]).map(wildcardToRegExp)
   const argumentsPreviewChars = config.argumentsPreviewChars as number
+  const blockThreshold = validateBlockThreshold(config.blockThreshold)
+  const blockProviders = validateBlockProviders(config.blockProviders as string[])
   if (!Number.isInteger(argumentsPreviewChars) || argumentsPreviewChars < 1) {
     throw new Error(`repeat-tool-reminder: invalid argumentsPreviewChars ${argumentsPreviewChars} — must be an integer >= 1`)
   }
@@ -192,7 +242,7 @@ export function apply(ctx: Context, config: Config): void {
     if (!exec.agent) return undefined
     if (!tracked(exec.name)) return undefined
     const canonical = canonicalize(exec.arguments)
-    const key = JSON.stringify([exec.name, canonical])
+    const key = identityKey(exec.name, exec.arguments)
     const chain = chains.get(exec.agent)
     const count = chain !== undefined && chain.key === key ? chain.count + 1 : 1
     chains.set(exec.agent, { key, count })
@@ -206,10 +256,30 @@ export function apply(ctx: Context, config: Config): void {
     })
   }
 
-  // Observe-and-enrich, never veto: count first (state advances regardless of
-  // the downstream outcome), DELEGATE so a later listener can still block or
-  // replace, then fold the reminder onto whatever came back — additionalContexts
-  // rides both decision variants, so a blocked call still gets the nudge.
+  /**
+   * Peek at the last tracked key+count without advancing. Post-execute still
+   * increments, including after this deny, so a reminder threshold can fire
+   * on the same attempt.
+   */
+  function wouldBlock(exec: ToolExecution): boolean {
+    if (blockThreshold === undefined || !exec.agent || !tracked(exec.name)) return false
+    const provider = exec.agent.session.requestHeader()?.config.provider ?? exec.agent.options.provider
+    if (provider === undefined || !blockProviders.includes(provider)) return false
+    const chain = chains.get(exec.agent)
+    if (chain === undefined) return false
+    return chain.key === identityKey(exec.name, exec.arguments)
+      && chain.count + 1 >= blockThreshold
+  }
+
+  ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
+    if (!wouldBlock(exec)) return next()
+    return { kind: 'deny', reason: identicalDenyReason(exec.name) }
+  })
+
+  // Count first (state advances regardless of the downstream outcome), DELEGATE
+  // so a later listener can still block or replace, then fold the reminder onto
+  // whatever came back — additionalContexts rides both decision variants, so a
+  // blocked or denied call still gets the nudge.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
     const reminder = observe(exec)
     const downstream = await next()

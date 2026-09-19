@@ -11,6 +11,7 @@ import type { GoalMessageSource, GoalRef, GoalView } from '@deepseek-ai/dsh-goal
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
+import { applyContinueIntent, attachContinueNotice } from './continue.ts'
 import { renderGoalRoundPrompt } from './prompt.ts'
 
 export { renderGoalRoundPrompt } from './prompt.ts'
@@ -360,7 +361,15 @@ export function apply(ctx: Context): void {
     ctx.on('agent/pre-step', async ({ agent, messages, signal }, next): Promise<PreStepDecision> => {
       const submitted = messages.find((message): message is UserMessage & { source: GoalMessageSource } =>
         isGoalRoundSource(message.source))
-      if (submitted === undefined) return next()
+      if (submitted === undefined) {
+        let notice: UserMessage | undefined
+        try {
+          notice = applyContinueIntent(ctx, agent, messages)
+        } catch (error: unknown) {
+          ctx.logger.warn(`goal-round-driver: continue-intent handling failed for agent "${agent.id}": ${renderThrown(error)}`)
+        }
+        return attachContinueNotice(await next(), notice, signal.aborted)
+      }
       const { content, source } = submitted
       const state = stateFor(agent)
       let valid = false

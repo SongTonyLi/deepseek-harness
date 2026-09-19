@@ -134,6 +134,7 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | 插件入口：`BasicCompactionEngine`、自动 listener、入口点分发 |
 | [`src/region.ts`](src/region.ts) | 保留选择与共享的先记录标记压缩事务 |
 | [`src/summarizer.ts`](src/summarizer.ts) | 默认 `ctx.llm.stream()` 摘要、检查点框定、安全摘要投影 |
+| [`src/work-state.ts`](src/work-state.ts) | 在入站路由为 `cursor` 的 `model-selection` 通知之后接纳的模型切换工作状态通知 |
 | [`src/config.ts`](src/config.ts) | 加载时验证与路由模型策略解析 |
 | [`src/types.ts`](src/types.ts) | `BasicCompactionConfig` 与已解析策略词汇 |
 | — | 不发布运行时不变式配套条目；除所属 seam 强制执行的约定外，本包不公开独立事件序列或可变数据关系。持久标记对仍可在会话日志中观察。 |
@@ -163,12 +164,24 @@ kind: "package-reference"
 
 #### 模型看到的内容
 
-成功步骤越过阈值后，如果已加载可选修剪器，超大工具结果会先被改写。如果仍需摘要，下一个请求会收到下方检查点前导、一个空行、`<compacted-summary>`、根据数据生成的摘要以及 `</compacted-summary>`。溢出恢复会根据使表层前进的任何替换重建立即重试。检查点会替换已选较早范围，后面跟随已保留的近期单元。
+成功步骤越过阈值后，如果已加载可选修剪器，超大工具结果会先被改写。如果仍需摘要，下一个请求会收到下方检查点前导、一个空行、`<compacted-summary>`、根据数据生成的摘要以及 `</compacted-summary>`。溢出恢复会根据使表层前进的任何替换重建立即重试。检查点会替换已选较早范围，后面跟随已保留的近期单元。当已接纳步骤已经包含一条入站路由为 Cursor 订阅（`cursor`）的 `model-selection` 通知时，此后端再追加一条来源为 `{ kind: 'plugin', plugin: 'compaction-basic', form: 'notice', summary: 'work state' }` 的 user 角色通知。跨提供方通知会写出 `cursor/<model>`；同一 Cursor 提供方内的切换保留裸模型 id，并使用上一条请求头。切换到 DeepSeek 或 pi-ai 目录路由时不会收到该通知。该通知要求后继模型把最新 `<compacted-summary>`（历史中已有时）与持久会话／工作区状态视为权威，不要重新检查已完成工作或重新推导已记录计划，并执行检查点的 Next Step 或一次改变状态的工具调用（仅当某个具名文件缺失时才 read）。如果上一轮没有成功的 `edit`、`write` 或 `bash` 调用，通知还会包含 `the previous turn made no file changes; do not repeat its plan`。
 
 ##### 会话检查点前导
 
 ```markdown
 This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.
+```
+
+##### 带检查点的模型切换工作状态通知
+
+```markdown
+[work state: treat the latest <compacted-summary> and durable session/workspace state as authority; do not re-inspect completed work or re-derive a plan already recorded; the next action is the checkpoint's Next Step, or a state-changing tool (read only if a named file is missing); the previous turn made no file changes; do not repeat its plan]
+```
+
+##### 无检查点的模型切换工作状态通知
+
+```markdown
+[work state: do not re-inspect completed work or re-derive a plan already recorded; the next action is a state-changing tool (read only if a named file is missing); the previous turn made no file changes; do not repeat its plan]
 ```
 
 #### Token 影响
@@ -208,10 +221,25 @@ Output EXACTLY the Markdown structure below: keep every section, in order. Use t
 - [explicitly requested work not yet completed]
 
 ## Current Work
-- [precisely what was in progress at this checkpoint]
+- [precisely what was in progress at this checkpoint; if inspection of owners/files already happened, state that explicitly so a successor must NOT reopen "inspect owners"]
 
 ## Next Step
 - [the single next action, directly in line with the most recent request, or "(none)"]
+
+## Files Read
+- [exact path: key facts already extracted; do not tell the successor to re-read unless the file changed]
+
+## Decisions Taken
+- [decision: what was chosen and why it is binding]
+
+## Edits Applied
+- [path: what changed]
+
+## Edits Planned But Not Applied
+- [path or area: what remains to write]
+
+## Last Tool Results
+- [last few tool names + one-line outcomes; quote error text verbatim]
 
 ## Critical Context
 - [decisions and their rationale, constraints, user preferences, open questions, data needed to continue]
@@ -221,7 +249,8 @@ Rules:
 - Capture user feedback and explicit instructions faithfully, especially corrections.
 - Do NOT mention this summarization request or that the context was compacted.
 - Output only the checkpoint text: do not call any tool or take any other action.
-- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.
+- If inspection of owners/files already happened, state that explicitly under Current Work so a successor must NOT reopen "inspect owners".
+- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts and still-true decisions, drop stale ones, and merge newer information into a single consolidated summary under the same structure.
 ```
 
 #### Token 影响

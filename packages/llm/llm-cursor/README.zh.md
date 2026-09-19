@@ -84,7 +84,7 @@ DSH 的每一步模型调用是一次新的 HTTP/2 Connect `Run`，由 harness �
 
 #### 模型看见什么
 
-一次重建的 Cursor `AgentRunRequest`，其 `root_prompt_messages_json` 承载模型可见的历史：系统提示作为 `<rules>` user 消息，然后每个先前轮次作为 `<user_query>` user 消息、承载文本和名为 `mcp_dsh_<tool>` 的 `tool-call` 部分的 assistant 消息，以及承载结果的 `tool` 消息；thinking 不重放。当前用户动作、请求的模型 id，以及 `providerIdentifier: dsh` 的 MCP 工具定义补全该请求。中间没有助手回复的连续 user 角色消息——人类提示加上运行时上下文快照、技能目录和其他注入的用户消息——按顺序拼进该轮的用户文本，因为一次 Run 只有一个 `userMessageAction`。本地执行工具调用之后，进行中的轮次连同其结果被重放，用户动作是固定提示 `The results of your tool calls are in the tool messages above. Continue the task.`。请求上下文带一条全局规则，声明 Cursor 内建工具会返回拒绝，并指出应调用 `mcp_dsh_` 工具。由于该路由声明只接受文本输入，图片以 harness 的纯文本占位符到达模型；不发送图片字节。Cursor 仍在 harness MCP 工具之外提供自己的内建工具。
+一次重建的 Cursor `AgentRunRequest`，其 `root_prompt_messages_json` 承载模型可见的历史：系统提示作为 `<rules>` user 消息，然后每个先前人类轮次作为 `<user_query>` user 消息，harness 注入的目录、快照和通知作为不被 `<user_query>` 包裹的独立 user 消息，assistant 消息承载文本和名为 `mcp_dsh_<tool>` 的 `tool-call` 部分，以及承载结果的 `tool` 消息；thinking 不重放。当前用户动作只有人类提示——一次 Run 只有一个 `userMessageAction`，因此 skill 目录和运行时快照走根提示，而不并入该动作。本地执行工具调用之后，进行中的轮次连同其结果被重放，用户动作是固定提示 `The results of your tool calls are in the tool messages above. Continue the task.`。请求上下文带一条全局规则，声明 Cursor 内建工具会返回拒绝，并指出应调用 `mcp_dsh_` 工具。由于该路由声明只接受文本输入，图片以 harness 的纯文本占位符到达模型；不发送图片字节。Cursor 仍在 harness MCP 工具之外提供自己的内建工具。
 
 #### Token 影响
 

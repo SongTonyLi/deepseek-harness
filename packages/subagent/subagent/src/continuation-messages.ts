@@ -8,6 +8,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import { optionalSubagentDiagnostic } from './diagnostic.ts'
 import type { ActivationTerminal } from './lifecycle.ts'
 import type { SubagentResult } from './types.ts'
 
@@ -101,9 +102,14 @@ export function withContinuableReturnGuidance(
  * the parent's own task vocabulary.
  * @param childId - the durable child the parent knows by id.
  * @param stopReason - how the child's last ordinary turn ended.
+ * @param diagnostic - sanitized failure reason when `stopReason` is `error`.
  * @returns the model-facing opening line of the settlement notice.
  */
-function settlementSummary(childId: SessionId, stopReason: SubagentResult['stopReason']): string {
+function settlementSummary(
+  childId: SessionId,
+  stopReason: SubagentResult['stopReason'],
+  diagnostic: string | undefined,
+): string {
   const subject = `Background subagent ${childId}`
   switch (stopReason) {
     case 'completed':
@@ -116,8 +122,12 @@ function settlementSummary(childId: SessionId, stopReason: SubagentResult['stopR
     // the child had claimed, so the parent must not treat the task as done.
     case 'refusal':
       return `${subject} declined the task.`
-    case 'error':
-      return `${subject} failed before it finished.`
+    case 'error': {
+      const reason = optionalSubagentDiagnostic(diagnostic)
+      return reason === undefined
+        ? `${subject} failed before it finished.`
+        : `${subject} failed before it finished: ${reason}`
+    }
     /* v8 ignore next 4 -- `SubagentResult['stopReason']` is merge-extensible, so this arm
      * needs a backend that adds a variant; an unnameable ending is reported as unfinished
      * rather than silently as success. */
@@ -128,6 +138,8 @@ function settlementSummary(childId: SessionId, stopReason: SubagentResult['stopR
 
 /**
  * Build the runtime-owned settlement notice from the child's nonempty closing text.
+ * A `stopReason: 'error'` notice appends the stable retry instruction after the
+ * closing-message block.
  * @param childId - durable child session id named in the notice.
  * @param terminal - recorded terminal state for the settled Activation.
  * @returns the durable user-message representation delivered to the parent.
@@ -136,19 +148,24 @@ export function createSettlementMessage(
   childId: SessionId,
   terminal: ActivationTerminal,
 ): ReturnType<typeof createUserMessage> {
-  const summary = settlementSummary(childId, terminal.stopReason)
+  const summary = settlementSummary(childId, terminal.stopReason, terminal.diagnostic)
   // Parent providers receive this notice as a user message and may reject
   // nontext assistant blocks. Keep this conversion local so SDK/UI consumers
   // retain the complete child output.
   const closingText = (terminal.output ?? []).flatMap(block =>
     block.type === 'text' && block.text.length > 0 ? [block] : [],
   )
+  const closing = closingText.length === 0
+    ? [{ type: 'text' as const, text: 'It left no closing message.' }]
+    : [{ type: 'text' as const, text: 'Its closing message:' }, ...closingText]
+  const retry = terminal.stopReason === 'error'
+    ? [{ type: 'text' as const, text: 'Do the work directly or retry.' }]
+    : []
   return createUserMessage({
     content: [
       { type: 'text' as const, text: summary },
-      ...closingText.length === 0
-        ? [{ type: 'text' as const, text: 'It left no closing message.' }]
-        : [{ type: 'text' as const, text: 'Its closing message:' }, ...closingText],
+      ...closing,
+      ...retry,
     ],
     source: {
       kind: 'subagent-settled' as const,

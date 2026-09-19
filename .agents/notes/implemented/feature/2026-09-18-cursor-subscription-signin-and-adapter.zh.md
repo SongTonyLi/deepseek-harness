@@ -28,11 +28,11 @@ harness 已能通过 `dsh-authorization` 登录 pi-ai 目录中的订阅（ChatG
 
 DSH 的每一步模型调用是一次 HTTP/2 Connect `AgentService/Run`。适配器把 harness 历史、系统提示与工具映射为 MCP 工具定义，再把文本、thinking、用量与 MCP 工具调用映射为 `StreamChunk`。一次 MCP 工具调用结束该流；DSH 在本地执行工具，下一步是新的 Run。Cursor 原生工作区 exec（`read`、`shell` 及同类）在链路上拒绝，以免该轮停住。pi-cursor 的会话 journal、挂起的 bridge 以及原生工具执行不在范围内。
 
-Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示。2026-09-18 的实测探针表明 `conversation_state.turns` 从不到达模型，且根条目中的 `{"role":"system"}` 会被丢弃而使用 Cursor 自己的提示：重建的请求以一个没有系统提示、也不记得先前助手文本和工具结果的新问题到达，而在一次工具调用之后模型看到的是一条空的用户消息。因此 `buildPromptMessages` 把系统提示作为 `<rules>` user 消息发布，并把每个先前轮次重放为 `<user_query>` user 消息、带 `text` 和名为 `mcp_dsh_<tool>` 的 `tool-call` 部分的 assistant 消息，以及带结果的 `tool` 消息，这与 pi-cursor 针对同一发现采用的渲染一致；轮次结构仍一同发送，供服务端记账。本地执行工具调用之后，进行中的轮次连同其结果被重放，Run 必需的用户消息是固定提示 `TOOL_RESULT_CONTINUATION_TEXT`。流解码器把模型回显的 `mcp_dsh_` 前缀还原为 harness 工具名。
+Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示。2026-09-18 的实测探针表明 `conversation_state.turns` 从不到达模型，且根条目中的 `{"role":"system"}` 会被丢弃而使用 Cursor 自己的提示：重建的请求以一个没有系统提示、也不记得先前助手文本和工具结果的新问题到达，而在一次工具调用之后模型看到的是一条空的用户消息。因此 `buildPromptMessages` 把系统提示作为 `<rules>` user 消息发布，并把每个先前人类轮次重放为 `<user_query>` user 消息，把 harness 注入的目录、快照和通知重放为不加包裹的 user 消息，以及带 `text` 和名为 `mcp_dsh_<tool>` 的 `tool-call` 部分的 assistant 消息和带结果的 `tool` 消息，这与 pi-cursor 针对同一发现采用的渲染一致，只是注入上下文不再折进查询；轮次结构仍一同发送，供服务端记账。本地执行工具调用之后，进行中的轮次连同其结果被重放，Run 必需的用户消息是固定提示 `TOOL_RESULT_CONTINUATION_TEXT`。流解码器把模型回显的 `mcp_dsh_` 前缀还原为 harness 工具名。
 
 Cursor 仍在 MCP 工具之外提供其内建的 `read`、`shell`、`grep` 及同类，而 harness 工具名与之冲突，因此请求上下文的应答带一条全局 Cursor 规则 `NATIVE_TOOLS_RULE`，指出应调用 `mcp_dsh_` 工具；实测探针显示模型读到该规则并跳过了原生工具。当模型仍调用原生工具时，`stream.ts` 以该 exec 的类型化拒绝应答（`readResult.rejected`、`shellResult.rejected`、`grepResult.error` 等），拒绝原因指出对应的 harness 工具；线上服务端保持 Run 开启，模型把该拒绝当作工具结果读取。本构建不认识的 exec 仍作为线路漂移使该步失败。Cursor 不报告提示用量，因此 `inputTokens` 是 payload 基于字符数的估算；token meter 在自身估算更大时保留自己的值，TUI 上下文计量则显示适配器的数字而不是零。
 
-一次 Cursor Run 只有一个当前 `userMessageAction`。loop 在人类提示之后追加的 harness `user/message` 事件——运行时上下文快照、技能目录、技能指令正文、会话引用上下文——是连续的 user 角色消息。`conversationFromOptions` 按顺序把这些无助手步骤的轮次拼进该动作，并在已完成轮次内同样拼接连续的用户消息，这样注入的上下文就不能替换提示。
+一次 Cursor Run 只有一个当前 `userMessageAction`。loop 在人类提示之后追加的 harness `user/message` 事件——运行时上下文快照、技能目录、技能指令正文、会话引用上下文——是连续的 user 角色消息。`conversationFromOptions` 把 `source.kind === 'user'` 的文本留作查询／动作，并把所有其他 user 角色来源放到根提示上，且不加 `<user_query>` 包裹。若把这些注入消息拼进动作（或拼进历史中的 `<user_query>`），Cursor 模型会把 skill 目录里“行动前先调用 skill 工具”的句子当成用户任务。
 
 `LlmAdapter` 要求的归属头出现在每一次 HTTP/2 请求上。挂载时注册捆绑的回退模型；存在令牌后 `GetUsableModels` 替换它们，缓存在 `$DSH_HOME` 下。
 
@@ -65,6 +65,8 @@ TUI `/login` 已经列出每条 flow；Cursor 行是 `llm-cursor/cursor`，没�
 **默认 `reuseInstalledCursorLogin` 为 false。** 对并非 Cursor 的产品更安全：不会静默读取另一个应用的令牌。它也丢掉 Pi「若 Cursor 应用已登录则直接可用」的路径，而这正是要看 pi-cursor 的主要原因。退出开关仍是该配置字段。
 
 **把 `~/.pi/agent/auth.json` 或 Cursor 的文件当作存储。** 拿到可用令牌最快，其它提供方也已有 pi-ai 式的环境发现。它把 DSH 绑到另一个工具为单一厂商准备的私有文件，跳过授权 seam，并让 Web/TUI 没有「已登录」可展示。采集只是请求时的回退；持久授权是 harness 记录。
+
+**把每条连续的 user 角色消息都拼进 Run 动作和历史中的 `<user_query>`。** 这样注入的上下文不会替换人类提示，而且每轮只需一个字符串。Cursor 会把该字符串当作用户任务，于是 skill 目录里“行动前先加载 skill”的句子就成了模型要执行的指令。人类文本留作查询；目录、快照和通知留在根提示上，不加该包裹。
 
 ## Consequences
 

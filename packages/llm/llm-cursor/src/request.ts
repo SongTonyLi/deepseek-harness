@@ -62,15 +62,21 @@ export type CursorTurnStep =
 
 /** One user turn plus the assistant steps that answered it. */
 export interface CursorTurn {
+  /** Human utterance for this turn; Cursor wraps it in `<user_query>`. */
   userText: string
+  /**
+   * Harness-injected user-role text (skill catalog, runtime snapshot, notices).
+   * Replayed as its own user prompt message, never inside `<user_query>`.
+   */
+  contextText: string
   steps: CursorTurnStep[]
 }
 
 /**
- * What the Run's single `userMessageAction` carries. `userMessage` is the human
- * prompt joined with any injected user context. `continue` follows tool calls
- * DSH ran locally: the in-flight turn is replayed with its results in the root
- * prompt and the user message is {@link TOOL_RESULT_CONTINUATION_TEXT}.
+ * What the Run's single `userMessageAction` carries. `userMessage` is the
+ * human prompt only. `continue` follows tool calls DSH ran locally: the
+ * in-flight turn is replayed with its results in the root prompt and the
+ * user message is {@link TOOL_RESULT_CONTINUATION_TEXT}.
  */
 export type CursorRunAction =
   | { kind: 'userMessage'; text: string }
@@ -82,6 +88,11 @@ export interface CursorConversation {
   /** Turns before the action, oldest first; on `continue`, the last one is the in-flight turn with its tool results. */
   turns: CursorTurn[]
   action: CursorRunAction
+  /**
+   * Catalog, snapshot, and notice text that arrived with the current human
+   * prompt. It is replayed on the root prompt, not joined into `action`.
+   */
+  actionContext: string
 }
 
 /**
@@ -154,13 +165,20 @@ function joinUserTexts(left: string, right: string): string {
   return `${left}\n\n${right}`
 }
 
-function appendUserTurn(turns: CursorTurn[], text: string): void {
+function emptyTurn(): CursorTurn {
+  return { userText: '', contextText: '', steps: [] }
+}
+
+function isHumanQuery(message: Message): boolean {
+  return message.source.kind === 'user'
+}
+
+function appendUserTurn(turns: CursorTurn[], text: string, asQuery: boolean): void {
   const last = turns[turns.length - 1]
-  if (last !== undefined && last.steps.length === 0) {
-    last.userText = joinUserTexts(last.userText, text)
-    return
-  }
-  turns.push({ userText: text, steps: [] })
+  const open = last !== undefined && last.steps.length === 0 ? last : emptyTurn()
+  if (open !== last) turns.push(open)
+  if (asQuery) open.userText = joinUserTexts(open.userText, text)
+  else open.contextText = joinUserTexts(open.contextText, text)
 }
 
 function parseArguments(raw: string): Record<string, unknown> {
@@ -266,10 +284,11 @@ function createUserMessage(text: string, selectedContextBlob: Uint8Array) {
 /**
  * Split harness messages into Cursor turns plus the action for this Run.
  *
- * Consecutive user-role messages with no assistant steps between them join in
- * order into one Cursor user text. A Run has a single `userMessageAction`, so
- * runtime-context snapshots and skill catalogs that follow the human prompt
- * ride that action instead of replacing it. History that ends in assistant
+ * Consecutive human user-role messages with no assistant steps between them
+ * join into one Cursor user query. Plugin catalogs, snapshots, and notices
+ * join into `contextText` / `actionContext` instead, because a Run has a
+ * single `userMessageAction` and Cursor wraps that action and each
+ * historical `userText` in `<user_query>`. History that ends in assistant
  * steps, normally tool calls plus their local results, carries no new user
  * text and becomes a `continue` action.
  * @param options - assembled model request.
@@ -307,10 +326,10 @@ export function conversationFromOptions(options: GenerateOptions): CursorConvers
       continue
     }
     if (message.role === 'user') {
-      appendUserTurn(turns, textOf(message))
+      appendUserTurn(turns, textOf(message), isHumanQuery(message))
       continue
     }
-    if (turns.length === 0) turns.push({ userText: '', steps: [] })
+    if (turns.length === 0) turns.push(emptyTurn())
     // oxlint-disable-next-line typescript/no-non-null-assertion -- the empty-history branch just pushed
     const last = turns[turns.length - 1]!
     for (const block of message.content) {
@@ -331,11 +350,18 @@ export function conversationFromOptions(options: GenerateOptions): CursorConvers
     }
   }
   const last = turns[turns.length - 1]
-  if (last === undefined) return { systemPrompt, turns: [], action: { kind: 'userMessage', text: '' } }
-  if (last.steps.length === 0) {
-    return { systemPrompt, turns: turns.slice(0, -1), action: { kind: 'userMessage', text: last.userText } }
+  if (last === undefined) {
+    return { systemPrompt, turns: [], action: { kind: 'userMessage', text: '' }, actionContext: '' }
   }
-  return { systemPrompt, turns, action: { kind: 'continue' } }
+  if (last.steps.length === 0) {
+    return {
+      systemPrompt,
+      turns: turns.slice(0, -1),
+      action: { kind: 'userMessage', text: last.userText },
+      actionContext: last.contextText,
+    }
+  }
+  return { systemPrompt, turns, action: { kind: 'continue' }, actionContext: '' }
 }
 
 /**
@@ -363,9 +389,14 @@ export function buildRules(): CursorRule[] {
  * named `mcp_dsh_<tool>` as Cursor names them. Thinking is not replayed.
  * @param systemPrompt - rendered harness system prompt; `''` adds no rules.
  * @param turns - turns to replay, oldest first.
+ * @param actionContext - harness context for the current action; omitted from `<user_query>`.
  * @returns prompt messages in order.
  */
-export function buildPromptMessages(systemPrompt: string, turns: readonly CursorTurn[]): CursorPromptMessage[] {
+export function buildPromptMessages(
+  systemPrompt: string,
+  turns: readonly CursorTurn[],
+  actionContext = '',
+): CursorPromptMessage[] {
   const messages: CursorPromptMessage[] = []
   if (systemPrompt.trim().length > 0) {
     messages.push({ role: 'user', content: [{ type: 'text', text: `<rules>\n${systemPrompt}\n</rules>` }] })
@@ -374,6 +405,10 @@ export function buildPromptMessages(systemPrompt: string, turns: readonly Cursor
     const query = turn.userText.trim()
     if (query.length > 0) {
       messages.push({ role: 'user', content: [{ type: 'text', text: `<user_query>\n${query}\n</user_query>` }] })
+    }
+    const context = turn.contextText.trim()
+    if (context.length > 0) {
+      messages.push({ role: 'user', content: [{ type: 'text', text: context }] })
     }
     let assistant: CursorPromptPart[] = []
     let results: CursorPromptPart[] = []
@@ -404,6 +439,10 @@ export function buildPromptMessages(systemPrompt: string, turns: readonly Cursor
       }
     }
     flush()
+  }
+  const trailing = actionContext.trim()
+  if (trailing.length > 0) {
+    messages.push({ role: 'user', content: [{ type: 'text', text: trailing }] })
   }
   return messages
 }
@@ -436,13 +475,13 @@ function actionText(action: CursorRunAction): string {
  * @returns protobuf bytes and the blob store.
  */
 export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
-  const { systemPrompt, turns, action } = conversationFromOptions(options)
+  const { systemPrompt, turns, action, actionContext } = conversationFromOptions(options)
   const mcpTools = buildMcpToolDefinitions(options.tools)
   const blobStore = new Map<string, Uint8Array>()
   const encoder = new TextEncoder()
   const systemBlobId = storeAsBlob(encoder.encode(JSON.stringify({ role: 'system', content: systemPrompt })), blobStore)
   const rules = buildRules()
-  const promptMessages = buildPromptMessages(systemPrompt, turns)
+  const promptMessages = buildPromptMessages(systemPrompt, turns, actionContext)
   const promptBlobIds = promptMessages.map(message => storeAsBlob(encoder.encode(JSON.stringify(message)), blobStore))
   const selectedCtxBlob = storeAsBlob(new Uint8Array(), blobStore)
   const turnBlobIds: Uint8Array[] = []

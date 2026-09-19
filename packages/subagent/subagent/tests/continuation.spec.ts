@@ -2818,8 +2818,9 @@ describe('continuable settlement delivery', () => {
     const child = await loadStoredSession(ctx.sessionPersistence, started.childId)
     expect(hasUserText(child.events, 'second task')).toBe(false)
     expect(settlementNotices(parent)[0]!.text).toBe(
-      `Background subagent ${started.childId} failed before it finished.`
-      + '\nIts closing message:\nthe answer',
+      `Background subagent ${started.childId} failed before it finished: ENOSPC: no space left on device`
+      + '\nIts closing message:\nthe answer'
+      + '\nDo the work directly or retry.',
     )
   })
 
@@ -2972,7 +2973,10 @@ describe('continuable settlement delivery', () => {
     await waitNoActivation(ctx, started.childId)
     await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
     expect(settlementNotices(parent)[0]!.text).toBe(
-      `Background subagent ${started.childId} failed before it finished.\nIt left no closing message.`,
+      `Background subagent ${started.childId} failed before it finished: `
+      + `subagent "${started.childId}" activation handle disposal failed: scope unwind failed: scope unwind failed`
+      + '\nIt left no closing message.'
+      + '\nDo the work directly or retry.',
     )
   })
 
