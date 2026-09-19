@@ -17,12 +17,11 @@ import type { MoveTarget, TranscriptAxis } from './navigation.ts'
 
 /**
  * Which region owns the keyboard. They stack in the order the screen draws
- * them - the transcript blocks, the editor, the subagent panel's rows while
- * it is drawn, the status bar's segments - and `Up` and `Down` walk that
- * stack, so leaving the transcript downwards or the panel upwards lands in
- * the editor, where the caret is.
+ * them - the transcript blocks, the queued-prompt panel while it is drawn,
+ * the editor, the subagent panel's rows while it is drawn, and the status
+ * bar's segments.
  */
-export type FocusRegion = 'editor' | 'transcript' | 'panel' | 'bar'
+export type FocusRegion = 'editor' | 'transcript' | 'queue' | 'panel' | 'bar'
 
 /**
  * How long an `Escape` that only handed the keyboard back silences the
@@ -39,6 +38,8 @@ export const ESCAPE_HANDOFF_MS = 750
  */
 export type MoveAxis =
   | TranscriptAxis
+  /** A pending prompt. */
+  | 'prompt'
   /** A drawn subagent panel row. */
   | 'row'
   /** A status bar segment. */
@@ -70,6 +71,8 @@ export type KeyAction =
   | { kind: 'escape' }
   /** Steer the running turn with the editor's text. */
   | { kind: 'steer' }
+  /** Act on the pending prompt held by the queue panel. */
+  | { kind: 'queue'; action: 'steer' | 'inject' | 'edit' }
   /** Open the current model's reasoning-effort picker. */
   | { kind: 'effort' }
   /** Type these characters at the editor's caret, wherever the keyboard was. */
@@ -104,6 +107,7 @@ export const HINTS: Record<FocusRegion, readonly string[]> = {
     '↑↓ ←→ · Space folds · Esc input',
     'Esc input',
   ],
+  queue: ['↑↓ prompts · S steer · I inject · E edit · Esc input', 'S steer · I inject · E edit · Esc input', 'Esc input'],
   panel: ['↑↓ children · Enter details · Tab regions · Esc input', '↑↓ children · Esc input', 'Esc input'],
   bar: ['←→ segments · Enter details · Tab regions · Esc input', '←→ segments · Esc input', 'Esc input'],
 }
@@ -114,12 +118,13 @@ export const HINTS: Record<FocusRegion, readonly string[]> = {
  * them in another order, which {@link FocusRegion} states and the `Tab` walk
  * follows over the regions drawn right now.
  */
-export const FOCUS_REGIONS: readonly FocusRegion[] = ['editor', 'transcript', 'panel', 'bar']
+export const FOCUS_REGIONS: readonly FocusRegion[] = ['editor', 'transcript', 'queue', 'panel', 'bar']
 
 /** What each region is called where it is named rather than drawn. */
 export const REGION_LABELS: Record<FocusRegion, string> = {
   editor: 'input',
   transcript: 'conversation',
+  queue: 'queued prompts',
   panel: 'subagent panel',
   bar: 'status bar',
 }
@@ -167,6 +172,7 @@ export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
     widestHint('transcript'),
     'Shift+↑↓ blocks · PgUp PgDn turns · Home End ends · Tab regions · Enter reads',
   ],
+  queue: [widestHint('queue')],
   panel: [widestHint('panel')],
   bar: [widestHint('bar')],
 }
@@ -203,6 +209,8 @@ export function resolveKey(region: FocusRegion, data: string): KeyAction | undef
       return editorKey(data)
     case 'transcript':
       return transcriptKey(data)
+    case 'queue':
+      return queueKey(data)
     case 'panel':
       return panelKey(data)
     case 'bar':
@@ -254,6 +262,14 @@ const TRANSCRIPT_MOVES: readonly MoveBinding[] = [
   { key: 'right', axis: 'part', to: 'next' },
   { key: 'shift+left', axis: 'part', to: 'first' },
   { key: 'shift+right', axis: 'part', to: 'last' },
+]
+
+/** The pending-prompt panel's movement keys. */
+const QUEUE_MOVES: readonly MoveBinding[] = [
+  { key: 'up', axis: 'prompt', to: 'previous' },
+  { key: 'down', axis: 'prompt', to: 'next' },
+  { key: 'home', axis: 'prompt', to: 'first' },
+  { key: 'end', axis: 'prompt', to: 'last' },
 ]
 
 /**
@@ -318,6 +334,20 @@ function transcriptKey(data: string): KeyAction | undefined {
   if (move !== undefined) return move
   if (matchesKey(data, 'enter')) return OPEN
   if (matchesKey(data, 'space')) return { kind: 'fold' }
+  return cycleKey(data) ?? typeKey(data)
+}
+
+/**
+ * What one key means while the pending-prompt panel holds the keyboard.
+ * @param data - the raw key bytes.
+ * @returns the action, or undefined for a key the panel consumes without effect.
+ */
+function queueKey(data: string): KeyAction | undefined {
+  const move = moveKey(data, QUEUE_MOVES)
+  if (move !== undefined) return move
+  if (data === 's' || data === 'S') return { kind: 'queue', action: 'steer' }
+  if (data === 'i' || data === 'I') return { kind: 'queue', action: 'inject' }
+  if (data === 'e' || data === 'E') return { kind: 'queue', action: 'edit' }
   return cycleKey(data) ?? typeKey(data)
 }
 

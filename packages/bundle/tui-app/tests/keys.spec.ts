@@ -28,7 +28,7 @@ function key(region: FocusRegion, data: string): KeyAction | undefined {
 }
 
 /** Every region, so a key can be asked of all of them at once. */
-const REGIONS: readonly FocusRegion[] = ['editor', 'transcript', 'panel', 'bar']
+const REGIONS: readonly FocusRegion[] = ['editor', 'transcript', 'queue', 'panel', 'bar']
 
 describe('the keys every region answers', () => {
   it('reads Escape, Ctrl+O, and Ctrl+G the same way wherever the keyboard is', () => {
@@ -91,6 +91,24 @@ describe('the transcript', () => {
     // Ctrl+S steers from the editor and types nothing, so the transcript
     // consumes it without effect.
     expect(key('transcript', KEY.ctrlS)).toBeUndefined()
+  })
+})
+
+describe('the queued-prompt panel', () => {
+  it('walks prompts and applies its three commands', () => {
+    expect(key('queue', KEY.up)).toEqual({ kind: 'move', axis: 'prompt', to: 'previous' })
+    expect(key('queue', KEY.down)).toEqual({ kind: 'move', axis: 'prompt', to: 'next' })
+    expect(key('queue', KEY.home)).toEqual({ kind: 'move', axis: 'prompt', to: 'first' })
+    expect(key('queue', KEY.end)).toEqual({ kind: 'move', axis: 'prompt', to: 'last' })
+    expect(key('queue', 's')).toEqual({ kind: 'queue', action: 'steer' })
+    expect(key('queue', 'I')).toEqual({ kind: 'queue', action: 'inject' })
+    expect(key('queue', 'e')).toEqual({ kind: 'queue', action: 'edit' })
+  })
+
+  it('cycles regions and types other printable keys back into the editor', () => {
+    expect(key('queue', KEY.tab)).toEqual({ kind: 'cycle', step: 1 })
+    expect(key('queue', KEY.shiftTab)).toEqual({ kind: 'cycle', step: -1 })
+    expect(key('queue', 'q')).toEqual({ kind: 'type', text: 'q' })
   })
 })
 
@@ -172,10 +190,11 @@ describe('the legends', () => {
 
   it('ends every docked legend on the way back to the input, and gives the editor none', () => {
     expect(widestHint('transcript')).toBe('↑↓ sections · ←→ parts · Space folds · Ctrl+G reader · Esc input')
+    expect(widestHint('queue')).toBe('↑↓ prompts · S steer · I inject · E edit · Esc input')
     expect(widestHint('panel')).toBe('↑↓ children · Enter details · Tab regions · Esc input')
     expect(widestHint('bar')).toBe('←→ segments · Enter details · Tab regions · Esc input')
     expect(widestHint('editor')).toBe('')
-    for (const region of ['transcript', 'panel', 'bar'] as const) {
+    for (const region of ['transcript', 'queue', 'panel', 'bar'] as const) {
       expect(HINTS[region].at(-1)).toBe('Esc input')
     }
   })
@@ -186,10 +205,10 @@ describe('the legends', () => {
       expect(FOCUS_REGIONS).toContain(region)
       expect(REGION_LABELS[region]).not.toBe('')
     }
-    expect(FOCUS_REGIONS).toEqual(['editor', 'transcript', 'panel', 'bar'])
+    expect(FOCUS_REGIONS).toEqual(['editor', 'transcript', 'queue', 'panel', 'bar'])
     // A docked region's help row opens with the very legend it draws, so the
     // two can never drift apart.
-    for (const region of ['transcript', 'panel', 'bar'] as const) {
+    for (const region of ['transcript', 'queue', 'panel', 'bar'] as const) {
       expect(KEY_LINES[region][0]).toBe(widestHint(region))
     }
     // The editor draws none, so its keys are listed only here, the entry keys

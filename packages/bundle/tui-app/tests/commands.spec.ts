@@ -239,6 +239,29 @@ describe('session commands', () => {
     expect(test.terminal.text()).toContain('stop the running turn (Esc twice) before switching')
   })
 
+  it('starts an empty session through /clear and leaves the previous one resumable', async () => {
+    const test = await bench({
+      history: [{
+        type: 'user/message',
+        seq: 0,
+        time: 1,
+        data: createUserMessage({ content: [{ type: 'text', text: 'keep this prompt' }], source: { kind: 'user' } }),
+      }] as never[],
+    })
+    await test.settle()
+    expect(test.terminal.text()).toContain('› keep this prompt')
+    typeLine(test.terminal, '/clear')
+    await test.settle()
+    expect(test.hostCalls).toEqual(['create'])
+    expect(test.opened[0]?.disposed).toBe(1)
+    expect(test.terminal.text()).toContain('new session: session session-opened-1')
+    expect(await test.screen()).not.toContain('› keep this prompt')
+    typeLine(test.terminal, '/help')
+    await test.settle()
+    expect(test.terminal.text()).toContain('/clear')
+    expect(test.terminal.text()).toContain('previous session stays on disk')
+  })
+
   it('refuses input and a second switch while the host opens, and releases a session opened after quit', async () => {
     const gate = { release: () => {} }
     let effortLookups = 0
@@ -450,6 +473,7 @@ describe('command failures and aliases', () => {
     await test.settle()
     expect(test.terminal.text()).toContain('/exit')
     expect(test.terminal.text()).toContain('/resume')
+    expect(test.terminal.text()).toContain('/clear')
     typeLine(test.terminal, '/exit')
     expect(test.quits).toHaveLength(1)
   })

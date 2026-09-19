@@ -1,7 +1,7 @@
 /** Palette roles, color detection, and the derived pi-tui themes. */
 
 import { describe, expect, it } from 'vitest'
-import { colorEnabled, createPalette, editorTheme, markdownTheme, selectListTheme } from '../src/style.ts'
+import { colorEnabled, createPalette, editorTheme, markdownTheme, paintDiffRows, selectListTheme } from '../src/style.ts'
 
 describe('palette', () => {
   it('wraps text in SGR pairs when enabled and returns it verbatim otherwise', () => {
@@ -14,6 +14,17 @@ describe('palette', () => {
     expect(off.accent('x')).toBe('x')
     expect(off.inverse('x')).toBe('x')
     expect(off.enabled).toBe(false)
+  })
+
+  it('paints additions green and removals red without changing context rows', () => {
+    const source = ['+ add', '- remove', '  keep', '@@ hunk']
+    expect(paintDiffRows(source, source, createPalette(true))).toEqual([
+      '\u001b[32m+ add\u001b[39m',
+      '\u001b[31m- remove\u001b[39m',
+      '  keep',
+      '@@ hunk',
+    ])
+    expect(paintDiffRows(source, source, createPalette(false))).toEqual(source)
   })
 
   it('decides color from NO_COLOR, FORCE_COLOR, then the TTY', () => {

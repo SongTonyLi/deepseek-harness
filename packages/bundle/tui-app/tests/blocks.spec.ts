@@ -59,6 +59,15 @@ describe('blocks', () => {
     failed.invalidate()
   })
 
+  it('draws added tool rows green and removed rows red', () => {
+    const colored = { ...theme, palette: createPalette(true) }
+    const block = new ToolBlock(colored, 'edit', { title: 'Edit a.ts', lines: ['a.ts', '- old', '+ fresh'] }, 1)
+    block.setExpanded(true)
+    const shown = block.render(40).join('\n')
+    expect(shown).toContain('\u001b[31m- old\u001b[39m')
+    expect(shown).toContain('\u001b[32m+ fresh\u001b[39m')
+  })
+
   it('draws the header and call rows at the level of the card fade, and the result rows at their own', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     block.setResult(['out'], false)
