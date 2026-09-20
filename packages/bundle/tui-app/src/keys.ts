@@ -163,6 +163,7 @@ export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
     'Enter sends · Shift+Enter newline · ↑↓ history · Ctrl+S steers',
     'Shift+Tab effort list · Shift+←→ words',
     '@ completes paths and sessions · / completes commands · Tab takes one',
+    '!cmd runs here · the next prompt can read it · !!cmd stays local',
     `${ENTRY_KEYS} · Ctrl+G reader`,
     'Ctrl+O folds every tool card and context row',
     'Esc arms the stop · Esc again stops the turn',

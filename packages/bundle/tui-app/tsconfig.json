@@ -111,6 +111,9 @@
       "path": "../../settings/settings"
     },
     {
+      "path": "../../shell/shell"
+    },
+    {
       "path": "../../skill/skill"
     },
     {

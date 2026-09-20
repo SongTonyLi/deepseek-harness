@@ -34,6 +34,8 @@ export interface QueuePanelRender {
 
 /**
  * Build the panel rows in claim order: next-step input before ordinary turns.
+ * Messages whose source is not `user` are omitted: a `!` notice waiting for
+ * the next prompt is context, not a prompt the keyboard can steer or edit.
  * @param nextStep - messages waiting for the nearest step boundary.
  * @param nextTurn - messages waiting for separate turns.
  * @returns selectable pending-prompt rows.
@@ -44,10 +46,10 @@ export function queuePanelRows(nextStep: readonly UserMessage[], nextTurn: reado
     target,
     text: contentText(message.content).split('\n', 1)[0] ?? '',
   })
-  return [
-    ...nextStep.map(message => row('next-step', message)),
-    ...nextTurn.map(message => row('next-turn', message)),
-  ]
+  const pending = (target: InboxTarget, messages: readonly UserMessage[]): QueuePanelRow[] => messages
+    .filter(message => message.source.kind === 'user')
+    .map(message => row(target, message))
+  return [...pending('next-step', nextStep), ...pending('next-turn', nextTurn)]
 }
 
 /**

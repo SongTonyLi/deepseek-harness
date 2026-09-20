@@ -119,6 +119,7 @@ describe('tui command-line provider', () => {
     expect(observed.out).toContain('dsh --profile tui')
     expect(observed.out).toContain('--resume <session-id>')
     expect(observed.out).toContain('--no-open')
+    expect(observed.out).toContain('!cmd runs a local shell command')
     expect(values).toBeUndefined()
     expect(observed.runnerConfig).toBeUndefined()
     expect(observed.exits).toEqual([0])

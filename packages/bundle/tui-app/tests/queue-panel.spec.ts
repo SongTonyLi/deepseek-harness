@@ -38,4 +38,12 @@ describe('queued-prompt panel', () => {
   it('draws nothing for an empty inbox', () => {
     expect(renderQueuePanel([], { palette: createPalette(true), width: 40 })).toBe('')
   })
+
+  it('omits plugin notices so a ! result waiting for the next prompt is not a queued prompt', () => {
+    const notice = createUserMessage({
+      content: [{ type: 'text', text: 'The user ran `ls` in the terminal.' }],
+      source: { kind: 'plugin', plugin: 'tui-app', form: 'notice', summary: '! ls' },
+    })
+    expect(queuePanelRows([notice], [message('ask about it')]).map(row => row.text)).toEqual(['ask about it'])
+  })
 })

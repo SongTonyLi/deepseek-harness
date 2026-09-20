@@ -1,5 +1,5 @@
 ---
-description: "dsh 的交互式终端模式：在你的终端里与 agent（智能体）对话，带流式回复、工具卡片、用键盘浏览对话记录、双面板全屏阅读器、审批、提问、斜杠命令、@ 引用、附件与会话切换。"
+description: "dsh 的交互式终端模式：在你的终端里与 agent（智能体）对话，带流式回复、工具卡片、用键盘浏览对话记录、双面板全屏阅读器、审批、提问、斜杠命令、! 本地命令、@ 引用、附件与会话切换。"
 kind: "package-bundle"
 ---
 
@@ -65,6 +65,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | 按键 | 效果 |
 |---|---|
 | `Enter` | 发送编辑器文本；轮次进行中时它在编辑器上方的带框 `QUEUE` 面板中等待下一轮次，直到循环领取它后才进入对话 |
+| `!command` / `!!command` | 在本终端运行；`!` 会作为下一步上下文供下一条提示阅读，`!!` 只留在本地 |
 | `Shift+Enter` | 插入换行 |
 | `Ctrl+S` | 轮次进行中时，把编辑器文本引导（steer）进当前轮次的下一步 |
 | `Up` / `Down` | 调出先前的提示 |
@@ -75,11 +76,11 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `Shift+Down` | 有提示等待时把焦点放到待处理提示面板第一行，否则在子 agent 面板已绘制时放到其第一行，再否则放到状态栏 |
 | `Ctrl+G` | 整屏读出对话记录，停在其最新小节 |
 | `Ctrl+O` | 展开或折叠所有工具卡片与上下文行 |
-| `Esc` | 装填停止并给出提示；该提示仍在屏幕上时再按一次会停止正在进行的轮次，已排队的消息保持排队 |
+| `Esc` | 取消正在运行的 `!`；在没有轮次进行且草稿以 `!` 开头时清空编辑器；否则装填停止，该提示仍在屏幕上时再按一次会停止正在进行的轮次 |
 | `Ctrl+C` | 清空编辑器；600 ms 内再按一次则退出 |
 | `Ctrl+D` | 编辑器为空时退出 |
 
-仅仅交还了键盘的 `Esc`——离开某个区域、关闭页面、选择器或阅读器——会打开一个 750 ms 的窗口，其间到达编辑器的 `Esc` 完全不做任何事，因此习惯性的连按停不掉任何轮次。没有轮次进行时，`Esc` 在补全列表打开时关闭它，其余情况保持沉默。尚无可读内容的会话对 `Shift+Up` 与 `Ctrl+G` 回以 `nothing in the transcript to read yet`，并把键盘留在编辑器。
+仅仅交还了键盘的 `Esc`——离开某个区域、关闭页面、选择器或阅读器——会打开一个 750 ms 的窗口，其间到达编辑器的 `Esc` 完全不做任何事，因此习惯性的连按停不掉任何轮次。没有轮次进行时，`Esc` 在补全列表打开时关闭它，清空以 `!` 开头的草稿，其余情况保持沉默。尚无可读内容的会话对 `Shift+Up` 与 `Ctrl+G` 回以 `nothing in the transcript to read yet`，并把键盘留在编辑器。
 
 待处理提示面板持有键盘时：
 
@@ -154,7 +155,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 每个聚焦的分段都在第二行展开其最重要的事实。除 `todo` 之外，`Enter` 把这些事实打印到对话记录，并指出改变它们的方式：模型分段指出 `/model`，推理强度分段指出 `Shift+Tab` 与 `/effort` 共用的选择器，权限分段指出其预设；`turn` 分段——绘制在权限与用量分段之间、形如 `turn <elapsed>`，且只在轮次进行时出现——给出轮次编号、其开始时间、已用时间与排队消息数量；用量、上下文、目标与计划分段打印 `/status` 报告中对应的小节，workspace 分段显示完整路径，附件分段列出待发送的附件。`todo` 分段展开按状态统计的计数以及正在进行的条目（若无正在进行的条目则为下一条待办），`Enter` 打开 agent 的 todo 列表，与 `/todos` 打开的是同一个列表。
 
-在编辑器开头输入 `/` 会补全终端自身的命令与共享注册表的命令；任意位置的 `@` 补全引用。
+在编辑器开头输入 `/` 会补全终端自身的命令与共享注册表的命令；任意位置的 `@` 补全引用。非空的 `!command` 或 `!!command` 行经 `ctx.shell` 在会话 cwd 以 `danger-full-access` 运行；对话记录显示 `$ command` 与输出。`!` 会注入一条插件通知供下一步领取；`!!` 不会。单独的 `!` 仍是普通提示。
 
 | 命令 | 效果 |
 |---|---|
@@ -235,7 +236,7 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。编辑器里提交的非空 `!` 或 `!!` 行经本进程的 `ctx.shell` 运行；`!` 注入一条下一步通知，`!!` 只留在本地。
 
 ### 渲染模型
 
@@ -251,7 +252,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 |---|---|
 | [`src/index.ts`](src/index.ts) | `tui-app` 插件：会话宿主（创建、恢复、fork）、历史读取、退出流程、退出码映射 |
 | [`src/startup.ts`](src/startup.ts) | `tui-app-startup` 提供方：提示位置参数、`--resume`、`--no-open` 与 `--help` |
-| [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、停止装填、它挂载的临时提示行，以及阅读器所依托的终端交接 |
+| [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、停止装填、它挂载的临时提示行、阅读器所依托的终端交接，以及提交时解析的 `!` / `!!` |
 | [`src/keys.ts`](src/keys.ts) | 按键模型：各焦点区域、一次按键在每个区域中的含义、它们逐级收缩的按键提示、进入用的按键、`/help` 的各行，以及交接窗口 |
 | [`src/sessions.ts`](src/sessions.ts) | `/resume` 与 `/sessions` 共用的持久化会话列表及选择器行 |
 | [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行 |
@@ -276,6 +277,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/highlight.ts`](src/highlight.ts) | 围栏代码的语法高亮：某个围栏可能加载的语法、由背景选定的配色主题，以及一个 token 所用的 SGR |
 | [`src/completion.ts`](src/completion.ts) | 编辑器的斜杠命令与 `@` 引用补全 |
 | [`src/editor.ts`](src/editor.ts) | 提示编辑器的终端光标，以及把 `Shift+Left` / `Shift+Right` 映射到 pi-tui 词导航的逻辑 |
+| [`src/shell-line.ts`](src/shell-line.ts) | 解析 `!` / `!!` 行，并格式化对话记录行与面向模型的通知 |
 | [`src/status.ts`](src/status.ts) | 投影接缝的事实，以及 `/status` 报告与分段详情共享的小节；压缩与重试通知 |
 | [`src/footer.ts`](src/footer.ts) | 状态栏：有序的各分段、每个分段的详情行、未聚焦时由两端向内构建的一行，以及聚焦时的滑动窗口 |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | 实时子 agent 面板：一次后代列表加上采样到的实时事实构成其各行、未聚焦时的摘要行，以及聚焦时的列表 |
@@ -293,6 +295,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | 阅读器面板：其按键映射、它铺满的屏幕、其重新锚定与其退出 |
 | [`tests/alt-screen.spec.ts`](tests/alt-screen.spec.ts) | 备用屏幕：其成对的切换、其逐行绘制，以及更短的一帧所清除的行 |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的 `/resume` 与 `/sessions` 选择器、附件、队列、技能、登录、导出、引用、`/effort` 与 `Shift+Tab` 共用的选择器，以及模型列表中的 `Ctrl+S` |
+| [`tests/shell.spec.ts`](tests/shell.spec.ts) | 提交时解析的 `!` / `!!` 分发、下一步 inject、Esc 取消，以及缺少 shell 时的通知 |
 | [`tests/effort.spec.ts`](tests/effort.spec.ts) | 共用的推理强度名称、选择器行、当前强度提示与输入参数匹配 |
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、可导航的子 agent 与 todo 列表、目录命令、命令提示与审批详情 |
 | [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | 走遍对话记录、区域序列、检视面板、实时会话上的阅读器连同它接管与交还的终端，以及重绘窗口内的原地标记条 |
@@ -329,11 +332,25 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 <a id="model-experience"></a>
 ## 模型体验
 
-无，因为 runner 把键入的文本作为普通用户消息提交，提示与工具由已组合的 base 与终端配置行持有。
+### 用户键入的 shell 命令
+
+#### 模型看到什么
+
+非空的 `!command` 行在命令结束后注入一条插件通知（`source.kind: plugin`，`plugin: tui-app`，`form: notice`）。下一步领取时会带上此包装；`<command>` 与围栏正文依数据而定。没有输出时使用精确一行 `(no output)` 而不是围栏。取消的运行会再追加一个空行和 `(command cancelled)`。非零退出会再追加一个空行和 `Command exited with code <n>`。`!!command` 与单独的 `!` 不添加通知。
+
+##### 用户 shell 通知前缀
+
+```markdown
+The user ran `<command>` in the terminal.
+```
+
+#### Token 影响
+
+有条件且保留：每条 `!` 通知留在之后请求的对话历史中；`!!` 与单独的 `!` 不增加任何内容。
 
 #### KV Cache 影响
 
-runner 不向请求前缀添加任何内容；`/model` 切换像在浏览器中一样开始新的请求序列。
+在可复用的请求前缀之后只做追加式增长。该通知不改变系统提示或工具目录。`/model` 切换像在浏览器中一样开始新的请求序列。
 
 ## 已知限制与延期工作
 
@@ -358,6 +375,7 @@ runner 不向请求前缀添加任何内容；`/model` 切换像在浏览器中�
 - **淡入需要终端的应答**——其亮度级别由终端对启动时发出的查询所报告的背景色构建，因此保持沉默、或既不编码真彩色也不编码 256 色的终端只会得到两级的暗淡模式；`NO_COLOR`、被禁用的调色板、`TERM=dumb` 与 `reducedMotion` 会完全关闭每一种淡入与每一种边框抬亮，临时提示行届时在保持结束时直接消失，而不是淡出。
 - **终端自身的光标可能闪烁**——编辑器不绘制自己的光标，应用打开终端光标，而 pi-tui 会在其重绘的各行之间移动它；不支持 pi-tui 为一帧包裹的同步输出序列的终端可能显示出这种移动。
 - **通过 `dsh` 启动器运行**——以其他方式启动该 profile 会在启动时失败，因为只有启动器能请求进程退出。
+- **`!` 是一次性的，也不是 TTY**——每一行都是一次新的 `ctx.shell.run`；没有持久 shell，也不能跑交互式程序。Web 编辑器不拦截 `!`。命令行上的可选首条提示始终是用户消息。
 
 <a id="dev-note"></a>
 ### 开发备注

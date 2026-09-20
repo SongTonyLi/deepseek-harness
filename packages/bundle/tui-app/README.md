@@ -1,5 +1,5 @@
 ---
-description: "Interactive terminal mode for dsh: talk to the agent in your terminal with streamed replies, tool cards, keyboard navigation over the conversation, a full-screen two-panel reader for turns, approvals, questions, slash commands, @-references, attachments, and session switching."
+description: "Interactive terminal mode for dsh: talk to the agent in your terminal with streamed replies, tool cards, keyboard navigation over the conversation, a full-screen two-panel reader for turns, approvals, questions, slash commands, ! shell lines, @-references, attachments, and session switching."
 kind: "package-bundle"
 ---
 
@@ -65,6 +65,7 @@ While the input has the keyboard:
 | Key | Effect |
 |---|---|
 | `Enter` | Send the editor text; while a turn runs it waits for the next turn in the framed `QUEUE` panel above the editor until the loop claims it, entering the conversation then |
+| `!command` / `!!command` | Run in this terminal; `!` is next-step context the next prompt can read, `!!` stays local |
 | `Shift+Enter` | Insert a newline |
 | `Ctrl+S` | While a turn runs, steer the editor text into the running turn's next step |
 | `Up` / `Down` | Recall earlier prompts |
@@ -75,11 +76,11 @@ While the input has the keyboard:
 | `Shift+Down` | Focus the queued-prompt panel's first row while prompts wait, otherwise the subagent panel's first row while it is drawn, and the status bar otherwise |
 | `Ctrl+G` | Read the conversation full screen, on its newest section |
 | `Ctrl+O` | Expand or collapse every tool card and context row |
-| `Esc` | Arm the stop and say so; a second press while that line is on screen stops the running turn, and queued messages stay queued |
+| `Esc` | Cancel a running `!`; with a leading `!` draft and no turn running, clear the editor; otherwise arm the stop, and a second press while that line is on screen stops the running turn |
 | `Ctrl+C` | Clear the editor; a second press within 600 ms quits |
 | `Ctrl+D` | Quit when the editor is empty |
 
-An `Esc` that only handed the keyboard back — leaving a region, closing a page, a picker, or the reader — opens a 750 ms window in which an `Esc` reaching the input does nothing at all, so a habitual double press stops no turn. With no turn running, `Esc` closes the completion list while one is open and is silent otherwise. A session with nothing to read yet answers `Shift+Up` and `Ctrl+G` with `nothing in the transcript to read yet` and leaves the keyboard in the input.
+An `Esc` that only handed the keyboard back — leaving a region, closing a page, a picker, or the reader — opens a 750 ms window in which an `Esc` reaching the input does nothing at all, so a habitual double press stops no turn. With no turn running, `Esc` closes the completion list while one is open, clears a draft that starts with `!`, and is silent otherwise. A session with nothing to read yet answers `Shift+Up` and `Ctrl+G` with `nothing in the transcript to read yet` and leaves the keyboard in the input.
 
 While the queued-prompt panel has the keyboard:
 
@@ -154,7 +155,7 @@ Every other key reaching the reader is consumed, and closing it opens the same 7
 
 Every focused segment expands its most important facts on the second line. `Enter` prints those facts into the transcript for every segment except `todo`, stating what they are and what changes them: the model segment names `/model`, the effort segment names the picker shared by `Shift+Tab` and `/effort`, and the permission segment names its preset, the `turn` segment — drawn as `turn <elapsed>` between the permission and usage segments, and only while a turn runs — gives the turn number, its start time, its elapsed time, and the queued-message counts, while the usage, context, goal, and plan segments print the matching sections of the `/status` report, the workspace segment the full path, and the attachments segment the pending attachments. The `todo` segment expands the counts by status and the item being worked on, or the next pending item when none is in progress, and `Enter` opens the agent's todo list, the same list `/todos` opens.
 
-Typing `/` at the start of the editor completes the terminal's own commands and the shared registry's; `@` anywhere completes references.
+Typing `/` at the start of the editor completes the terminal's own commands and the shared registry's; `@` anywhere completes references. A nonempty `!command` or `!!command` line runs through `ctx.shell` in the session cwd at `danger-full-access`; the transcript shows `$ command` and the output. `!` injects a plugin notice for the next admitted step; `!!` does not. A lone `!` is an ordinary prompt.
 
 | Command | Effect |
 |---|---|
@@ -235,7 +236,7 @@ The runner is a direct driver over the core API carrier, like `dsh-headless`, th
 
 ### Run flow
 
-The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after the chosen (by default the last) `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle; while the host opens the next session the editor refuses input, and a quit during that wait releases the session that arrives afterwards. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1. `/resume` and `/sessions` share the persisted-session chooser. Editor `Shift+Tab` dispatches empty `/effort` to open its current-model picker, and editor `Shift+Left` / `Shift+Right` use pi-tui's word navigation. `/login` starts `authorization.begin` with only subscription methods (every method except a key-collecting `api-key` login). A notice the flow marks with `openInBrowser` is handed to the default browser through `dsh-native-command`'s credential-scrubbed helper while the URL stays printed; the handoff is suppressed when `openBrowser` is false, the launch came through SSH, or the host has no desktop, and an opener failure becomes a notice beside the URL rather than a sign-in failure.
+The runner awaits the complete application (`ctx.get('loader')?.await()`) and builds a session host over the core registry with three operations: `create` makes one fresh persisted Agent with the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, `resume` reads the persisted log in pages through a read handle of `ctx.sessionPersistence` and resumes the Agent through the registry, and `fork` observes the source through `ctx.sessionQuery`, cuts after the chosen (by default the last) `turn/end` up to the next `turn/start`, and creates a seeded Agent with `parentSession` and `isSeeded` metadata. Every operation installs a `ModelSelectionRef` in the Agent's scoped setup so `/model` changes the next request. The terminal application starts on the session `--resume` or a fresh `create` yields, subscribes to `session/event`, `agent/assistant-stream`, and `agent/status`, answers the `approval/request` and `user-questions/request` waterfalls for the bound Agent only, and switches sessions by binding the next one and disposing the previous handle; while the host opens the next session the editor refuses input, and a quit during that wait releases the session that arrives afterwards. Quitting cancels any running turn, waits for quiescence, flushes the bound Session, disposes its handle, and requests exit 0; a driver failure writes `dsh: <message>` to stderr and requests exit 1. `/resume` and `/sessions` share the persisted-session chooser. Editor `Shift+Tab` dispatches empty `/effort` to open its current-model picker, and editor `Shift+Left` / `Shift+Right` use pi-tui's word navigation. `/login` starts `authorization.begin` with only subscription methods (every method except a key-collecting `api-key` login). A notice the flow marks with `openInBrowser` is handed to the default browser through `dsh-native-command`'s credential-scrubbed helper while the URL stays printed; the handoff is suppressed when `openBrowser` is false, the launch came through SSH, or the host has no desktop, and an opener failure becomes a notice beside the URL rather than a sign-in failure. A nonempty `!` or `!!` line submitted in the editor runs through `ctx.shell` in this process; `!` injects a next-step notice and `!!` stays local.
 
 ### Rendering model
 
@@ -251,7 +252,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 |---|---|
 | [`src/index.ts`](src/index.ts) | The `tui-app` plugin: the session host (create, resume, fork), history read, quit flow, exit mapping |
 | [`src/startup.ts`](src/startup.ts) | The `tui-app-startup` provider: prompt positional, `--resume`, `--no-open`, and `--help` |
-| [`src/app.ts`](src/app.ts) | The terminal application: layout, the key router, commands, session binding, seams, log and stream folding, the stop arm, the transient line it mounts, and the terminal handover the reader runs on |
+| [`src/app.ts`](src/app.ts) | The terminal application: layout, the key router, commands, session binding, seams, log and stream folding, the stop arm, the transient line it mounts, the terminal handover the reader runs on, and prefix-on-submit `!` / `!!` |
 | [`src/keys.ts`](src/keys.ts) | The key model: the focus regions, what one press means in each, the legends they degrade through, the entry keys, the `/help` lines, and the handoff window |
 | [`src/sessions.ts`](src/sessions.ts) | The persisted-session list and picker rows shared by `/resume` and `/sessions` |
 | [`src/effort.ts`](src/effort.ts) | Reasoning-effort names and picker rows shared by `/model`, `/effort`, and editor `Shift+Tab` |
@@ -276,6 +277,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/highlight.ts`](src/highlight.ts) | Syntax colour for fenced code: the grammars a fence may load, the theme the background picks, and the SGR one token is drawn with |
 | [`src/completion.ts`](src/completion.ts) | Slash-command and `@`-reference completion for the editor |
 | [`src/editor.ts`](src/editor.ts) | The prompt editor's terminal caret and its `Shift+Left` / `Shift+Right` mapping to pi-tui word navigation |
+| [`src/shell-line.ts`](src/shell-line.ts) | Parse a `!` / `!!` line and format the transcript rows and model-facing notice |
 | [`src/status.ts`](src/status.ts) | Projection-seam facts and the sections the `/status` report and the segment details share; compaction and retry notices |
 | [`src/footer.ts`](src/footer.ts) | The status bar: the ordered segments, each segment's detail rows, the unfocused line built from both ends, and the focused sliding window |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | The live subagent panel: one descendant listing plus sampled live facts become its rows, the unfocused summary line, and the focused listing |
@@ -293,6 +295,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | The reader pane: its key map, the screen it fills, its re-anchoring, and its exit |
 | [`tests/alt-screen.spec.ts`](tests/alt-screen.spec.ts) | The alternate screen: its balanced switches, its per-row drawing, and the rows a shorter frame clears |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | The `/resume` and `/sessions` picker, attachments, queues, skills, sign-in, export, references, the picker shared by `/effort` and `Shift+Tab`, and `Ctrl+S` in the model list over scripted services |
+| [`tests/shell.spec.ts`](tests/shell.spec.ts) | Prefix-on-submit `!` / `!!` dispatch, next-step inject, Esc cancel, and the missing-shell notice |
 | [`tests/effort.spec.ts`](tests/effort.spec.ts) | Shared effort names, picker rows, the current-effort hint, and typed argument matching |
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | Status footer and report, the navigable subagent and todo lists, catalog commands, command hints, and the approval detail |
 | [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | Walking the conversation, the region stack, the inspector, the reader over a live session with the terminal it takes and gives back, and the in-place gutter inside the repaint window |
@@ -329,11 +332,25 @@ Read these pages when you want to go deeper into the shared core, the sibling su
 <a id="model-experience"></a>
 ## Model Experience
 
-None, as the runner submits typed text as ordinary user messages and the composed base and terminal rows own the prompts and tools.
+### User-typed shell command
+
+#### What the model sees
+
+A nonempty `!command` line injects one plugin notice after the command finishes (`source.kind: plugin`, `plugin: tui-app`, `form: notice`). The next admitted step includes this wrapper; `<command>` and the fenced body are data-dependent. An empty run uses the exact line `(no output)` instead of a fence. A cancelled run appends a blank line and `(command cancelled)`. A nonzero exit appends a blank line and `Command exited with code <n>`. `!!command` and a lone `!` add no notice.
+
+##### User shell notice prefix
+
+```markdown
+The user ran `<command>` in the terminal.
+```
+
+#### Token effect
+
+Conditional and retained: each `!` notice stays in conversation history for later requests; `!!` and a lone `!` add none.
 
 #### KV Cache effect
 
-The runner adds nothing to the request prefix; a `/model` switch starts a new request series exactly as it does from the browser.
+Append-only conversation growth after the reusable request prefix. The notice does not change the system prompt or tool catalog. A `/model` switch starts a new request series exactly as it does from the browser.
 
 ## Known Limitations and Deferred Work
 
@@ -358,6 +375,7 @@ These limits describe the terminal surface as shipped; they are not a general CL
 - **The fade needs an answer from the terminal** — its ramp is built from the background color the terminal reports to the query sent at startup, so a terminal that stays silent, or that encodes neither truecolor nor 256 colors, gets the two-level faint mode instead; `NO_COLOR`, a disabled palette, `TERM=dumb`, and `reducedMotion` turn every fade and every chrome lift off entirely, and a transient line then disappears at the end of its hold instead of fading out.
 - **The terminal's own caret can flicker** — the editor draws no caret of its own and the app turns the terminal cursor on, which pi-tui then moves across the lines it repaints; a terminal that does not honor the synchronized-output sequences pi-tui wraps a frame in can show that movement.
 - **Runs through the `dsh` launcher** — starting the profile another way fails at startup, because only the launcher can request the process exit.
+- **`!` is one-shot and not a TTY** — each line is a fresh `ctx.shell.run`; there is no persistent shell or interactive program. The Web composer does not intercept `!`. An optional first prompt on the command line is always a user message.
 
 <a id="dev-note"></a>
 ### Dev Note
