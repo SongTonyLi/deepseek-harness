@@ -1,4 +1,4 @@
-/** Pending-prompt panel rows and framed rendering. */
+/** Follow-up panel rows and framed listing. */
 
 import { describe, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -10,29 +10,45 @@ function message(text: string) {
   return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' as const } })
 }
 
-describe('queued-prompt panel', () => {
-  it('lists next-step input first and frames the unfocused rows without an emoji marker', () => {
+describe('follow-up panel', () => {
+  it('lists next-step input first as pending rows under a follow-ups title', () => {
     const rows = queuePanelRows([message('steer now')], [message('later\nsecond line')])
     expect(rows.map(row => [row.target, row.text])).toEqual([
       ['next-step', 'steer now'],
       ['next-turn', 'later'],
     ])
     const shown = renderQueuePanel(rows, { palette: createPalette(false), width: 60 })
-    expect(shown).toContain('● QUEUE')
-    expect(shown).toContain('next step · steer now')
-    expect(shown).toContain('next turn · later')
-    expect(shown).toContain('Shift+↓ manages')
-    expect(shown).not.toContain('⏳')
+    expect(shown).toContain('follow-ups')
+    expect(shown).not.toContain('QUEUE')
+    expect(shown).toContain('○ steer now')
+    expect(shown).toContain('○ later')
+    expect(shown).not.toContain('next step ·')
+    expect(shown).not.toContain('next turn ·')
+    expect(shown).toContain('shift+↓ select')
+    expect(shown.indexOf('○ steer now')).toBeLessThan(shown.indexOf('○ later'))
   })
 
-  it('marks the selected row and names each focused action', () => {
+  it('marks the selected row and names enter, select/edit, and cancel', () => {
     const shown = renderQueuePanel(queuePanelRows([], [message('revise this')]), {
       palette: createPalette(false),
       width: 72,
       selected: 0,
     })
-    expect(shown).toContain('▸ next turn · revise this')
-    expect(shown).toContain('S steer · I inject · E edit')
+    expect(shown).toContain('○ revise this')
+    expect(shown).toContain('enter steer · ↑ select/edit · esc cancel')
+    expect(shown).not.toContain('S steer · I inject · E edit')
+  })
+
+  it('wraps a long follow-up under the pending glyph', () => {
+    const text = 'also implement similar scratch out, listing effect exactly like in the image'
+    const shown = renderQueuePanel(queuePanelRows([], [message(text)]), {
+      palette: createPalette(false),
+      width: 42,
+      selected: 0,
+    })
+    expect(shown).toContain('○ also implement')
+    expect(shown).toMatch(/│ {3}\S/u)
+    expect(shown).toContain('enter steer · ↑ select/edit · esc cancel')
   })
 
   it('draws nothing for an empty inbox', () => {

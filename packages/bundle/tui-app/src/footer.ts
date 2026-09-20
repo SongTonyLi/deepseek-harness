@@ -289,7 +289,7 @@ export function buildFooterSegments(inputs: FooterInputs): FooterSegment[] {
         // The projection is the durable source; a profile without it still
         // knows the preset the permission service reports.
         ...projected.length === 0 ? [`permission: ${inputs.permission}`] : projected,
-        '/permission <preset> changes the sandbox mode and the approval policy',
+        '/permission opens the permission list',
       ]),
     })
   }

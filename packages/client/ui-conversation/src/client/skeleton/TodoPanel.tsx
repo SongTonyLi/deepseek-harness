@@ -1,4 +1,5 @@
 import { useId, useState } from 'react'
+import clsx from 'clsx'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // The domain's client-namespace pure-type outlet: one import edge delivers
@@ -110,7 +111,7 @@ export function TodoPanel({ todos, t }: TodoPanelProps) {
             {todos.map(item => (
               <li key={item.content} className={css.item} data-status={item.status}>
                 <span className={css.glyph} aria-hidden><StatusGlyph status={item.status} /></span>
-                <span className={css.content}>{item.content}</span>
+                <span className={clsx(css.content, item.status === 'completed' && css.contentCompleted)}>{item.content}</span>
               </li>
             ))}
           </ul>

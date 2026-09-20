@@ -80,7 +80,7 @@ describe('TuiApp', () => {
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: inject })
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(await test.screen()).toContain('S steer · I inject · E edit')
+    expect(await test.screen()).toContain('enter steer · ↑ select/edit · esc cancel')
     test.terminal.type('i')
     expect(test.calls.injections).toEqual([inject])
     expect(test.calls.steers).toHaveLength(0)
@@ -114,7 +114,7 @@ describe('TuiApp', () => {
     expect(test.agent.inbox.nextTurn).toEqual([original])
     expect(test.calls.followups).toHaveLength(0)
     await test.settle()
-    expect(await test.screen()).toContain('next turn · keep this')
+    expect(await test.screen()).toContain('○ keep this')
   })
 
   it('holds a queued prompt above the editor until the loop claims it, and draws it in the conversation then', async () => {
@@ -130,26 +130,27 @@ describe('TuiApp', () => {
     let screen = await test.screen()
     // The steer row comes first, as the loop takes it first; a multi-line
     // prompt shows its first line. Neither is a conversation block yet.
-    expect(screen).toContain('next step · right now')
-    expect(screen).toContain('next turn · later on')
+    expect(screen).toContain('follow-ups')
+    expect(screen).toContain('○ right now')
+    expect(screen).toContain('○ later on')
     expect(screen).not.toContain('second line')
     expect(screen).not.toContain('› later on')
-    expect(screen.indexOf('next step ·')).toBeLessThan(screen.indexOf('next turn ·'))
+    expect(screen.indexOf('○ right now')).toBeLessThan(screen.indexOf('○ later on'))
     // Claimed: it leaves the queue and its durable message draws the block.
     test.agent.inbox.remove(soon.id)
     test.agent.ctx.emit('agent/inbox/claimed', { agent: test.agent, message: soon, turn: 1 })
     test.session.append('user/message', soon, { surfaceOp: 'append' })
     await test.settle()
     screen = await test.screen()
-    expect(screen).not.toContain('next step · right now')
+    expect(screen).not.toContain('○ right now')
     expect(screen).toContain('› right now')
-    expect(screen).toContain('next turn · later on')
+    expect(screen).toContain('○ later on')
     // Discarded: the row goes and no block is drawn for it.
     test.agent.inbox.remove(later.id)
     test.agent.ctx.emit('agent/inbox/discarded', { agent: test.agent, message: later })
     await test.settle()
     screen = await test.screen()
-    expect(screen).not.toContain('● QUEUE')
+    expect(screen).not.toContain('follow-ups')
     expect(screen).not.toContain('later on')
     // Another Agent's inbox is not this terminal's queue, whichever way it moves.
     const other = { id: 'other' } as never
@@ -158,7 +159,7 @@ describe('TuiApp', () => {
     test.agent.ctx.emit('agent/inbox/claimed', { agent: other, message: later, turn: 1 })
     test.agent.ctx.emit('agent/inbox/discarded', { agent: other, message: later })
     await test.settle()
-    expect(await test.screen()).not.toContain('● QUEUE')
+    expect(await test.screen()).not.toContain('follow-ups')
   })
 
   it('streams reasoning and text, then replaces them with the committed message and its usage', async () => {

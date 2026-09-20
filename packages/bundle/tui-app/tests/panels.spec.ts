@@ -423,6 +423,7 @@ describe('todo list', () => {
     expect(listed).toContain('✓ read the spec')
     expect(listed).toContain('▸ write the data layer')
     expect(listed).toContain('being worked on now')
+    expect(test.terminal.output).not.toContain('\u001b[9m')
 
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.enter)
@@ -451,6 +452,19 @@ describe('todo list', () => {
     typeLine(test.terminal, 'back to typing')
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'back to typing' }]])
+  })
+
+  it('scratches out completed todo content in the picker when color is on', async () => {
+    const test = await bench({
+      color: true,
+      projections: projectionsStub(() => ({ todos: mixed })).stub,
+    })
+    typeLine(test.terminal, '/todos')
+    await test.settle()
+    expect(test.terminal.output).toContain('\u001b[2m\u001b[9mread the spec\u001b[29m\u001b[22m')
+    expect(test.terminal.output).not.toContain('\u001b[9mwrite the data layer')
+    expect(test.terminal.text()).toContain('✓')
+    expect(test.terminal.text()).toContain('write the data layer')
   })
 
   it('draws a todo line too wide for the list default beside its status', async () => {

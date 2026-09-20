@@ -100,6 +100,7 @@ describe('the queued-prompt panel', () => {
     expect(key('queue', KEY.down)).toEqual({ kind: 'move', axis: 'prompt', to: 'next' })
     expect(key('queue', KEY.home)).toEqual({ kind: 'move', axis: 'prompt', to: 'first' })
     expect(key('queue', KEY.end)).toEqual({ kind: 'move', axis: 'prompt', to: 'last' })
+    expect(key('queue', KEY.enter)).toEqual({ kind: 'queue', action: 'steer' })
     expect(key('queue', 's')).toEqual({ kind: 'queue', action: 'steer' })
     expect(key('queue', 'I')).toEqual({ kind: 'queue', action: 'inject' })
     expect(key('queue', 'e')).toEqual({ kind: 'queue', action: 'edit' })
@@ -190,11 +191,12 @@ describe('the legends', () => {
 
   it('ends every docked legend on the way back to the input, and gives the editor none', () => {
     expect(widestHint('transcript')).toBe('↑↓ sections · ←→ parts · Space folds · Ctrl+G reader · Esc input')
-    expect(widestHint('queue')).toBe('↑↓ prompts · S steer · I inject · E edit · Esc input')
+    expect(widestHint('queue')).toBe('enter steer · ↑ select/edit · esc cancel')
     expect(widestHint('panel')).toBe('↑↓ children · Enter details · Tab regions · Esc input')
     expect(widestHint('bar')).toBe('←→ segments · Enter details · Tab regions · Esc input')
     expect(widestHint('editor')).toBe('')
-    for (const region of ['transcript', 'queue', 'panel', 'bar'] as const) {
+    expect(HINTS.queue.at(-1)).toBe('esc cancel')
+    for (const region of ['transcript', 'panel', 'bar'] as const) {
       expect(HINTS[region].at(-1)).toBe('Esc input')
     }
   })

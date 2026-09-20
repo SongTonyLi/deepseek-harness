@@ -1,5 +1,6 @@
 /** The terminal's session, attachment, queue, skill, sign-in, `/login`,
- *  Shift+Tab effort picker, export, and reference commands over scripted services. */
+ *  Shift+Tab effort picker, `/permission` picker, export, and reference
+ *  commands over scripted services. */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1229,5 +1230,124 @@ describe('the effort command', () => {
     const model = await gated('/model p/think')
     expect(model.screen).not.toContain('Reasoning effort ·')
     expect(model.selection).toEqual({ provider: 'test-provider', model: 'test-model' })
+  })
+})
+
+describe('the permission command', () => {
+  /** Catalog plus the shared `/permission` write path the picker submits. */
+  function permissionServices(ctx: Context, current = 'workspace-write'): { lines: string[] } {
+    const state = { current }
+    const options = [
+      { value: 'workspace-write', name: 'workspace-write', description: 'Write inside the workspace.' },
+      { value: 'danger-full-access', name: 'Full access', description: 'Full file access without approval prompts.' },
+    ]
+    const lines: string[] = []
+    ctx.provide('permissionPresets', {
+      catalog: () => ({ options }),
+      current: () => state.current,
+      set: (_session: Session, name: string) => { state.current = name },
+    } as never)
+    ctx.provide('commands', {
+      list: () => [{ name: 'permission', description: 'Switch the permission preset', input: { hint: '<preset>' } }],
+      execute: (_agent: unknown, line: string) => {
+        lines.push(line)
+        const name = line.slice('/permission '.length)
+        state.current = name
+        return Promise.resolve({ result: { kind: 'success', text: `preset ${name}` } })
+      },
+    } as never)
+    return { lines }
+  }
+
+  it('opens on the preset in force and applies the picked one', async () => {
+    let lines: string[] = []
+    const test = await bench({
+      before: (ctx) => { lines = permissionServices(ctx).lines },
+    })
+    typeLine(test.terminal, '/permission')
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen).toContain('Permission preset')
+    expect(screen).toContain('current: workspace-write · Esc keeps it')
+    expect(screen).toContain('workspace-write ✓')
+    expect(screen).toContain('Full access')
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(lines).toEqual(['/permission danger-full-access'])
+    expect(test.terminal.text()).toContain('/permission: preset danger-full-access')
+    typeLine(test.terminal, '/permission')
+    await test.settle()
+    expect(test.terminal.text()).toContain('current: Full access · Esc keeps it')
+    expect(test.terminal.text()).toContain('Full access ✓')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(lines).toEqual(['/permission danger-full-access'])
+  })
+
+  it('takes a catalog value as its argument', async () => {
+    let lines: string[] = []
+    const test = await bench({
+      before: (ctx) => { lines = permissionServices(ctx).lines },
+    })
+    typeLine(test.terminal, '/permission Danger-Full-Access')
+    await test.settle()
+    expect(lines).toEqual(['/permission danger-full-access'])
+    expect(test.terminal.text()).toContain('/permission: preset danger-full-access')
+    typeLine(test.terminal, '/permission yolo')
+    await test.settle()
+    expect(test.terminal.text()).toContain('unknown preset "yolo" (available: workspace-write, danger-full-access)')
+    expect(lines).toEqual(['/permission danger-full-access'])
+  })
+
+  it('reports a profile that offers no permission service or no presets', async () => {
+    const bare = await bench()
+    typeLine(bare.terminal, '/permission')
+    await bare.settle()
+    expect(bare.terminal.text()).toContain('no permission service is composed')
+    const empty = await bench({
+      before: (ctx) => {
+        ctx.provide('permissionPresets', {
+          catalog: () => ({ options: [] }),
+          current: () => 'custom',
+        } as never)
+      },
+    })
+    typeLine(empty.terminal, '/permission')
+    await empty.settle()
+    expect(empty.terminal.text()).toContain('no selectable permission presets')
+    typeLine(empty.terminal, '/permission auto')
+    await empty.settle()
+    expect(empty.terminal.text()).toContain('unknown preset "auto"')
+  })
+
+  it('lists /permission once when the shared command is also registered', async () => {
+    const test = await bench({
+      before: (ctx) => { permissionServices(ctx) },
+    })
+    typeLine(test.terminal, '/help')
+    await test.settle()
+    const rows = test.terminal.text().split('\n').filter(line => /^\s*\/permission\b/u.test(line))
+    expect(rows).toHaveLength(1)
+  })
+
+  it('applies a pick through the permission service when no command registry is composed', async () => {
+    const applied: string[] = []
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('permissionPresets', {
+          catalog: () => ({ options: [{ value: 'workspace-write', name: 'workspace-write' }, { value: 'auto', name: 'Auto review' }] }),
+          current: () => 'workspace-write',
+          set: (_session: Session, name: string) => { applied.push(name) },
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/permission')
+    await test.settle()
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(applied).toEqual(['auto'])
+    expect(test.terminal.text()).toContain('preset auto')
   })
 })

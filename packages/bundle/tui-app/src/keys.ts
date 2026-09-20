@@ -107,7 +107,7 @@ export const HINTS: Record<FocusRegion, readonly string[]> = {
     '↑↓ ←→ · Space folds · Esc input',
     'Esc input',
   ],
-  queue: ['↑↓ prompts · S steer · I inject · E edit · Esc input', 'S steer · I inject · E edit · Esc input', 'Esc input'],
+  queue: ['enter steer · ↑ select/edit · esc cancel', 'enter steer · esc cancel', 'esc cancel'],
   panel: ['↑↓ children · Enter details · Tab regions · Esc input', '↑↓ children · Esc input', 'Esc input'],
   bar: ['←→ segments · Enter details · Tab regions · Esc input', '←→ segments · Esc input', 'Esc input'],
 }
@@ -124,7 +124,7 @@ export const FOCUS_REGIONS: readonly FocusRegion[] = ['editor', 'transcript', 'q
 export const REGION_LABELS: Record<FocusRegion, string> = {
   editor: 'input',
   transcript: 'conversation',
-  queue: 'queued prompts',
+  queue: 'follow-ups',
   panel: 'subagent panel',
   bar: 'status bar',
 }
@@ -339,13 +339,14 @@ function transcriptKey(data: string): KeyAction | undefined {
 }
 
 /**
- * What one key means while the pending-prompt panel holds the keyboard.
+ * What one key means while the follow-ups panel holds the keyboard.
  * @param data - the raw key bytes.
  * @returns the action, or undefined for a key the panel consumes without effect.
  */
 function queueKey(data: string): KeyAction | undefined {
   const move = moveKey(data, QUEUE_MOVES)
   if (move !== undefined) return move
+  if (matchesKey(data, 'enter')) return { kind: 'queue', action: 'steer' }
   if (data === 's' || data === 'S') return { kind: 'queue', action: 'steer' }
   if (data === 'i' || data === 'I') return { kind: 'queue', action: 'inject' }
   if (data === 'e' || data === 'E') return { kind: 'queue', action: 'edit' }
