@@ -238,7 +238,7 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 通过 `ctx.sessionPersistence` 的只读句柄分页读取持久化日志并经注册表恢复 Agent，`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。编辑器里提交的非空 `!` 或 `!!` 行经本进程的 `ctx.shell` 运行；`!` 注入一条下一步通知，`!!` 只留在本地。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含三个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 先拿到 Agent 写句柄，再经 `ctx.sessionQuery` 观察实时 Session，使 bind 画出每条持久化事件（包括恢复时的闭合事件），`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent。每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。编辑器里提交的非空 `!` 或 `!!` 行经本进程的 `ctx.shell` 运行；`!` 注入一条下一步通知，`!!` 只留在本地。
 
 ### 渲染模型
 
@@ -252,7 +252,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `tui-app` 插件：会话宿主（创建、恢复、fork）、历史读取、退出流程、退出码映射 |
+| [`src/index.ts`](src/index.ts) | `tui-app` 插件：会话宿主（创建、恢复、fork）、恢复观察、退出流程、退出码映射 |
 | [`src/startup.ts`](src/startup.ts) | `tui-app-startup` 提供方：提示位置参数、`--resume`、`--no-open` 与 `--help` |
 | [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、停止装填、它挂载的临时提示行、阅读器所依托的终端交接，以及提交时解析的 `!` / `!!` |
 | [`src/keys.ts`](src/keys.ts) | 按键模型：各焦点区域、一次按键在每个区域中的含义、它们逐级收缩的按键提示、进入用的按键、`/help` 的各行，以及交接窗口 |
@@ -261,7 +261,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/permission.ts`](src/permission.ts) | `/permission` 的权限预设名称及选择器行 |
 | [`src/attach.ts`](src/attach.ts) | `/attach`：本地文件经附件存储成为图片或文件块 |
 | [`src/export.ts`](src/export.ts) | `/export`：通过导出包的归档辅助函数写出会话日志 ZIP |
-| [`src/blocks.ts`](src/blocks.ts) | 对话记录组件：用户提示、assistant 回复、工具卡片、系统提示词与注入上下文、通知；可导航的块暴露其各小节并绘制焦点标记条，可折叠的块则承载两个折叠键共用的那条标记。每个块保留上次画出的行，回复还保留上次 Markdown 解析所着色的代码围栏，因此已稳定的对话记录每帧只花每块一次键比较，一次流式增量也只为发生变化的那个围栏着色 |
+| [`src/blocks.ts`](src/blocks.ts) | 对话记录组件：用户提示、assistant 回复、工具卡片、系统提示词与注入上下文、通知；可导航的块暴露其各小节并绘制焦点标记条，可折叠的块则承载两个折叠键共用的那条标记。每个块保留上次画出的行，回复还保留上次 Markdown 解析所着色的代码围栏，并只对最后一个已关闭围栏之后仍打开的尾部重新词法分析，因此已稳定的对话记录每帧只花每块一次键比较，一次流式增量也只为发生变化的那个围栏着色 |
 | [`src/context.ts`](src/context.ts) | 把已记录的系统提示词与注入的用户消息投影为对话记录小节 |
 | [`src/navigation.ts`](src/navigation.ts) | 把对话记录看作各个小节、沿四条轴走遍它们的光标、这些小节归入的各轮次，以及检视面板的标题 |
 | [`src/inspector.ts`](src/inspector.ts) | 停靠的检视面板：带模式徽标的边框面板、小节标题、带编号且会折行的各部分选择行、折叠后的各行，及其挂载的组件 |

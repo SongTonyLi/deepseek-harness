@@ -36,9 +36,9 @@ tsx source-launch (`pnpm dsh`) taxes both Hosts. Compare built `dsh --profile tu
 
 - Both profiles mount `@deepseek-ai/dsh-agent-loop` through `dsh-base`. After a Session is running, host-plane rows versus `agent-presets` remounts do not change the class of per-turn work.
 - TUI `TuiApp.onStreamFrame` calls `this.tui.requestRender()` on every `chunk` and `end` frame (`start` returns without one). On the main screen, pi-tui `TuiBase.requestRender` already coalesces to `MIN_RENDER_INTERVAL_MS = 16`; a later call in the same window returns while `renderRequested` is true. The suspended reader paints immediately ([alternate-screen reader](../../implemented/architecture/2026-09-20-tui-reader-on-the-alternate-screen.md)).
-- A streaming `AssistantBlock` calls `compose()` on every `render()` while a fade is attached. pi-tui `Markdown.render` re-lexes only after `setText` or a width change. Fade ticks therefore recolor; they do not re-parse.
+- A streaming `AssistantBlock` calls `compose()` on every `render()` while a fade is attached. The live reply re-lexes only the open tail after the last closed fence. Fade ticks therefore recolor; they do not re-parse.
 - `presentCall` and `presentResult` run on `tool/call` and `tool/result` only. A `tool-call-delta` updates the loader message.
-- `--resume` pages the log at `HISTORY_PAGE = 256` in `readHistory` (one full-log pass on a read handle, then that handle closes), then `agents.resume()` opens a write handle and calls `handle.read(0, undefined)` (a second full-log pass, which may append interrupted-turn closers). `TuiApp.bind` then replays the `readHistory` snapshot through `onSessionEvent`, so it omits those closers. Web Client `Session.doOpen` requests `PAGE_MESSAGES = 50`.
+- `--resume` calls `agents.resume()` first (one full-log pass on the write handle, which may append interrupted-turn closers), then `sessionQuery.observeSession` materializes the live Session for `TuiApp.bind`, so the transcript includes those closers. Web Client `Session.doOpen` requests `PAGE_MESSAGES = 50`.
 - Web conversation assembly publishes live chunks as `'animation-frame'` and waits for three `requestAnimationFrame` callbacks. That is a looser cap than TUI’s 16 ms scheduler, not a capability TUI lacks.
 - Settled blocks already return `LastDrawn` lines. The reuse note’s fake-terminal bench reports idle frames of 1.2 ms at 20 turns, 4.4 ms at 80, and 18 ms at 320. Remaining idle cost is pi-tui’s walk and line comparison over the growing frame.
 - The 80 ms loader calls `requestRender` while the Agent is `running`. That is about 12.5 frames per second of whole-frame diffs during think gaps, not a transcript rebuild.
@@ -52,7 +52,7 @@ Build these before product edits. Use compiled JavaScript under plain Node, a pr
 | Card | Completion | Workload | Entry path | Clock | Memory |
 |---|---|---|---|---|---|
 | A cold first key | Printable key appears in the editor | New empty Session | Built `dsh --profile tui` child | Process start → echoed key | RSS after first frame |
-| B resume ready | Editor accepts input and history line count matches the log | 80-turn and 320-turn fixtures in the reuse-bench shape (1500-row system prompt, folded `read` card, and one fenced reply per turn) | Same child; after `loader.await`, time `readHistory`, `agents.resume`, `bind`, and first frame separately | Persistence I/O and UI replay separately | Retained Session + mounted blocks |
+| B resume ready | Editor accepts input and history line count matches the log | 80-turn and 320-turn fixtures in the reuse-bench shape (1500-row system prompt, folded `read` card, and one fenced reply per turn) | Same child; after `loader.await`, time `agents.resume`, `observeSession`, `bind`, and first frame separately | Persistence I/O and UI replay separately | Retained Session + mounted blocks |
 | C stream frame | One `doRender` after a burst | 20k-character live reply, closed fences, 50 deltas inside one 16 ms window, then a paced 16 ms stream | Production `TuiApp` + fake `Terminal` on the main screen | Share of lexer, `compose`, fade recolor, `Container` concat, line diff | Transient peak during the burst |
 | D think-gap frames | One second of loader-only ticks on a settled 80-turn transcript | Agent `running`, no deltas, fade disarmed | Same | `doRender` count and duration | Unchanged retained blocks |
 | C+D input overlap | Key bytes to editor line change while C or D runs | Same 80-turn tree plus live deltas or the loader | Same | Event-loop delay and key-to-echo | — |
@@ -84,9 +84,9 @@ Do not set a required CI time budget until three reference samples and a hosted 
 
 Later work lands as separate PRs, each mergeable:
 
-1. Cards A–D as package-local diagnostics or a `benchmarks/` path, with this note as the measurement-card owner. No product behavior change.
-2. Rank 1 only if card C shows the lexer share. Own tests in `tests/blocks.spec.ts` keep fence memo and wrap contracts.
-3. Rank 2 only if card B shows the second full read. `bind` reads the resumed Session’s events; `readHistory` goes away or becomes a test-only helper.
+1. Cards C and D run as `packages/bundle/tui-app/tests/endpoints.perf.spec.ts` (threshold-free). Cards A and B as a built `dsh --profile tui` child wait on `DSH_TUI_PERF_CHILD=1`. This note remains the measurement-card owner.
+2. Rank 1 landed: the live reply caches the closed-fence prefix and lexes only the open tail. Own tests in `tests/blocks.spec.ts` keep fence memo, wrap, list, table, and fade contracts.
+3. Rank 2 landed: `bind` observes the resumed Session; the extra `readHistory` pass is gone.
 4. Rank 3 only if card D shows loader frames dominating think-gap CPU, and only as a slower tick that still draws the spinner.
 
 A later required TUI lane reuses the same cards and adds budgets the way the Web browser workflow did: reference-machine samples first, hosted repeat second, source constants last.

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-19-tui-transcript-render-reuse.md
-2026-09-19-tui-transcript-render-reuse.md: 34e478226a57c9060358bcc1471bf1a3e083e18e
-2026-09-19-tui-transcript-render-reuse.zh.md: 7766ac9b4a29a4f43842c19771a55257410a88c3
+2026-09-19-tui-transcript-render-reuse.md: 216dc027ab2db77848aa903c6c74adc153bbb18c
+2026-09-19-tui-transcript-render-reuse.zh.md: b8eb6b14e5be09ad35e262e7959e8a63be7916a9

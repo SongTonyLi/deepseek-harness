@@ -73,6 +73,7 @@ async function bench(
     },
     resume(ownerCtx, resumeOptions) {
       observed.resumed.push(resumeOptions)
+      observed.order.push(`resume:${resumeOptions.resumeSessionId}`)
       return makeAgent(ownerCtx, resumeOptions.resumeSessionId, resumeOptions.setup)
     },
   })
@@ -88,11 +89,13 @@ async function bench(
       },
     } as never)
   }
-  if (options.observed !== undefined) {
-    const events = options.observed
+  if (options.observed !== undefined || options.history !== undefined) {
     ctx.provide('sessionQuery', {
       observeSession: (id: SessionId) => {
         observed.order.push(`observe:${id}`)
+        const events = String(id) === 'session-old'
+          ? (options.history ?? [])
+          : (options.observed ?? [])
         return Promise.resolve({ events, [Symbol.dispose]: () => { observed.order.push('release-observation') } })
       },
       listSessions: () => Promise.resolve([{ header: { id: 'session-old', createdAt: 1 } }]),
@@ -183,7 +186,7 @@ describe('tui runner', () => {
     expect(observed.order).toEqual(['release', 'cancel', 'flush', 'dispose', 'exit:0'])
   })
 
-  it('resumes a persisted session after paging its history through a read handle', async () => {
+  it('resumes a persisted session from the Agent session after the write-handle load', async () => {
     const history: SessionEvent[] = Array.from({ length: 300 }, (_, seq) => ({
       type: 'user/message',
       seq,
@@ -193,7 +196,7 @@ describe('tui runner', () => {
     const { ctx, observed } = await bench({ history })
     apply(ctx, config({ resume: 'session-old' }))
     await settled()
-    expect(observed.order.slice(0, 2)).toEqual(['open:session-old:read', 'close'])
+    expect(observed.order).toEqual(['resume:session-old', 'observe:session-old', 'release-observation'])
     expect(observed.resumed.map(options => options.resumeSessionId)).toEqual(['session-old'])
     expect(observed.created).toHaveLength(0)
     expect(observed.terminal.text()).toContain('› prompt 0')
@@ -201,11 +204,30 @@ describe('tui runner', () => {
     expect(observed.exits).toEqual([])
   })
 
-  it('fails loud when --resume has no persistence provider', async () => {
-    const { ctx, observed } = await bench({ noPersistence: true })
+  it('draws interrupted-turn closers that resume appended after the write-handle read', async () => {
+    const history: SessionEvent[] = [
+      { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+      {
+        type: 'user/message',
+        seq: 1,
+        time: 1,
+        data: createUserMessage({ content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }),
+      },
+      { type: 'turn/end', seq: 2, time: 1, data: { turn: 1, reason: { kind: 'interrupted' } } },
+    ] as never[]
+    const { ctx, observed } = await bench({ history })
     apply(ctx, config({ resume: 'session-old' }))
     await settled()
-    expect(observed.err).toContain('resuming a session needs a composed session persistence provider')
+    expect(observed.order[0]).toBe('resume:session-old')
+    expect(observed.terminal.text()).toContain('› hello')
+    expect(observed.terminal.text()).toContain('turn was interrupted by an earlier process exit')
+  })
+
+  it('fails loud when --resume has no query engine', async () => {
+    const { ctx, observed } = await bench()
+    apply(ctx, config({ resume: 'session-old' }))
+    await settled()
+    expect(observed.err).toContain('resuming a session needs a composed session query engine')
     expect(observed.exits).toEqual([1])
   })
 
@@ -238,7 +260,7 @@ describe('tui runner', () => {
     observed.terminal.type(KEY.enter)
     await settled()
     expect(observed.resumed.map(options => options.resumeSessionId)).toEqual(['session-old'])
-    expect(observed.order.slice(-3)).toEqual(['open:session-old:read', 'close', 'dispose'])
+    expect(observed.order.slice(-4)).toEqual(['resume:session-old', 'observe:session-old', 'release-observation', 'dispose'])
     observed.terminal.type(KEY.ctrlD)
     await settled()
     expect(observed.err).toContain('session session-old saved')

@@ -1,9 +1,10 @@
 /** Transcript components rendered at fixed widths. */
 
 import { describe, expect, it } from 'vitest'
+import { Markdown } from '@earendil-works/pi-tui'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
-import { createPalette, type CodeHighlighter } from '../src/style.ts'
+import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
 import type { CodeSpan } from '../src/transcript.ts'
 
 const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 6 }
@@ -95,6 +96,21 @@ describe('blocks', () => {
       '\u001b[2m  \u2502 a\u001b[22m',
       '\u001b[2m  \u2502 \u2026 2 more rows · Ctrl+O expands\u001b[22m',
     ])
+  })
+
+  it('flushes the reply tail when the width changes', () => {
+    let flushed = 0
+    const block = new AssistantBlock(theme, 1)
+    block.appendText('hello world')
+    block.setFade({
+      spans: () => [{ text: 'world', age: 0 }],
+      style: () => FADE,
+      steps: 5,
+      flush: () => { flushed += 1 },
+    })
+    expect(block.render(40).at(-1)).toContain('hello \u001b[2mworld')
+    block.render(20)
+    expect(flushed).toBe(1)
   })
 
   it('recolors the reasoning tail and flushes it when the width changes', () => {
@@ -563,7 +579,70 @@ describe('render reuse', () => {
     block.render(40)
     block.appendText('\nthen')
     block.render(40)
+    // The closed fence is cached; a later delta does not re-ask. The
+    // application invalidates every block when the grammar lands.
+    expect(counter.calls).toBe(1)
+    block.invalidate()
+    block.render(40)
     expect(counter.calls).toBe(2)
+  })
+
+  it('matches a full Markdown parse while a closed fence is followed by a growing tail', () => {
+    const oracle = (text: string, width: number): string[] =>
+      ['', ...new Markdown(text, 0, 0, markdownTheme(theme.palette)).render(width)]
+    const block = new AssistantBlock(theme, 1)
+    const steps = [
+      '```ts\nconst a = 1\n',
+      '```ts\nconst a = 1\n```\n',
+      '```ts\nconst a = 1\n```\n\nthen',
+      '```ts\nconst a = 1\n```\n\nthen more',
+      '```ts\nconst a = 1\n```\n\nthen more\n\n1. one\n2. two',
+      '```ts\nconst a = 1\n```\n\nthen more\n\n| a | b |\n| --- | --- |\n| 1 | 2 |',
+    ]
+    for (const text of steps) {
+      const streamed = new AssistantBlock(theme, 1)
+      streamed.appendText(text.slice(0, 12))
+      streamed.render(40)
+      streamed.appendText(text.slice(12))
+      expect(streamed.render(40).map(line => line.trimEnd())).toEqual(oracle(text, 40).map(line => line.trimEnd()))
+      expect(streamed.render(20).map(line => line.trimEnd())).toEqual(oracle(text, 20).map(line => line.trimEnd()))
+    }
+    block.appendText(steps[3] as string)
+    block.setFade({
+      spans: () => [{ text: 'more', age: 0 }],
+      style: () => FADE,
+      steps: 5,
+      flush: () => {},
+    })
+    expect(block.render(40).join('\n')).toContain('then')
+    expect(block.render(40).at(-1)).toContain('\u001b[2mmore')
+  })
+
+  it('treats a backtick run with backticks in its info as text, and closes a fence at EOF', () => {
+    const skipped = new AssistantBlock(theme, 1)
+    skipped.appendText('```ts`nope`\nnot a fence')
+    expect(skipped.render(40).join('\n')).toContain('not a fence')
+
+    const closed = new AssistantBlock(theme, 1)
+    closed.appendText('```ts\nconst a = 1\n```')
+    expect(closed.render(40).join('\n')).toContain('const a = 1')
+    closed.appendText('\n\n')
+    expect(closed.render(40).join('\n')).toContain('const a = 1')
+
+    const tilde = new AssistantBlock(theme, 1)
+    tilde.appendText('~~~\nplain\n~~~\nthen')
+    expect(tilde.render(40).join('\n')).toContain('plain')
+    expect(tilde.render(40).join('\n')).toContain('then')
+
+    const indented = new AssistantBlock(theme, 1)
+    indented.appendText('   ```ts\nconst a = 1\n   ```\n\nthen')
+    expect(indented.render(40).join('\n')).toContain('const a = 1')
+
+    const notCloser = new AssistantBlock(theme, 1)
+    notCloser.appendText('```ts\nconst a = 1\n```lang\nstill open')
+    notCloser.render(40)
+    notCloser.appendText('\n```\n')
+    expect(notCloser.render(40).join('\n')).toContain('still open')
   })
 
   it('hands back the same reply lines while the message is settled', () => {

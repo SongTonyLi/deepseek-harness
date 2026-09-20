@@ -36,9 +36,9 @@ tsx 源码启动（`pnpm dsh`）会同时加重两个 Host。要把构建后的 
 
 - 两个 profile 都通过 `dsh-base` 挂载 `@deepseek-ai/dsh-agent-loop`。会话一旦在跑，host 平面行与 `agent-presets` 重新挂载并不改变每轮次工作的类别。
 - TUI 的 `TuiApp.onStreamFrame` 对每个 `chunk` 与 `end` 帧调用 `this.tui.requestRender()`（`start` 直接返回，不请求）。在主屏上，pi-tui 的 `TuiBase.requestRender` 已经按 `MIN_RENDER_INTERVAL_MS = 16` 合并；同一窗口内后一次调用在 `renderRequested` 为真时直接返回。被挂起的阅读器会立即绘制（[备用屏幕阅读器](../../implemented/architecture/2026-09-20-tui-reader-on-the-alternate-screen.zh.md)）。
-- 正在流式输出的 `AssistantBlock` 在挂着渐变时，每次 `render()` 都调用 `compose()`。pi-tui 的 `Markdown.render` 只在 `setText` 或宽度变化后重新词法分析。因此渐变滴答会重新着色，不会重新解析。
+- 正在流式输出的 `AssistantBlock` 在挂着渐变时，每次 `render()` 都调用 `compose()`。实时回复只对最后一个已关闭围栏之后仍打开的尾部重新词法分析。因此渐变滴答会重新着色，不会重新解析。
 - `presentCall` 与 `presentResult` 只在 `tool/call` 与 `tool/result` 上运行。`tool-call-delta` 只更新加载器文案。
-- `--resume` 在 `readHistory` 里按 `HISTORY_PAGE = 256` 分页读日志（读句柄上的一整遍全日志，随后该句柄关闭），随后 `agents.resume()` 打开写句柄并调用 `handle.read(0, undefined)`（第二遍全日志，可能追加被打断轮次的闭合事件）。`TuiApp.bind` 再经 `onSessionEvent` 回放 `readHistory` 快照，因此漏掉那些闭合事件。Web Client 的 `Session.doOpen` 请求 `PAGE_MESSAGES = 50`。
+- `--resume` 先调用 `agents.resume()`（写句柄上的一遍全日志，可能追加被打断轮次的闭合事件），再由 `sessionQuery.observeSession` 物化实时 Session 供 `TuiApp.bind` 使用，因此对话记录包含那些闭合事件。Web Client 的 `Session.doOpen` 请求 `PAGE_MESSAGES = 50`。
 - Web 会话组装把实时分片发布为 `'animation-frame'`，并等待三次 `requestAnimationFrame` 回调。这是比 TUI 的 16 ms 调度更松的上限，不是 TUI 缺少的能力。
 - 已结算的块已经交回 `LastDrawn` 行。复用注记的伪终端 bench 给出空闲帧：20 轮次 1.2 ms，80 轮次 4.4 ms，320 轮次 18 ms。空闲时剩下的成本是 pi-tui 对不断变长的帧做遍历与逐行比较。
 - Agent 处于 `running` 时，80 ms 的加载器会调用 `requestRender`。思考间隙里这大约是每秒 12.5 帧的整帧比对，不是重建 transcript。
@@ -52,7 +52,7 @@ tsx 源码启动（`pnpm dsh`）会同时加重两个 Host。要把构建后的 
 | 卡片 | 完成条件 | 工作负载 | 入口路径 | 时钟 | 内存 |
 |---|---|---|---|---|---|
 | A 冷启动首键 | 可打印按键出现在编辑器中 | 新的空会话 | 构建后的 `dsh --profile tui` 子进程 | 进程启动 → 回显的按键 | 首帧后的 RSS |
-| B 恢复就绪 | 编辑器接受输入，且历史上屏行数与日志一致 | 复用 bench 形态的 80 轮次与 320 轮次夹具（1500 行系统提示词、每轮次一张折叠的 `read` 卡片和一段带围栏的回复） | 同一子进程；在 `loader.await` 之后分别计时 `readHistory`、`agents.resume`、`bind` 与首帧 | 持久化 I/O 与界面回放分开 | 保留的会话加上已挂载的块 |
+| B 恢复就绪 | 编辑器接受输入，且历史上屏行数与日志一致 | 复用 bench 形态的 80 轮次与 320 轮次夹具（1500 行系统提示词、每轮次一张折叠的 `read` 卡片和一段带围栏的回复） | 同一子进程；在 `loader.await` 之后分别计时 `agents.resume`、`observeSession`、`bind` 与首帧 | 持久化 I/O 与界面回放分开 | 保留的会话加上已挂载的块 |
 | C 流式帧 | 一阵分片之后的一次 `doRender` | 2 万字符的实时回复、已关闭的围栏、在一个 16 ms 窗口内的 50 个分片，然后再跑按 16 ms 步进的流 | 主屏上的生产 `TuiApp` 加伪 `Terminal` | 词法分析、`compose`、渐变着色、`Container` 拼接、逐行比对各自占比 | 这一阵期间的瞬时峰值 |
 | D 思考间隙帧 | 已结算的 80 轮次 transcript 上，只由加载器驱动的一秒 | Agent 为 `running`、无分片、渐变已解除 | 同上 | `doRender` 次数与耗时 | 保留的块不变 |
 | C+D 输入重叠 | C 或 D 运行时，按键字节到编辑器行变化 | 同一棵 80 轮次树，加上实时分片或加载器 | 同上 | 事件循环延迟与按键到回显 | — |
@@ -84,9 +84,9 @@ tsx 源码启动（`pnpm dsh`）会同时加重两个 Host。要把构建后的 
 
 后续工作分成可独立合并的 PR：
 
-1. 把卡片 A–D 做成包内诊断或一条 `benchmarks/` 路径，由本注记持有测量卡片。不改产品行为。
-2. 仅当卡片 C 显示词法分析占比时做次序 1。`tests/blocks.spec.ts` 中的所属测试保持围栏备忘与折行约定。
-3. 仅当卡片 B 显示第二次整日志读取时做次序 2。`bind` 读取已恢复会话的事件；`readHistory` 删除或变成仅测试助手。
+1. 卡片 C 与 D 作为 `packages/bundle/tui-app/tests/endpoints.perf.spec.ts` 运行（无阈值）。卡片 A 与 B 作为构建后的 `dsh --profile tui` 子进程，等 `DSH_TUI_PERF_CHILD=1`。本注记仍持有测量卡片。
+2. 次序 1 已落地：实时回复缓存已关闭围栏的前缀，只对仍打开的尾部做词法分析。`tests/blocks.spec.ts` 中的所属测试保持围栏备忘、折行、列表、表格与渐变约定。
+3. 次序 2 已落地：`bind` 观察已恢复的 Session；额外的 `readHistory` 那一遍已删除。
 4. 仅当卡片 D 显示加载器帧主导思考间隙 CPU 时做次序 3，且只作为仍绘制旋转指示器的更慢滴答。
 
 以后的必跑 TUI 车道复用同一组卡片，并按 Web 浏览器工作流那样加预算：先参考机器样本，再托管复跑，最后写入源码常量。

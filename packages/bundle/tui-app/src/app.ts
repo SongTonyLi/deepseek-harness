@@ -326,7 +326,10 @@ export interface BoundSession {
   agent: Agent
   /** The Agent's installed model selection; `/model` writes `current`. */
   selection: ModelSelectionRef
-  /** Persisted events drawn before live input; empty for a fresh session. */
+  /**
+   * Persisted events drawn before live input, including closers resume
+   * appended; empty for a fresh session.
+   */
   history: readonly SessionEvent[]
   /** Release the Agent when the terminal moves to another session or quits. */
   dispose(): Promise<void>
