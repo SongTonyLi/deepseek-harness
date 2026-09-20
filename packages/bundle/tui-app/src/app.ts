@@ -526,6 +526,24 @@ type EffortLookup =
   /** The catalog could not resolve the model; the message names the failure. */
   | { kind: 'failed'; message: string }
 
+/**
+ * Spinner word for a streamed or executing tool.
+ * @param name - the tool name when one is known.
+ * @returns `calling <name>`, or `calling` when the name has not arrived.
+ */
+function callingActivity(name: string | undefined): string {
+  return name ? `calling ${name}` : 'calling'
+}
+
+/**
+ * Whether the spinner is already naming a tool call.
+ * @param activity - the current spinner word.
+ * @returns true for `calling` and `calling <name>`.
+ */
+function isCallingActivity(activity: string): boolean {
+  return activity === 'calling' || activity.startsWith('calling ')
+}
+
 /** The interactive terminal application; one instance per process. */
 export class TuiApp {
   private readonly tui: GuardedMainScreen
@@ -672,8 +690,10 @@ export class TuiApp {
   private streamedChars = 0
   /** Whether {@link TuiApp.liveUsage} came from a provider `usage` chunk. */
   private usageExact = false
-  /** Spinner label without the live ↑↓ suffix (`thinking`, `calling read`, …). */
+  /** Spinner label without the live ↑↓ suffix (`thinking`, `writing`, `calling read`, …). */
   private loaderActivity = 'thinking'
+  /** Tool names still streamed or executing, in first-seen order. */
+  private readonly pendingToolNames = new Map<ToolCallId, string>()
   private lastCtrlC = 0
   private stopped = false
 
@@ -884,6 +904,7 @@ export class TuiApp {
     this.toolArguments.clear()
     this.toolStreamArgs.clear()
     this.unconfirmedTools.clear()
+    this.pendingToolNames.clear()
     this.submittedIds.clear()
     this.todoTurns.clear()
     this.turn = 0
@@ -1015,6 +1036,7 @@ export class TuiApp {
     } else if (this.statusSlot.children.length > 0) {
       this.loader.stop()
       this.statusSlot.removeChild(this.loader)
+      this.pendingToolNames.clear()
       this.loaderActivity = 'thinking'
       this.clearLiveUsage()
       this.loader.setMessage('thinking')
@@ -3546,12 +3568,14 @@ export class TuiApp {
             if (chunk.text !== '') {
               this.appendStreamedText(chunk.text)
               this.noteStreamedChars(chunk.text.length)
+              this.setStreamActivity('writing')
             }
             break
           case 'reasoning-delta':
             if (chunk.text !== '') {
               this.appendStreamedReasoning(chunk.text)
               this.noteStreamedChars(chunk.text.length)
+              this.setStreamActivity('thinking')
             }
             break
           case 'tool-call-delta':
@@ -3631,6 +3655,8 @@ export class TuiApp {
       case 'tool/call': {
         const { callId, name, arguments: argumentsJson } = event.data
         this.toolStreamArgs.delete(callId)
+        this.pendingToolNames.set(callId, name)
+        this.setLoaderActivity(callingActivity(name))
         this.upsertToolCard(callId, name, argumentsJson, 'log')
         break
       }
@@ -3643,7 +3669,8 @@ export class TuiApp {
         const body = toolResultBody(view, result.content)
         block.setResult(body.lines, isError, body.code)
         this.fadeBlock((fade) => { block.setResultFade(fade) })
-        this.setLoaderActivity('thinking')
+        this.pendingToolNames.delete(result.toolCallId)
+        this.syncLoaderFromPendingTools()
         break
       }
       case 'turn/end': {
@@ -3746,11 +3773,32 @@ export class TuiApp {
 
   /**
    * Replace the spinner's activity word and redraw its live ↑↓ suffix.
-   * @param activity - `thinking`, `calling <name>`, or a retry notice.
+   * @param activity - `thinking`, `writing`, `calling` / `calling <name>`, or a retry notice.
    */
   private setLoaderActivity(activity: string): void {
     this.loaderActivity = activity
     this.refreshLoader()
+  }
+
+  /**
+   * Label a streamed reasoning or visible-text chunk unless a tool call is
+   * already the current activity: calling stays until the last in-flight
+   * tool settles or a new model call begins.
+   * @param activity - `thinking` for reasoning, `writing` for visible text.
+   */
+  private setStreamActivity(activity: 'thinking' | 'writing'): void {
+    if (isCallingActivity(this.loaderActivity)) return
+    this.setLoaderActivity(activity)
+  }
+
+  /**
+   * Draw `calling <name>` for the most recently remembered in-flight tool,
+   * or `thinking` when none remain.
+   */
+  private syncLoaderFromPendingTools(): void {
+    let name: string | undefined
+    for (const candidate of this.pendingToolNames.values()) name = candidate
+    this.setLoaderActivity(name === undefined ? 'thinking' : callingActivity(name))
   }
 
   /**
@@ -3761,7 +3809,8 @@ export class TuiApp {
     this.streamedChars = 0
     this.usageExact = false
     this.liveUsage = { inputTokens: this.seedLiveSend(), outputTokens: 0 }
-    this.loaderActivity = 'thinking'
+    if (this.pendingToolNames.size === 0) this.loaderActivity = 'thinking'
+    else this.syncLoaderFromPendingTools()
     this.refreshLiveUsage()
   }
 
@@ -3826,11 +3875,18 @@ export class TuiApp {
    * @param chunk - one `tool-call-delta` of the live assistant stream.
    */
   private onToolCallDelta(chunk: Extract<StreamChunk, { type: 'tool-call-delta' }>): void {
-    if (chunk.name !== undefined && chunk.name !== '') this.setLoaderActivity(`calling ${chunk.name}`)
+    const name = chunk.name === ''
+      ? undefined
+      : (chunk.name ?? this.toolBlocks.get(chunk.id)?.name)
+    if (name !== undefined) {
+      if (chunk.id !== '') this.pendingToolNames.set(chunk.id, name)
+      this.setLoaderActivity(callingActivity(name))
+    } else if (!isCallingActivity(this.loaderActivity)) {
+      this.setLoaderActivity(callingActivity(undefined))
+    }
     if (chunk.id === '') return
     const argumentsJson = (this.toolStreamArgs.get(chunk.id) ?? '') + chunk.argumentsDelta
     this.toolStreamArgs.set(chunk.id, argumentsJson)
-    const name = chunk.name === '' ? undefined : (chunk.name ?? this.toolBlocks.get(chunk.id)?.name)
     if (name === undefined) return
     this.upsertToolCard(chunk.id, name, argumentsJson, 'stream')
   }
@@ -3875,8 +3931,10 @@ export class TuiApp {
       this.toolBlocks.delete(callId)
       this.toolArguments.delete(callId)
       this.toolStreamArgs.delete(callId)
+      this.pendingToolNames.delete(callId)
     }
     this.unconfirmedTools.clear()
+    this.syncLoaderFromPendingTools()
     return true
   }
 
