@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-20-tui-performance-vs-web.md
-2026-09-20-tui-performance-vs-web.md: 2bc33c1a6072fd57f51d4b2c5e3c83f7177adbeb
-2026-09-20-tui-performance-vs-web.zh.md: a7f9a5419510f73920d685bf46c0f9c025b0b94d
+2026-09-20-tui-performance-vs-web.md: c5bd4cb013e1f417f03ae0998518113befa6f0b9
+2026-09-20-tui-performance-vs-web.zh.md: fb40b4b3c991b204b139a74eabc4f9ca4e78b50f

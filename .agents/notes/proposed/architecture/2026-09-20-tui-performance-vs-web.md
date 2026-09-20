@@ -14,7 +14,11 @@ Without separated clocks, a tempting copy of Web paging, conversation fold, or `
 
 ## Proposal
 
-Treat TUI performance as five endpoints. Measure each on the production entry path before changing product code. Copy a Web mechanism only when it does not break those terminal rules and a named card shows the cost it claims to remove.
+Treat TUI performance as five endpoints. Measure each on the production entry path before changing product code. Copy a Web mechanism only when it does not break those terminal rules, does not remove a shipped TUI capability, and a named card shows the cost it claims to remove.
+
+### Shipped capabilities stay
+
+A performance change may delete duplicate work. It may not delete, hide, page away, or put behind a new flag any capability the terminal already ships: the unpruned transcript in scrollback; stream fade and card float-out; the inspector and focus gutter; the alternate-screen reader; syntax colour on the first fence; the loader while the Agent is `running`; folded tool cards and context blocks; the subagent panel; the status-bar walk; `/` commands; `!` / `!!`; `@` completion; approvals and questions; session create, resume, fork, and export. `reducedMotion`, `NO_COLOR`, and `codeHighlight: false` remain the existing off switches; they are not the optimization.
 
 ### Endpoints the complaint mixes
 
@@ -63,8 +67,8 @@ Do not set a required CI time budget until three reference samples and a hosted 
 |---|---|---|---|---|
 | 1 | Incremental Markdown for the live reply: cache closed tokens and compose only the open tail | Keep after card C | Lexer plus wrap below about one fifth of `doRender` on the 20k-character reply | Wrap, lists, tables, unclosed fences, `recolorTail` matching from the end, first-fence grammar load |
 | 2 | Resume from the Agent’s loaded Session instead of a second `readHistory` pass | Keep for card B | The paged read-handle pass plus the write-handle `read(0, undefined)` become one full-log pass; 80-turn and 320-turn resume wall times fall | `bind` draws every persisted event including resume closers; write-handle repair still runs |
-| 3 | Stop or slow the loader only in think gaps | Demote until card D | `doRender` count in a one-second think gap | Spinner still means the Agent is working |
-| 4 | Eager editor before history finishes painting | Demote | Card A without a visible transcript | Editor still refuses submit while a session switch is in flight; printable keys still echo |
+| 3 | Slow the loader tick only in think gaps | Demote until card D | `doRender` count in a one-second think gap | The loader still draws while the Agent is `running`; stopping it is out of scope |
+| 4 | Eager editor before history finishes painting | Reject | `--resume` and `/resume` still draw the persisted log before the editor accepts a submit | History on screen before input is the shipped resume contract |
 | 5 | Remount TUI tools behind `agent-presets` as Web does | Demote as boot-only | Card A plugin-settlement time | Process-wide composition the terminal profile documents |
 | 6 | App-level 16 ms stream coalesce | Reject | `TuiBase.requestRender` already coalesces the main screen; a 50-delta burst in one window must stay one scheduled `doRender` | Stream and fade cadence on the main screen; the suspended reader stays immediate |
 | 7 | Web `PAGE_MESSAGES` window or “load earlier” | Reject | `Home`, `/turns`, and `Ctrl+G` must still name every turn | Scrollback owns history; prepend above the viewport writes `ESC[3J` |
@@ -83,7 +87,7 @@ Later work lands as separate PRs, each mergeable:
 1. Cards A–D as package-local diagnostics or a `benchmarks/` path, with this note as the measurement-card owner. No product behavior change.
 2. Rank 1 only if card C shows the lexer share. Own tests in `tests/blocks.spec.ts` keep fence memo and wrap contracts.
 3. Rank 2 only if card B shows the second full read. `bind` reads the resumed Session’s events; `readHistory` goes away or becomes a test-only helper.
-4. Rank 3 only if card D shows loader frames dominating think-gap CPU.
+4. Rank 3 only if card D shows loader frames dominating think-gap CPU, and only as a slower tick that still draws the spinner.
 
 A later required TUI lane reuses the same cards and adds budgets the way the Web browser workflow did: reference-machine samples first, hosted repeat second, source constants last.
 
@@ -99,6 +103,8 @@ A later required TUI lane reuses the same cards and adds budgets the way the Web
 
 **Ship incremental Markdown without card C.** Rejected: Markdown is non-local. A prefix wrap change must invalidate the cache, and `recolorTail` matches from the end. If card C attributes the leftover cost to pi-tui’s line walk, this package cannot skip that walk without forking the renderer.
 
+**Drop fade, the inspector, the reader, or old transcript rows to go faster.** Rejected: those are shipped capabilities. This note speeds the existing terminal; it does not shrink it.
+
 ## Acceptance criteria
 
 - This note is the owner for TUI-versus-Web performance work: five endpoints, the measurement cards, and the keep / demote / reject table.
@@ -106,10 +112,12 @@ A later required TUI lane reuses the same cards and adds budgets the way the Web
 - Cards A–D exist as executable diagnostics on built artifacts, even if they are not yet required CI budgets.
 - No PR copies Web paging, Client fold, sibling-`render` skipping, off-screen virtualization, stream fade cutoff, or a render worker while this note is proposed or implemented.
 - Rank 2 does not move, overwrite, or delete a committed persistence generation; it only stops the terminal from performing a second full-log pass for the same log the Agent is about to load.
+- A speedup that removes, hides, pages, or newly flags a shipped TUI capability is out of scope.
+- Package `tui-app` tests and the keyless TUI profile smoke stay the functional pin; a faster card that fails them does not land.
 
 ## Risks
 
-A first-keystroke editor that appears before history paints can accept a prompt against a Session that is still binding. Keep the existing rule that submit waits while the host opens another session, unless card A is the agreed product change. Printable keys already echo during that wait.
+An editor that appears before history paints can accept a prompt against a Session that is still binding. Rank 4 is rejected so `--resume` and `/resume` keep drawing the persisted log before submit. Printable keys already echo during a session switch.
 
 Incremental Markdown that misses a prefix restyle will show a layout jump when the closer arrives. The owning tests must include an unclosed fence, a list that tightens on a later marker, and a width change.
 
