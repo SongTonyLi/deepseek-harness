@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-20-tui-performance-vs-web.md
+2026-09-20-tui-performance-vs-web.md: f5acdadea27587c7bf24ecd59f7296c54ddbe26b
+2026-09-20-tui-performance-vs-web.zh.md: 354a0c65a3f1393286a4eccb9eda545a2ee48117

@@ -28,7 +28,7 @@ One entry per block and one parse's worth of fences per reply bound the memory t
 
 - The same bench after the change: the idle frame takes 1.2 ms at 20 turns, 4.4 ms at 80, and 18 ms at 320; the fade- or focus-guarded frame 1.6 ms, 4.5 ms, and 21 ms; every card expanded at 80 turns 0.7 ms against 3.4 s before. What remains is pi-tui's own pass over every line of the frame, which grows with the frame's text and is outside this package.
 - `tests/blocks.spec.ts` pins the contract with a counting highlighter: a card colours once across repeated frames, again when it folds or unfolds, and again after `invalidate()`; a reply colours an unchanged fence once across stream deltas and the commit; an answer left plain is asked for again; a settled block returns the same lines until something changes.
-- The measurements come from the package bench over a fake terminal and exclude the terminal emulator and model latency. A streaming reply still re-parses its Markdown on every delta, and the fence still open at the end of the message is coloured again per delta until it closes.
+- The measurements come from the package bench over a fake terminal and exclude the terminal emulator and model latency. A streaming reply re-lexes only the open tail after the last closed fence, and the fence still open at the end of the message is coloured again per delta until it closes.
 
 ## Related decisions
 

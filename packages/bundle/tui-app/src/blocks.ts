@@ -20,10 +20,11 @@
  * changes per frame - a fade's level, the focus mark's lift - is drawn over
  * those kept lines. Fenced code is the expensive part of a reply, so a reply
  * also keeps the coloured fences of its last Markdown parse
- * ({@link FenceMemo}): a stream delta re-parses the whole message but colours
- * only the fence that changed. `invalidate()` drops all of it, which the
- * application calls on every block when a grammar lands; a new terminal width
- * needs no call, because it misses every key on its own.
+ * ({@link FenceMemo}): a stream delta re-lexes only the open tail after the
+ * last closed fence and colours only the fence that changed. `invalidate()`
+ * drops all of it, which the application calls on every block when a grammar
+ * lands; a new terminal width needs no call, because it misses every key on
+ * its own.
  * @module @deepseek-ai/dsh-tui-app/blocks
  */
 
@@ -181,9 +182,9 @@ class LastDrawn<T> {
 /**
  * The coloured fences of one reply, kept from one Markdown parse to the next.
  *
- * pi-tui's `Markdown` re-parses the whole message whenever its text changes
- * and asks the theme to colour every fence it finds, so a streaming reply
- * that already carries three fences would colour all three on every delta.
+ * pi-tui's `Markdown` re-parses whenever its text changes and asks the theme
+ * to colour every fence it finds, so a streaming reply that already carries
+ * three fences would colour all three on every delta of the open tail.
  * This keeps what the last parse asked for: a fence that is asked for again
  * is answered from memory, and a fence the last parse did not ask for is
  * dropped at the next {@link FenceMemo.settle}, so the memo never holds more
@@ -494,6 +495,56 @@ export interface BlockFade {
 }
 
 /**
+ * Source through the last closed fenced block, including the newline that
+ * follows the closer when the message still has one. An unclosed fence, or a
+ * reply with no fence, yields an empty prefix so the whole message is lexed.
+ * @param text - the live Markdown source.
+ * @returns the closed prefix, or the empty string.
+ */
+function closedFencePrefix(text: string): string {
+  let last = 0
+  let index = 0
+  let open: { char: string; length: number } | undefined
+  while (index <= text.length) {
+    const newline = text.indexOf('\n', index)
+    const end = newline === -1 ? text.length : newline
+    const line = text.slice(index, end)
+    let indent = 0
+    while (indent < 3 && line[indent] === ' ') indent += 1
+    const rest = line.slice(indent)
+    const marker = /^(`{3,}|~{3,})/.exec(rest)?.[1]
+    if (marker !== undefined) {
+      const info = rest.slice(marker.length)
+      if (open === undefined) {
+        if (!(marker.startsWith('`') && info.includes('`'))) {
+          open = { char: marker[0] as string, length: marker.length }
+        }
+      } else if (marker[0] === open.char && marker.length >= open.length && info.trim() === '') {
+        last = newline === -1 ? text.length : newline + 1
+        open = undefined
+      }
+    }
+    if (newline === -1) break
+    index = newline + 1
+  }
+  return text.slice(0, last)
+}
+
+/**
+ * Stack a closed-fence drawing and the open tail the way one Markdown parse
+ * would: a fence adds a blank line before the next block unless that block
+ * is a blank-line token (the tail then starts with a newline).
+ * @param prefixLines - the cached prefix drawing.
+ * @param tail - the unparsed tail source.
+ * @param tailLines - the tail drawing.
+ * @returns the combined Markdown lines.
+ */
+function joinFencePrefix(prefixLines: readonly string[], tail: string, tailLines: readonly string[]): string[] {
+  if (tail.startsWith('\n')) return [...prefixLines, ...tailLines]
+  return [...prefixLines, '', ...tailLines]
+}
+
+/**
  * An assistant reply: streamed reasoning above streamed Markdown text. The
  * durable `assistant/message` replaces both with the committed content.
  *
@@ -511,6 +562,14 @@ export class AssistantBlock implements Component, AssistantSection {
   private text = ''
   private interrupted = false
   private readonly markdown: Markdown
+  /** Closed-fence prefix, parsed only when that prefix or the width changes. */
+  private readonly prefixMarkdown: Markdown
+  /** Last prefix drawing, reused while the closed fences and width hold. */
+  private prefixCache: { text: string; width: number; lines: string[] } | undefined
+  /** Last text handed to {@link AssistantBlock.markdown}, so fade ticks do not re-lex. */
+  private appliedTail: string | undefined
+  /** Last text handed to {@link AssistantBlock.prefixMarkdown}. */
+  private appliedPrefix: string | undefined
   private readonly reasoningText: Text
   private fade: FadeRender | undefined
   /** Width of the last render that drew a text tail; absent before the first one. */
@@ -534,7 +593,9 @@ export class AssistantBlock implements Component, AssistantSection {
   constructor(private readonly theme: BlockTheme, readonly turn: number) {
     const palette = theme.palette
     this.fences = theme.codeHighlight === undefined ? undefined : new FenceMemo(theme.codeHighlight)
-    this.markdown = new Markdown('', 0, 0, markdownTheme(palette, this.fences))
+    const themeForMarkdown = markdownTheme(palette, this.fences)
+    this.markdown = new Markdown('', 0, 0, themeForMarkdown)
+    this.prefixMarkdown = new Markdown('', 0, 0, themeForMarkdown)
     this.reasoningText = new Text('', 0, 0)
   }
 
@@ -600,7 +661,6 @@ export class AssistantBlock implements Component, AssistantSection {
   appendText(delta: string): void {
     this.text += delta
     this.revision += 1
-    this.markdown.setText(this.text)
   }
 
   /**
@@ -628,12 +688,18 @@ export class AssistantBlock implements Component, AssistantSection {
     // describes anything on screen and this block is settled for good.
     this.fade = undefined
     this.reasoningFade = undefined
-    this.markdown.setText(text)
+    this.prefixCache = undefined
+    this.appliedPrefix = undefined
+    this.appliedTail = undefined
     this.reasoningText.setText(this.theme.palette.dim(this.theme.palette.italic(reasoning.trimEnd())))
   }
 
   invalidate(): void {
     this.markdown.invalidate()
+    this.prefixMarkdown.invalidate()
+    this.prefixCache = undefined
+    this.appliedPrefix = undefined
+    this.appliedTail = undefined
     this.reasoningText.invalidate()
     this.fences?.clear()
     this.drawn.clear()
@@ -709,13 +775,56 @@ export class AssistantBlock implements Component, AssistantSection {
    */
   private renderText(width: number, at: number): string[] {
     const fade = this.fade
-    const lines = this.markdown.render(width)
+    const lines = this.renderMarkdown(width)
     // The parse, if the render ran one, asked for its fences synchronously.
     this.fences?.settle()
     if (fade === undefined) return lines
     if (this.fadeWidth !== undefined && this.fadeWidth !== width) fade.flush()
     this.fadeWidth = width
     return recolorTail(lines, fadingInSpans(fade), fade.style(), this.repaintFloor - at)
+  }
+
+  /**
+   * Lex the open tail and reuse the closed-fence prefix at this width.
+   * @param width - the width the Markdown lays out in.
+   * @returns the Markdown lines, fade not yet applied.
+   */
+  private renderMarkdown(width: number): string[] {
+    const prefix = closedFencePrefix(this.text)
+    if (prefix.length === 0) {
+      this.prefixCache = undefined
+      this.appliedPrefix = undefined
+      this.applyMarkdown(this.markdown, this.text, 'tail')
+      return this.markdown.render(width)
+    }
+    const tail = this.text.slice(prefix.length)
+    let prefixLines = this.prefixCache
+    if (prefixLines === undefined || prefixLines.text !== prefix || prefixLines.width !== width) {
+      this.applyMarkdown(this.prefixMarkdown, prefix, 'prefix')
+      prefixLines = { text: prefix, width, lines: this.prefixMarkdown.render(width) }
+      this.prefixCache = prefixLines
+    }
+    if (tail.trim() === '') return prefixLines.lines
+    this.applyMarkdown(this.markdown, tail, 'tail')
+    return joinFencePrefix(prefixLines.lines, tail, this.markdown.render(width))
+  }
+
+  /**
+   * Hand `text` to `markdown` only when it differs, so a fade tick does not re-lex.
+   * @param markdown - the prefix or tail instance.
+   * @param text - the source that instance should hold.
+   * @param which - which applied-text slot to update.
+   */
+  private applyMarkdown(markdown: Markdown, text: string, which: 'prefix' | 'tail'): void {
+    if (which === 'prefix') {
+      if (this.appliedPrefix === text) return
+      markdown.setText(text)
+      this.appliedPrefix = text
+      return
+    }
+    if (this.appliedTail === text) return
+    markdown.setText(text)
+    this.appliedTail = text
   }
 }
 

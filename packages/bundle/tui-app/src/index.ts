@@ -19,7 +19,6 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { canOpenNativePath, openNativeUrl } from '@deepseek-ai/dsh-native-command'
 import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-query'
 // Empty type imports carry the loader Context merge for the settlement await
 // and the cmdline Context merge for the appExit host value.
@@ -189,30 +188,19 @@ export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stder
   openUrl: openNativeUrl,
 }
 
-/** Events read per page when a persisted session is resumed, through the storage handle before the Agent takes the log over. */
-const HISTORY_PAGE = 256
-
 /**
- * Read a persisted session's complete event log in pages, so the terminal
- * can draw the earlier conversation before resuming it.
- * @param ctx - plugin context carrying the persistence service.
- * @param id - the session to read.
- * @returns the persisted events in log order.
+ * Events the terminal binds after the Agent has taken the write handle.
+ * The live Session already includes interrupted-turn closers resume appended.
+ * @param ctx - plugin context carrying the session query engine.
+ * @param id - the session the Agent just resumed.
+ * @returns the persisted events in log order, closers included.
+ * @throws when no query engine is composed.
  */
-async function readHistory(ctx: Context, id: SessionId): Promise<SessionEvent[]> {
-  const persistence = ctx.get('sessionPersistence')
-  if (persistence === undefined) throw new Error('tui-app: resuming a session needs a composed session persistence provider')
-  const handle = await persistence.open(id, 'read')
-  try {
-    const events: SessionEvent[] = []
-    for (;;) {
-      const page = await handle.read(events.length, HISTORY_PAGE)
-      events.push(...page.events)
-      if (page.events.length < HISTORY_PAGE) return events
-    }
-  } finally {
-    await handle[Symbol.asyncDispose]()
-  }
+async function observeBoundHistory(ctx: Context, id: SessionId): Promise<readonly SessionEvent[]> {
+  const query = ctx.get('sessionQuery')
+  if (query === undefined) throw new Error('tui-app: resuming a session needs a composed session query engine')
+  using observation = await query.observeSession(id, { projectionMode: 'none' })
+  return observation.events
 }
 
 /** The injected core services, read together after settlement. */
@@ -291,7 +279,20 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string): SessionHost
   }, seed ?? [])
   return {
     create: () => create(undefined, undefined),
-    resume: async id => bind((_selection, setup) => agents.resume({ resumeSessionId: id, setup }), await readHistory(ctx, id)),
+    resume: async (id) => {
+      const selection: ModelSelectionRef = { current: undefined, assembled: undefined }
+      const handle = await agents.resume({
+        resumeSessionId: id,
+        setup: (agentCtx) => { installModelSelection(agentCtx, selection) },
+      })
+      await handle.agent.whenIdle()
+      return {
+        agent: handle.agent,
+        selection,
+        history: await observeBoundHistory(ctx, id),
+        dispose: () => handle.dispose(),
+      }
+    },
     fork: async (id, turn) => create(await forkSeed(ctx, id, turn), id),
   }
 }
