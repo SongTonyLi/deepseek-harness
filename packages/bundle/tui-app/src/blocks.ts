@@ -798,14 +798,15 @@ export class AssistantBlock implements Component, AssistantSection {
       return this.markdown.render(width)
     }
     const tail = this.text.slice(prefix.length)
-    const cached = this.prefixCache
-    if (cached === undefined || cached.text !== prefix || cached.width !== width) {
+    let prefixLines = this.prefixCache
+    if (prefixLines === undefined || prefixLines.text !== prefix || prefixLines.width !== width) {
       this.applyMarkdown(this.prefixMarkdown, prefix, 'prefix')
-      this.prefixCache = { text: prefix, width, lines: this.prefixMarkdown.render(width) }
+      prefixLines = { text: prefix, width, lines: this.prefixMarkdown.render(width) }
+      this.prefixCache = prefixLines
     }
-    if (tail.trim() === '') return this.prefixCache.lines
+    if (tail.trim() === '') return prefixLines.lines
     this.applyMarkdown(this.markdown, tail, 'tail')
-    return joinFencePrefix(this.prefixCache.lines, tail, this.markdown.render(width))
+    return joinFencePrefix(prefixLines.lines, tail, this.markdown.render(width))
   }
 
   /**
