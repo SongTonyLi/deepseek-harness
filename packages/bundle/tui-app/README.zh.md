@@ -257,7 +257,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行 |
 | [`src/attach.ts`](src/attach.ts) | `/attach`：本地文件经附件存储成为图片或文件块 |
 | [`src/export.ts`](src/export.ts) | `/export`：通过导出包的归档辅助函数写出会话日志 ZIP |
-| [`src/blocks.ts`](src/blocks.ts) | 对话记录组件：用户提示、assistant 回复、工具卡片、系统提示词与注入上下文、通知；可导航的块暴露其各小节并绘制焦点标记条，可折叠的块则承载两个折叠键共用的那条标记 |
+| [`src/blocks.ts`](src/blocks.ts) | 对话记录组件：用户提示、assistant 回复、工具卡片、系统提示词与注入上下文、通知；可导航的块暴露其各小节并绘制焦点标记条，可折叠的块则承载两个折叠键共用的那条标记。每个块保留上次画出的行，回复还保留上次 Markdown 解析所着色的代码围栏，因此已稳定的对话记录每帧只花每块一次键比较，一次流式增量也只为发生变化的那个围栏着色 |
 | [`src/context.ts`](src/context.ts) | 把已记录的系统提示词与注入的用户消息投影为对话记录小节 |
 | [`src/navigation.ts`](src/navigation.ts) | 把对话记录看作各个小节、沿四条轴走遍它们的光标、这些小节归入的各轮次，以及检视面板的标题 |
 | [`src/inspector.ts`](src/inspector.ts) | 停靠的检视面板：带模式徽标的边框面板、小节标题、带编号且会折行的各部分选择行、折叠后的各行，及其挂载的组件 |
