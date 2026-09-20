@@ -56,7 +56,10 @@ function streamText(value: unknown): string {
 }
 
 interface Run {
+  /** Rendered words, with the terminal's own sequences dropped. */
   stdout: string
+  /** Everything the terminal was written, sequences included. */
+  raw: string
   stderr: string
   exitCode: number | undefined
 }
@@ -140,12 +143,13 @@ async function runScript(cwd: string, args: readonly string[], steps: readonly S
   })
   try {
     const result = await child
-    const stdout = plain(streamText(result.stdout))
+    const raw = streamText(result.stdout)
+    const stdout = plain(raw)
     const stderr = streamText(result.stderr)
     if (result.timedOut) {
       throw new Error(`tui smoke did not exit within ${String(PROCESS_TIMEOUT_MS / 1_000)}s. stdout:\n${stdout}\nstderr:\n${stderr}`)
     }
-    return { stdout, stderr, exitCode: result.exitCode }
+    return { stdout, raw, stderr, exitCode: result.exitCode }
   } finally {
     if (deadline !== undefined) clearTimeout(deadline)
   }
@@ -166,7 +170,10 @@ describe('tui profile keyless smoke', () => {
         { marker: 'Reasoning effort · cli-mock/cli-mock', keys: `${DOWN}${ENTER}` },
         { marker: 'effort off from the next request', keys: SHIFT_UP },
         { marker: ' ● READ ', keys: CTRL_G },
-        { marker: ' ● READER ', keys: ESCAPE },
+        // Closing restores the conversation's own screen rather than drawing
+        // it again, so the step that follows walks a section: what the
+        // terminal writes next is the conversation answering a key.
+        { marker: ' ● READER ', keys: `${ESCAPE}${SHIFT_UP}` },
         { marker: ' ● READ ', keys: '' },
       ])
       expect(first.exitCode, `stderr:\n${first.stderr}\nstdout:\n${first.stdout}`).toBe(0)
@@ -179,7 +186,7 @@ describe('tui profile keyless smoke', () => {
       expect(first.stdout).toContain('Reasoning effort · cli-mock/cli-mock')
       expect(first.stdout).toContain('effort off from the next request')
       // Read mode is docked chrome with its own legend; the reader is the
-      // full-screen overlay over the same conversation.
+      // full-screen surface that takes the terminal from the conversation.
       expect(first.stdout).toContain(' ● READ ')
       expect(first.stdout).toContain('Esc input')
       expect(first.stdout).toContain(' ● READER ')
@@ -187,7 +194,13 @@ describe('tui profile keyless smoke', () => {
       // keyboard and the readout states how far into that turn the reading is.
       expect(first.stdout).toContain('↑↓ scrolls · PgUp PgDn pages · ← turns · Esc closes')
       expect(first.stdout).toMatch(/turn \d+\/\d+ · row \d+\/\d+/u)
-      // The reader closed back onto the section it was opened from.
+      // The reader runs on the terminal's alternate screen: it switches away
+      // from the conversation and back, and never writes a row of itself onto
+      // the conversation's own screen.
+      const takes = first.raw.indexOf('\u001b[?1049h')
+      expect(takes).toBeGreaterThan(-1)
+      expect(first.raw.indexOf('\u001b[?1049l', takes)).toBeGreaterThan(takes)
+      // The conversation is underneath it, answering the walk again.
       const reader = first.stdout.indexOf(' ● READER ')
       expect(first.stdout.indexOf(' ● READ ', reader)).toBeGreaterThan(reader)
       const saved = /--resume (session-[\w-]+)/u.exec(first.stderr)

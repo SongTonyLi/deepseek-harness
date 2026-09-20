@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-18-tui-reader-overlay-and-esc-safety.md
-2026-09-18-tui-reader-overlay-and-esc-safety.md: cd729841222c8860030bdd2b9d124ee816aac6b1
-2026-09-18-tui-reader-overlay-and-esc-safety.zh.md: 97e87c66957817cf1be4069ba3b4a7e03af7ea53
+2026-09-18-tui-reader-overlay-and-esc-safety.md: 29783681d65ac71cf6bb6da6f0a1b73e5bd16f75
+2026-09-18-tui-reader-overlay-and-esc-safety.zh.md: 65a688d608d0f79ff94e9b30fb99e962f4d0ef80

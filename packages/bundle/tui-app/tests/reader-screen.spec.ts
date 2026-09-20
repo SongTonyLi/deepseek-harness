@@ -1,10 +1,10 @@
-/** The reader as a mounted overlay: what it re-reads per render, what each key means, and how it settles. */
+/** The reader pane: what it re-reads per render, what each key means, and how it settles. */
 
 import { describe, expect, it } from 'vitest'
 import { stripTerminalSequences } from '@earendil-works/pi-tui'
 import type { SectionSource } from '../src/navigation.ts'
 import { READER_MIN_COLUMNS } from '../src/reader.ts'
-import { ReaderPane, type ReaderExit } from '../src/reader-overlay.ts'
+import { ReaderPane, type ReaderExit } from '../src/reader-screen.ts'
 import { KEY } from './bench.ts'
 import { source, transcript } from './section-source.ts'
 import { createPalette } from '../src/style.ts'
@@ -13,34 +13,37 @@ import { createPalette } from '../src/style.ts'
 const PLAIN = createPalette(false)
 
 /**
- * A mounted reader over a transcript a spec can grow under it.
+ * A reader over a transcript a spec can grow under it.
  * @param options - the section to open on and the terminal size.
  * @returns the pane, the blocks it reads, and helpers to draw and type.
  */
 function mounted(options: { block?: number; part?: number; rows?: number; width?: number } = {}): {
   pane: ReaderPane
   blocks: SectionSource[]
-  exit: Promise<ReaderExit>
+  exits: ReaderExit[]
   draw(): string
   type(data: string): string
 } {
   const blocks = transcript()
   const rows = options.rows ?? 40
   const width = options.width ?? 95
+  const exits: ReaderExit[] = []
   const pane = new ReaderPane({
     palette: PLAIN,
     blocks: () => blocks,
     rows: () => rows,
     minColumns: READER_MIN_COLUMNS,
     cursor: { block: options.block ?? 2, part: options.part ?? 1 },
+    onExit: (exit) => { exits.push(exit) },
   })
   const draw = (): string => pane.render(width).map(stripTerminalSequences).join('\n')
-  // The overlay renders before the first key reaches it, as pi-tui does.
+  // The application draws the reader once when it takes the terminal, before
+  // the first key reaches it.
   draw()
   return {
     pane,
     blocks,
-    exit: pane.settled,
+    exits,
     draw,
     type(data: string): string {
       pane.handleInput(data)
@@ -128,12 +131,12 @@ describe('the reader pane', () => {
   it('closes on Escape from the turn it was reading and from the list', async () => {
     const reading = mounted()
     reading.pane.handleInput(KEY.escape)
-    await expect(reading.exit).resolves.toMatchObject({ target: 'transcript' })
+    expect(reading.exits).toMatchObject([{ target: 'transcript' }])
 
     const listed = mounted()
     listed.pane.handleInput(KEY.left)
     listed.pane.handleInput(KEY.escape)
-    await expect(listed.exit).resolves.toMatchObject({ target: 'transcript' })
+    expect(listed.exits).toMatchObject([{ target: 'transcript' }])
   })
 
   it('draws one panel at a time on a terminal too narrow for both', () => {
@@ -155,6 +158,7 @@ describe('the reader pane', () => {
       rows: () => rows,
       minColumns: READER_MIN_COLUMNS,
       cursor: { block: 3, part: 1 },
+      onExit: () => {},
     })
     const drawn = pane.render(95).map(stripTerminalSequences).join('\n')
     // The tool result is the turn's last section, far past one body of rows.
@@ -170,35 +174,37 @@ describe('the reader pane', () => {
     // Nothing else moves, and Escape still brings the keyboard back.
     expect(test.type(KEY.down)).toContain('terminal too small')
     test.pane.handleInput(KEY.escape)
-    await expect(test.exit).resolves.toMatchObject({ target: 'transcript' })
+    expect(test.exits).toMatchObject([{ target: 'transcript' }])
   })
 
   it('closes to the input on Ctrl+G and on withdrawal, and settles only once', async () => {
     const test = mounted()
     test.pane.handleInput(KEY.ctrlG)
     test.pane.withdraw()
-    await expect(test.exit).resolves.toMatchObject({ target: 'editor' })
+    expect(test.exits).toMatchObject([{ target: 'editor' }])
     // A key after the settlement changes nothing.
     expect(test.type(KEY.down)).toContain(' ● READER ')
 
     const withdrawn = mounted()
     withdrawn.pane.withdraw()
-    await expect(withdrawn.exit).resolves.toMatchObject({ target: 'editor' })
+    expect(withdrawn.exits).toMatchObject([{ target: 'editor' }])
   })
 
-  it('settles itself when the transcript it was reading is gone', async () => {
+  it('settles itself when the transcript it was reading is gone', () => {
     const blocks: SectionSource[] = transcript()
+    const exits: ReaderExit[] = []
     const pane = new ReaderPane({
       palette: PLAIN,
       blocks: () => blocks,
       rows: () => 40,
       minColumns: READER_MIN_COLUMNS,
       cursor: { block: 2, part: 1 },
+      onExit: (exit) => { exits.push(exit) },
     })
     expect(pane.render(95)).toHaveLength(40)
     blocks.length = 0
     expect(pane.render(95)).toEqual(Array.from({ length: 40 }, () => ''))
-    await expect(pane.settled).resolves.toMatchObject({ target: 'editor' })
+    expect(exits).toMatchObject([{ target: 'editor' }])
   })
 
   it('falls back to the newest section when the remembered one carries nothing', () => {
@@ -209,6 +215,7 @@ describe('the reader pane', () => {
       rows: () => 40,
       minColumns: READER_MIN_COLUMNS,
       cursor: { block: 0, part: 0 },
+      onExit: () => {},
     })
     expect(pane.render(95).map(stripTerminalSequences).join('\n')).toContain('still here')
   })
@@ -219,29 +226,23 @@ describe('the reader pane', () => {
     expect(test.draw()).toContain(' ● READER ')
   })
 
-  it('draws the share of its rows a reveal asks for, counted from the bottom rule up', () => {
+  it('fills the screen it was given, whatever the terminal is', () => {
     const blocks = transcript()
-    let reveal = 1
+    let rows = 40
     const pane = new ReaderPane({
       palette: PLAIN,
       blocks: () => blocks,
-      rows: () => 40,
+      rows: () => rows,
       minColumns: READER_MIN_COLUMNS,
       cursor: { block: 2, part: 1 },
-      reveal: () => reveal,
+      onExit: () => {},
     })
-    const whole = pane.render(95)
-    expect(whole).toHaveLength(40)
-    // The overlay is anchored at the bottom of the viewport, so a partial
-    // reveal keeps every line it draws on the row it settles on: the bottom
-    // rule arrives first and the title last.
-    reveal = 0
-    expect(pane.render(95)).toEqual(whole.slice(39))
-    reveal = 0.5
-    expect(pane.render(95)).toEqual(whole.slice(20))
-    // A reveal past either end asks for no fewer than one row and no more
-    // rows than the frame has.
-    reveal = 2
-    expect(pane.render(95)).toEqual(whole)
+    // The reader owns the whole alternate screen, so every row of it is the
+    // reader's to draw and a resize is answered by the next drawing.
+    expect(pane.render(95)).toHaveLength(40)
+    rows = 12
+    expect(pane.render(95)).toHaveLength(12)
+    rows = 60
+    expect(pane.render(95)).toHaveLength(60)
   })
 })

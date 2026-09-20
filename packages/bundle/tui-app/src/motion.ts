@@ -1,7 +1,6 @@
 /**
  * Chrome motion: the brief lift a docked surface draws when the keyboard
- * lands on it or the mark it holds moves, and the reveal the full-screen
- * reader grows and shrinks through.
+ * lands on it or the mark it holds moves.
  *
  * Pure. A motion is a clock plus a three-level intensity ramp, so nothing
  * here queries a terminal, builds a color, or arms a timer: the application
@@ -31,12 +30,6 @@ export const STEP_TICKS = 3
 
 /** Ticks one step of the status bar's own walk lasts. */
 export const SEGMENT_TICKS = 4
-
-/** Ticks the reader takes to grow to its full height. */
-export const READER_OPEN_TICKS = 6
-
-/** Ticks the reader takes to shrink away before it is taken down. */
-export const READER_CLOSE_TICKS = 4
 
 /** Share of a motion drawn at its peak. */
 const PEAK_SHARE = 1 / 3

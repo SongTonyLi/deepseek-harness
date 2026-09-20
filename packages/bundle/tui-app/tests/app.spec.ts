@@ -14,7 +14,7 @@ import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, REGION_LABELS, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
-import { ABOVE_WINDOW_TOAST, NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
+import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
 import { BENCH_NOW, KEY, bench } from './bench.ts'
 
@@ -621,8 +621,12 @@ describe('TuiApp', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(await test.screen()).toContain(' ● READER ')
+    const reading = test.terminal.written.length
     gate.release()
     await test.settle()
+    // The reader had the terminal, so the switch gives the conversation's own
+    // screen back before it draws the session that replaced it.
+    expect(test.terminal.written.slice(reading)).toContain('[?1049l')
     const after = await test.screen()
     expect(after).not.toContain(' ● READER ')
     expect(after).toContain('the transcript changed · reader closed')
@@ -789,7 +793,7 @@ describe('TuiApp', () => {
       ['terminal too small for the reader (needs ', 'reader.ts'],
       [QUIT_TOAST, 'toast.ts'],
       [NOTHING_TO_READ_TOAST, 'toast.ts'],
-      [ABOVE_WINDOW_TOAST, 'toast.ts'],
+      ['above the repaint window · opened in the reader', 'app.ts'],
       ['press Esc again to stop turn ', 'toast.ts'],
       ['Space expands', 'transcript.ts'],
       ['Ctrl+O expands', 'transcript.ts'],

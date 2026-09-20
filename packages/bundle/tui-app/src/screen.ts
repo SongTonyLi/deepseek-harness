@@ -17,10 +17,16 @@
  * far into a block the renderer can still follow it, and
  * {@link GuardedMainScreen} gives the application the one moment where that
  * question can be answered: after a frame was built and before it is written.
+ *
+ * {@link GuardedMainScreen.suspend} is the other half of that rule: a
+ * full-screen surface that takes the terminal holds the main screen off it
+ * entirely rather than drawing over the conversation, so no line of the
+ * conversation is rewritten while the surface is up and none of the surface's
+ * own rows can reach the terminal's scrollback.
  * @module @deepseek-ai/dsh-tui-app/screen
  */
 
-import { TuiMainScreen, type Component, type Terminal } from '@earendil-works/pi-tui'
+import { TuiMainScreen, type Terminal } from '@earendil-works/pi-tui'
 
 /**
  * How many times one frame is offered to the guard before it is written. Two
@@ -43,40 +49,6 @@ export function repaintFloor(start: number, viewportTop: number): number {
 }
 
 /**
- * Blank rows at the foot of the frame, which a surface mounts while it needs
- * the whole viewport.
- *
- * The renderer repaints a line only at or after {@link repaintFloor}'s own
- * `viewportTop`, a high-water mark a taller frame raises for good. A frame
- * that has since shrunk therefore leaves the top of the viewport out of
- * reach, and an overlay that may not draw there stops short of the screen.
- * These rows push the frame back up to that mark: the terminal scrolls by
- * exactly the shortfall, every line of the viewport becomes repaintable
- * again, and an overlay composited into the frame's last `terminal.rows`
- * lines covers all of them. They are never seen - the overlay is drawn over
- * them, and they are gone before it is.
- *
- * pi-tui's `Text` drops blank lines, so the rows are a component of their own.
- */
-export class ViewportPad implements Component {
-  /**
-   * @param rows - how many blank lines to draw, read on every render.
-   */
-  constructor(private readonly rows: () => number) {}
-
-  invalidate(): void {}
-
-  /**
-   * Draw the pad.
-   * @returns that many empty lines, and none at all where the frame already
-   * reaches the mark.
-   */
-  render(): string[] {
-    return Array.from({ length: Math.max(0, this.rows()) }, () => '')
-  }
-}
-
-/**
  * The main screen that settles each frame between building it and writing it.
  *
  * The guard is handed the frame's first repaintable line: the higher of the
@@ -87,8 +59,16 @@ export class ViewportPad implements Component {
  * tomorrow. Settling before the write also means a fade reaches the terminal
  * already settled instead of changing in the next frame, by which time its
  * lines may sit above the window.
+ *
+ * It can also be suspended, which stops every write to the terminal while
+ * leaving the renderer's record of the main screen exactly as it was. The
+ * terminal restores that same screen when the surface that took it gives it
+ * back, so the first frame after {@link GuardedMainScreen.resume} writes only
+ * what changed meanwhile.
  */
 export class GuardedMainScreen extends TuiMainScreen {
+  /** What draws instead while another surface holds the terminal; absent while this screen does. */
+  private onSuspendedRender: (() => void) | undefined
   /**
    * @param terminal - the terminal the tree renders into.
    * @param showHardwareCursor - whether the terminal's own cursor is the caret.
@@ -105,6 +85,65 @@ export class GuardedMainScreen extends TuiMainScreen {
     private readonly guard: (viewportTop: number, width: number, frameLines: number) => boolean,
   ) {
     super(terminal, showHardwareCursor)
+  }
+
+  /**
+   * Stop writing to the terminal, and answer every render request with
+   * `onRender` instead.
+   *
+   * Nothing about the renderer's record of the main screen changes, so the
+   * frame it will judge its next write against stays the frame the terminal
+   * still holds behind the surface that took over.
+   * @param onRender - called wherever a frame would have been written, so the
+   * surface that owns the terminal draws on the application's existing render
+   * requests rather than on a clock of its own.
+   */
+  suspend(onRender: () => void): void {
+    this.onSuspendedRender = onRender
+  }
+
+  /** Write to the terminal again, and draw whatever changed while suspended. */
+  resume(): void {
+    if (this.onSuspendedRender === undefined) return
+    this.onSuspendedRender = undefined
+    this.requestRender()
+  }
+
+  /**
+   * Request a frame, or draw the surface that suspended this screen.
+   * @param force - redraw from scratch; ignored while suspended, where
+   * discarding the record would lose the screen the terminal is holding.
+   */
+  override requestRender(force = false): void {
+    const suspended = this.onSuspendedRender
+    if (suspended === undefined) {
+      super.requestRender(force)
+      return
+    }
+    suspended()
+  }
+
+  /**
+   * Write a frame now, or draw the suspending surface now.
+   * @param force - redraw from scratch; ignored while suspended, as in
+   * {@link GuardedMainScreen.requestRender}.
+   */
+  override renderNow(force = false): void {
+    const suspended = this.onSuspendedRender
+    if (suspended === undefined) {
+      super.renderNow(force)
+      return
+    }
+    suspended()
+  }
+
+  /** Write the frame, unless another surface holds the terminal. */
+  protected override doRender(): void {
+    // A frame the renderer scheduled before the surface took the terminal
+    // reaches here after it; writing it would draw the conversation over the
+    // surface.
+    if (this.onSuspendedRender !== undefined) return
+    super.doRender()
   }
 
   /**
