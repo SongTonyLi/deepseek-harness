@@ -11,6 +11,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
+import { TOOL_RUNNING_ROW } from '../src/blocks.ts'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, REGION_LABELS, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
@@ -211,6 +212,158 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).toContain('[interrupted]')
   })
 
+  it('shows live send and receive tokens on the spinner for each model call', async () => {
+    const contextPressure = { projectedTokens: 141_100, pressureTokens: 50_000, contextWindow: 200_000 }
+    const test = await bench({
+      running: true,
+      projections: {
+        snapshot: () => ({ asOfSeq: -1, values: { contextPressure } }),
+        onChanged: () => () => {},
+      },
+    })
+    test.stream.start()
+    await test.settle()
+    expect(test.terminal.text()).toContain('thinking ↑141.1k tokens')
+    test.stream.chunk({ type: 'text-delta', index: 0, text: 'abcd' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('thinking ↑141.1k ↓1 tokens')
+    test.stream.chunk({ type: 'tool-call-delta', index: 1, id: 'call-1' as never, name: 'read', argumentsDelta: '' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('calling read ↑141.1k ↓1 tokens')
+    test.stream.chunk({ type: 'usage', usage: { inputTokens: 1200, outputTokens: 34 } })
+    test.stream.chunk({ type: 'text-delta', index: 2, text: 'xxxxxxxx' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('calling read ↑1.2k ↓34 tokens')
+    expect(test.terminal.text()).not.toContain('↓36')
+    test.stream.end({ kind: 'committed', eventType: 'assistant/message', seq: 1 as never })
+    await test.settle()
+    expect(test.terminal.text()).toContain('calling read ↑1.2k ↓34 tokens')
+    test.stream.start()
+    const nextCall = await test.screen()
+    expect(nextCall).toContain('thinking ↑141.1k tokens')
+    expect(nextCall).not.toContain('thinking ↑141.1k ↓')
+    test.appendAssistant(
+      [{ type: 'text', text: 'done' }],
+      { usage: { inputTokens: 1200, outputTokens: 34 } },
+    )
+    test.terminal.type(KEY.shiftDown)
+    const screen = await test.screen()
+    expect(screen).toContain('↑1.2k ↓34 ctx 1.2k')
+    expect(screen).not.toContain('thinking ↑')
+    test.setStatus('idle')
+    const idle = await test.screen()
+    expect(idle).not.toContain('thinking')
+    expect(idle).toContain('↑1.2k ↓34 ctx 1.2k')
+  })
+
+  it('seeds the next call\'s send from the last committed prompt when context is unknown', async () => {
+    const test = await bench({ running: true })
+    test.appendAssistant(
+      [{ type: 'text', text: 'first' }],
+      { usage: { inputTokens: 1200, outputTokens: 34 } },
+    )
+    await test.settle()
+    test.stream.start()
+    await test.settle()
+    expect(test.terminal.text()).toContain('thinking ↑1.2k tokens')
+    test.stream.chunk({ type: 'text-delta', index: 0, text: 'abcd' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('thinking ↑1.2k ↓1 tokens')
+  })
+
+  it('estimates receive from a stream that never sent start, and ignores a zero context seed', async () => {
+    const test = await bench({
+      running: true,
+      projections: {
+        snapshot: () => ({
+          asOfSeq: -1,
+          values: { contextPressure: { projectedTokens: 0, pressureTokens: 0, contextWindow: 128_000 } },
+        }),
+        onChanged: () => () => {},
+      },
+    })
+    test.stream.chunk({ type: 'text-delta', index: 0, text: 'abcd' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('thinking ↓1 tokens')
+    expect(test.terminal.text()).not.toContain('thinking ↑')
+  })
+
+  it('draws a tool card as soon as the model names the call, then replaces the loading row with the result', async () => {
+    const test = await bench({
+      before: async (ctx) => {
+        await ctx.plugin(SystemPrompt)
+        await ctx.plugin(ToolRuntime)
+        ctx.tools.register({
+          name: 'read',
+          description: 'read a file',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+          output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+          execute: () => Promise.resolve('unused'),
+          presentCall: args => ({ card: 'generic', title: (args as { path: string }).path }),
+          presentResult: (_args, result) => ({
+            card: 'generic',
+            content: result.content,
+          }),
+        })
+      },
+    })
+    test.stream.start()
+    test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'read', argumentsDelta: '' })
+    await test.settle()
+    let screen = test.terminal.text()
+    expect(screen).toContain('● read')
+    expect(screen).toContain(TOOL_RUNNING_ROW)
+    expect(screen).not.toContain('a.ts')
+    test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, argumentsDelta: '{"path":"a.ts"}' })
+    await test.settle()
+    screen = test.terminal.text()
+    expect(screen).toContain('● read a.ts')
+    expect(screen).toContain(TOOL_RUNNING_ROW)
+    test.stream.end({ kind: 'committed', eventType: 'assistant/message', seq: 1 as never })
+    test.appendToolCall('call-1', 'read', { path: 'a.ts' })
+    await test.settle()
+    expect(test.terminal.text().split('● read a.ts')).toHaveLength(2)
+    test.appendToolResult('call-1', [{ type: 'text', text: 'export const a = 1' }])
+    screen = await test.screen()
+    expect(screen).toContain('read a.ts')
+    expect(screen).toContain('export const a = 1')
+    expect(screen.split('\n').some(line => line.trim() === `│ ${TOOL_RUNNING_ROW}`)).toBe(false)
+  })
+
+  it('drops a streamed tool card when the attempt is abandoned', async () => {
+    const test = await bench()
+    test.stream.start()
+    test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'write', argumentsDelta: '' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('● write')
+    expect(test.terminal.text()).toContain(TOOL_RUNNING_ROW)
+    test.stream.end({ kind: 'abandoned' })
+    const screen = await test.screen()
+    expect(screen).not.toContain('● write')
+    expect(screen.split('\n').some(line => line.trim() === `│ ${TOOL_RUNNING_ROW}`)).toBe(false)
+  })
+
+  it('ignores unnamed or id-less tool-call deltas and drops a card on an abandoned attempt retry', async () => {
+    const test = await bench({ running: true })
+    test.stream.start()
+    test.stream.chunk({ type: 'tool-call-delta', index: 0, id: '' as never, name: 'read', argumentsDelta: '' })
+    test.stream.chunk({ type: 'tool-call-delta', index: 1, id: 'call-x' as never, argumentsDelta: '{' })
+    test.stream.chunk({ type: 'tool-call-delta', index: 2, id: 'call-y' as never, name: '', argumentsDelta: '' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('calling read')
+    expect(test.terminal.text()).not.toContain('● read')
+    test.stream.chunk({ type: 'tool-call-delta', index: 3, id: 'call-2' as never, name: 'edit', argumentsDelta: '' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('● edit')
+    test.stream.end({ kind: 'committed', eventType: 'assistant/attempt', seq: 1 as never })
+    const dropped = await test.screen()
+    expect(dropped).not.toContain('● edit')
+    test.session.append('tool/call', { turn: 1, step: 1, callId: 'call-bad' as never, name: 'mystery', arguments: '{bad' })
+    await test.settle()
+    expect(test.terminal.text()).toContain('● mystery')
+    expect(test.terminal.text()).toContain('{bad')
+  })
+
   it('renders tool cards from presenters, folds their bodies, and toggles them with Ctrl+O', async () => {
     const test = await bench({
       toolPreviewLines: 2,
@@ -241,6 +394,7 @@ describe('TuiApp', () => {
     await test.settle()
     expect(test.terminal.text()).toContain('bash ls -la')
     expect(test.terminal.text()).toContain('cwd: /work')
+    expect(test.terminal.text()).toContain(TOOL_RUNNING_ROW)
     test.appendToolResult('call-1', [{ type: 'text', text: 'a\nb\nc\nd\n' }], true, { extra: 1 })
     await test.settle()
     expect(test.terminal.text()).toContain('… 4 more rows · Ctrl+O expands')

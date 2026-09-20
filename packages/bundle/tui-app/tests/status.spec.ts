@@ -191,7 +191,7 @@ describe('statusReport', () => {
     expect(statusReport(facts)).toEqual([
       'context: ~54k / 128k (42%)',
       '  system ~1.2k · tools ~3.4k · messages ~30k',
-      'tokens: ↑1.0k uncached · cache read 3.0k · cache write 0 · ↓400 · cache hit 75%',
+      'tokens: ↑1k uncached · cache read 3k · cache write 0 · ↓400 · cache hit 75%',
       'session: 2 turns · 5 steps · model 45.3s · tools 3.1s · first token 0.8s avg · 42 tok/s',
       'todos: 1 done · 1 active · 1 pending',
       '  ✓ a',

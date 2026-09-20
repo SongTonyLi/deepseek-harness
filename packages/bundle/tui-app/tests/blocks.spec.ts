@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Markdown } from '@earendil-works/pi-tui'
-import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, TOOL_RUNNING_ROW, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
 import type { CodeSpan } from '../src/transcript.ts'
@@ -50,7 +50,7 @@ describe('blocks', () => {
 
   it('draws a tool card with its status glyph and folded body', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
-    expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w'])
+    expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w', `  │ ${TOOL_RUNNING_ROW}`])
     block.setResult(['a', 'b', 'c'], false)
     expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w', '  │ a', '  │ … 2 more rows · Ctrl+O expands'])
     block.setExpanded(true)
@@ -216,6 +216,17 @@ describe('navigable sections', () => {
     ])
   })
 
+  it('replaces the call half and drops the loading row once the tool answers', () => {
+    const block = new ToolBlock(theme, 'read', { title: '', lines: [] }, 1)
+    expect(block.render(40)).toEqual(['', '● read', `  │ ${TOOL_RUNNING_ROW}`])
+    block.setCall('read', { title: 'a.ts', lines: [] })
+    expect(block.name).toBe('read')
+    expect(block.title).toBe('a.ts')
+    expect(block.render(40)).toEqual(['', '● read a.ts', `  │ ${TOOL_RUNNING_ROW}`])
+    block.setResult(['ok'], false)
+    expect(block.render(40)).toEqual(['', '● read a.ts', '  │ ok'])
+  })
+
   it('reports a card as its call, and its result once the tool answered', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'git status', lines: ['cwd: /w'] }, 5)
     expect(block.title).toBe('git status')
@@ -291,6 +302,7 @@ describe('the focus gutter', () => {
       '│ ',
       '┃ \u001b[2m● bash ls\u001b[22m',
       '┃ \u001b[2m  │ cwd: /w\u001b[22m',
+      `┃ \u001b[2m  │ ${TOOL_RUNNING_ROW}\u001b[22m`,
     ])
   })
 })

@@ -53,6 +53,9 @@ const NO_ARGUMENTS = '(no arguments)'
 /** What the result section reports for a tool that answered with nothing. */
 const NO_OUTPUT = '(no output)'
 
+/** Body row a running tool card draws until the result lands. */
+export const TOOL_RUNNING_ROW = '…'
+
 /** Shared presentation settings every block reads. */
 export interface BlockTheme {
   palette: Palette
@@ -845,8 +848,10 @@ export type ToolCardStatus = 'running' | 'done' | 'error'
  * A tool call card: status glyph, tool name, headline, then a foldable body.
  *
  * The card arrives in two pieces, and each floats out on its own: the header
- * and the call rows when the call is logged, the result rows when the tool
- * answers. A card rebuilt from history carries neither fade.
+ * and the call rows when the model starts the call (a stream delta, or the
+ * logged `tool/call`), the result rows when the tool answers. While it runs
+ * the body carries {@link TOOL_RUNNING_ROW} in place of a result. A card
+ * rebuilt from history carries neither fade.
  */
 export class ToolBlock implements Component, ToolSection, Foldable {
   readonly navigable = true as const
@@ -867,15 +872,25 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private highlightLevel: MotionLevel = 0
   /** The coloured, folded, wrapped body, by width, fold, focus, status, and result. */
   private readonly drawn = new LastDrawn<ToolLayout>()
-  /** Counts every result the card was given. */
+  /** Counts every call or result the card was given. */
   private revision = 0
+  private toolName: string
+  private call: ToolCallText
 
   constructor(
     private readonly theme: BlockTheme,
-    readonly name: string,
-    private readonly call: ToolCallText,
+    name: string,
+    call: ToolCallText,
     readonly turn: number,
-  ) {}
+  ) {
+    this.toolName = name
+    this.call = call
+  }
+
+  /** The tool the model called. */
+  get name(): string {
+    return this.toolName
+  }
 
   /** The card headline, as the section heading names this call. */
   get title(): string {
@@ -903,6 +918,18 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   setHighlight(part: number | undefined, level: MotionLevel = 0): void {
     this.highlight = part
     this.highlightLevel = level
+  }
+
+  /**
+   * Replace the call half as streamed arguments arrive or the logged call
+   * confirms them.
+   * @param name - the tool the model called.
+   * @param call - the headline and rows for those arguments.
+   */
+  setCall(name: string, call: ToolCallText): void {
+    this.toolName = name
+    this.call = call
+    this.revision += 1
   }
 
   /**
@@ -1010,24 +1037,28 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const glyph = this.status === 'running'
       ? palette.warning('●')
       : this.status === 'done' ? palette.success('●') : palette.error('●')
-    const header = `${glyph} ${palette.bold(this.name)}${this.call.title === '' ? '' : ` ${palette.dim(this.call.title)}`}`
-    const body = [...this.call.lines, ...this.resultLines]
+    const header = `${glyph} ${palette.bold(this.toolName)}${this.call.title === '' ? '' : ` ${palette.dim(this.call.title)}`}`
+    const loading = this.status === 'running' ? [TOOL_RUNNING_ROW] : []
+    const body = [...this.call.lines, ...loading, ...this.resultLines]
     // The spans align with the body by index; a half with no code gets a
-    // run of undefined so the result spans keep their offsets.
+    // run of undefined so the result spans keep their offsets. The loading
+    // row is never code.
     const code = this.call.code === undefined && this.resultCode === undefined
       ? undefined
       : [
         ...this.call.code ?? new Array<undefined>(this.call.lines.length).fill(undefined),
+        ...new Array<undefined>(loading.length).fill(undefined),
         ...this.resultCode ?? new Array<undefined>(this.resultLines.length).fill(undefined),
       ]
     // Truncation runs over the whole body, so the kept rows can stop inside
     // the call rows; how many of them survived splits the two fade groups.
-    // The fold marker is past every span, so it always draws plain.
+    // The fold marker is past every span, so it always draws plain. The
+    // loading row fades with the call, because it is the call's pending half.
     const kept = this.expanded
       ? body
       : foldRows(body, this.theme.toolPreviewLines, hidden => foldMarker(hidden, marked ? 'marked' : 'transcript'))
     const shown = paintDiffRows(paintCodeRows(kept, code, this.theme.codeHighlight), kept, palette)
-    const callCount = Math.min(this.call.lines.length, shown.length)
+    const callCount = Math.min(this.call.lines.length + loading.length, shown.length)
     const inner = Math.max(1, outer - 4)
     const rows = (lines: readonly string[]): string[] =>
       lines.flatMap(line => wrapTextWithAnsi(line, inner).map(part => `  ${palette.dim('│')} ${part}`))

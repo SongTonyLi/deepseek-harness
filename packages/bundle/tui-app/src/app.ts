@@ -30,7 +30,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
-import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
@@ -158,12 +158,15 @@ import {
   addUsage,
   contentText,
   describeFailure,
+  estimateTokens,
   formatElapsed,
+  formatLiveUsage,
   formatUsage,
   parseArguments,
   toolCallText,
   toolResultBody,
   turnEndNotice,
+  withLiveUsage,
   type UsageTotals,
 } from './transcript.ts'
 
@@ -560,6 +563,10 @@ export class TuiApp {
   private readonly theme: BlockTheme
   private readonly toolBlocks = new Map<ToolCallId, ToolBlock>()
   private readonly toolArguments = new Map<ToolCallId, unknown>()
+  /** Raw argument text accumulated from `tool-call-delta` chunks, keyed by call id. */
+  private readonly toolStreamArgs = new Map<ToolCallId, string>()
+  /** Cards mounted from the live stream that no logged `tool/call` has confirmed yet. */
+  private readonly unconfirmedTools = new Map<ToolCallId, ToolBlock>()
   private readonly submittedIds = new Set<string>()
   private readonly disposers: (() => void)[] = []
   /** Turn facts of the bound session's todo lines, keyed by content. */
@@ -659,6 +666,14 @@ export class TuiApp {
   /** Serializes `/attach` reads so pending attachments keep the typed order. */
   private attaching = Promise.resolve()
   private usage: UsageTotals = EMPTY_USAGE
+  /** The in-flight model call's tokens, shown on the spinner and in the footer. */
+  private liveUsage: TokenUsage | undefined
+  /** Streamed characters of the current call, used until a usage chunk arrives. */
+  private streamedChars = 0
+  /** Whether {@link TuiApp.liveUsage} came from a provider `usage` chunk. */
+  private usageExact = false
+  /** Spinner label without the live ↑↓ suffix (`thinking`, `calling read`, …). */
+  private loaderActivity = 'thinking'
   private lastCtrlC = 0
   private stopped = false
 
@@ -867,6 +882,8 @@ export class TuiApp {
     this.chat.clear()
     this.toolBlocks.clear()
     this.toolArguments.clear()
+    this.toolStreamArgs.clear()
+    this.unconfirmedTools.clear()
     this.submittedIds.clear()
     this.todoTurns.clear()
     this.turn = 0
@@ -876,6 +893,7 @@ export class TuiApp {
     this.endFade()
     this.blockFades.clear()
     this.usage = EMPTY_USAGE
+    this.clearLiveUsage()
     this.pending = []
     this.queueView = []
     this.queueSelection = undefined
@@ -993,9 +1011,12 @@ export class TuiApp {
         this.statusSlot.addChild(this.loader)
         this.loader.start()
       }
+      this.refreshLoader()
     } else if (this.statusSlot.children.length > 0) {
       this.loader.stop()
       this.statusSlot.removeChild(this.loader)
+      this.loaderActivity = 'thinking'
+      this.clearLiveUsage()
       this.loader.setMessage('thinking')
     }
     this.tui.requestRender()
@@ -1026,7 +1047,7 @@ export class TuiApp {
           queuedNextStep: inbox.nextStep.length,
         },
       },
-      usage: formatUsage(this.usage),
+      usage: formatUsage(withLiveUsage(this.usage, this.liveUsage)),
       facts: this.statusFacts(),
       cwd: this.deps.cwd,
       home: this.home,
@@ -3515,22 +3536,33 @@ export class TuiApp {
       case 'start':
         this.streaming = undefined
         this.endFade()
+        this.beginLiveUsage()
+        if (this.dropUnconfirmedTools()) this.tui.requestRender()
         return
       case 'chunk': {
         const chunk = frame.chunk
         switch (chunk.type) {
           case 'text-delta':
-            if (chunk.text !== '') this.appendStreamedText(chunk.text)
+            if (chunk.text !== '') {
+              this.appendStreamedText(chunk.text)
+              this.noteStreamedChars(chunk.text.length)
+            }
             break
           case 'reasoning-delta':
-            if (chunk.text !== '') this.appendStreamedReasoning(chunk.text)
+            if (chunk.text !== '') {
+              this.appendStreamedReasoning(chunk.text)
+              this.noteStreamedChars(chunk.text.length)
+            }
             break
           case 'tool-call-delta':
-            if (chunk.name !== undefined) this.loader.setMessage(`calling ${chunk.name}`)
+            this.onToolCallDelta(chunk)
+            this.noteStreamedChars(chunk.argumentsDelta.length)
+            break
+          case 'usage':
+            this.applyLiveUsage(chunk.usage)
             break
           case 'block-start':
           case 'block-end':
-          case 'usage':
           case 'finish':
             break
           /* v8 ignore next -- closed-union exhaustiveness guard */
@@ -3541,9 +3573,14 @@ export class TuiApp {
         return
       }
       case 'end':
-        // An abandoned attempt keeps what it streamed; the retry starts a new block.
+        // An abandoned attempt keeps streamed text; unconfirmed tool cards do
+        // not, because those calls never ran. A retry starts a new block.
         this.streaming = undefined
         this.endFade()
+        if (frame.outcome.kind === 'abandoned'
+          || (frame.outcome.kind === 'committed' && frame.outcome.eventType === 'assistant/attempt')) {
+          this.dropUnconfirmedTools()
+        }
         this.tui.requestRender()
         return
       /* v8 ignore next -- closed-union exhaustiveness guard */
@@ -3586,21 +3623,15 @@ export class TuiApp {
         this.streamingBlock().commit(text, reasoning, interrupted === true)
         this.streaming = undefined
         this.endFade()
-        if (usage !== undefined) {
-          this.usage = addUsage(this.usage, usage)
-          this.refreshFooter()
-        }
+        this.clearLiveUsage()
+        if (usage !== undefined) this.usage = addUsage(this.usage, usage)
+        this.refreshFooter()
         break
       }
       case 'tool/call': {
         const { callId, name, arguments: argumentsJson } = event.data
-        const args = parseArguments(argumentsJson)
-        this.toolArguments.set(callId, args)
-        const block = new ToolBlock(this.theme, name, toolCallText(argumentsJson, this.presentCall(name, args)), this.turn)
-        block.setExpanded(this.toolsExpanded)
-        this.toolBlocks.set(callId, block)
-        this.chat.addChild(block)
-        this.fadeBlock((fade) => { block.setFade(fade) })
+        this.toolStreamArgs.delete(callId)
+        this.upsertToolCard(callId, name, argumentsJson, 'log')
         break
       }
       case 'tool/result': {
@@ -3612,13 +3643,14 @@ export class TuiApp {
         const body = toolResultBody(view, result.content)
         block.setResult(body.lines, isError, body.code)
         this.fadeBlock((fade) => { block.setResultFade(fade) })
-        this.loader.setMessage('thinking')
+        this.setLoaderActivity('thinking')
         break
       }
       case 'turn/end': {
         this.turnStartedAt = undefined
         this.updateTicker()
         this.endFade()
+        this.clearLiveUsage()
         this.refreshFooter()
         const notice = turnEndNotice(event.data.reason)
         if (notice !== undefined) this.notice(notice, event.data.reason.kind === 'error' ? 'error' : 'dim')
@@ -3642,12 +3674,15 @@ export class TuiApp {
         break
       }
       case 'llm/retry':
-        this.loader.setMessage(retryMessage(event.data))
+        this.setLoaderActivity(retryMessage(event.data))
         break
       default:
         return
     }
     this.tui.requestRender()
+    // Paint the running card before the loop continues into prepare/execute,
+    // so a fast tool does not land its result in the same unread frame.
+    if (event.type === 'tool/call' && !this.replaying) this.tui.renderNow()
   }
 
   /**
@@ -3707,6 +3742,142 @@ export class TuiApp {
     const block = new ContextBlock(this.theme, title, parts, turn)
     block.setExpanded(this.toolsExpanded)
     this.chat.addChild(block)
+  }
+
+  /**
+   * Replace the spinner's activity word and redraw its live ↑↓ suffix.
+   * @param activity - `thinking`, `calling <name>`, or a retry notice.
+   */
+  private setLoaderActivity(activity: string): void {
+    this.loaderActivity = activity
+    this.refreshLoader()
+  }
+
+  /**
+   * Start a new model call's live counters: seed send from the projected
+   * next-request size or the last committed prompt, and zero receive.
+   */
+  private beginLiveUsage(): void {
+    this.streamedChars = 0
+    this.usageExact = false
+    this.liveUsage = { inputTokens: this.seedLiveSend(), outputTokens: 0 }
+    this.loaderActivity = 'thinking'
+    this.refreshLiveUsage()
+  }
+
+  /**
+   * Prompt tokens the current call is likely sending, before a usage chunk.
+   * @returns context occupancy when the projection has one, else the last
+   * committed prompt size, else 0.
+   */
+  private seedLiveSend(): number {
+    const used = this.statusFacts().context?.used
+    if (used !== undefined && used > 0) return used
+    return this.usage.lastInputTokens
+  }
+
+  /**
+   * Grow the receive estimate from streamed characters until the provider
+   * reports usage.
+   * @param chars - characters just appended to the live stream.
+   */
+  private noteStreamedChars(chars: number): void {
+    if (chars <= 0 || this.usageExact) return
+    this.streamedChars += chars
+    const send = this.liveUsage === undefined ? this.seedLiveSend() : this.liveUsage.inputTokens
+    this.liveUsage = { inputTokens: send, outputTokens: estimateTokens(this.streamedChars) }
+    this.refreshLiveUsage()
+  }
+
+  /**
+   * Replace the live counters with a provider usage chunk.
+   * @param usage - the call's reported usage.
+   */
+  private applyLiveUsage(usage: TokenUsage): void {
+    this.usageExact = true
+    this.liveUsage = usage
+    this.refreshLiveUsage()
+  }
+
+  /** Forget the in-flight call's counters and drop them from the spinner and footer. */
+  private clearLiveUsage(): void {
+    this.liveUsage = undefined
+    this.streamedChars = 0
+    this.usageExact = false
+    this.refreshLiveUsage()
+  }
+
+  /** Redraw the spinner and the footer from the current live counters. */
+  private refreshLiveUsage(): void {
+    this.refreshLoader()
+    this.refreshFooter()
+  }
+
+  /** Draw the spinner label plus the current call's ↑send ↓receive suffix. */
+  private refreshLoader(): void {
+    const suffix = formatLiveUsage(this.liveUsage)
+    this.loader.setMessage(suffix === '' ? this.loaderActivity : `${this.loaderActivity} ${suffix}`)
+  }
+
+  /**
+   * Mount or refresh a tool card from a stream delta: the name as soon as
+   * the model sends one, then the presenter headline once the arguments
+   * parse as JSON.
+   * @param chunk - one `tool-call-delta` of the live assistant stream.
+   */
+  private onToolCallDelta(chunk: Extract<StreamChunk, { type: 'tool-call-delta' }>): void {
+    if (chunk.name !== undefined && chunk.name !== '') this.setLoaderActivity(`calling ${chunk.name}`)
+    if (chunk.id === '') return
+    const argumentsJson = (this.toolStreamArgs.get(chunk.id) ?? '') + chunk.argumentsDelta
+    this.toolStreamArgs.set(chunk.id, argumentsJson)
+    const name = chunk.name === '' ? undefined : (chunk.name ?? this.toolBlocks.get(chunk.id)?.name)
+    if (name === undefined) return
+    this.upsertToolCard(chunk.id, name, argumentsJson, 'stream')
+  }
+
+  /**
+   * Draw one tool card, creating it on the first sighting and updating the
+   * call half when later arguments arrive. A streamed card stays unconfirmed
+   * until the matching `tool/call` is logged.
+   * @param callId - the model's call id.
+   * @param name - the tool name.
+   * @param argumentsJson - arguments accumulated so far, or the logged string.
+   * @param source - `stream` for a live delta, `log` for the durable call.
+   */
+  private upsertToolCard(callId: ToolCallId, name: string, argumentsJson: string, source: 'stream' | 'log'): void {
+    const args = parseArguments(argumentsJson)
+    if (args !== undefined) this.toolArguments.set(callId, args)
+    const call = source === 'stream' && args === undefined
+      ? { title: '', lines: [] }
+      : toolCallText(argumentsJson, args === undefined ? undefined : this.presentCall(name, args))
+    const existing = this.toolBlocks.get(callId)
+    if (existing !== undefined) {
+      existing.setCall(name, call)
+      if (source === 'log') this.unconfirmedTools.delete(callId)
+      return
+    }
+    const block = new ToolBlock(this.theme, name, call, this.turn)
+    block.setExpanded(this.toolsExpanded)
+    this.toolBlocks.set(callId, block)
+    this.chat.addChild(block)
+    this.fadeBlock((fade) => { block.setFade(fade) })
+    if (source === 'stream') this.unconfirmedTools.set(callId, block)
+  }
+
+  /**
+   * Take down every card the live stream mounted that no `tool/call` confirmed.
+   * @returns true when at least one card left the transcript.
+   */
+  private dropUnconfirmedTools(): boolean {
+    if (this.unconfirmedTools.size === 0) return false
+    for (const [callId, block] of this.unconfirmedTools) {
+      this.chat.removeChild(block)
+      this.toolBlocks.delete(callId)
+      this.toolArguments.delete(callId)
+      this.toolStreamArgs.delete(callId)
+    }
+    this.unconfirmedTools.clear()
+    return true
   }
 
   private presentCall(name: string, args: unknown): ToolCallView | undefined {

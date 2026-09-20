@@ -180,7 +180,7 @@ describe('buildFooterSegments', () => {
     ])
     expect(rows(built, 'usage')).toEqual([
       'this terminal: ↑1.2k ↓300 ctx 900',
-      'tokens: ↑1.0k uncached · cache read 3.0k · cache write 0 · ↓400 · cache hit 75%',
+      'tokens: ↑1k uncached · cache read 3k · cache write 0 · ↓400 · cache hit 75%',
       '/status prints all of these sections',
     ])
     expect(rows(built, 'goal')).toEqual([
