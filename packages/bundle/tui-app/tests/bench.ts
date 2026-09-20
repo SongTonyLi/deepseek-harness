@@ -179,6 +179,7 @@ export const KEY = {
 export interface AgentCalls {
   followups: UserMessage[]
   steers: UserMessage[]
+  injections: UserMessage[]
   cancels: number
   /** The options of the last cancel, e.g. `{ keepInbox: true }`. */
   cancelOptions: unknown
@@ -352,7 +353,7 @@ export async function bench(options: {
     ctx.provide('subagents', { listDescendants: (sessionId: SessionId) => listDescendants(sessionId) } as never)
   }
   await options.before?.(ctx)
-  const calls: AgentCalls = { followups: [], steers: [], cancels: 0, cancelOptions: undefined }
+  const calls: AgentCalls = { followups: [], steers: [], injections: [], cancels: 0, cancelOptions: undefined }
   // Every Agent the host binds shares the status `setStatus` moves, so a spec
   // that switches sessions keeps driving one scripted Agent; a child created
   // with `createChild` carries its own.
@@ -375,7 +376,7 @@ export async function bench(options: {
         send: () => {},
         followup: (message) => { calls.followups.push(message) },
         steer: (message) => { calls.steers.push(message) },
-        inject: () => {},
+        inject: (message) => { calls.injections.push(message) },
         whenIdle: () => Promise.resolve(),
       }
       await createOptions.setup?.(ownerCtx, agent)

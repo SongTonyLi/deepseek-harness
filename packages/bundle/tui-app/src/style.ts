@@ -68,6 +68,23 @@ export function createPalette(enabled: boolean): Palette {
 }
 
 /**
+ * Paint added and removed diff rows while leaving context and metadata rows
+ * unchanged. `source` stays plain so syntax-colored rows can be classified.
+ * @param rows - rows after optional syntax highlighting.
+ * @param source - corresponding plain rows carrying the diff prefixes.
+ * @param palette - active terminal palette.
+ * @returns the rows with additions green and removals red.
+ */
+export function paintDiffRows(rows: readonly string[], source: readonly string[], palette: Palette): string[] {
+  return rows.map((row, index) => {
+    const plain = source[index]
+    if (plain?.startsWith('+ ') === true) return palette.success(row)
+    if (plain?.startsWith('- ') === true) return palette.error(row)
+    return row
+  })
+}
+
+/**
  * Decide whether the terminal gets color: `NO_COLOR` (any non-empty value)
  * wins, then a non-empty non-zero `FORCE_COLOR`, then whether stdout is a TTY.
  * @param env - the process environment.

@@ -30,7 +30,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
-import { ReasoningEffortId, createUserMessage, type LlmModelReasoningInfo, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, createUserMessage, type LlmModelReasoningInfo, type MessageId, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
@@ -125,6 +125,7 @@ import {
   type FooterSegmentId,
 } from './footer.ts'
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
+import { queuePanelRows, renderQueuePanel, type QueuePanelRow } from './queue-panel.ts'
 import { READER_HINTS } from './reader.ts'
 import { ReaderPane, type ReaderExit } from './reader-overlay.ts'
 import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
@@ -149,7 +150,7 @@ import {
   toastDrawable,
   toastOverlay,
 } from './toast.ts'
-import { editorTheme, type Palette } from './style.ts'
+import { editorTheme, paintDiffRows, type Palette } from './style.ts'
 import {
   EMPTY_USAGE,
   addUsage,
@@ -433,6 +434,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'sessions', description: 'Switch to another session' },
   { name: 'resume', description: 'Resume a previous session' },
   { name: 'new', description: 'Start a new session' },
+  { name: 'clear', description: 'Start a new session with empty context; previous session stays on disk (resumable with /resume)' },
   { name: 'fork', description: 'Fork this session at its last completed turn (/fork <turn> for an earlier one)' },
   { name: 'title', description: 'Rename this session (/title <text>)' },
   { name: 'attach', description: 'Attach a file or image to the next prompt (/attach <path>, /attach clear)' },
@@ -530,6 +532,14 @@ export class TuiApp {
   private readonly queueSlot = new Container()
   /** The prompts queued for the next turn or step, drawn above the editor until the loop claims them. */
   private readonly queue: Text
+  /** Rows of the last queued-prompt draw, in claim order. */
+  private queueView: readonly QueuePanelRow[] = []
+  /** Pending prompt held while the queue panel owns the keyboard. */
+  private queueSelection: MessageId | undefined
+  /** A removed queued prompt whose text is being revised in the editor. */
+  private queueDraft: UserMessage | undefined
+  /** Suppresses the empty-queue focus handoff during a synchronous inbox transfer. */
+  private transferringQueue = false
   /** Holds {@link panel} exactly while the bound session has subagent rows. */
   private readonly panelSlot = new Container()
   /** Blank rows that give the mounted reader the whole viewport; see {@link ViewportPad}. */
@@ -806,6 +816,7 @@ export class TuiApp {
   /** Release the terminal and tell the host to exit; later calls are no-ops. */
   stop(): void {
     if (this.stopped) return
+    this.restoreQueueDraft()
     this.stopped = true
     this.updateTicker()
     this.updateFadeTicker()
@@ -827,6 +838,10 @@ export class TuiApp {
 
   /** Draw `next` as the terminal's session: clear the transcript and replay its history. */
   private bind(next: BoundSession): void {
+    if (this.queueDraft !== undefined) {
+      this.restoreQueueDraft()
+      this.editor.setText('')
+    }
     this.bound = next
     // The blocks the transcript focus names are about to be discarded, so the
     // keyboard goes back to the editor and the focus gutter with it, and the
@@ -853,6 +868,8 @@ export class TuiApp {
     this.blockFades.clear()
     this.usage = EMPTY_USAGE
     this.pending = []
+    this.queueView = []
+    this.queueSelection = undefined
     this.subagentEntries = []
     this.panelSelection = undefined
     this.listingFailure = undefined
@@ -1015,22 +1032,35 @@ export class TuiApp {
    * directly under the conversation the rest of the time.
    */
   private refreshQueue(): void {
-    const palette = this.deps.palette
     const inbox = this.agent.inbox
-    const row = (label: string, message: UserMessage): string =>
-      `${palette.dim(`⏳ ${label}`)} ${contentText(message.content).split('\n', 1).join('')}`
-    const rows = [
-      ...inbox.nextStep.map(message => row('next step', message)),
-      ...inbox.nextTurn.map(message => row('next turn', message)),
-    ]
+    const rows = queuePanelRows(inbox.nextStep, inbox.nextTurn)
+    this.queueView = rows
     const mounted = this.queueSlot.children.length > 0
     if (rows.length === 0) {
+      this.queueSelection = undefined
+      if (this.focus === 'queue' && !this.transferringQueue) this.focusEditor()
       if (mounted) this.queueSlot.removeChild(this.queue)
     } else {
-      this.queue.setText(rows.join('\n'))
       if (!mounted) this.queueSlot.addChild(this.queue)
+      const selected = this.queueSelectionIndex(rows)
+      this.queueSelection = rows[selected]?.message.id
+      this.queue.setText(renderQueuePanel(rows, {
+        palette: this.deps.palette,
+        width: this.deps.terminal.columns,
+        ...this.focus === 'queue' ? { selected } : {},
+      }))
     }
     this.tui.requestRender()
+  }
+
+  /**
+   * Locate the held pending prompt after inbox insertions and claims.
+   * @param rows - current queue rows.
+   * @returns the selected index, or 0 when the prior row left.
+   */
+  private queueSelectionIndex(rows: readonly QueuePanelRow[]): number {
+    const index = rows.findIndex(row => row.message.id === this.queueSelection)
+    return index === -1 ? 0 : index
   }
 
   // ── subagent panel ──────────────────────────────────────────────────────
@@ -1369,7 +1399,10 @@ export class TuiApp {
     await this.browse(changes.heading, changes.choices.map((choice): BrowseRow => ({
       item: { value: String(choice.index), label: choice.label, description: choice.description },
       heading: choice.label,
-      detail: () => changeDiffRows(this.deps.ctx, sessionId, choice, signal),
+      detail: async () => {
+        const rows = await changeDiffRows(this.deps.ctx, sessionId, choice, signal)
+        return paintDiffRows(rows, rows, this.deps.palette)
+      },
     })))
   }
 
@@ -1520,6 +1553,12 @@ export class TuiApp {
     // the keyboard back to the editor on the way.
     if (matchesKey(data, 'ctrl+c')) {
       this.focusEditor()
+      if (this.queueDraft !== undefined) {
+        this.restoreQueueDraft()
+        this.editor.setText('')
+        this.notice('queued prompt edit canceled')
+        return { consume: true }
+      }
       const now = Date.now()
       if (now - this.lastCtrlC < QUIT_DOUBLE_PRESS_MS) {
         this.stop()
@@ -1587,6 +1626,9 @@ export class TuiApp {
         return this.onEscape()
       case 'steer':
         this.onSubmit(this.editor.getText(), 'steer')
+        return { consume: true }
+      case 'queue':
+        this.actOnQueuedPrompt(action.action)
         return { consume: true }
       case 'effort':
         if (this.switching) {
@@ -1753,6 +1795,7 @@ export class TuiApp {
     // `focusRegion` returns early for the region the app already records, and
     // the reader left that record alone, so the caret state is set outright.
     this.setFocus(exit.target)
+    this.refreshQueue()
     this.refreshSubagentPanel()
     this.armEscapeHandoff()
     // The pane answers no key from here on, so it can shrink away after the
@@ -1794,6 +1837,9 @@ export class TuiApp {
       case 'part':
         this.moveTranscript(axis, to)
         return
+      case 'prompt':
+        this.moveQueueBy(to)
+        return
       case 'row':
         this.movePanelBy(to)
         return
@@ -1827,6 +1873,56 @@ export class TuiApp {
     const held = next.block === cursor.block && next.part === cursor.part
     if (axis === 'section' && to === 'next' && held) this.focusEditor()
     else this.moveCursor(next)
+  }
+
+  /**
+   * Walk the queued-prompt selection, stopping at both ends.
+   * @param to - which way along the pending prompts.
+   */
+  private moveQueueBy(to: MoveTarget): void {
+    const rows = this.queueView
+    const index = this.queueSelectionIndex(rows)
+    const last = Math.max(0, rows.length - 1)
+    const selected = to === 'first' ? 0
+      : to === 'last' ? last
+        : to === 'previous' ? Math.max(0, index - 1)
+          : Math.min(last, index + 1)
+    this.queueSelection = rows[selected]?.message.id
+    this.refreshQueue()
+  }
+
+  /** Apply one focused queue-panel command to the selected pending prompt. */
+  private actOnQueuedPrompt(action: 'steer' | 'inject' | 'edit'): void {
+    const row = this.queueView[this.queueSelectionIndex(this.queueView)]
+    if (row === undefined) return
+    if (action === 'edit') {
+      if (!this.agent.inbox.remove(row.message.id)) {
+        this.notice('that queued prompt was already claimed', 'error')
+        this.refreshQueue()
+        return
+      }
+      this.queueDraft = row.message
+      this.editor.setText(contentText(row.message.content))
+      this.focusEditor()
+      this.notice('editing queued prompt; Enter sends the revision')
+      return
+    }
+    this.transferringQueue = true
+    try {
+      if (!this.agent.inbox.remove(row.message.id)) {
+        this.notice('that queued prompt was already claimed', 'error')
+        return
+      }
+      if (action === 'steer') this.agent.steer(row.message)
+      else this.agent.inject(row.message)
+    } finally {
+      this.transferringQueue = false
+      this.refreshQueue()
+      this.refreshFooter()
+    }
+    this.notice(action === 'steer'
+      ? 'queued prompt is steering the nearest step'
+      : 'queued prompt will be injected at the nearest step without waking the Agent')
   }
 
   /**
@@ -1942,6 +2038,12 @@ export class TuiApp {
     this.refreshFooter()
   }
 
+  /** Give the keyboard to the queued-prompt panel on one of its rows. */
+  private focusQueue(index: number): void {
+    this.queueSelection = this.queueView[index]?.message.id
+    this.focusRegion('queue')
+  }
+
   /**
    * Give the keyboard to the subagent panel on one of its rows.
    * @param index - the row the selection lands on.
@@ -1952,11 +2054,12 @@ export class TuiApp {
   }
 
   /**
-   * Give the keyboard to the region under the editor: the subagent panel's
-   * first row while the panel is drawn, and the status bar otherwise.
+   * Give `Shift+Down` to the pending-prompt panel when it is drawn, then the
+   * first region below the editor.
    */
   private focusBelowEditor(): void {
-    if (this.panelView.rows.length > 0) this.focusPanel(0)
+    if (this.queueView.length > 0) this.focusQueue(0)
+    else if (this.panelView.rows.length > 0) this.focusPanel(0)
     else this.focusBar()
   }
 
@@ -1999,14 +2102,14 @@ export class TuiApp {
   }
 
   /**
-   * The regions drawn around the editor right now, in stack order: the
-   * conversation while it holds a section, the subagent panel while it has
-   * rows, and the status bar, which is always drawn.
+   * The regions drawn around the editor right now, in screen order, except
+   * that the editor itself is not part of the `Tab` walk.
    * @returns the regions `Tab` walks.
    */
   private drawnRegions(): DockedRegion[] {
     const drawn: DockedRegion[] = []
     if (this.transcriptEntry() !== undefined) drawn.push('transcript')
+    if (this.queueView.length > 0) drawn.push('queue')
     if (this.panelView.rows.length > 0) drawn.push('panel')
     drawn.push('bar')
     return drawn
@@ -2025,6 +2128,7 @@ export class TuiApp {
     /* v8 ignore next -- the status bar is always drawn, so the wrapped index names a region */
     if (next === undefined) return
     if (next === 'transcript') this.focusTranscript()
+    else if (next === 'queue') this.focusQueue(this.queueSelectionIndex(this.queueView))
     else if (next === 'panel') this.focusPanel(this.panelSelectionIndex(this.panelView.rows))
     else this.focusBar()
   }
@@ -2090,6 +2194,7 @@ export class TuiApp {
   private focusRegion(region: FocusRegion): void {
     if (this.focus === region) return
     this.setFocus(region)
+    this.refreshQueue()
     this.refreshSubagentPanel()
   }
 
@@ -2174,11 +2279,13 @@ export class TuiApp {
     }
     this.editor.setText('')
     this.editor.addToHistory(text)
-    if (text.startsWith('/')) {
+    const draft = this.queueDraft
+    this.queueDraft = undefined
+    if (draft === undefined && text.startsWith('/')) {
       void this.dispatchCommand(text)
       return
     }
-    this.submit(text, mode)
+    this.submit(text, mode, draft)
   }
 
   /**
@@ -2191,12 +2298,23 @@ export class TuiApp {
     return this.runCommand(line).catch((error: unknown) => { this.notice(`${name} failed: ${describeFailure(error)}`, 'error') })
   }
 
-  private submit(text: string, mode: SubmitMode = 'queue'): void {
+  /** Return an abandoned edit to the ordinary-turn inbox without waking the Agent. */
+  private restoreQueueDraft(): void {
+    const draft = this.queueDraft
+    if (draft === undefined) return
+    this.queueDraft = undefined
+    this.agent.inbox.append('next-turn', draft)
+    this.refreshQueue()
+    this.refreshFooter()
+  }
+
+  private submit(text: string, mode: SubmitMode = 'queue', draft?: UserMessage): void {
     const agent = this.agent
     const attachments = this.pending.splice(0)
+    const retained = draft?.content.filter(block => block.type !== 'text') ?? []
     const message: UserMessage = createUserMessage({
-      content: [...attachments.map(attachment => attachment.block), { type: 'text', text }],
-      source: { kind: 'user' },
+      content: [...retained, ...attachments.map(attachment => attachment.block), { type: 'text', text }],
+      source: draft?.source ?? { kind: 'user' },
     })
     if (agent.status !== 'running') {
       // An idle Agent takes the prompt at once, so it is drawn here and the
@@ -2250,6 +2368,7 @@ export class TuiApp {
         await this.openSessionPicker()
         return
       case 'new':
+      case 'clear':
         await this.switchSession(() => this.deps.host.create(), 'new session')
         return
       case 'fork': {

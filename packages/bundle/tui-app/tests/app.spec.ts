@@ -73,6 +73,50 @@ describe('TuiApp', () => {
     await test.settle()
   })
 
+  it('focuses the framed queue to inject, steer, or edit its selected prompt', async () => {
+    const test = await bench({ running: true })
+    const inject = createUserMessage({ content: [{ type: 'text', text: 'context only' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', inject)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: inject })
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(await test.screen()).toContain('S steer · I inject · E edit')
+    test.terminal.type('i')
+    expect(test.calls.injections).toEqual([inject])
+    expect(test.calls.steers).toHaveLength(0)
+
+    const steer = createUserMessage({ content: [{ type: 'text', text: 'change course' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', steer)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: steer })
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type('s')
+    expect(test.calls.steers).toEqual([steer])
+
+    const edit = createUserMessage({ content: [{ type: 'text', text: 'draft answer' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', edit)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: edit })
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type('e')
+    test.terminal.type(' revised')
+    test.terminal.type(KEY.enter)
+    expect(test.calls.followups.at(-1)?.content).toEqual([{ type: 'text', text: 'draft answer revised' }])
+  })
+
+  it('restores the original queued prompt when an edit is canceled', async () => {
+    const test = await bench({ running: true })
+    const original = createUserMessage({ content: [{ type: 'text', text: 'keep this' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', original)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: original })
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type('e')
+    expect(test.agent.inbox.nextTurn).toEqual([])
+    test.terminal.type(KEY.ctrlC)
+    expect(test.agent.inbox.nextTurn).toEqual([original])
+    expect(test.calls.followups).toHaveLength(0)
+    await test.settle()
+    expect(await test.screen()).toContain('next turn · keep this')
+  })
+
   it('holds a queued prompt above the editor until the loop claims it, and draws it in the conversation then', async () => {
     const test = await bench({ running: true })
     // The inbox is scripted, so the bench appends what the Agent's followup
@@ -86,26 +130,26 @@ describe('TuiApp', () => {
     let screen = await test.screen()
     // The steer row comes first, as the loop takes it first; a multi-line
     // prompt shows its first line. Neither is a conversation block yet.
-    expect(screen).toContain('⏳ next step right now')
-    expect(screen).toContain('⏳ next turn later on')
+    expect(screen).toContain('next step · right now')
+    expect(screen).toContain('next turn · later on')
     expect(screen).not.toContain('second line')
     expect(screen).not.toContain('› later on')
-    expect(screen.indexOf('⏳ next step')).toBeLessThan(screen.indexOf('⏳ next turn'))
+    expect(screen.indexOf('next step ·')).toBeLessThan(screen.indexOf('next turn ·'))
     // Claimed: it leaves the queue and its durable message draws the block.
     test.agent.inbox.remove(soon.id)
     test.agent.ctx.emit('agent/inbox/claimed', { agent: test.agent, message: soon, turn: 1 })
     test.session.append('user/message', soon, { surfaceOp: 'append' })
     await test.settle()
     screen = await test.screen()
-    expect(screen).not.toContain('⏳ next step')
+    expect(screen).not.toContain('next step · right now')
     expect(screen).toContain('› right now')
-    expect(screen).toContain('⏳ next turn later on')
+    expect(screen).toContain('next turn · later on')
     // Discarded: the row goes and no block is drawn for it.
     test.agent.inbox.remove(later.id)
     test.agent.ctx.emit('agent/inbox/discarded', { agent: test.agent, message: later })
     await test.settle()
     screen = await test.screen()
-    expect(screen).not.toContain('⏳')
+    expect(screen).not.toContain('● QUEUE')
     expect(screen).not.toContain('later on')
     // Another Agent's inbox is not this terminal's queue, whichever way it moves.
     const other = { id: 'other' } as never
@@ -114,7 +158,7 @@ describe('TuiApp', () => {
     test.agent.ctx.emit('agent/inbox/claimed', { agent: other, message: later, turn: 1 })
     test.agent.ctx.emit('agent/inbox/discarded', { agent: other, message: later })
     await test.settle()
-    expect(await test.screen()).not.toContain('⏳')
+    expect(await test.screen()).not.toContain('● QUEUE')
   })
 
   it('streams reasoning and text, then replaces them with the committed message and its usage', async () => {

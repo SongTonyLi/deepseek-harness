@@ -19,7 +19,7 @@ import { Markdown, Text, wrapTextWithAnsi, type Component } from '@earendil-work
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
-import { markdownTheme, type CodeHighlighter, type Palette } from './style.ts'
+import { markdownTheme, paintDiffRows, type CodeHighlighter, type Palette } from './style.ts'
 import { foldMarker, foldRows, paintCodeRows, type CodeSpan, type ToolCallText } from './transcript.ts'
 
 /** Columns the focus gutter takes from the width a block's content wraps at. */
@@ -699,7 +699,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const kept = this.expanded
       ? body
       : foldRows(body, this.theme.toolPreviewLines, hidden => foldMarker(hidden, marked ? 'marked' : 'transcript'))
-    const shown = paintCodeRows(kept, code, this.theme.codeHighlight)
+    const shown = paintDiffRows(paintCodeRows(kept, code, this.theme.codeHighlight), kept, palette)
     const callCount = Math.min(this.call.lines.length, shown.length)
     const inner = Math.max(1, outer - 4)
     const rows = (lines: readonly string[]): string[] =>
