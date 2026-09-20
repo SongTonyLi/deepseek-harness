@@ -11,8 +11,8 @@
  * have, correct it when it lands" the rest of this surface uses.
  *
  * Colours come from a shiki theme rather than the palette: a theme
- * distinguishes a keyword from a type from a number, which the nine palette
- * roles cannot, and the transcript is where the model's code is read. The
+ * distinguishes a keyword from a type from a number, which the palette's
+ * structural roles cannot, and the transcript is where the model's code is read. The
  * theme is chosen from the terminal's own background, so a light terminal is
  * not given dark-theme colours, and a terminal that answers neither a colour
  * depth nor a background gets no colour at all.

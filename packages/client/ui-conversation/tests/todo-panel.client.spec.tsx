@@ -66,6 +66,9 @@ describe('TodoPanel', () => {
     expect(screen.getByText('写组件')).toBeTruthy()
     // Each status row carries an SVG glyph (not a text bullet).
     expect(items.every(li => li.querySelector('svg') !== null)).toBe(true)
+    expect(screen.getByText('搭骨架').className).toMatch(/contentCompleted/)
+    expect(screen.getByText('写组件').className).not.toMatch(/contentCompleted/)
+    expect(screen.getByText('补测试').className).not.toMatch(/contentCompleted/)
   })
 
   it('collapse hides an expanded list; expand restores; header keeps the count summary', () => {

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
-import { TODO_GLYPH, listTodoChoices, todoDetail } from '../src/todos.ts'
+import { TODO_GLYPH, listTodoChoices, paintTodoContent, todoDetail } from '../src/todos.ts'
 
 const session = { id: 'session-a' } as Session
 
@@ -34,6 +34,19 @@ describe('TODO_GLYPH', () => {
 })
 
 describe('listTodoChoices', () => {
+  it('scratches out completed content when a paint function is given, leaving the glyph', () => {
+    const { ctx } = registryOf({ todos: mixed })
+    const paint = (content: string): string => `~${content}~`
+    expect(listTodoChoices(ctx, session, paint).map(choice => choice.label)).toEqual([
+      '✓ ~read the spec~',
+      '▸ write the data layer',
+      '○ wire the picker',
+    ])
+    expect(paintTodoContent('read the spec', 'completed', paint)).toBe('~read the spec~')
+    expect(paintTodoContent('write the data layer', 'in_progress', paint)).toBe('write the data layer')
+    expect(paintTodoContent('read the spec', 'completed')).toBe('read the spec')
+  })
+
   it('numbers each item in list order with its glyph, content, and status word', () => {
     const { ctx, asked } = registryOf({ todos: mixed })
     expect(listTodoChoices(ctx, session)).toEqual([

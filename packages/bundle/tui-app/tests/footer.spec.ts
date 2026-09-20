@@ -163,11 +163,11 @@ describe('buildFooterSegments', () => {
   it('reports the permission projection when it is registered and the service value when it is not', () => {
     expect(rows(buildFooterSegments(inputs({ permission: 'workspace-write', facts })), 'permission')).toEqual([
       'permission: workspace-write',
-      '/permission <preset> changes the sandbox mode and the approval policy',
+      '/permission opens the permission list',
     ])
     expect(rows(buildFooterSegments(inputs({ permission: 'auto' })), 'permission')).toEqual([
       'permission: auto',
-      '/permission <preset> changes the sandbox mode and the approval policy',
+      '/permission opens the permission list',
     ])
   })
 

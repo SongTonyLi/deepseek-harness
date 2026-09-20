@@ -7,11 +7,16 @@ describe('palette', () => {
   it('wraps text in SGR pairs when enabled and returns it verbatim otherwise', () => {
     const on = createPalette(true)
     expect(on.accent('x')).toBe('\u001b[36mx\u001b[39m')
+    expect(on.heading('x')).toBe('\u001b[38;5;117mx\u001b[39m')
+    expect(on.link('x')).toBe('\u001b[38;5;75mx\u001b[39m')
     expect(on.bold('x')).toBe('\u001b[1mx\u001b[22m')
     expect(on.underline('x')).toBe('\u001b[4mx\u001b[24m')
+    expect(on.strikethrough('x')).toBe('\u001b[9mx\u001b[29m')
     expect(on.enabled).toBe(true)
     const off = createPalette(false)
     expect(off.accent('x')).toBe('x')
+    expect(off.heading('x')).toBe('x')
+    expect(off.link('x')).toBe('x')
     expect(off.inverse('x')).toBe('x')
     expect(off.enabled).toBe(false)
   })
@@ -45,6 +50,14 @@ describe('palette', () => {
       expect(typeof style).toBe('function')
       expect((style as (text: string) => string)('t')).toContain('t')
     }
+    expect(markdown.heading('H')).toBe(palette.bold(palette.heading('H')))
+    expect(markdown.link('L')).toBe(palette.underline(palette.link('L')))
+    expect(markdown.listBullet('•')).toBe(palette.heading('•'))
+    expect(markdown.quote('q')).toBe(palette.italic(palette.dim('q')))
+    expect(markdown.quoteBorder('│')).toBe(palette.dim('│'))
+    expect(markdown.code('c')).toBe(palette.link('c'))
+    expect(markdown.heading('H')).not.toBe(palette.bold(palette.accent('H')))
+    expect(markdown.link('L')).not.toBe(palette.accent('L'))
     expect(markdown.codeBlock('code')).toBe('code')
     // With no highlighter the fence draws exactly the source lines, which is
     // what the renderer would have drawn without the hook at all.

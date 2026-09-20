@@ -17,8 +17,14 @@ export interface Palette {
   bold: Style
   italic: Style
   underline: Style
+  /** Scratched-out text, used for completed todo content. */
+  strikethrough: Style
   /** Brand and focus color. */
   accent: Style
+  /** Pale cyan on the dark-mode cool scale; Markdown headings and list markers. */
+  heading: Style
+  /** Deeper blue on the same scale; Markdown links and inline code. */
+  link: Style
   success: Style
   warning: Style
   error: Style
@@ -36,7 +42,10 @@ const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, clo
   bold: ['1', '22'],
   italic: ['3', '23'],
   underline: ['4', '24'],
+  strikethrough: ['9', '29'],
   accent: ['36', '39'],
+  heading: ['38;5;117', '39'],
+  link: ['38;5;75', '39'],
   success: ['32', '39'],
   warning: ['33', '39'],
   error: ['31', '39'],
@@ -58,7 +67,10 @@ export function createPalette(enabled: boolean): Palette {
     bold: role('bold'),
     italic: role('italic'),
     underline: role('underline'),
+    strikethrough: role('strikethrough'),
     accent: role('accent'),
+    heading: role('heading'),
+    link: role('link'),
     success: role('success'),
     warning: role('warning'),
     error: role('error'),
@@ -118,19 +130,19 @@ export interface CodeHighlighter {
 export function markdownTheme(palette: Palette, highlight?: CodeHighlighter): MarkdownTheme {
   return {
     highlightCode: (code, lang) => highlight?.lines(code, lang) ?? code.split('\n'),
-    heading: text => palette.bold(palette.accent(text)),
-    link: palette.accent,
+    heading: text => palette.bold(palette.heading(text)),
+    link: text => palette.underline(palette.link(text)),
     linkUrl: palette.dim,
-    code: palette.warning,
+    code: palette.link,
     codeBlock: text => text,
     codeBlockBorder: palette.dim,
-    quote: palette.italic,
+    quote: text => palette.italic(palette.dim(text)),
     quoteBorder: palette.dim,
     hr: palette.dim,
-    listBullet: palette.accent,
+    listBullet: palette.heading,
     bold: palette.bold,
     italic: palette.italic,
-    strikethrough: palette.dim,
+    strikethrough: palette.strikethrough,
     underline: palette.underline,
   }
 }

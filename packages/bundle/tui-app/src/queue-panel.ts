@@ -1,13 +1,13 @@
 /**
- * The pending-prompt panel above the editor. It presents the Agent inbox as a
- * framed, selectable list without mutating the messages it displays.
+ * The follow-up panel above the editor. It presents the Agent inbox as a
+ * boxed pending-prompt list without mutating the messages it displays.
  * @module @deepseek-ai/dsh-tui-app/queue-panel
  */
 
-import { wrapTextWithAnsi } from '@earendil-works/pi-tui'
+import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { InboxTarget } from '@deepseek-ai/dsh-agent'
-import { bodyLine, bottomRule, chip, fitLegend, ruleRoom, topRule, type FrameTone } from './frame.ts'
+import { bodyLine, bottomRule, fitLegend, topRule, type FrameTone } from './frame.ts'
 import { HINTS } from './keys.ts'
 import type { Palette } from './style.ts'
 import { contentText } from './transcript.ts'
@@ -33,6 +33,25 @@ export interface QueuePanelRender {
 }
 
 /**
+ * The first content line a row shows.
+ * @param content - the message's full text.
+ * @returns the text before the first newline, or all of `content` when it is one line.
+ */
+function firstLine(content: string): string {
+  const breakAt = content.indexOf('\n')
+  return breakAt === -1 ? content : content.slice(0, breakAt)
+}
+
+/** Pending-row marker; the same glyph the todo list uses for an unstarted item. */
+const FOLLOW_UP_GLYPH = '○'
+
+/** Columns the glyph and its trailing space occupy on the first wrapped line. */
+const FOLLOW_UP_PREFIX = `${FOLLOW_UP_GLYPH} `
+
+/** Indent that lines up wrapped follow-up text under the first line's content. */
+const FOLLOW_UP_INDENT = '  '
+
+/**
  * Build the panel rows in claim order: next-step input before ordinary turns.
  * Messages whose source is not `user` are omitted: a `!` notice waiting for
  * the next prompt is context, not a prompt the keyboard can steer or edit.
@@ -44,7 +63,7 @@ export function queuePanelRows(nextStep: readonly UserMessage[], nextTurn: reado
   const row = (target: InboxTarget, message: UserMessage): QueuePanelRow => ({
     message,
     target,
-    text: contentText(message.content).split('\n', 1)[0] ?? '',
+    text: firstLine(contentText(message.content)),
   })
   const pending = (target: InboxTarget, messages: readonly UserMessage[]): QueuePanelRow[] => messages
     .filter(message => message.source.kind === 'user')
@@ -53,8 +72,24 @@ export function queuePanelRows(nextStep: readonly UserMessage[], nextTurn: reado
 }
 
 /**
- * Render the pending prompts inside a frame. A focused panel accents its held
- * row and names its actions; an unfocused panel names the key that enters it.
+ * One follow-up's text wrapped under the pending glyph, hanging the
+ * continuation so it lines up with the first line's content.
+ * @param text - the row's first content line.
+ * @param room - columns inside the frame.
+ * @param glyph - the pending marker, already styled.
+ * @returns one or more body contents, never wider than `room`.
+ */
+function followUpLines(text: string, room: number, glyph: string): string[] {
+  const inner = Math.max(1, room - visibleWidth(FOLLOW_UP_PREFIX))
+  return wrapTextWithAnsi(text, inner).map((line, index) => (
+    index === 0 ? `${glyph} ${line}` : `${FOLLOW_UP_INDENT}${line}`
+  ))
+}
+
+/**
+ * Render the pending prompts as a boxed follow-ups list. A focused panel
+ * accents its held row and names enter, select/edit, and cancel; an unfocused
+ * panel names the key that enters it.
  * @param rows - pending prompts in claim order.
  * @param render - palette, terminal width, and optional selection.
  * @returns panel text, or the empty string when no prompt waits.
@@ -64,16 +99,17 @@ export function renderQueuePanel(rows: readonly QueuePanelRow[], render: QueuePa
   const { palette, selected } = render
   const width = Math.max(1, render.width)
   const tone: FrameTone = selected === undefined ? 'muted' : 'focus'
-  const title = `${String(rows.length)} pending`
-  const lines = [topRule({ chip: chip(palette, 'QUEUE'), title: palette.bold(title), width, palette, tone })]
+  const heading = tone === 'focus' ? palette.accent('follow-ups') : palette.dim('follow-ups')
+  const lines = [heading, topRule({ width, palette, tone })]
   const room = Math.max(1, width - 2)
   for (const [index, row] of rows.entries()) {
-    const label = row.target === 'next-step' ? 'next step' : 'next turn'
-    const marker = selected === index ? palette.accent('▸ ') : '  '
-    const text = `${marker}${palette.dim(`${label} ·`)} ${row.text}`
-    for (const wrapped of wrapTextWithAnsi(text, room)) lines.push(bodyLine(wrapped, width, palette, tone))
+    const glyph = selected === index ? palette.accent(FOLLOW_UP_GLYPH) : FOLLOW_UP_GLYPH
+    for (const content of followUpLines(row.text, room, glyph)) {
+      lines.push(bodyLine(content, width, palette, tone))
+    }
   }
-  const hints = selected === undefined ? ['Shift+↓ manages'] : HINTS.queue
-  lines.push(bottomRule({ left: palette.dim(fitLegend(hints, ruleRoom(width))), width, palette, tone }))
+  const hints = selected === undefined ? ['shift+↓ select'] : HINTS.queue
+  lines.push(bodyLine(palette.dim(fitLegend(hints, room)), width, palette, tone))
+  lines.push(bottomRule({ width, palette, tone }))
   return lines.join('\n')
 }

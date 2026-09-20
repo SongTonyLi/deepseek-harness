@@ -84,6 +84,7 @@ import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
 import { parseUserShellLine, userShellContextText, userShellTranscriptRows } from './shell-line.ts'
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
+import { matchPermission, permissionHint, permissionItems } from './permission.ts'
 import { exportSessionZip } from './export.ts'
 import { BlockFadeClock, FadeRegistry, FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
 import { InspectorPane, type InspectorView } from './inspector.ts'
@@ -423,6 +424,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'help', description: 'Show commands and keys' },
   { name: 'model', description: 'Pick the model and reasoning effort for the next request (/model provider/model, /model save)' },
   { name: 'effort', description: 'Pick the current model\'s reasoning effort for the next request (/effort <id>, /effort default)' },
+  { name: 'permission', description: 'Pick the permission preset (/permission <preset>)', hint: '<preset>' },
   { name: 'sessions', description: 'Switch to another session' },
   { name: 'resume', description: 'Resume a previous session' },
   { name: 'new', description: 'Start a new session' },
@@ -448,6 +450,9 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'quit', description: 'Save the session and exit' },
   { name: 'exit', description: 'Same as /quit' },
 ]
+
+/** Names the terminal handles before the shared registry, used to hide the matching catalog row. */
+const LOCAL_COMMAND_NAMES = new Set(LOCAL_COMMANDS.map(command => command.name))
 
 /**
  * Whether a sign-in method is a provider subscription rather than a key field.
@@ -931,7 +936,7 @@ export class TuiApp {
 
   private completableCommands(): CompletableCommand[] {
     const registry = this.deps.ctx.get('commands')
-    const shared = registry?.list(this.agent) ?? []
+    const shared = (registry?.list(this.agent) ?? []).filter(command => !LOCAL_COMMAND_NAMES.has(command.name))
     return [...LOCAL_COMMANDS, ...shared.map(command => ({
       name: command.name,
       description: command.description,
@@ -1028,7 +1033,7 @@ export class TuiApp {
   }
 
   /**
-   * Redraw the queued prompts above the editor from the bound Agent's inbox.
+   * Redraw the follow-ups list above the editor from the bound Agent's inbox.
    * The slot is mounted exactly while a prompt waits, so the editor sits
    * directly under the conversation the rest of the time.
    */
@@ -1367,7 +1372,12 @@ export class TuiApp {
    */
   private async browseTodos(): Promise<void> {
     const items = this.statusFacts().todos?.items ?? []
-    const choices = listTodoChoices(this.deps.ctx, this.agent.session)
+    const { palette } = this.deps
+    const choices = listTodoChoices(
+      this.deps.ctx,
+      this.agent.session,
+      content => palette.dim(palette.strikethrough(content)),
+    )
     if (choices.length === 0) {
       this.notice('no todos yet')
       return
@@ -2520,6 +2530,9 @@ export class TuiApp {
       case 'effort':
         await this.runCurrentEffort(argument)
         return
+      case 'permission':
+        await this.choosePermission(argument)
+        return
       case 'sessions':
       case 'resume':
         await this.openSessionPicker()
@@ -2860,6 +2873,66 @@ export class TuiApp {
     this.notice(effort === undefined
       ? 'effort: provider default from the next request'
       : `effort ${effort} from the next request`, 'success')
+    this.refreshFooter()
+  }
+
+  /**
+   * Choose the bound session's permission preset: an empty argument opens
+   * the picker on the preset in force, and anything else names a catalog
+   * value. A pick submits `/permission <preset>` when the shared command
+   * exists, the same write path the browser uses.
+   * @param argument - a catalog value, or empty for the picker.
+   */
+  private async choosePermission(argument: string): Promise<void> {
+    const presets = this.deps.ctx.get('permissionPresets')
+    if (presets === undefined) {
+      this.notice('no permission service is composed', 'error')
+      return
+    }
+    const options = presets.catalog().options
+    if (argument !== '') {
+      const matched = matchPermission(options, argument)
+      if (matched === null) {
+        const available = options.map(option => option.value).join(', ')
+        this.notice(available === ''
+          ? `unknown preset "${argument}"`
+          : `unknown preset "${argument}" (available: ${available})`, 'error')
+        return
+      }
+      await this.applyPermission(presets, matched)
+      return
+    }
+    if (options.length === 0) {
+      this.notice('no selectable permission presets')
+      return
+    }
+    const current = presets.current(this.agent.session)
+    const picked = await this.showModal(new PickPrompt(
+      this.deps.palette,
+      'Permission preset',
+      permissionItems(options),
+      {
+        body: [permissionHint(options, current)],
+        current,
+      },
+    ))
+    if (picked === undefined) return
+    await this.applyPermission(presets, picked.value)
+  }
+
+  /**
+   * Switch to `name` through the shared `/permission` command when a
+   * registry is composed, otherwise through the permission service.
+   * @param presets - the composed permission service.
+   * @param name - a catalog value.
+   */
+  private async applyPermission(presets: Context['permissionPresets'], name: string): Promise<void> {
+    if (this.deps.ctx.get('commands') !== undefined) {
+      await this.runSharedCommand(`/permission ${name}`, 'permission')
+      return
+    }
+    presets.set(this.agent.session, name)
+    this.notice(`preset ${name}`, 'success')
     this.refreshFooter()
   }
 

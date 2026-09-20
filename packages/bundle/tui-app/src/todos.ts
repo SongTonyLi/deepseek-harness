@@ -1,9 +1,10 @@
 /**
  * The agent's todo list as terminal rows: the status glyphs every todo surface
  * of this terminal draws, the picker choices the list offers, and the detail
- * rows one entered item prints. Everything here is pure text work over plain
- * values; the single service touch is one optional read of the `todos` session
- * projection.
+ * rows one entered item prints. Completed picker content can take a paint
+ * function so the list scratches it out. Everything here is pure text work
+ * over plain values; the single service touch is one optional read of the
+ * `todos` session projection.
  * @module @deepseek-ai/dsh-tui-app/todos
  */
 
@@ -55,6 +56,21 @@ const TODO_WORD: Record<TodoItem['status'], string> = {
 /** Every status, in the order a counts row lists them. */
 const TODO_STATUSES: readonly TodoItem['status'][] = ['completed', 'in_progress', 'pending']
 
+/** Paint applied to completed todo content; omitted leaves the text unmarked. */
+export type TodoContentPaint = (content: string) => string
+
+/**
+ * The content a todo row shows: completed items take `paint` so the list can
+ * scratch them out; every other status is the content unchanged.
+ * @param content - the text after any row-length cut.
+ * @param status - the item's status.
+ * @param paint - how completed content is marked.
+ * @returns the painted content, or `content` when the item is not completed or no paint was given.
+ */
+export function paintTodoContent(content: string, status: TodoItem['status'], paint?: TodoContentPaint): string {
+  return status === 'completed' && paint !== undefined ? paint(content) : content
+}
+
 /** One todo of the current list as the picker shows it. */
 export interface TodoChoice {
   /** Zero-based position in the current list; the picker row value once the caller stringifies it. */
@@ -71,19 +87,20 @@ export interface TodoChoice {
  * The agent's current todo list as picker rows, in write order.
  * @param ctx - plugin context carrying the optional session-projection registry.
  * @param session - the session whose todo list is read.
+ * @param paint - how completed content is marked; omitted leaves it unmarked.
  * @returns one choice per item. Empty in three cases: no projection registry
  * is composed in this profile, the registry has no `todos` unit registered, or
  * the value is `null` — which it is before the first `todo_write` of the
  * current turn, since every `turn/start` clears the list.
  */
-export function listTodoChoices(ctx: Context, session: Session): TodoChoice[] {
+export function listTodoChoices(ctx: Context, session: Session, paint?: TodoContentPaint): TodoChoice[] {
   const projections = ctx.get('sessionProjections')
   if (projections === undefined) return []
   const items = projections.snapshot(session, ['todos']).values.todos
   if (items === undefined || items === null) return []
   return items.map((item, index) => ({
     index,
-    label: `${TODO_GLYPH[item.status]} ${labelContent(item.content)}`,
+    label: `${TODO_GLYPH[item.status]} ${paintTodoContent(labelContent(item.content), item.status, paint)}`,
     description: describeStatus(item.status),
     status: item.status,
   }))
