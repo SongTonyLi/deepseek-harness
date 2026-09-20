@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, createSystemMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createSystemMessage, createToolResultMessage, createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
+import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
@@ -17,11 +20,25 @@ import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, REGION
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
-import { BENCH_NOW, KEY, bench } from './bench.ts'
+import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
   for (const char of text) terminal.type(char)
   terminal.type(KEY.enter)
+}
+
+/** A projection registry stub whose snapshot the test controls. */
+function projectionsStub(values: () => Record<string, unknown>): NonNullable<Exclude<Parameters<typeof bench>[0], undefined>['projections']> {
+  return {
+    snapshot: () => ({ asOfSeq: 1, values: values() }),
+    onChanged() { return () => {} },
+  }
+}
+
+/** Open a turn and log `next` as the current todo list. */
+function writeTodos(test: Bench, next: TodoItem[], turn = 1): void {
+  test.session.append('turn/start', { turn })
+  test.session.append('todo/write', { todos: next })
 }
 
 /** A system prompt longer than any fold budget. */
@@ -893,7 +910,6 @@ describe('TuiApp', () => {
         ctx.commands.register({
           name: 'odd',
           description: 'rejects with a non-error',
-          // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- A non-Error reason is what this case exercises.
           handler: () => Promise.reject('plain reason'),
         })
       },
@@ -1609,5 +1625,221 @@ describe('the running-turn counter', () => {
     expect(screen).toContain('elapsed: 1m12s')
     expect(screen).toContain('queued: 1 for the next turn · 0 for the next step')
     expect(screen).toMatch(/started: \d{4}-\d{2}-\d{2} \d{2}:\d{2}/u)
+  })
+})
+
+describe('the activity board', () => {
+  it('mounts todo rows above the editor, scratches a completed item, and leaves with turn/end', async () => {
+    let todos: TodoItem[] = []
+    const test = await bench({ color: true, projections: projectionsStub(() => ({ todos })) })
+    todos = [
+      { content: 'read the spec', status: 'pending' },
+      { content: 'write the layer', status: 'in_progress' },
+    ]
+    writeTodos(test, todos)
+    const later = createUserMessage({ content: [{ type: 'text', text: 'later on' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', later)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: later })
+    let screen = await test.screen()
+    expect(screen).toContain('○ read the spec')
+    expect(screen).toContain('▸ write the layer')
+    expect(screen.indexOf('follow-ups')).toBeLessThan(screen.indexOf('○ read the spec'))
+    expect(screen.indexOf('○ read the spec')).toBeLessThan(screen.indexOf('test-model'))
+
+    todos = [
+      { content: 'read the spec', status: 'completed' },
+      { content: 'write the layer', status: 'in_progress' },
+    ]
+    test.session.append('todo/write', { todos })
+    screen = await test.screen()
+    expect(screen).toContain('✓ read the spec')
+    expect(test.terminal.output).toContain('\u001b[9m')
+
+    test.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    screen = await test.screen()
+    expect(screen).not.toContain('read the spec')
+    expect(screen).not.toContain('write the layer')
+  })
+
+  it('replaces the one-line descendant summary and ignores a session that is not a descendant', async () => {
+    const test = await bench()
+    const kid = await test.createChild({ id: 'session-kid' })
+    test.ctx.emit('subagent/start', { runId: 'run-kid', provider: 'test', id: kid.id, local: true } as never)
+    let screen = await test.screen()
+    expect(screen).toContain('session-kid · running')
+
+    kid.session.append('tool/call', {
+      turn: 1,
+      step: 1,
+      callId: 'call-1' as ToolCallId,
+      name: 'bash',
+      arguments: '{"command":"ls"}',
+    })
+    screen = await test.screen()
+    expect(screen).toContain('session-kid · calling bash')
+
+    kid.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: 'call-1' as ToolCallId,
+        content: [{ type: 'text', text: 'listed files' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    screen = await test.screen()
+    expect(screen).toContain('session-kid · listed files')
+    expect(screen).not.toContain('calling bash')
+
+    kid.session.append('assistant/message', {
+      stream: [],
+      turn: 1,
+      step: 1,
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'child assistant prose' }],
+        source: { provider: 'test-provider', model: 'test-model' },
+      }),
+    }, { surfaceOp: 'append' })
+    kid.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    screen = await test.screen()
+    expect(screen).toContain('session-kid · done')
+    expect(screen).not.toContain('child assistant prose')
+    expect(screen).not.toContain('listed files')
+
+    const stranger = await test.createChild({ id: 'session-stranger', parent: 'session-other' as SessionId })
+    test.ctx.emit('subagent/start', { runId: 'run-stranger', provider: 'test', id: stranger.id, local: true } as never)
+    screen = await test.screen()
+    expect(screen).not.toContain('session-stranger · running')
+    stranger.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: 'call-x' as ToolCallId,
+        content: [{ type: 'text', text: 'stranger output' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    screen = await test.screen()
+    expect(screen).not.toContain('stranger output')
+    expect(screen).toContain('session-kid · done')
+
+    const orphan = await test.createChild({ id: 'session-orphan' })
+    orphan.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: 'call-orphan' as ToolCallId,
+        content: [{ type: 'text', text: 'result without a call' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    screen = await test.screen()
+    expect(screen).toContain('session-orphan · result without a call')
+  })
+
+  it('names a listed descendant and a bound-parent stop reason without the last assistant message', async () => {
+    const entries: SubagentDescendantListEntry[] = []
+    const test = await bench({ subagents: () => Promise.resolve(entries) })
+    const listed = await test.createChild({ id: 'session-listed', parent: 'session-other' as SessionId })
+    entries.push({
+      kind: 'child',
+      id: listed.id,
+      activity: 'running',
+      mode: 'one-shot',
+      hasChildren: false,
+      parentId: 'session-other' as SessionId,
+      depth: 1,
+      label: 'reviewer',
+    })
+    listed.setStatus('running')
+    test.tick()
+    await test.settle()
+    listed.session.append('tool/call', {
+      turn: 1,
+      step: 1,
+      callId: 'call-2' as ToolCallId,
+      name: 'read',
+      arguments: '{',
+    })
+    let screen = await test.screen()
+    expect(screen).toContain('reviewer · calling read')
+
+    const start = { runId: 'run-1', provider: 'test', id: listed.id, local: true }
+    test.ctx.emit('subagent/start', start as never)
+    test.ctx.emit('subagent/start', start as never)
+    screen = await test.screen()
+    expect(screen).toContain('reviewer · running')
+
+    test.ctx.emit('subagent/end', {
+      runId: 'run-1',
+      provider: 'test',
+      id: listed.id,
+      local: true,
+      stopReason: 'aborted',
+      lastAssistantMessage: [{ type: 'text', text: 'secret child reply' }],
+    } as never)
+    screen = await test.screen()
+    expect(screen).toContain('reviewer · aborted')
+    expect(screen).not.toContain('secret child reply')
+
+    test.ctx.emit('subagent/end', {
+      runId: 'run-2',
+      provider: 'test',
+      id: 'session-elsewhere',
+      local: true,
+      stopReason: 'error',
+      lastAssistantMessage: [{ type: 'text', text: 'other parent reply' }],
+    } as never)
+    screen = await test.screen()
+    expect(screen).not.toContain('other parent reply')
+    expect(screen).toContain('reviewer · aborted')
+  })
+
+  it('leaves the board unmounted after replaying a finished session', async () => {
+    const todos: TodoItem[] = [{ content: 'replayed task', status: 'pending' }]
+    const test = await bench({
+      projections: projectionsStub(() => ({ todos })),
+      history: [
+        { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+        { type: 'todo/write', seq: 1, time: 2, data: { todos } },
+        { type: 'todo/write', seq: 2, time: 3, data: { todos } },
+        { type: 'turn/end', seq: 3, time: 4, data: { turn: 1, reason: { kind: 'completed' } } },
+      ] as never[],
+    })
+    const screen = await test.screen()
+    expect(screen).not.toContain('replayed task')
+  })
+
+  it('repaints a fading board row on the shared fade tick', async () => {
+    let todos: TodoItem[] = []
+    const test = await bench({
+      color: true,
+      env: { COLORTERM: 'truecolor' },
+      background: 'rgb:0000/0000/0000',
+      projections: projectionsStub(() => ({ todos })),
+    })
+    todos = [{ content: 'fade me', status: 'pending' }]
+    writeTodos(test, todos)
+    const kid = await test.createChild({ id: 'session-fade' })
+    kid.session.append('tool/call', {
+      turn: 1,
+      step: 1,
+      callId: 'call-fade' as ToolCallId,
+      name: 'bash',
+      arguments: '{}',
+    })
+    await test.settle()
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
+    test.runTick(FADE_TICK_MS)
+    const screen = await test.screen()
+    expect(screen).toContain('○ fade me')
+    expect(screen).toContain('session-fade · calling bash')
+  })
+
+  it('draws no todo rows when the projection has not published the list', async () => {
+    const test = await bench({ projections: projectionsStub(() => ({ todos: null })) })
+    test.session.append('turn/start', { turn: 1 })
+    test.session.append('todo/write', { todos: [{ content: 'hidden until projected', status: 'pending' }] })
+    expect(await test.screen()).not.toContain('hidden until projected')
   })
 })

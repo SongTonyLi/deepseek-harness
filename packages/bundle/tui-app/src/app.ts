@@ -2,14 +2,15 @@
  * The interactive terminal application: it renders the durable session log
  * and the live assistant stream of one Agent at a time into a pi-tui tree,
  * turns keystrokes into agent input, answers the approval and user-questions
- * seams for that Agent, and switches between sessions through its host. Under
- * the editor it keeps two docked regions the keyboard can take over — the
- * subagent panel and the status bar — and one repeating tick advances their
- * elapsed counters and re-reads a stale subagent listing. A second tick, at
- * its own period, brightens streamed reply text and floats out reasoning and
- * tool cards that just landed, each only as far up the frame as the
- * renderer repaints without discarding the terminal's scrollback
- * (`./screen.ts`).
+ * seams for that Agent, and switches between sessions through its host. Above
+ * the editor it draws an activity board of the open turn's todos and the
+ * latest descendant line. Under the editor it keeps two docked regions the
+ * keyboard can take over — the subagent panel and the status bar — and one
+ * repeating tick advances their elapsed counters and re-reads a stale
+ * subagent listing. A second tick, at its own period, brightens streamed
+ * reply text and floats out reasoning, tool cards, and activity-board rows
+ * that just landed, each only as far up the frame as the renderer repaints
+ * without discarding the terminal's scrollback (`./screen.ts`).
  * @module @deepseek-ai/dsh-tui-app/app
  */
 
@@ -128,6 +129,14 @@ import {
   type FooterSegmentId,
 } from './footer.ts'
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
+import {
+  activityBoardView,
+  activityResultParts,
+  activityTurnEndStatus,
+  formatActivitySubagentLine,
+  renderActivityBoard,
+  type ActivityBoardSubagent,
+} from './activity-board.ts'
 import { queuePanelRows, renderQueuePanel, type QueuePanelRow } from './queue-panel.ts'
 import { READER_HINTS } from './reader.ts'
 import { ReaderPane, type ReaderExit } from './reader-screen.ts'
@@ -557,8 +566,16 @@ export class TuiApp {
   private readonly editor: BarCursorEditor
   /** Holds {@link queue} exactly while the bound Agent's inbox has a prompt waiting. */
   private readonly queueSlot = new Container()
+  /**
+   * Holds {@link activity} exactly while the open turn has todo rows or a
+   * latest-descendant line, so the editor sits directly under the conversation
+   * the rest of the time.
+   */
+  private readonly activitySlot = new Container()
   /** The prompts queued for the next turn or step, drawn above the editor until the loop claims them. */
   private readonly queue: Text
+  /** Current-turn todos and the latest descendant line, drawn above the editor. */
+  private readonly activity: Text
   /** Rows of the last queued-prompt draw, in claim order. */
   private queueView: readonly QueuePanelRow[] = []
   /** Pending prompt held while the queue panel owns the keyboard. */
@@ -589,6 +606,18 @@ export class TuiApp {
   private readonly disposers: (() => void)[] = []
   /** Turn facts of the bound session's todo lines, keyed by content. */
   private todoTurns = new Map<string, TodoHistory>()
+  /** Todos the activity board draws for the open turn, from the `todos` projection. */
+  private activityTodos: readonly TodoItem[] = []
+  /** Status last drawn for each activity-board todo, keyed by content. */
+  private activityTodoStatus = new Map<string, TodoItem['status']>()
+  /** Fades of todo rows that are still moving, keyed by content. */
+  private activityTodoFades = new Map<string, BlockFade>()
+  /** Latest descendant line the activity board draws; absent before one lands. */
+  private activitySubagent: ActivityBoardSubagent | undefined
+  /** Fade of the descendant line while it is still moving. */
+  private activitySubagentFade: BlockFade | undefined
+  /** The last descendant `tool/call` the board saw, for presenting its result. */
+  private activityChildCall: { name: string; args: unknown } | undefined
   /** The turn the last logged `turn/start` opened; 0 before the first one. */
   private turn = 0
   /** Whether a nonempty system prompt has already been drawn in this transcript. */
@@ -740,6 +769,7 @@ export class TuiApp {
     this.editor.onSubmit = (text) => { this.onSubmit(text) }
     this.editor.onChange = () => { this.syncEditorBorder() }
     this.queue = new Text('', 0, 0)
+    this.activity = new Text('', 0, 0)
     this.panel = new Text('', 0, 0)
     this.footer = new FooterBar(() => ({
       segments: this.segments,
@@ -753,7 +783,7 @@ export class TuiApp {
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
     const tree = [
       this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.queueSlot,
-      this.editor, this.panelSlot, this.footer,
+      this.activitySlot, this.editor, this.panelSlot, this.footer,
     ]
     for (const child of tree) this.tui.addChild(child)
   }
@@ -784,11 +814,21 @@ export class TuiApp {
         }
         this.setWorking(status === 'running')
       }),
-      // Neither lifecycle edge carries the delegating parent, so they mark the
-      // listing stale rather than adding or removing a row themselves; both
-      // fire for out-of-process children too.
-      ctx.on('subagent/start', () => { this.markSubagentsStale() }),
-      ctx.on('subagent/end', () => { this.markSubagentsStale() }),
+      // Neither lifecycle edge names the delegating parent in its payload;
+      // both fire for out-of-process children too. The listing and the child's
+      // header decide whether the activity board may show the status word.
+      ctx.on('subagent/start', (info) => {
+        this.markSubagentsStale()
+        if (this.isBoundDescendantId(info.id)) {
+          this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: 'running' })
+        }
+      }),
+      ctx.on('subagent/end', (info) => {
+        this.markSubagentsStale()
+        if (this.isBoundDescendantId(info.id)) {
+          this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: info.stopReason })
+        }
+      }),
       // A prompt waits above the editor from the moment it enters the inbox
       // until the loop claims it for a turn or step, or `/queue clear` drops it.
       ctx.on('agent/inbox/inserted', ({ agent: subject }) => { if (subject === this.agent) this.refreshQueue() }),
@@ -918,6 +958,7 @@ export class TuiApp {
     this.pending = []
     this.queueView = []
     this.queueSelection = undefined
+    this.clearActivityBoard()
     this.subagentEntries = []
     this.panelSelection = undefined
     this.listingFailure = undefined
@@ -1103,6 +1144,163 @@ export class TuiApp {
       }))
     }
     this.tui.requestRender()
+  }
+
+  /**
+   * Redraw the activity board above the editor from the open turn's todos and
+   * the latest descendant line. The slot is mounted exactly while a row
+   * draws, so the editor sits directly under follow-ups or the conversation
+   * the rest of the time.
+   */
+  private refreshActivityBoard(): void {
+    const view = activityBoardView({
+      todos: this.activityTodos,
+      ...this.activitySubagent === undefined ? {} : { subagent: this.activitySubagent },
+    })
+    const text = renderActivityBoard(view, {
+      palette: this.deps.palette,
+      todoFades: this.activityTodoFades,
+      ...this.activitySubagentFade === undefined ? {} : { subagentFade: this.activitySubagentFade },
+    })
+    const mounted = this.activitySlot.children.length > 0
+    if (text === '') {
+      if (mounted) this.activitySlot.removeChild(this.activity)
+    } else {
+      if (!mounted) this.activitySlot.addChild(this.activity)
+      this.activity.setText(text)
+    }
+    this.tui.requestRender()
+  }
+
+  /**
+   * Replace the board's todos from the same `todos` projection `/todos` reads
+   * and fade rows that are new or that changed status.
+   */
+  private syncActivityTodos(): void {
+    const items = this.statusFacts().todos?.items ?? []
+    const fades = new Map<string, BlockFade>()
+    const statuses = new Map<string, TodoItem['status']>()
+    for (const item of items) {
+      const previous = this.activityTodoStatus.get(item.content)
+      if (previous === undefined || previous !== item.status) {
+        this.fadeBlock((fade) => { fades.set(item.content, fade) })
+      } else {
+        const existing = this.activityTodoFades.get(item.content)
+        if (existing !== undefined) fades.set(item.content, existing)
+      }
+      statuses.set(item.content, item.status)
+    }
+    this.activityTodos = items
+    this.activityTodoFades = fades
+    this.activityTodoStatus = statuses
+    this.refreshActivityBoard()
+  }
+
+  /**
+   * Replace the one descendant line, fading it when the text changed.
+   * @param line - the label, status word, and optional summary.
+   */
+  private setActivitySubagent(line: ActivityBoardSubagent): void {
+    const next = formatActivitySubagentLine(line)
+    const previous = this.activitySubagent === undefined ? undefined : formatActivitySubagentLine(this.activitySubagent)
+    this.activitySubagent = line
+    if (next !== previous) {
+      this.activitySubagentFade = undefined
+      this.fadeBlock((fade) => { this.activitySubagentFade = fade })
+    }
+    this.refreshActivityBoard()
+  }
+
+  /** Drop the open-turn board so bind and turn edges leave no stale rows. */
+  private clearActivityBoard(): void {
+    this.activityTodos = []
+    this.activityTodoStatus = new Map()
+    this.activityTodoFades = new Map()
+    this.activitySubagent = undefined
+    this.activitySubagentFade = undefined
+    this.activityChildCall = undefined
+    this.refreshActivityBoard()
+  }
+
+  /**
+   * Whether `id` belongs under the bound session: a listing entry, or a
+   * live child whose header parent is the bound session.
+   * @param id - the session id a lifecycle event named.
+   * @returns true when the activity board may show that child's status word.
+   */
+  private isBoundDescendantId(id: SessionId): boolean {
+    if (this.subagentEntries.some(entry => entry.id === id)) return true
+    const child = this.deps.ctx.get('agents')?.get(id)
+    return child !== undefined && child.session.header.parentSession === this.agent.session.id
+  }
+
+  /**
+   * Whether `session` is a descendant of the bound session: a listing entry,
+   * or a header whose parent is the bound session.
+   * @param session - the session that just logged an event.
+   * @returns true when the activity board may show that session's latest line.
+   */
+  private isBoundDescendant(session: Session): boolean {
+    return this.isBoundDescendantId(session.id) || session.header.parentSession === this.agent.session.id
+  }
+
+  /**
+   * The listing label for a descendant, or its session id when the listing
+   * has not named it.
+   * @param id - the descendant session id.
+   * @returns the board's label for that child.
+   */
+  private activityLabelFor(id: SessionId): string {
+    const entry = this.subagentEntries.find(candidate => candidate.id === id)
+    return entry?.kind === 'child' && entry.label !== undefined ? entry.label : id
+  }
+
+  /**
+   * Replace the descendant line from a child session event. Assistant prose
+   * is ignored; only tool calls, tool results, and turn ends update the line.
+   * @param session - the descendant that logged `event`.
+   * @param event - the durable event.
+   */
+  private onDescendantActivity(session: Session, event: SessionEvent): void {
+    switch (event.type) {
+      case 'tool/call': {
+        const { name, arguments: argumentsJson } = event.data
+        const args = parseArguments(argumentsJson)
+        this.activityChildCall = { name, args }
+        const title = args === undefined ? undefined : this.presentCall(name, args)?.title
+        this.setActivitySubagent({
+          label: this.activityLabelFor(session.id),
+          status: callingActivity(name),
+          ...title === undefined ? {} : { summary: title },
+        })
+        return
+      }
+      case 'tool/result': {
+        const [result] = event.data.message.content
+        const call = this.activityChildCall
+        this.activityChildCall = undefined
+        const view = this.presentResult(
+          call?.name ?? '',
+          call?.args,
+          result.content,
+          result.isError === true,
+          event.data.meta,
+        )
+        this.setActivitySubagent({
+          label: this.activityLabelFor(session.id),
+          ...activityResultParts(toolResultBody(view, result.content).lines[0], result.isError === true),
+        })
+        return
+      }
+      case 'turn/end':
+        this.setActivitySubagent({
+          label: this.activityLabelFor(session.id),
+          status: activityTurnEndStatus(event.data.reason),
+        })
+        return
+      default:
+        return
+    }
   }
 
   /**
@@ -3548,6 +3746,7 @@ export class TuiApp {
     // what tells this period to build it again; every other surface reads the
     // level while it renders.
     if (this.panelLift !== this.panelLiftNow()) this.refreshSubagentPanel()
+    if (this.activitySlot.children.length > 0) this.refreshActivityBoard()
     this.motions.tick()
     this.tui.requestRender()
     this.updateFadeTicker()
@@ -3618,8 +3817,11 @@ export class TuiApp {
   private onSessionEvent(session: Session, event: SessionEvent): void {
     if (session !== this.agent.session) {
       // Every live session of this process reaches here, the subagent
-      // children included; their events only tell the panel its listing aged.
+      // children included; their events tell the panel its listing aged and
+      // replace the activity board's one descendant line when they belong
+      // under the bound session.
       this.markSubagentsStale()
+      if (this.isBoundDescendant(session)) this.onDescendantActivity(session, event)
       return
     }
     switch (event.type) {
@@ -3628,11 +3830,13 @@ export class TuiApp {
         // todo writes, which carry no turn of their own.
         this.turn = event.data.turn
         this.turnStartedAt = event.time
+        this.clearActivityBoard()
         this.updateTicker()
         this.refreshFooter()
         break
       case 'todo/write':
         this.trackTodoTurns(event.data.todos)
+        this.syncActivityTodos()
         break
       case 'user/message':
         this.onUserMessage(event.data)
@@ -3678,6 +3882,7 @@ export class TuiApp {
         this.updateTicker()
         this.endFade()
         this.clearLiveUsage()
+        this.clearActivityBoard()
         this.refreshFooter()
         const notice = turnEndNotice(event.data.reason)
         if (notice !== undefined) this.notice(notice, event.data.reason.kind === 'error' ? 'error' : 'dim')
