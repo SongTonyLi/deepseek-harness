@@ -29,14 +29,27 @@ export function contentText(blocks: readonly ContentBlock[]): string {
 }
 
 /**
- * Compact token count: `950`, `1.2k`, `3.4M`.
+ * Compact token count with a thousands/millions/billions unit: `950`, `1.2k`,
+ * `12.3k`, `3.4M`, `1.2B`. A trailing `.0` is dropped so `1000` reads `1k`.
  * @param count - a non-negative token count.
  * @returns the formatted count.
  */
 export function formatTokens(count: number): string {
   if (count < 1000) return String(count)
-  if (count < 1_000_000) return `${(count / 1000).toFixed(count < 10_000 ? 1 : 0)}k`
-  return `${(count / 1_000_000).toFixed(1)}M`
+  if (count < 1_000_000) return formatScaled(count / 1000, 'k')
+  if (count < 1_000_000_000) return formatScaled(count / 1_000_000, 'M')
+  return formatScaled(count / 1_000_000_000, 'B')
+}
+
+/**
+ * One decimal place and a unit letter, dropping a trailing `.0`.
+ * @param value - the count already divided by the unit's base.
+ * @param unit - `k`, `M`, or `B`.
+ * @returns the compact count.
+ */
+function formatScaled(value: number, unit: string): string {
+  const fixed = value.toFixed(1)
+  return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}${unit}`
 }
 
 /**
@@ -83,6 +96,65 @@ export interface UsageTotals {
 /** The zero totals a fresh session starts from. */
 export const EMPTY_USAGE: UsageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, lastInputTokens: 0 }
 
+/** Characters treated as one token when the provider has not yet reported usage. */
+const CHARS_PER_TOKEN = 4
+
+/**
+ * Approximate a token count from streamed character length, the same 4-chars
+ * rule the Cursor adapter uses when a provider omits prompt usage.
+ * @param chars - non-negative character count; a negative value counts as 0.
+ * @returns `ceil(chars / 4)`.
+ */
+export function estimateTokens(chars: number): number {
+  return Math.ceil(Math.max(0, chars) / CHARS_PER_TOKEN)
+}
+
+/** Prompt tokens occupying the context window: uncached input plus cache read. */
+function promptTokens(usage: TokenUsage): number {
+  return usage.inputTokens + (usage.cacheReadTokens ?? 0)
+}
+
+/**
+ * Billed prompt tokens of one usage record: uncached input plus cache read
+ * and cache write.
+ * @param usage - one model call's usage.
+ * @returns the billed send count.
+ */
+export function billedInputTokens(usage: TokenUsage): number {
+  return promptTokens(usage) + (usage.cacheWriteTokens ?? 0)
+}
+
+/**
+ * Fold an in-flight model call into the session totals for the footer.
+ * @param totals - committed totals so far.
+ * @param live - the current call; absent leaves `totals` unchanged.
+ * @returns the totals the footer should draw right now.
+ */
+export function withLiveUsage(totals: UsageTotals, live: TokenUsage | undefined): UsageTotals {
+  if (live === undefined) return totals
+  const prompt = promptTokens(live)
+  return {
+    inputTokens: totals.inputTokens + live.inputTokens,
+    outputTokens: totals.outputTokens + live.outputTokens,
+    cacheReadTokens: totals.cacheReadTokens + (live.cacheReadTokens ?? 0),
+    lastInputTokens: prompt > 0 ? prompt : totals.lastInputTokens,
+  }
+}
+
+/**
+ * The ↑send ↓receive suffix the working spinner draws for the current call.
+ * @param usage - the in-flight call; absent or zero draws nothing.
+ * @returns the suffix without a leading space, or the empty string.
+ */
+export function formatLiveUsage(usage: TokenUsage | undefined): string {
+  if (usage === undefined) return ''
+  const send = billedInputTokens(usage)
+  const parts: string[] = []
+  if (send > 0) parts.push(`↑${formatTokens(send)}`)
+  if (usage.outputTokens > 0) parts.push(`↓${formatTokens(usage.outputTokens)}`)
+  return parts.length === 0 ? '' : `${parts.join(' ')} tokens`
+}
+
 /**
  * Fold one committed usage record into the totals.
  * @param totals - the totals so far.
@@ -94,7 +166,7 @@ export function addUsage(totals: UsageTotals, usage: TokenUsage): UsageTotals {
     inputTokens: totals.inputTokens + usage.inputTokens,
     outputTokens: totals.outputTokens + usage.outputTokens,
     cacheReadTokens: totals.cacheReadTokens + (usage.cacheReadTokens ?? 0),
-    lastInputTokens: usage.inputTokens + (usage.cacheReadTokens ?? 0),
+    lastInputTokens: promptTokens(usage),
   }
 }
 

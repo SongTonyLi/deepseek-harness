@@ -11,8 +11,11 @@ import {
   formatElapsed,
   formatTimestamp,
   formatTokens,
+  estimateTokens,
+  formatLiveUsage,
   formatUsage,
   foldRows,
+  withLiveUsage,
   paintCodeRows,
   parseArguments,
   toolCallText,
@@ -101,9 +104,14 @@ describe('transcript', () => {
 
   it('formats token counts compactly', () => {
     expect(formatTokens(950)).toBe('950')
+    expect(formatTokens(1000)).toBe('1k')
     expect(formatTokens(1234)).toBe('1.2k')
-    expect(formatTokens(12345)).toBe('12k')
+    expect(formatTokens(12_345)).toBe('12.3k')
+    expect(formatTokens(141_100)).toBe('141.1k')
+    expect(formatTokens(54_000)).toBe('54k')
+    expect(formatTokens(1_000_000)).toBe('1M')
     expect(formatTokens(2_500_000)).toBe('2.5M')
+    expect(formatTokens(1_200_000_000)).toBe('1.2B')
   })
 
   it('folds usage and formats the footer summary', () => {
@@ -113,6 +121,26 @@ describe('transcript', () => {
     const twice = addUsage(once, { inputTokens: 150, outputTokens: 30, cacheReadTokens: 900 })
     expect(twice).toEqual({ inputTokens: 250, outputTokens: 50, cacheReadTokens: 900, lastInputTokens: 1050 })
     expect(formatUsage(twice)).toBe('↑250 ↓50 cache 900 ctx 1.1k')
+  })
+
+  it('estimates tokens from streamed characters and formats a live call', () => {
+    expect(estimateTokens(0)).toBe(0)
+    expect(estimateTokens(-8)).toBe(0)
+    expect(estimateTokens(4)).toBe(1)
+    expect(estimateTokens(5)).toBe(2)
+    expect(formatLiveUsage(undefined)).toBe('')
+    expect(formatLiveUsage({ inputTokens: 0, outputTokens: 0 })).toBe('')
+    expect(formatLiveUsage({ inputTokens: 1200, outputTokens: 0 })).toBe('↑1.2k tokens')
+    expect(formatLiveUsage({ inputTokens: 0, outputTokens: 34 })).toBe('↓34 tokens')
+    expect(formatLiveUsage({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 900 })).toBe('↑1k ↓20 tokens')
+    expect(formatLiveUsage({ inputTokens: 10, outputTokens: 4, cacheWriteTokens: 90 })).toBe('↑100 ↓4 tokens')
+    expect(withLiveUsage(EMPTY_USAGE, undefined)).toEqual(EMPTY_USAGE)
+    expect(withLiveUsage(EMPTY_USAGE, { inputTokens: 100, outputTokens: 20 })).toEqual({
+      inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, lastInputTokens: 100,
+    })
+    expect(withLiveUsage(EMPTY_USAGE, { inputTokens: 0, outputTokens: 8 })).toEqual({
+      inputTokens: 0, outputTokens: 8, cacheReadTokens: 0, lastInputTokens: 0,
+    })
   })
 
   it('maps every turn-end reason to a notice', () => {
