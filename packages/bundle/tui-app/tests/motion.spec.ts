@@ -1,7 +1,7 @@
 /** The chrome motion clock and the three-level lift its call sites draw with. */
 
 import { describe, expect, it } from 'vitest'
-import { LANDING_TICKS, Motion, READER_OPEN_TICKS, SEGMENT_TICKS, STEP_TICKS, pulse, type MotionLevel } from '../src/motion.ts'
+import { LANDING_TICKS, Motion, SEGMENT_TICKS, STEP_TICKS, pulse, type MotionLevel } from '../src/motion.ts'
 import { createPalette } from '../src/style.ts'
 
 /** The period every case measures in. */
@@ -59,7 +59,7 @@ describe('Motion', () => {
   })
 
   it('settles at once when it was given no length to run', () => {
-    const clock = new Motion({ startedAt: 0, ticks: READER_OPEN_TICKS, stepMs: 0, now: () => 0 })
+    const clock = new Motion({ startedAt: 0, ticks: LANDING_TICKS, stepMs: 0, now: () => 0 })
     expect(clock.progress()).toBe(1)
     expect(clock.level()).toBe(0)
     expect(clock.needsRepaint()).toBe(false)

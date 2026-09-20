@@ -54,6 +54,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
+import { AlternateScreen } from './alt-screen.ts'
 import { attachLocalFile, type PendingAttachment } from './attach.ts'
 import {
   changeDiffRows,
@@ -96,8 +97,6 @@ import {
 import {
   LANDING_TICKS,
   Motion,
-  READER_CLOSE_TICKS,
-  READER_OPEN_TICKS,
   SEGMENT_TICKS,
   STEP_TICKS,
   type MotionLevel,
@@ -127,9 +126,9 @@ import {
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
 import { queuePanelRows, renderQueuePanel, type QueuePanelRow } from './queue-panel.ts'
 import { READER_HINTS } from './reader.ts'
-import { ReaderPane, type ReaderExit } from './reader-overlay.ts'
+import { ReaderPane, type ReaderExit } from './reader-screen.ts'
 import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
-import { GuardedMainScreen, ViewportPad, repaintFloor } from './screen.ts'
+import { GuardedMainScreen, repaintFloor } from './screen.ts'
 import { describeSession, listSessionChoices, type SessionChoice } from './sessions.ts'
 import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
 import {
@@ -141,7 +140,6 @@ import {
 } from './subagent-panel.ts'
 import { listTodoChoices, todoDetail, type TodoTransition } from './todos.ts'
 import {
-  ABOVE_WINDOW_TOAST,
   NOTHING_TO_READ_TOAST,
   QUIT_TOAST,
   ToastClock,
@@ -187,17 +185,8 @@ function splitModelValue(value: string): ModelSelection {
 /** What the transcript is told when a session switch took the conversation the reader was showing. */
 const READER_GONE = 'the transcript changed · reader closed'
 
-/**
- * How the reader is mounted: the whole viewport, anchored at its bottom edge.
- *
- * pi-tui composites an overlay into the last `terminal.rows` lines of the
- * frame, so anchoring at the bottom puts the pane's first line exactly on the
- * frame's last repaintable line whatever the frame's own length is - and the
- * pane draws one line fewer for every viewport line the renderer can no
- * longer repaint ({@link TuiApp.viewportFloor}), so opening the reader never
- * rewrites a line above the window.
- */
-const READER_OVERLAY = { width: '100%', maxHeight: '100%', anchor: 'bottom-left' } as const
+/** What the transcript is told when a fold key named a block the renderer can no longer rewrite. */
+const ABOVE_WINDOW_NOTICE = 'above the repaint window · opened in the reader'
 
 /**
  * Row layout of the todo picker: the label column grows with the widest todo
@@ -542,8 +531,8 @@ export class TuiApp {
   private transferringQueue = false
   /** Holds {@link panel} exactly while the bound session has subagent rows. */
   private readonly panelSlot = new Container()
-  /** Blank rows that give the mounted reader the whole viewport; see {@link ViewportPad}. */
-  private readonly pad = new ViewportPad(() => this.readerPad)
+  /** The terminal's alternate screen, which the reader draws on; see {@link AlternateScreen}. */
+  private readonly readerScreen: AlternateScreen
   /** Colours fenced code in replies; see {@link SyntaxHighlighter}. */
   private readonly codeHighlight: SyntaxHighlighter
   /** The terminal's background once it answered; undefined until then, and on a terminal that answers none. */
@@ -615,14 +604,10 @@ export class TuiApp {
   private chrome: { motion: Motion; scope: MotionScope } | undefined
   /** The lift the subagent panel's text was last built with, which only a repaint changes. */
   private panelLift: MotionLevel = 0
-  /** The reader on screen right now, while one is open. */
-  private reader: { handle: OverlayHandle; pane: ReaderPane } | undefined
-  /** Blank rows {@link ViewportPad} draws so the mounted reader covers the whole viewport. */
-  private readerPad = 0
-  /** The motion growing the open reader into place; settled or absent draws it whole. */
-  private readerOpening: Motion | undefined
-  /** The reader shrinking away, still mounted until its motion settles. */
-  private readerClosing: { handle: OverlayHandle; motion: Motion } | undefined
+  /** The reader on the alternate screen right now, while one is open. */
+  private reader: { pane: ReaderPane } | undefined
+  /** Set while a paint of the open reader is already queued for this turn of the loop. */
+  private readerPaintQueued = false
   /** Prompts shown or waiting on the modal queue, which the reader steps aside for. */
   private queuedModals = 0
   /** Until when an `Escape` that reaches the editor does nothing at all. */
@@ -631,8 +616,9 @@ export class TuiApp {
   private stopArmedUntil = 0
   /**
    * How many of the viewport's own first lines the renderer can no longer
-   * repaint, from the last frame the guard settled. An overlay composites
-   * into those lines, so this is what decides where one can be drawn.
+   * repaint, from the last frame the guard settled. The transient line
+   * composites into those lines, so this is what decides whether it can float
+   * at all.
    */
   private viewportFloor = 0
   /** Set while {@link TuiApp.bind} replays a session's history, which draws its cards settled. */
@@ -686,6 +672,7 @@ export class TuiApp {
     this.tui = new GuardedMainScreen(deps.terminal, true, (viewportTop, width, frameLines) => {
       return this.settleFrame(viewportTop, width, frameLines)
     })
+    this.readerScreen = new AlternateScreen(deps.terminal)
     this.header = new Text('', 0, 0)
     this.inspector = new InspectorPane(() => this.inspectorView(), { palette, previewLines: deps.focusPreviewLines })
     this.loader = new Loader(this.tui, palette.accent, palette.dim, 'thinking')
@@ -711,7 +698,7 @@ export class TuiApp {
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
     const tree = [
       this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.queueSlot,
-      this.editor, this.panelSlot, this.footer, this.pad,
+      this.editor, this.panelSlot, this.footer,
     ]
     for (const child of tree) this.tui.addChild(child)
   }
@@ -1287,7 +1274,6 @@ export class TuiApp {
     // each step, so a reader that closed under a prompt is not brought back
     // from the dead.
     this.queuedModals += 1
-    this.finishReaderClose()
     this.hideReader(true)
     if (this.reader === undefined) this.focusEditor()
     // Settling hands the keyboard back, so the press that closed the prompt
@@ -1300,12 +1286,15 @@ export class TuiApp {
   }
 
   /**
-   * Take the reader off the screen for as long as something else needs it, or
-   * put it back.
+   * Take the reader off the terminal for as long as something else needs it,
+   * or put it back. The reader itself stays open throughout, on the section
+   * it was reading.
    * @param hidden - whether the reader steps aside.
    */
   private hideReader(hidden: boolean): void {
-    this.reader?.handle.setHidden(hidden)
+    if (this.reader === undefined) return
+    if (hidden) this.hideReaderScreen()
+    else this.showReader()
   }
 
   /**
@@ -1521,27 +1510,29 @@ export class TuiApp {
    * their global meaning wherever the keyboard is; everything else is what
    * {@link resolveKey} makes of the key in the region that holds it.
    *
-   * A reader that is still shrinking away goes first, before the key is read:
-   * pi-tui hands the key stream back to an overlay it still holds a focus
-   * restore for, so a key this listener leaves to the editor would reach the
-   * pane instead of the caret.
+   * A reader holding the terminal takes every key here, so nothing reaches
+   * the editor behind it and no frame of the conversation is asked for while
+   * the terminal is showing another screen.
    * @param data - the raw key bytes.
    * @returns the consume marker, or undefined for the keys pi-tui's own
    * editor answers.
    */
   private onKey(data: string): { consume: true } | undefined {
     if (isKeyRelease(data)) return { consume: true }
-    this.finishReaderClose()
     if (this.modals.isActive()) {
       if (!matchesKey(data, 'ctrl+c')) return undefined
       this.modals.withdrawActive()
       return { consume: true }
     }
-    // The reader owns its whole key stream the same way: every key reaches
-    // the focused overlay, and `Ctrl+C` alone brings the keyboard back here.
-    if (this.reader !== undefined) {
-      if (!matchesKey(data, 'ctrl+c')) return undefined
-      this.reader.pane.withdraw()
+    // The reader owns its whole key stream the same way: while it holds the
+    // terminal every key is its own, and `Ctrl+C` alone brings the keyboard
+    // back here. Nothing is left for the editor, so the renderer is never
+    // asked for a frame of a conversation the terminal is not showing.
+    const reading = this.reader
+    if (reading !== undefined && this.readerScreen.active) {
+      if (matchesKey(data, 'ctrl+c')) reading.pane.withdraw()
+      else reading.pane.handleInput(data)
+      this.queueReaderPaint()
       return { consume: true }
     }
     // An armed stop lasts exactly as long as its own line is on screen, so
@@ -1753,10 +1744,12 @@ export class TuiApp {
   /**
    * Read the transcript full screen.
    *
-   * The reader is an overlay, so it costs the conversation no line and the
-   * renderer's repaint boundary stays where it was. The frame is settled
-   * first, so the pane knows how much of the viewport the renderer can still
-   * repaint before it decides how tall to draw.
+   * The reader takes the terminal rather than drawing over the conversation:
+   * the frame on screen is written one last time, the main screen is then
+   * held off the terminal, and the alternate screen carries the reader. The
+   * conversation keeps every line it had, the renderer's repaint boundary
+   * stays where it was, and nothing the reader draws can reach the terminal's
+   * scrollback.
    * @param at - the section to open on; the newest one when omitted.
    */
   private openReader(at?: TranscriptCursor): void {
@@ -1766,20 +1759,70 @@ export class TuiApp {
       this.showToast(NOTHING_TO_READ_TOAST)
       return
     }
-    this.finishReaderClose()
-    this.tui.renderNow()
-    this.readerOpening = this.startMotion(READER_OPEN_TICKS)
     const pane = new ReaderPane({
       palette: this.deps.palette,
       blocks: () => navigableBlocks(this.chat.children),
-      rows: () => Math.max(1, this.deps.terminal.rows - this.viewportFloor),
+      rows: () => Math.max(1, this.deps.terminal.rows),
       minColumns: this.deps.readerMinColumns,
       cursor,
-      reveal: () => this.readerReveal(),
+      onExit: (exit) => { this.closeReader(exit) },
     })
-    this.reader = { handle: this.tui.showOverlay(pane, READER_OVERLAY), pane }
-    this.tui.requestRender()
-    void pane.settled.then((exit) => { this.closeReader(exit) })
+    this.reader = { pane }
+    this.showReader()
+  }
+
+  /**
+   * Put the open reader on the terminal: settle the conversation, hold the
+   * main screen off the terminal, and draw the reader on the alternate one.
+   *
+   * Called with a reader open and the conversation on the terminal.
+   *
+   * Every render the application already asks for draws the reader while it is
+   * up, so a landing tool result, a streamed word, and a resize all reach it
+   * without a clock of its own.
+   */
+  private showReader(): void {
+    // The conversation the reader is opened over is drawn as it stands, so
+    // the screen the terminal restores afterwards is the one the keys that
+    // led here left behind.
+    this.tui.renderNow()
+    this.tui.suspend(() => { this.queueReaderPaint() })
+    this.readerScreen.enter()
+    this.paintReader()
+  }
+
+  /**
+   * Take the reader off the terminal and give the conversation its screen
+   * back, leaving the reader itself open. Both steps answer for a terminal
+   * the reader never took, so a caller needs to know only that it is done.
+   */
+  private hideReaderScreen(): void {
+    this.readerScreen.leave()
+    // The terminal restored the conversation exactly as the reader found it,
+    // so the renderer draws only what the session changed meanwhile.
+    this.tui.resume()
+  }
+
+  /**
+   * Draw the open reader, at most once per turn of the loop.
+   *
+   * The pane re-reads the conversation on every paint, so a burst of session
+   * events costs one drawing rather than one per event.
+   */
+  private queueReaderPaint(): void {
+    if (this.readerPaintQueued) return
+    this.readerPaintQueued = true
+    queueMicrotask(() => {
+      this.readerPaintQueued = false
+      this.paintReader()
+    })
+  }
+
+  /** Draw the open reader now, if one holds the terminal. */
+  private paintReader(): void {
+    const open = this.reader
+    if (open === undefined || !this.readerScreen.active) return
+    this.readerScreen.paint(open.pane.render(Math.max(1, this.deps.terminal.columns)))
   }
 
   /**
@@ -1787,23 +1830,16 @@ export class TuiApp {
    * @param exit - the section last read and the region that takes over.
    */
   private closeReader(exit: ReaderExit): void {
-    const open = this.reader
-    if (open === undefined) return
+    if (this.reader === undefined) return
     this.reader = undefined
-    this.readerOpening = undefined
     this.cursor = exit.cursor
+    this.hideReaderScreen()
     // `focusRegion` returns early for the region the app already records, and
     // the reader left that record alone, so the caret state is set outright.
     this.setFocus(exit.target)
     this.refreshQueue()
     this.refreshSubagentPanel()
     this.armEscapeHandoff()
-    // The pane answers no key from here on, so it can shrink away after the
-    // keyboard has already gone back; a terminal that runs no motion drops it
-    // at once.
-    const motion = this.startMotion(READER_CLOSE_TICKS)
-    if (motion === undefined) open.handle.hide()
-    else this.readerClosing = { handle: open.handle, motion }
     this.tui.requestRender()
   }
 
@@ -1815,11 +1851,10 @@ export class TuiApp {
    * @returns whether a reader was open, so the caller can report that it came down.
    */
   private dropReader(): boolean {
-    this.finishReaderClose()
     const open = this.reader
     if (open === undefined) return false
     this.reader = undefined
-    open.handle.hide()
+    this.hideReaderScreen()
     open.pane.withdraw()
     return true
   }
@@ -2209,7 +2244,6 @@ export class TuiApp {
    * @param region - the region that takes the keyboard.
    */
   private setFocus(region: FocusRegion): void {
-    this.finishReaderClose()
     if (region === 'editor') this.chrome = undefined
     else this.startChrome('landing', LANDING_TICKS)
     this.focus = region
@@ -2255,9 +2289,12 @@ export class TuiApp {
     this.tui.renderNow()
     if (this.highlighted?.block !== block) {
       // What cannot be marked cannot be rewritten either; the reader draws
-      // every row of it instead, at no cost to the conversation.
+      // every row of it instead, at no cost to the conversation. The reader
+      // takes the terminal, so the reason it opened is a notice rather than a
+      // floating line: the conversation keeps it, and it is read when the
+      // reader gives the screen back.
+      this.notice(ABOVE_WINDOW_NOTICE)
       this.openReader(section.cursor)
-      this.showToast(ABOVE_WINDOW_TOAST)
       return
     }
     block.setExpanded(!block.isExpanded())
@@ -3175,30 +3212,6 @@ export class TuiApp {
   }
 
   /**
-   * How much of its height the reader draws right now.
-   * @returns the share of the pane's rows: growing while it opens, shrinking
-   * while it comes down, and 1 for a reader that is simply up.
-   */
-  private readerReveal(): number {
-    const closing = this.readerClosing
-    if (closing !== undefined) return 1 - closing.motion.progress()
-    return this.readerOpening?.progress() ?? 1
-  }
-
-  /**
-   * Take a shrinking reader off the screen now, for anything that needs the
-   * viewport back before the motion settles: another overlay, a prompt, a
-   * session change, or the next key press - pi-tui would hand the key stream
-   * back to an overlay it still holds a focus restore for.
-   */
-  private finishReaderClose(): void {
-    const closing = this.readerClosing
-    if (closing === undefined) return
-    this.readerClosing = undefined
-    closing.handle.hide()
-  }
-
-  /**
    * Arm the fade tick while streamed text or a card still draws below the last
    * brightness level and disarm it otherwise, so a session that is not
    * streaming runs no fade timer. Exactly one runs at a time, and a stopped
@@ -3240,25 +3253,14 @@ export class TuiApp {
    * @param viewportTop - the frame's first repaintable line.
    * @param width - the width it was built at.
    * @param frameLines - how many lines the frame has, which is what places
-   * an overlay: pi-tui composites one into the frame's last `rows` lines.
+   * the transient line: pi-tui composites an overlay into the frame's last
+   * `rows` lines.
    * @returns whether anything changed a line, so the frame is built again
    * before it is written.
    */
   private settleFrame(viewportTop: number, width: number, frameLines: number): boolean {
     const rows = this.deps.terminal.rows
-    // The pad is measured against the frame without it, so the rows it adds
-    // are the shortfall itself rather than a count that feeds on its own
-    // effect; a terminal that resized under an open reader settles on the new
-    // shortfall the same way.
-    const floor = repaintFloor(Math.max(frameLines - this.readerPad, rows) - rows, viewportTop)
-    const pad = this.reader === undefined && this.readerClosing === undefined ? 0 : floor
-    this.viewportFloor = floor - pad
-    if (pad !== this.readerPad) {
-      this.readerPad = pad
-      // The frame changed length, so every decision below is taken on the
-      // frame that replaces this one.
-      return true
-    }
+    this.viewportFloor = repaintFloor(Math.max(frameLines, rows) - rows, viewportTop)
     const section = this.focusedSection()
     const wanted: HeldSection | undefined = section !== undefined && this.focus === 'transcript'
       ? { block: section.block, part: section.cursor.part, level: this.markLift() }
@@ -3302,7 +3304,6 @@ export class TuiApp {
     this.reasoningTail?.tick()
     this.blockFades.tick()
     if (this.toast?.clock.expired() === true) this.hideToast()
-    if (this.readerClosing?.motion.needsRepaint() === false) this.finishReaderClose()
     // The panel's text is built when something changes it, so its own lift is
     // what tells this period to build it again; every other surface reads the
     // level while it renders.

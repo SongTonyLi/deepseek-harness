@@ -48,11 +48,11 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 被聚焦的块也会在原地被标记：一条两列宽的标记条，在块的其他行旁为暗色、在被聚焦小节自身的行旁为强调色——若折叠把该小节整个留在了绘出的行之外，强调色便落在那一行折叠标记旁——标记绘制期间该块的内容按窄两列换行。这个标记只能落在 pi-tui 仍以差分方式重绘的行上——也就是它写出的上一帧的最后 `rows` 行，这条边界只会被更高的帧抬高、不会被更矮的帧降低——因为改动其上方的任何一行都会清空终端的回滚区。已经滚过该位置的块不带标记条，检视面板的标题追加 ` · off screen`，其边框线也改画暗色而非强调色，于是边框本身就报告出标记无法画在该块所在之处。淡入中的各行抵达这一边界时，会在写出它们的同一帧内被结算为最终颜色，因此回滚区里不会留下暗色文字。
 
-在任一区域按 `Ctrl+G`、在对话记录的某个小节上按 `Enter`，以及 `/turns`，都会整屏读出对话记录。阅读器是合成进视口的浮层，因此不占用对话记录的任何一行，也让重绘边界保持原位；若某一帧此后变短，使视口顶部落到渲染器够不着的地方，帧尾的若干空行会把它还回来，于是阅读器铺满整个终端。它在带有 ` ● READER ` 徽标与 `turn <n> of <total>` 的顶边线之下画两个面板：左面板每个轮次一行——轮次编号、其提示的首行，以及右对齐的标记 `⬡<n>` 注入上下文块数、`✻` 有推理、`¶` 有回复、`⚒<n>` 工具调用数——并在正在阅读的那个轮次之下列出它的各小节，`▸` 落在阅读器所持的那一个上，因此任何轮次自己的上下文都只有一步之遥；右面板把该轮次从头到尾滚动读出，各小节堆叠在 `── <label> · turn <n> ` 标题之下，顶行所属的那个小节带强调色。那里的行从不折叠：阅读器正是读取系统提示词、注入快照、长回复或工具结果完整面向模型文本的地方。`Right` 打开被选中的轮次，`Left` 回到轮次列表；在列表中 `Up` / `Down` 每次步进一个小节并跨入相邻的轮次，而 `PageUp` / `PageDown` 步进整个轮次；在轮次面板中它们逐行滚动，而顶行所属的小节就是阅读器关闭后对话记录恢复到的位置。`/` 在按键提示的位置打开一行查询，把轮次列表收窄到提示或文本匹配的轮次，读数写作 `<kept>/<total> turns`；其余时候提示边线在右端报告 `turn 3/12 · row 14/212`，任何宽度都不会丢弃它。列数不足 `readerMinColumns` 时正文一次只画一个面板——轮次列表，或由 `Right` 从中打开的那个轮次——不足 24 列或 8 行时只画一行暗色文字 `terminal too small for the reader (needs 24×8)`，并且只应答 `Esc`、`Ctrl+G` 与 `Ctrl+C`。它在每一帧都重新读取对话记录，因此流式回复会在其中增长、落地的工具结果会出现、新轮次会加入轮次列表；重新换行时它按正在阅读的小节重新锚定，而不是按行号；审批或提问出现时它在该提示存续期间让位；切换会话会让它随通知 `the transcript changed · reader closed` 一同关闭。
+在任一区域按 `Ctrl+G`、在对话记录的某个小节上按 `Enter`，以及 `/turns`，都会整屏读出对话记录。阅读器并不画在对话记录之上，而是接管终端：它运行在终端的备用屏幕（alternate screen，分页器所用的那块屏幕）上，只要它还开着，对话记录自己的屏幕就被挡在终端之外。因此它不占用对话记录的任何一行，让重绘边界保持原位，在任何终端上都铺满整屏，也不可能把自己的任何一行留在你的回滚缓冲里；关闭它会把对话记录原样恢复成你离开时的样子，期间落地的内容则绘制在其下方。它在带有 ` ● READER ` 徽标与 `turn <n> of <total>` 的顶边线之下画两个面板：左面板每个轮次一行——轮次编号、其提示的首行，以及右对齐的标记 `⬡<n>` 注入上下文块数、`✻` 有推理、`¶` 有回复、`⚒<n>` 工具调用数——并在正在阅读的那个轮次之下列出它的各小节，`▸` 落在阅读器所持的那一个上，因此任何轮次自己的上下文都只有一步之遥；右面板把该轮次从头到尾滚动读出，各小节堆叠在 `── <label> · turn <n> ` 标题之下，顶行所属的那个小节带强调色。那里的行从不折叠：阅读器正是读取系统提示词、注入快照、长回复或工具结果完整面向模型文本的地方。`Right` 打开被选中的轮次，`Left` 回到轮次列表；在列表中 `Up` / `Down` 每次步进一个小节并跨入相邻的轮次，而 `PageUp` / `PageDown` 步进整个轮次；在轮次面板中它们逐行滚动，而顶行所属的小节就是阅读器关闭后对话记录恢复到的位置。`/` 在按键提示的位置打开一行查询，把轮次列表收窄到提示或文本匹配的轮次，读数写作 `<kept>/<total> turns`；其余时候提示边线在右端报告 `turn 3/12 · row 14/212`，任何宽度都不会丢弃它。列数不足 `readerMinColumns` 时正文一次只画一个面板——轮次列表，或由 `Right` 从中打开的那个轮次——不足 24 列或 8 行时只画一行暗色文字 `terminal too small for the reader (needs 24×8)`，并且只应答 `Esc`、`Ctrl+G` 与 `Ctrl+C`。它在每一帧都重新读取对话记录，因此流式回复会在其中增长、落地的工具结果会出现、新轮次会加入轮次列表；重新换行时它按正在阅读的小节重新锚定，而不是按行号；审批或提问出现时它在该提示存续期间让位；切换会话会让它随通知 `the transcript changed · reader closed` 一同关闭。
 
-临时按键反馈以一行暗色带框文字浮在视口右上角：`press Esc again to stop turn <n>`、`press Ctrl+C again to quit`、`nothing in the transcript to read yet` 与 `above the repaint window · opened in the reader`。它以全亮度保持 `toastMs`、随后淡出，不占用对话记录自身的任何一行，也不接管键盘；渲染器已无法重绘视口顶部时，它改为打印进对话记录，从而被保留下来。值得留存的事实则是对话记录中的通知：`stopping the turn…`、`wait for the session switch to finish` 以及每一条命令结果。
+临时按键反馈以一行暗色带框文字浮在视口右上角：`press Esc again to stop turn <n>`、`press Ctrl+C again to quit` 与 `nothing in the transcript to read yet`。它以全亮度保持 `toastMs`、随后淡出，不占用对话记录自身的任何一行，也不接管键盘；渲染器已无法重绘视口顶部时，它改为打印进对话记录，从而被保留下来。值得留存的事实则是对话记录中的通知：`stopping the turn…`、`wait for the session switch to finish`、`above the repaint window · opened in the reader` 以及每一条命令结果。
 
-动效不止于流式文本，而且每种效果都乘着同一个淡入时钟。键盘落到对话记录、子 agent 面板或状态栏上时，会把该表层的边框、其徽标与它持有的标记抬亮六拍；对话记录走查中的一步把新聚焦的标记条抬亮三拍；状态栏上的一步把所选标签抬亮四拍；阅读器用六拍长出、用四拍缩回，并自其底边线向上绘制，因此它画出的每一行都不会滑动。任何抬亮都不改变任何东西绘制的行数，而 `reducedMotion`——与 `NO_COLOR`、被禁用的调色板和 `TERM=dumb` 一样——会把它们全部关闭，并且不为它们安排任何重绘。
+动效不止于流式文本，而且每种效果都乘着同一个淡入时钟。键盘落到对话记录、子 agent 面板或状态栏上时，会把该表层的边框、其徽标与它持有的标记抬亮六拍；对话记录走查中的一步把新聚焦的标记条抬亮三拍；状态栏上的一步把所选标签抬亮四拍。阅读器没有任何动效：它在自己占据的屏幕上一次性完整出现。任何抬亮都不改变任何东西绘制的行数，而 `reducedMotion`——与 `NO_COLOR`、被禁用的调色板和 `TERM=dumb` 一样——会把它们全部关闭，并且不为它们安排任何重绘。
 
 子 agent 面板在绑定会话之下有常驻的子 agent 会话、或列表中带有无法读取的候选者时绘制。未聚焦时它是一行摘要，含列出的数量与第一个子会话的关键标签；聚焦时其标题统计所列出的条目，并以它所应答的按键 `↑↓ children · Enter details · Tab regions · Esc input` 结尾，在容纳不下时收缩为 `↑↓ children · Esc input`，再收缩为 `Esc input`；每一行给出该子会话的层级缩进、其标签或 id、其模式（`one-shot` 或 `continuable`）、`resident`、其 agent 处于 `running` 还是 `idle`、其已用时间——进行中轮次的用时，否则是已结束轮次的合计——以及其 token 用量，以本进程对该子会话的可见程度与已组合的投影所能提供的为限。最多绘制六行，其下是 `+<n> more · /subagents lists them all`；列表无法解读的候选者绘制为 `unreadable: <reason>` 且打不开任何页面，读取失败的列表则保留上一次成功读取产生的各行，并在其下写出 `listing failed: <reason>`。面板随其最后一行一同消失。
 
@@ -103,7 +103,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `Home` / `End` | 最早 / 最新的小节 |
 | `Left` / `Right` | 被持有块的上一个 / 下一个部分，到该块两端即停 |
 | `Shift+Left` / `Shift+Right` | 被持有块的第一个 / 最后一个部分 |
-| `Space` | 折叠或展开被标记的工具卡片或上下文块；渲染器已无法重写的块改为在阅读器中打开，并附上一行 `above the repaint window · opened in the reader` |
+| `Space` | 折叠或展开被标记的工具卡片或上下文块；渲染器已无法重写的块改为在阅读器中打开，并附上通知 `above the repaint window · opened in the reader` |
 | `Enter` | 整屏读出该小节 |
 | `Tab` / `Shift+Tab` | 已绘制区域中的下一个 / 上一个 |
 | `Esc` | 回到编辑器 |
@@ -218,7 +218,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `liveRefreshMs` | `1000` | 重绘周期：推进 `turn` 分段与面板中的已用时间，并重新读取已过期的子 agent 列表 |
 | `streamFadeSteps` | `12` | 一次淡入或浮出持续多少拍：回复文字淡入，推理与工具卡片浮出，时长为 `streamFadeSteps × streamFadeStepMs` |
 | `streamFadeStepMs` | `33` | 一拍淡入或浮出的时长，也是仍在变化时的重绘周期；总时长为 `streamFadeSteps × streamFadeStepMs` |
-| `reducedMotion` | `false` | 以稳定颜色绘制流式文本、流式推理、工具卡片与应用自身的边框装饰，不做淡入、不做抬亮、不做阅读器展开，也不重复重绘 |
+| `reducedMotion` | `false` | 以稳定颜色绘制流式文本、流式推理、工具卡片与应用自身的边框装饰，不做淡入、不做抬亮，也不重复重绘 |
 | `openBrowser` | `true` | 把被标记的授权页面交给本地默认浏览器 |
 
 `prompt`、`resume` 与 `openBrowser` 经启动提供方来自命令行；生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)是所有可接受字段的完整来源。
@@ -251,7 +251,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 |---|---|
 | [`src/index.ts`](src/index.ts) | `tui-app` 插件：会话宿主（创建、恢复、fork）、历史读取、退出流程、退出码映射 |
 | [`src/startup.ts`](src/startup.ts) | `tui-app-startup` 提供方：提示位置参数、`--resume`、`--no-open` 与 `--help` |
-| [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、停止装填，以及它挂载的各浮层 |
+| [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、停止装填、它挂载的临时提示行，以及阅读器所依托的终端交接 |
 | [`src/keys.ts`](src/keys.ts) | 按键模型：各焦点区域、一次按键在每个区域中的含义、它们逐级收缩的按键提示、进入用的按键、`/help` 的各行，以及交接窗口 |
 | [`src/sessions.ts`](src/sessions.ts) | `/resume` 与 `/sessions` 共用的持久化会话列表及选择器行 |
 | [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行 |
@@ -263,10 +263,11 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/inspector.ts`](src/inspector.ts) | 停靠的检视面板：带模式徽标的边框面板、小节标题、带编号且会折行的各部分选择行、折叠后的各行，及其挂载的组件 |
 | [`src/frame.ts`](src/frame.ts) | 纯粹的画框：圆角边框线、反白的模式徽标、正文行，以及某个宽度容纳得下的按键提示级别 |
 | [`src/reader.ts`](src/reader.ts) | 作为纯数据的阅读器：其状态、按键变成的各个意图、其几何布局，以及它画出的各行 |
-| [`src/reader-overlay.ts`](src/reader-overlay.ts) | 挂载的阅读器面板：其按键映射、其展开动效，以及它把键盘留在何处 |
-| [`src/screen.ts`](src/screen.ts) | 在构建一帧与写出该帧之间带若干次结算的主屏幕、每次结算所依据的重绘窗口，以及每个块的重绘下界 |
+| [`src/reader-screen.ts`](src/reader-screen.ts) | 画在备用屏幕上的阅读器面板：其按键映射，以及它把键盘留在何处 |
+| [`src/screen.ts`](src/screen.ts) | 在构建一帧与写出该帧之间带若干次结算的主屏幕、每次结算所依据的重绘窗口、每个块的重绘下界，以及把对话记录挡在终端之外的挂起 |
+| [`src/alt-screen.ts`](src/alt-screen.ts) | 终端的备用屏幕：接管它、在其上按绝对行址绘制，以及把对话记录自己的屏幕交还 |
 | [`src/fade.ts`](src/fade.ts) | 流式文本淡入与浮出：基于挂钟的尾部追踪器、块时钟与注册表、淡入亮度级别、浮出混合，以及对已渲染行的重新着色 |
-| [`src/motion.ts`](src/motion.ts) | 边框装饰的动效时钟与其调用点所绘的三级抬亮：落键、小节步进、状态栏走查与阅读器的展开 |
+| [`src/motion.ts`](src/motion.ts) | 边框装饰的动效时钟与其调用点所绘的三级抬亮：落键、小节步进与状态栏走查 |
 | [`src/prompts.ts`](src/prompts.ts) | 审批、提问、选择器与只读详情提示以及模态队列 |
 | [`src/toast.ts`](src/toast.ts) | 临时按键提示行：其浮层、其时钟，以及它承载的各条文字 |
 | [`src/transcript.ts`](src/transcript.ts) | 呈现视图、用量与轮次结束原因的纯文本折叠，以及每条标记共用的那一套折叠措辞 |
@@ -289,11 +290,12 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/motion.spec.ts`](tests/motion.spec.ts) | 动效时钟的各个级别、它对重绘的要求，以及每一级所绘的抬亮 |
 | [`tests/toast.spec.ts`](tests/toast.spec.ts) | 临时提示行的方框、其保持、其淡出与其提前结算 |
 | [`tests/reader.spec.ts`](tests/reader.spec.ts) | 阅读器的几何布局、其状态机、其过滤，以及它返回的各行 |
-| [`tests/reader-overlay.spec.ts`](tests/reader-overlay.spec.ts) | 挂载的面板：其按键映射、其展开动效、其重新锚定与其退出 |
+| [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | 阅读器面板：其按键映射、它铺满的屏幕、其重新锚定与其退出 |
+| [`tests/alt-screen.spec.ts`](tests/alt-screen.spec.ts) | 备用屏幕：其成对的切换、其逐行绘制，以及更短的一帧所清除的行 |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的 `/resume` 与 `/sessions` 选择器、附件、队列、技能、登录、导出、引用、`/effort` 与 `Shift+Tab` 共用的选择器，以及模型列表中的 `Ctrl+S` |
 | [`tests/effort.spec.ts`](tests/effort.spec.ts) | 共用的推理强度名称、选择器行、当前强度提示与输入参数匹配 |
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、可导航的子 agent 与 todo 列表、目录命令、命令提示与审批详情 |
-| [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | 走遍对话记录、区域序列、检视面板、实时会话上的阅读器，以及重绘窗口内的原地标记条 |
+| [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | 走遍对话记录、区域序列、检视面板、实时会话上的阅读器连同它接管与交还的终端，以及重绘窗口内的原地标记条 |
 | [`tests/context.spec.ts`](tests/context.spec.ts) | 把系统提示词与注入上下文投影为对话记录小节 |
 | [`tests/index.spec.ts`](tests/index.spec.ts) | 创建、恢复分页、fork 切割、会话切换、退出流程与失败报告 |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 基于真实 Loader 配置树的命令行解析 |
@@ -346,8 +348,8 @@ runner 不向请求前缀添加任何内容；`/model` 切换像在浏览器中�
 - **交付物只列名、不打开**——`/deliverables` 列出交付路径，`/changes` 显示逐行对比；浏览器会预览这些文件。
 - **历史由终端回滚区持有**——键盘可以走遍对话记录的每个块与每个部分，工具卡片与上下文块可以折叠，阅读器的 `/` 过滤可以收窄本会话的各轮次；搜索一个轮次的文本以及其他会话的历史，属于浏览器表层。
 - **滚走的聚焦块只在检视面板中被标记**——pi-tui 只对它写出的上一帧的最后 `rows` 行做差分重绘，要改动其上方的内容就得清空终端回滚区，因此更靠前的块得不到标记条，检视面板标题写出 `off screen`，其边框转为暗色，在它上面按 `Space` 会打开阅读器而不是重写它；`Ctrl+O` 是唯一仍会重写那些行的按键，在高于终端的对话记录上它会让 pi-tui 整屏重绘。
-- **缩过的帧会让视口顶部脱离可及范围**——重绘窗口随迄今写出的最高一帧上升且不会回落，因此在读取模式关闭或旋转指示离开之后，阅读器会比整屏少画那么多行、其上方露出对话记录，临时提示行也改为打印进对话记录；两者都会随对话记录增长而恢复。
-- **阅读器下沉期间遮住输入行**——`Esc`、`Ctrl+G` 与 `Ctrl+C` 会立刻交还键盘，随后该面板用四拍淡入时钟缩回，默认即 132 ms，其间终端光标不可见；任何移动键盘的按键，以及任何提示或会话变更，都会立即撤下该面板。
+- **缩过的帧会让视口顶部脱离可及范围**——重绘窗口随迄今写出的最高一帧上升且不会回落，因此在读取模式关闭或旋转指示离开之后，临时提示行改为打印进对话记录；它会随对话记录增长而恢复。阅读器不受影响：它画在终端的另一块屏幕上，那里的每一行都归它所有。
+- **阅读器开着时不绘制对话记录**——对话记录的屏幕被挡在终端之外，因此期间跑完的轮次、落地的工具结果与打印的通知，都在阅读器关闭时的同一帧里绘出。阅读器自身仍会随它们到达而显示，因为它在每一次绘制时都重新读取对话记录。
 - **阅读器显示的是源文本**——assistant 回复读到的是模型写下的 Markdown，而不是对话记录绘制出的渲染结果，因此表格与标题以源码形式呈现。
 - **面板列出的是常驻，而不是整棵树**——子会话在其会话记录常驻于本进程期间加入面板，因此由进程外提供方运行、在此没有自己会话的子 agent 永远不会出现；`/subagents` 仍是到达每一个持久后代的途径。
 - **常驻不等于正在工作**——列表的 `activity: 'running'` 表示该子会话的记录常驻，这正是行内 `resident` 所报告的内容；子会话是否在工作则是它旁边单独的 `running` / `idle`，读自本进程中该子会话的 Agent。

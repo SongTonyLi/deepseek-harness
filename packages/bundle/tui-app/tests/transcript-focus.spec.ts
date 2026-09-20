@@ -6,11 +6,17 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ESCAPE_HANDOFF_MS } from '../src/keys.ts'
-import { LANDING_TICKS, READER_CLOSE_TICKS, READER_OPEN_TICKS, SEGMENT_TICKS, STEP_TICKS } from '../src/motion.ts'
+import { LANDING_TICKS, SEGMENT_TICKS, STEP_TICKS } from '../src/motion.ts'
 import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
 
 /** The scrollback-clear sequence pi-tui writes on a full redraw. */
 const CLEAR_SCROLLBACK = '[3J'
+
+/** The sequence that takes the terminal's alternate screen, which the reader draws on. */
+const ALTERNATE_SCREEN_ENTER = '[?1049h'
+
+/** The sequence that gives the conversation's own screen back. */
+const ALTERNATE_SCREEN_LEAVE = '[?1049l'
 
 /**
  * Submit one prompt from the editor.
@@ -785,14 +791,16 @@ describe('folding the block the focus holds', () => {
 
     test.terminal.type(KEY.space)
     await test.settle()
-    expect(test.terminal.text()).toContain('above the repaint window · opened in the reader')
     // The reader reaches rows the folded block above the window never drew.
     expect(test.terminal.text()).toContain('rule 9')
     expect(test.terminal.written.slice(before)).not.toContain(CLEAR_SCROLLBACK)
     test.terminal.type(KEY.escape)
     await test.settle()
-    // The conversation itself kept what it draws.
-    expect(await test.screen()).not.toContain('rule 9')
+    // The conversation itself kept what it draws, and keeps the line that
+    // says why the key opened the reader instead of folding in place.
+    const back = await test.screen()
+    expect(back).not.toContain('rule 9')
+    expect(back).toContain('above the repaint window · opened in the reader')
   })
 
   it('draws the folded block on a terminal too narrow for its marker', async () => {
@@ -913,22 +921,92 @@ describe('the reader and the scrollback', () => {
     expect(await test.screen()).not.toContain(' ● READER ')
   })
 
-  it('covers the whole viewport after the frame shrank under it', async () => {
+  it('covers the whole screen, whatever the frame under it did', async () => {
     const test = await tallConversation()
     test.terminal.type(KEY.shiftUp)
     await test.settle()
     // Esc unmounts the inspector, so the frame shrinks and the top of the
-    // viewport falls out of the renderer's own reach.
+    // viewport falls out of the renderer's own reach. What the conversation's
+    // screen can still be drawn on decides nothing here: the reader is on the
+    // terminal's other screen, and owns every row of it.
     test.terminal.type(KEY.escape)
     await test.settle()
     test.terminal.type(KEY.ctrlG)
     await test.settle()
-    // pi-tui composites an overlay into the frame's last `rows` lines, so a
-    // reader that covers the terminal owns every one of them: the blank rows
-    // the frame gained put the viewport's top back within reach.
     const viewport = (await test.screen()).split('\n').slice(-test.terminal.rows)
     expect(viewport[0]).toContain(' ● READER ')
     expect(viewport.at(-1)).toContain('╰')
+  })
+
+  it('leaves the conversation’s own screen untouched for as long as it is open', async () => {
+    const test = await tallConversation({ running: true })
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    const opened = test.terminal.written.length
+    test.stream.start()
+    test.stream.chunk({ type: 'text-delta', index: 0, text: 'streamed while reading' })
+    test.appendToolCall('call-late', 'bash', { command: 'git log' })
+    test.appendToolResult('call-late', [{ type: 'text', text: 'landed while reading' }])
+    for (const key of READER_WALK) test.terminal.type(key)
+    await test.settle()
+    const whileOpen = test.terminal.written.slice(opened)
+    // Every row of the reader is addressed absolutely on the other screen, so
+    // nothing written while it is up can print, scroll, or rewrite a line of
+    // the conversation - which is why none of this reaches the scrollback.
+    expect(whileOpen).not.toContain('\n')
+    expect(whileOpen).not.toContain(ALTERNATE_SCREEN_LEAVE)
+    expect(whileOpen).not.toContain(CLEAR_SCROLLBACK)
+
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    // The conversation comes back with what landed while it was away.
+    const back = await test.screen()
+    expect(back).toContain('landed while reading')
+    expect(back).not.toContain(' ● READER ')
+  })
+
+  it('gives the terminal back for a prompt the agent is blocked on, and takes it again', async () => {
+    const test = await tallConversation()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    const opened = test.terminal.written.length
+
+    const asked = test.ctx.waterfall(
+      'approval/request',
+      { agent: test.agent, toolName: 'bash', reason: 'writes outside the workspace' },
+      () => Promise.resolve<ApprovalOutcome>('unavailable'),
+    )
+    await test.settle()
+    // The prompt belongs to the conversation, so the reader gives the terminal
+    // back rather than being drawn over.
+    expect(test.terminal.written.slice(opened)).toContain(ALTERNATE_SCREEN_LEAVE)
+    expect(test.terminal.text()).toContain('Allow bash?')
+    const answered = test.terminal.written.length
+    test.terminal.type(KEY.enter)
+    await expect(asked).resolves.toBe('allowed-once')
+    await test.settle()
+    // The seam is settled, so the reader has the terminal and the keyboard back.
+    const resumed = test.terminal.written.slice(answered)
+    expect(resumed).toContain(ALTERNATE_SCREEN_ENTER)
+    expect(resumed).toContain(' ● READER ')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(await test.screen()).toContain(' ● READ ')
+  })
+
+  it('gives the terminal back before the application releases it', async () => {
+    const test = await tallConversation()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    const opened = test.terminal.written.length
+    test.app.stop()
+    await test.settle()
+    // A shell must never be handed a terminal still showing the other screen,
+    // so the switch back is written while the application still holds it.
+    const quitting = test.terminal.written.slice(opened)
+    expect(quitting).toContain(ALTERNATE_SCREEN_LEAVE)
+    expect(test.terminal.stopped).toBe(true)
+    expect(test.quits).toHaveLength(1)
   })
 
   it('steps aside for a seam the agent is blocked on and comes back over the same conversation', async () => {
@@ -1047,9 +1125,6 @@ describe('the chrome motions', () => {
   /** How long a landing lasts on the bench's own fade period. */
   const LANDING_MS = LANDING_TICKS * FADE_TICK_MS
 
-  /** Half of the reader's growth, where its legend is up and its title is not. */
-  const HALF_OPEN_MS = (READER_OPEN_TICKS / 2) * FADE_TICK_MS
-
   it('lifts the inspector frame on the landing and settles it on the same lines', async () => {
     const test = await moving()
     test.terminal.type(KEY.shiftUp)
@@ -1130,45 +1205,24 @@ describe('the chrome motions', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
-  it('grows the reader into place from its bottom rule and shrinks it away again', async () => {
+  it('takes the terminal whole and gives it back whole, arming no motion of its own', async () => {
     const test = await moving()
     test.terminal.type(KEY.ctrlG)
     await test.settle()
-    const growing = (await paint(test)).shown
-    // The overlay is anchored at the bottom of the viewport, so the reveal
-    // draws the rows it has where they will settle: the bottom rule is in
-    // place first and the top rule arrives last.
-    expect(growing).toContain('╰')
-    expect(growing).not.toContain('↑↓ scrolls')
-    expect(growing).not.toContain(' ● READER ')
-
-    test.runTick(FADE_TICK_MS, HALF_OPEN_MS)
-    await test.settle()
-    const half = (await paint(test)).shown
-    expect(half).toContain('↑↓ scrolls')
-    expect(half).not.toContain(' ● READER ')
-
-    test.runTick(FADE_TICK_MS, READER_OPEN_TICKS * FADE_TICK_MS)
-    await test.settle()
-    expect((await paint(test)).shown).toContain(' ● READER ')
+    // The reader is on screen complete from its first drawing: it owns the
+    // alternate screen rather than growing into the conversation's own.
+    const open = (await paint(test)).shown
+    expect(open).toContain(' ● READER ')
+    expect(open).toContain('↑↓ scrolls')
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
 
     test.terminal.type(KEY.escape)
-    await test.settle()
-    test.runTick(FADE_TICK_MS)
-    await test.settle()
-    // The reader comes down from the top, and the keyboard is already back in
-    // the conversation: nothing waits for the motion.
-    const shrinking = (await paint(test)).shown
-    expect(shrinking).not.toContain(' ● READER ')
-    expect(shrinking).toContain('↑↓ scrolls')
-
-    test.runTick(FADE_TICK_MS, READER_CLOSE_TICKS * FADE_TICK_MS)
     await test.settle()
     const back = (await paint(test)).shown
     expect(back).not.toContain('↑↓ scrolls')
     expect(back).toContain('3/3 · turn 1 · bash · result')
-    // The conversation took the keyboard back, so its own landing is still
-    // moving; once that settles too, nothing holds the tick.
+    // The conversation took the keyboard back, so its own landing is moving;
+    // once that settles, nothing holds the tick.
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
     test.runTick(FADE_TICK_MS, LANDING_MS)
     await test.settle()
@@ -1201,43 +1255,24 @@ describe('the chrome motions', () => {
     }
     test.terminal.type(KEY.enter)
     await test.settle()
-    await run(READER_OPEN_TICKS)
+    await run(LANDING_TICKS)
     test.terminal.type(KEY.escape)
     await test.settle()
-    await run(READER_CLOSE_TICKS)
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     await test.settle()
     await run(SEGMENT_TICKS)
-    // Every frame of every reveal and every lift was written differentially.
+    // Every lift was written differentially, and the reader in the middle of
+    // the walk drew on the terminal's other screen entirely.
     expect(test.terminal.written.slice(before)).not.toContain(CLEAR_SCROLLBACK)
   })
 
-  it('takes a shrinking reader down at once when the keyboard moves again', async () => {
-    const test = await moving()
-    test.terminal.type(KEY.ctrlG)
-    test.terminal.type(KEY.escape)
-    await test.settle()
-    test.terminal.type(KEY.escape)
-    test.terminal.type(KEY.shiftDown)
-    await test.settle()
-    // pi-tui hands the key stream back to an overlay it still holds a focus
-    // restore for, so a reader that is still shrinking goes when the focus
-    // moves again.
-    const moved = await paint(test)
-    expect(moved.shown).toContain('←→ segments · Enter details')
-    expect(moved.shown).not.toContain(' ● READER ')
-  })
-
-  it('types into the editor while the reader it just left is still shrinking', async () => {
+  it('hands the keyboard straight back, so the next key types at the caret', async () => {
     const test = await moving()
     test.terminal.type(KEY.ctrlG)
     await test.settle()
-    test.runTick(FADE_TICK_MS, READER_OPEN_TICKS * FADE_TICK_MS)
-    await test.settle()
-    // `Ctrl+G` hands the keyboard back to the editor and leaves the pane
-    // shrinking; the first character takes the pane down and lands at the
-    // caret rather than reaching the overlay pi-tui still holds a restore for.
+    // `Ctrl+G` closes the reader and gives the terminal and the keyboard back
+    // in one step: the characters that follow land at the caret.
     test.terminal.type(KEY.ctrlG)
     await test.settle()
     for (const char of 'hello') test.terminal.type(char)
@@ -1247,23 +1282,15 @@ describe('the chrome motions', () => {
     expect(typed.shown).not.toContain(' ● READER ')
   })
 
-  it('shrinks a reader away over a short conversation without clearing the scrollback', async () => {
+  it('reads and closes over a short conversation without clearing the scrollback', async () => {
     const test = await moving()
     const before = test.terminal.written.length
     test.terminal.type(KEY.ctrlG)
     await test.settle()
-    for (let step = 0; step <= READER_OPEN_TICKS; step += 1) {
-      test.runTick(FADE_TICK_MS)
-      await test.settle()
-    }
     test.terminal.type(KEY.escape)
     await test.settle()
-    for (let step = 0; step <= READER_CLOSE_TICKS; step += 1) {
-      test.runTick(FADE_TICK_MS)
-      await test.settle()
-    }
-    // The frame the overlay padded to the terminal height shrinks back through
-    // the renderer's deleted-lines path, on the reveal as on the way down.
+    // The conversation's own screen was never written to while the reader had
+    // the terminal, so nothing about it had to be redrawn afterwards.
     expect(test.terminal.written.slice(before)).not.toContain(CLEAR_SCROLLBACK)
     expect(await test.screen()).not.toContain(' ● READER ')
   })

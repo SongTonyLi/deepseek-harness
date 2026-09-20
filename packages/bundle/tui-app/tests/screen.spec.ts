@@ -1,8 +1,8 @@
-/** The guarded main screen: the repaint window it hands its guard, and its settle passes. */
+/** The guarded main screen: the repaint window it hands its guard, its settle passes, and its suspension. */
 
 import { describe, expect, it } from 'vitest'
 import type { Component } from '@earendil-works/pi-tui'
-import { GuardedMainScreen, ViewportPad, repaintFloor } from '../src/screen.ts'
+import { GuardedMainScreen, repaintFloor } from '../src/screen.ts'
 import { FakeTerminal } from './bench.ts'
 
 /** A child that counts its renders and draws whatever it was last given. */
@@ -127,18 +127,49 @@ describe('GuardedMainScreen', () => {
   })
 })
 
-describe('ViewportPad', () => {
-  it('draws the rows it is asked for, and nothing where none are needed', () => {
-    let rows = 0
-    const pad = new ViewportPad(() => rows)
-    expect(pad.render()).toEqual([])
-    rows = 3
-    expect(pad.render()).toEqual(['', '', ''])
-    // A negative shortfall is no shortfall at all.
-    rows = -2
-    expect(pad.render()).toEqual([])
-    // The pad holds no state of its own to invalidate.
-    pad.invalidate()
-    expect(pad.render()).toEqual([])
+describe('suspending the main screen', () => {
+  it('writes nothing while suspended and draws the surface that took the terminal instead', () => {
+    const { screen, terminal, child } = screenWith(10, () => false)
+    screen.renderNow()
+    expect(terminal.output).not.toBe('')
+    let drawn = 0
+    screen.suspend(() => { drawn += 1 })
+    terminal.output = ''
+    child.lines = ['first', 'second', 'tail']
+    screen.renderNow()
+    screen.requestRender()
+    // Every render request reaches the surface holding the terminal, and the
+    // conversation the terminal is no longer showing is left alone.
+    expect(drawn).toBe(2)
+    expect(terminal.output).toBe('')
+  })
+
+  it('draws what changed while it was suspended, and only that', async () => {
+    const { screen, terminal, child } = screenWith(10, () => false)
+    screen.renderNow()
+    screen.suspend(() => {})
+    child.lines = ['first', 'tail', 'landed while away']
+    screen.renderNow()
+    terminal.output = ''
+    screen.resume()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // The terminal restored the screen the renderer last wrote, so the line
+    // that landed meanwhile is the one line the first frame back writes.
+    expect(terminal.output).toContain('landed while away')
+    expect(terminal.output).not.toContain('first')
+  })
+
+  it('resumes only from a suspension, and a forced request cannot discard the held screen', () => {
+    const { screen, terminal, child } = screenWith(10, () => false)
+    screen.renderNow()
+    screen.resume()
+    let drawn = 0
+    screen.suspend(() => { drawn += 1 })
+    terminal.output = ''
+    child.lines = ['rewritten']
+    screen.requestRender(true)
+    screen.renderNow(true)
+    expect(drawn).toBe(2)
+    expect(terminal.output).toBe('')
   })
 })

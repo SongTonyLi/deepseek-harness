@@ -1,25 +1,20 @@
 /**
- * The reader as a mounted overlay: the component pi-tui composites over the
- * viewport, and the key map that drives it.
+ * The reader as the surface that owns the terminal: the pane drawn on the
+ * alternate screen, and the key map that drives it.
  *
- * It costs the frame no rows. pi-tui composites an overlay into the last
- * terminal-height lines of the frame after the tree rendered, so the
- * conversation underneath keeps every line it had and the renderer's repaint
- * boundary is never raised. The application places it against the bottom of
- * the viewport and tells it how many rows it may draw, which is one fewer for
- * every viewport line the renderer can no longer repaint; the pane fills
- * exactly that many.
- *
- * Opening and closing are the two moments it moves: the application hands the
- * pane a reveal it reads per render, and the pane draws that share of its
- * frame from the bottom rule up, so the reader rises into place and sinks
- * away without the frame underneath it gaining or losing a line.
+ * It costs the conversation nothing at all. The application switches the
+ * terminal to its alternate screen (`./alt-screen.ts`) and holds the
+ * main screen off it for as long as the reader is up, so the conversation
+ * keeps every line it had, the renderer's repaint boundary never moves, and
+ * no row the reader draws can reach the terminal's scrollback. The pane fills
+ * the screen: it is told how many rows the terminal has and returns exactly
+ * that many.
  *
  * The pane holds no copy of the transcript: it re-reads the blocks and their
  * turns on every render, so a reply that is still streaming grows inside it,
  * a tool result that lands appears, and a new turn joins the list, all with
  * no push and no second clock.
- * @module @deepseek-ai/dsh-tui-app/reader-overlay
+ * @module @deepseek-ai/dsh-tui-app/reader-screen
  */
 
 import { matchesKey, type Component } from '@earendil-works/pi-tui'
@@ -59,7 +54,7 @@ export interface ReaderPaneOptions {
    */
   blocks(): readonly SectionSource[]
   /**
-   * How many rows the overlay may draw.
+   * How many rows the screen has.
    * @returns the rows, re-read on every render so a resize needs no notification.
    */
   rows(): number
@@ -68,12 +63,13 @@ export interface ReaderPaneOptions {
   /** The section the reader opens on. */
   cursor: TranscriptCursor
   /**
-   * How much of its height the pane draws right now, read per render.
-   * @returns a fraction of {@link ReaderPaneOptions.rows}: 1 for the settled
-   * reader, less while it grows into place or shrinks away. Absent draws the
-   * whole height, which is what a terminal running no motion gets.
+   * Called once, where the reader closes: on the key that closes it, and on
+   * the render that finds the conversation gone. It runs inside that step
+   * rather than after it, so the key stream reaches the conversation from the
+   * very next key.
+   * @param exit - the section last read and the region that takes the keyboard.
    */
-  reveal?(): number
+  onExit(exit: ReaderExit): void
 }
 
 /**
@@ -81,9 +77,6 @@ export interface ReaderPaneOptions {
  * to one {@link ReaderIntent}, and settles once when the reader closes.
  */
 export class ReaderPane implements Component {
-  /** Where the reader left the keyboard and the reading. */
-  readonly settled: Promise<ReaderExit>
-  private resolve!: (exit: ReaderExit) => void
   /** Whether the reader is still open; a second close is ignored. */
   private open = true
   private state: ReaderState
@@ -96,7 +89,6 @@ export class ReaderPane implements Component {
    * @param options - the palette, the live transcript reads, and the section to open on.
    */
   constructor(private readonly options: ReaderPaneOptions) {
-    this.settled = new Promise<ReaderExit>((resolve) => { this.resolve = resolve })
     this.state = { cursor: options.cursor, column: 'pane', offset: 0 }
   }
 
@@ -104,11 +96,9 @@ export class ReaderPane implements Component {
 
   /**
    * Draw the reader at `width`.
-   * @param width - the columns the overlay was laid out at.
-   * @returns as many lines as `rows()` reports, so the overlay covers the
-   * viewport it was placed in - fewer while a reveal is still growing or
-   * shrinking it - and blank lines once the transcript it was reading is
-   * gone.
+   * @param width - the columns the screen has.
+   * @returns as many lines as `rows()` reports, so the reader covers the
+   * screen, and blank lines once the transcript it was reading is gone.
    */
   render(width: number): string[] {
     this.width = width
@@ -117,7 +107,7 @@ export class ReaderPane implements Component {
     const settled = clampCursor(this.state.cursor, blocks) ?? lastSection(blocks)
     if (settled === undefined) {
       // Nothing left to read: the pane settles rather than drawing a frame
-      // over a conversation that is gone.
+      // for a conversation that is gone.
       this.close('editor')
       return Array.from({ length: rows }, () => '')
     }
@@ -142,24 +132,7 @@ export class ReaderPane implements Component {
       minColumns: this.options.minColumns,
       totalTurns: groups.length,
     })
-    return full.slice(rows - this.drawnRows(rows))
-  }
-
-  /**
-   * How many of the frame's lines the reveal draws right now.
-   *
-   * The overlay is anchored at the bottom of the viewport, so a pane that
-   * draws fewer lines keeps every line it does draw on the terminal row it
-   * will settle on: the reader rises into place rather than sliding, and the
-   * conversation above it keeps its own lines throughout.
-   * @param rows - the height the frame was laid out at.
-   * @returns the lines to keep, counted from the bottom rule up; at least one
-   * and never more than the frame has.
-   */
-  private drawnRows(rows: number): number {
-    const reveal = this.options.reveal?.() ?? 1
-    if (reveal >= 1) return rows
-    return Math.max(1, Math.min(rows, Math.ceil(reveal * rows)))
+    return full
   }
 
   /**
@@ -197,7 +170,7 @@ export class ReaderPane implements Component {
    * The geometry of the frame as it stands.
    * @param visible - the turns the rail lists.
    * @param blocks - the navigable blocks.
-   * @param rows - the rows the overlay draws.
+   * @param rows - the rows the screen has.
    * @returns the geometry, with the walking pane measured.
    */
   private geometryFor(visible: readonly TurnGroup[], blocks: readonly SectionSource[], rows: number): ReaderGeometry {
@@ -211,7 +184,7 @@ export class ReaderPane implements Component {
   private close(target: 'transcript' | 'editor'): void {
     if (!this.open) return
     this.open = false
-    this.resolve({ cursor: this.state.cursor, target })
+    this.options.onExit({ cursor: this.state.cursor, target })
   }
 
   /**

@@ -3670,22 +3670,20 @@ export interface Config {
    * How long one fade tick lasts, in milliseconds, which is also the repaint
    * period while anything is still moving. Duration of each fade is
    * `streamFadeSteps * streamFadeStepMs`, and the app's own chrome motions -
-   * the keyboard landing on a region, a step of a walk, the reader opening and
-   * closing - run for their own step counts at this same tick. The terminal
-   * arms this repaint only while something still differs from its settled
-   * drawing and disarms it as soon as the last one settles, so an idle session
-   * runs no timer. A shorter period draws a smoother fade at the cost of more
-   * redraws.
+   * the keyboard landing on a region and a step of a walk - run for their own
+   * step counts at this same tick. The terminal arms this repaint only while
+   * something still differs from its settled drawing and disarms it as soon as
+   * the last one settles, so an idle session runs no timer. A shorter period
+   * draws a smoother fade at the cost of more redraws.
    */
   streamFadeStepMs: number
   /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
    * what is on screen to change after it is drawn: no brightness ramp on
-   * arriving text, no lift where the keyboard lands or steps, no reveal as the
-   * reader opens and closes, and no repeating repaint for any of them. A
-   * transient key-feedback line still holds for `toastMs` and then disappears,
-   * because the window it names has to end.
+   * arriving text, no lift where the keyboard lands or steps, and no repeating
+   * repaint for any of them. A transient key-feedback line still holds for
+   * `toastMs` and then disappears, because the window it names has to end.
    */
   reducedMotion: boolean
   /** Permit local default-browser handoff for authorization pages. */

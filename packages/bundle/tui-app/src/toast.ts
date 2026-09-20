@@ -25,9 +25,6 @@ export const QUIT_TOAST = 'press Ctrl+C again to quit'
 /** What the line says when the transcript holds nothing the reader could open. */
 export const NOTHING_TO_READ_TOAST = 'nothing in the transcript to read yet'
 
-/** What the line says when a fold key named a block the renderer can no longer rewrite. */
-export const ABOVE_WINDOW_TOAST = 'above the repaint window · opened in the reader'
-
 /**
  * What the line says while the stop is armed. It names the turn it would
  * stop, so a press after a turn boundary is read for what it is.
