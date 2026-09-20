@@ -1664,6 +1664,10 @@ describe('the activity board', () => {
   it('replaces the one-line descendant summary and ignores a session that is not a descendant', async () => {
     const test = await bench()
     const kid = await test.createChild({ id: 'session-kid' })
+    test.ctx.emit('subagent/start', { runId: 'run-kid', provider: 'test', id: kid.id, local: true } as never)
+    let screen = await test.screen()
+    expect(screen).toContain('session-kid · running')
+
     kid.session.append('tool/call', {
       turn: 1,
       step: 1,
@@ -1671,7 +1675,7 @@ describe('the activity board', () => {
       name: 'bash',
       arguments: '{"command":"ls"}',
     })
-    let screen = await test.screen()
+    screen = await test.screen()
     expect(screen).toContain('session-kid · calling bash')
 
     kid.session.append('tool/result', {
@@ -1703,6 +1707,9 @@ describe('the activity board', () => {
     expect(screen).not.toContain('listed files')
 
     const stranger = await test.createChild({ id: 'session-stranger', parent: 'session-other' as SessionId })
+    test.ctx.emit('subagent/start', { runId: 'run-stranger', provider: 'test', id: stranger.id, local: true } as never)
+    screen = await test.screen()
+    expect(screen).not.toContain('session-stranger · running')
     stranger.session.append('tool/result', {
       turn: 1,
       step: 1,
@@ -1758,32 +1765,31 @@ describe('the activity board', () => {
     expect(screen).toContain('reviewer · calling read')
 
     const start = { runId: 'run-1', provider: 'test', id: listed.id, local: true }
-    test.agent.ctx.emit('subagent/start', start, test.agent)
-    test.agent.ctx.emit('subagent/start', start, test.agent)
+    test.ctx.emit('subagent/start', start as never)
+    test.ctx.emit('subagent/start', start as never)
     screen = await test.screen()
     expect(screen).toContain('reviewer · running')
 
-    test.agent.ctx.emit('subagent/end', {
+    test.ctx.emit('subagent/end', {
       runId: 'run-1',
       provider: 'test',
       id: listed.id,
       local: true,
       stopReason: 'aborted',
       lastAssistantMessage: [{ type: 'text', text: 'secret child reply' }],
-    }, test.agent)
+    } as never)
     screen = await test.screen()
     expect(screen).toContain('reviewer · aborted')
     expect(screen).not.toContain('secret child reply')
 
-    const other = { id: 'session-other' } as Agent
-    test.agent.ctx.emit('subagent/end', {
+    test.ctx.emit('subagent/end', {
       runId: 'run-2',
       provider: 'test',
       id: 'session-elsewhere',
       local: true,
       stopReason: 'error',
       lastAssistantMessage: [{ type: 'text', text: 'other parent reply' }],
-    }, other)
+    } as never)
     screen = await test.screen()
     expect(screen).not.toContain('other parent reply')
     expect(screen).toContain('reviewer · aborted')

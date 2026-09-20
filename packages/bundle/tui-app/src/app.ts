@@ -814,16 +814,20 @@ export class TuiApp {
         }
         this.setWorking(status === 'running')
       }),
-      // Neither lifecycle edge carries the delegating parent, so they mark the
-      // listing stale rather than adding or removing a row themselves; both
-      // fire for out-of-process children too.
-      ctx.on('subagent/start', (info, parent) => {
+      // Neither lifecycle edge names the delegating parent in its payload;
+      // both fire for out-of-process children too. The listing and the child's
+      // header decide whether the activity board may show the status word.
+      ctx.on('subagent/start', (info) => {
         this.markSubagentsStale()
-        if (parent === this.agent) this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: 'running' })
+        if (this.isBoundDescendantId(info.id)) {
+          this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: 'running' })
+        }
       }),
-      ctx.on('subagent/end', (info, parent) => {
+      ctx.on('subagent/end', (info) => {
         this.markSubagentsStale()
-        if (parent === this.agent) this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: info.stopReason })
+        if (this.isBoundDescendantId(info.id)) {
+          this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: info.stopReason })
+        }
       }),
       // A prompt waits above the editor from the moment it enters the inbox
       // until the loop claims it for a turn or step, or `/queue clear` drops it.
@@ -1219,14 +1223,25 @@ export class TuiApp {
   }
 
   /**
+   * Whether `id` belongs under the bound session: a listing entry, or a
+   * live child whose header parent is the bound session.
+   * @param id - the session id a lifecycle event named.
+   * @returns true when the activity board may show that child's status word.
+   */
+  private isBoundDescendantId(id: SessionId): boolean {
+    if (this.subagentEntries.some(entry => entry.id === id)) return true
+    const child = this.deps.ctx.get('agents')?.get(id)
+    return child !== undefined && child.session.header.parentSession === this.agent.session.id
+  }
+
+  /**
    * Whether `session` is a descendant of the bound session: a listing entry,
    * or a header whose parent is the bound session.
    * @param session - the session that just logged an event.
    * @returns true when the activity board may show that session's latest line.
    */
   private isBoundDescendant(session: Session): boolean {
-    if (this.subagentEntries.some(entry => entry.id === session.id)) return true
-    return session.header.parentSession === this.agent.session.id
+    return this.isBoundDescendantId(session.id) || session.header.parentSession === this.agent.session.id
   }
 
   /**
@@ -1252,10 +1267,11 @@ export class TuiApp {
         const { name, arguments: argumentsJson } = event.data
         const args = parseArguments(argumentsJson)
         this.activityChildCall = { name, args }
+        const title = args === undefined ? undefined : this.presentCall(name, args)?.title
         this.setActivitySubagent({
           label: this.activityLabelFor(session.id),
           status: callingActivity(name),
-          summary: args === undefined ? undefined : this.presentCall(name, args)?.title,
+          ...title === undefined ? {} : { summary: title },
         })
         return
       }
