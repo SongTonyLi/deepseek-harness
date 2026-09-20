@@ -767,6 +767,7 @@ describe('TuiApp', () => {
       expect(shown, key).toContain(key)
     }
     expect(shown).toContain('Esc arms the stop · Esc again stops the turn')
+    expect(shown).toContain('!cmd runs here · the next prompt can read it · !!cmd stays local')
   })
 
   it('writes every legend step, fold marker, and transient line in exactly one module', () => {

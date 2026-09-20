@@ -30,7 +30,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
-import { ReasoningEffortId, createUserMessage, type LlmModelReasoningInfo, type MessageId, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
@@ -45,6 +46,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-title'
+import type {} from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-skill'
 // Carries the subagent lifecycle events, the descendant listing, and the
 // `subagentTiming` projection key; `tokenUsage` rides the token meter.
@@ -80,6 +82,7 @@ import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, isFold
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
+import { parseUserShellLine, userShellContextText, userShellTranscriptRows } from './shell-line.ts'
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { exportSessionZip } from './export.ts'
 import { BlockFadeClock, FadeRegistry, FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
@@ -461,6 +464,12 @@ type Tone = 'dim' | 'error' | 'success'
 /** How a message submitted while a turn runs reaches the Agent. */
 type SubmitMode = 'queue' | 'steer'
 
+/** Shown when `!` is submitted and this composition has no `ctx.shell`. */
+const SHELL_MISSING = '! needs a shell executor in this composition'
+
+/** Shown when a second `!` is submitted while one is still running. */
+const SHELL_BUSY = 'A shell command is already running. Press Esc to cancel it first.'
+
 /** One cancellable asynchronous operation and its shared settlement. */
 interface CancellableOperation {
   controller: AbortController
@@ -614,6 +623,8 @@ export class TuiApp {
   private escapeQuietUntil = 0
   /** Until when a second editor `Escape` stops the running turn. */
   private stopArmedUntil = 0
+  /** Abort of the in-flight user `!` command, when one is running. */
+  private shellAbort: AbortController | undefined
   /**
    * How many of the viewport's own first lines the renderer can no longer
    * repaint, from the last frame the guard settled. The transient line
@@ -684,6 +695,7 @@ export class TuiApp {
       references: (query, quoted, signal) => this.references(query, quoted, signal),
     }))
     this.editor.onSubmit = (text) => { this.onSubmit(text) }
+    this.editor.onChange = () => { this.syncEditorBorder() }
     this.queue = new Text('', 0, 0)
     this.panel = new Text('', 0, 0)
     this.footer = new FooterBar(() => ({
@@ -803,6 +815,7 @@ export class TuiApp {
   /** Release the terminal and tell the host to exit; later calls are no-ops. */
   stop(): void {
     if (this.stopped) return
+    this.dropUserShell()
     this.restoreQueueDraft()
     this.stopped = true
     this.updateTicker()
@@ -825,6 +838,7 @@ export class TuiApp {
 
   /** Draw `next` as the terminal's session: clear the transcript and replay its history. */
   private bind(next: BoundSession): void {
+    this.dropUserShell()
     if (this.queueDraft !== undefined) {
       this.restoreQueueDraft()
       this.editor.setText('')
@@ -1660,7 +1674,17 @@ export class TuiApp {
     const now = this.deps.now()
     if (now < this.escapeQuietUntil) return { consume: true }
     if (this.editor.isShowingAutocomplete()) return undefined
-    if (this.agent.status !== 'running') return { consume: true }
+    if (this.shellAbort !== undefined) {
+      this.shellAbort.abort()
+      return { consume: true }
+    }
+    if (this.agent.status !== 'running') {
+      if (this.editor.getText().trimStart().startsWith('!')) {
+        this.editor.setText('')
+        this.syncEditorBorder()
+      }
+      return { consume: true }
+    }
     if (now >= this.stopArmedUntil) {
       this.stopArmedUntil = now + this.showToast(stopTurnToast(this.turn))
       return { consume: true }
@@ -2302,8 +2326,8 @@ export class TuiApp {
   }
 
   /**
-   * Handle a submitted editor line: a `/` line runs a command, anything else
-   * becomes a user message.
+   * Handle a submitted editor line: a `/` line runs a command, a nonempty `!`
+   * / `!!` line runs in the terminal, and anything else becomes a user message.
    * @param raw - the editor text.
    * @param mode - how a message reaches a running Agent: `queue` waits for the next turn, `steer` enters the current one.
    */
@@ -2322,6 +2346,11 @@ export class TuiApp {
       void this.dispatchCommand(text)
       return
     }
+    const shell = draft === undefined ? parseUserShellLine(text) : undefined
+    if (shell !== undefined) {
+      void this.runUserShell(shell.command, shell.excluded)
+      return
+    }
     this.submit(text, mode, draft)
   }
 
@@ -2333,6 +2362,97 @@ export class TuiApp {
   private dispatchCommand(line: string): Promise<void> {
     const name = line.slice(0, line.indexOf(' ') === -1 ? undefined : line.indexOf(' '))
     return this.runCommand(line).catch((error: unknown) => { this.notice(`${name} failed: ${describeFailure(error)}`, 'error') })
+  }
+
+  /**
+   * Run one user-typed shell command in this process and, unless it was `!!`,
+   * inject the result as next-step context for the next admitted request.
+   * @param command - the text after `!` / `!!`.
+   * @param excluded - true when the line used `!!`.
+   */
+  private async runUserShell(command: string, excluded: boolean): Promise<void> {
+    if (this.shellAbort !== undefined) {
+      this.notice(SHELL_BUSY, 'error')
+      this.editor.setText(excluded ? `!!${command}` : `!${command}`)
+      this.syncEditorBorder()
+      return
+    }
+    const shell = this.deps.ctx.get('shell')
+    if (shell === undefined) {
+      this.notice(SHELL_MISSING, 'error')
+      return
+    }
+    /* v8 ignore next -- TUI sessions record cwd on create; process cwd is the fallback when a header omitted it */
+    const workdir = this.agent.session.header.cwd ?? this.deps.cwd
+    const controller = new AbortController()
+    this.shellAbort = controller
+    try {
+      const result = await shell.run(shell.resolve({
+        command,
+        workdir,
+        signal: controller.signal,
+        sandboxPolicy: {
+          mode: 'danger-full-access',
+          workspaceRoot: workdir,
+          sessionId: this.agent.session.id,
+        },
+      }))
+      if (!this.userShellCurrent(controller)) return
+      this.showUserShell(command, result, excluded)
+    } catch (error: unknown) {
+      if (!this.userShellCurrent(controller)) return
+      this.notice(`! failed: ${describeFailure(error)}`, 'error')
+    } finally {
+      if (this.shellAbort === controller) this.shellAbort = undefined
+    }
+  }
+
+  /**
+   * Whether `controller` is still the in-flight user-shell run on this bound
+   * session. Bind and quit drop the controller so a late settle cannot draw or
+   * inject into the next session.
+   * @param controller - the AbortController created for this run.
+   * @returns true while this run still owns `shellAbort` and the app is up.
+   */
+  private userShellCurrent(controller: AbortController): boolean {
+    return !this.stopped && this.shellAbort === controller
+  }
+
+  /**
+   * Detach and abort the in-flight user-shell run, if any. A late settle then
+   * sees a different controller (or a stopped app) and stays silent.
+   */
+  private dropUserShell(): void {
+    const running = this.shellAbort
+    this.shellAbort = undefined
+    running?.abort()
+  }
+
+  /**
+   * Draw one finished user shell run and inject the model-facing notice.
+   * @param command - the text after `!` / `!!`.
+   * @param result - the completed foreground run.
+   * @param excluded - true when the line used `!!`.
+   */
+  private showUserShell(command: string, result: ShellRunResult, excluded: boolean): void {
+    this.showBlock(userShellTranscriptRows(command, result))
+    if (excluded) return
+    const message = createUserMessage({
+      content: [{ type: 'text', text: userShellContextText(command, result) }],
+      source: { kind: 'plugin', plugin: 'tui-app', form: 'notice', summary: boundContextSummary(`! ${command}`) },
+    })
+    this.submittedIds.add(message.id)
+    this.agent.inject(message)
+    this.refreshQueue()
+  }
+
+  /**
+   * Recolor the editor border while the draft starts with `!`.
+   */
+  private syncEditorBorder(): void {
+    const palette = this.deps.palette
+    this.editor.borderColor = this.editor.getText().trimStart().startsWith('!') ? palette.warning : palette.dim
+    this.tui.requestRender()
   }
 
   /** Return an abandoned edit to the ordinary-turn inbox without waking the Agent. */
@@ -2879,9 +2999,10 @@ export class TuiApp {
       this.notice('queue cleared', 'success')
       return
     }
+    const queued = (messages: readonly UserMessage[]): UserMessage[] => messages.filter(message => message.source.kind === 'user')
     const rows = [
-      ...inbox.nextTurn.map(message => `next turn: ${contentText(message.content)}`),
-      ...inbox.nextStep.map(message => `next step: ${contentText(message.content)}`),
+      ...queued(inbox.nextTurn).map(message => `next turn: ${contentText(message.content)}`),
+      ...queued(inbox.nextStep).map(message => `next step: ${contentText(message.content)}`),
     ]
     this.notice(rows.length === 0 ? 'nothing is queued' : rows.join('\n'))
   }
@@ -3476,9 +3597,9 @@ export class TuiApp {
   }
 
   private onUserMessage(message: UserMessage): void {
+    if (this.submittedIds.has(message.id)) return
     const source = message.source
     if (source.kind === 'user') {
-      if (this.submittedIds.has(message.id)) return
       const attachments = message.content.filter(block => block.type !== 'text').map(block => `[${block.type}]`)
       this.chat.addChild(new UserBlock(this.theme, [contentText(message.content), ...attachments].filter(part => part !== '').join('\n'), this.turn))
       return
