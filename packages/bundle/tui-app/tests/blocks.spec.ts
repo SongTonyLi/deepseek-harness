@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
-import { createPalette } from '../src/style.ts'
+import { createPalette, type CodeHighlighter } from '../src/style.ts'
+import type { CodeSpan } from '../src/transcript.ts'
 
 const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 6 }
 
@@ -437,5 +438,144 @@ describe('folding a block', () => {
     expect(isFoldable(new UserBlock(theme, 'read the spec', 1))).toBe(false)
     expect(isFoldable(new AssistantBlock(theme, 1))).toBe(false)
     expect(isFoldable(undefined)).toBe(false)
+  })
+})
+
+/**
+ * A highlighter that counts how often it is asked. It wraps every line in
+ * guillemets, or leaves the block plain like a grammar that has not landed.
+ * @param colour - whether it answers with coloured lines at all.
+ * @returns the highlighter and the count it keeps.
+ */
+function countingHighlighter(colour = true): { highlight: CodeHighlighter; counter: { calls: number } } {
+  const counter = { calls: 0 }
+  const highlight: CodeHighlighter = {
+    lines: (code) => {
+      counter.calls += 1
+      return colour ? code.split('\n').map(line => `«${line}»`) : undefined
+    },
+  }
+  return { highlight, counter }
+}
+
+/** A two-row `read` result and the code spans behind it. */
+const READ_ROWS = ['1│ const a = 1', '2│ const b = 2']
+const READ_CODE: CodeSpan[] = [
+  { lang: 'ts', prefix: '1│ ', source: 'const a = 1' },
+  { lang: 'ts', prefix: '2│ ', source: 'const b = 2' },
+]
+
+describe('render reuse', () => {
+  const RULES = Array.from({ length: 30 }, (_, index) => `rule ${String(index)}`)
+
+  it('colours a tool card once and hands back the same lines while nothing changed', () => {
+    const { highlight, counter } = countingHighlighter()
+    const block = new ToolBlock({ ...theme, codeHighlight: highlight }, 'read', { title: 'a.ts', lines: [] }, 1)
+    block.setResult(READ_ROWS, false, READ_CODE)
+    const first = block.render(40)
+    expect(first).toEqual(['', '● read a.ts', '  │ 1│ «const a = 1»', '  │ 2│ «const b = 2»'])
+    expect(block.render(40)).toBe(first)
+    expect(block.render(40)).toBe(first)
+    expect(counter.calls).toBe(1)
+  })
+
+  it('rebuilds a tool card when it folds or unfolds, and again when a grammar lands', () => {
+    const { highlight, counter } = countingHighlighter()
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 1, codeHighlight: highlight }, 'read', { title: 'a.ts', lines: [] }, 1)
+    block.setResult(READ_ROWS, false, READ_CODE)
+    const folded = block.render(40)
+    expect(folded).toHaveLength(4)
+    block.setExpanded(true)
+    const expanded = block.render(40)
+    expect(expanded).toHaveLength(4)
+    expect(expanded).not.toBe(folded)
+    expect(expanded.at(-1)).toBe('  │ 2│ «const b = 2»')
+    expect(counter.calls).toBe(2)
+    // A grammar that lands asks every card to draw again: the rows it drew
+    // plain are the ones the colour is for.
+    block.invalidate()
+    expect(block.render(40)).toEqual(expanded)
+    expect(counter.calls).toBe(3)
+  })
+
+  it('draws a card fade over the card body without rebuilding it', () => {
+    const { highlight, counter } = countingHighlighter()
+    const block = new ToolBlock({ ...theme, palette: createPalette(true), codeHighlight: highlight }, 'read', { title: 'a.ts', lines: [] }, 1)
+    block.setResult(READ_ROWS, false, READ_CODE)
+    const settled = block.render(40)
+    block.setResultFade(blockFade(0))
+    const faded = block.render(40)
+    expect(faded).not.toEqual(settled)
+    expect(faded.at(-1)).toContain('[2m')
+    block.setResultFade(blockFade(undefined))
+    expect(block.render(40)).toBe(settled)
+    expect(counter.calls).toBe(1)
+    // The gutter narrows the card and renames its fold key, so the focus
+    // landing rebuilds this one card; the mark then rides the rebuilt body.
+    block.setHighlight(1)
+    expect(block.render(40).at(-1)).toContain('┃')
+  })
+
+  it('hands back the same context lines until the block folds or unfolds', () => {
+    const block = new ContextBlock({ ...theme, contextPreviewLines: 1 }, 'system prompt', [{ kind: 'system', rows: RULES }], 0)
+    const folded = block.render(40)
+    expect(block.render(40)).toBe(folded)
+    block.setExpanded(true)
+    const expanded = block.render(40)
+    expect(expanded).not.toBe(folded)
+    expect(expanded).toHaveLength(RULES.length + 2)
+    expect(block.render(40)).toBe(expanded)
+    block.setHighlight(0)
+    expect(block.render(40)[2]).toBe('┃   rule 0')
+    block.setHighlight(undefined)
+    expect(block.render(40)).toEqual(expanded)
+  })
+
+  it('hands back the same prompt lines while nothing changed', () => {
+    const block = new UserBlock(theme, 'one two three four', 1)
+    const first = block.render(10)
+    expect(block.render(10)).toBe(first)
+    expect(block.render(12)).not.toBe(first)
+    expect(block.render(10)).toEqual(first)
+  })
+
+  it('colours an unchanged fence once while the reply keeps streaming and when it commits', () => {
+    const { highlight, counter } = countingHighlighter()
+    const block = new AssistantBlock({ ...theme, codeHighlight: highlight }, 1)
+    block.appendText('```ts\nconst a = 1\n```\n\nthen')
+    expect(block.render(40).join('\n')).toContain('«const a = 1»')
+    expect(counter.calls).toBe(1)
+    block.appendText(' more')
+    expect(block.render(40).join('\n')).toContain('then more')
+    expect(counter.calls).toBe(1)
+    block.commit('```ts\nconst a = 1\n```\n\nthen more', '', false)
+    expect(block.render(40).join('\n')).toContain('«const a = 1»')
+    expect(counter.calls).toBe(1)
+    block.invalidate()
+    block.render(40)
+    expect(counter.calls).toBe(2)
+  })
+
+  it('asks again for a fence the highlighter left plain, so the grammar that lands colours it', () => {
+    const { highlight, counter } = countingHighlighter(false)
+    const block = new AssistantBlock({ ...theme, codeHighlight: highlight }, 1)
+    block.appendText('```ts\nconst a = 1\n```\n')
+    block.render(40)
+    block.appendText('\nthen')
+    block.render(40)
+    expect(counter.calls).toBe(2)
+  })
+
+  it('hands back the same reply lines while the message is settled', () => {
+    const block = new AssistantBlock(theme, 1)
+    block.commit('Final answer', 'weighing it up', false)
+    const first = block.render(40)
+    expect(block.render(40)).toBe(first)
+    block.setHighlight(1)
+    const marked = block.render(40)
+    expect(marked).not.toBe(first)
+    expect(marked.at(-1)).toContain('┃')
+    block.setHighlight(undefined)
+    expect(block.render(40)).toEqual(first)
   })
 })

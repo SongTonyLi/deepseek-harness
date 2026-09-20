@@ -257,7 +257,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/effort.ts`](src/effort.ts) | Reasoning-effort names and picker rows shared by `/model`, `/effort`, and editor `Shift+Tab` |
 | [`src/attach.ts`](src/attach.ts) | `/attach`: local files into image or file blocks through the attachment store |
 | [`src/export.ts`](src/export.ts) | `/export`: the session-log ZIP written through the export package's archive helpers |
-| [`src/blocks.ts`](src/blocks.ts) | Transcript components: user prompt, assistant reply, tool card, system prompt and injected context, notice; the navigable blocks expose their sections and draw the focus gutter, and the foldable ones carry the marker both fold keys name |
+| [`src/blocks.ts`](src/blocks.ts) | Transcript components: user prompt, assistant reply, tool card, system prompt and injected context, notice; the navigable blocks expose their sections and draw the focus gutter, and the foldable ones carry the marker both fold keys name. Each block keeps the lines it last drew and a reply keeps the coloured fences of its last Markdown parse, so a frame of a settled transcript costs one key comparison per block and a stream delta colours only the fence that changed |
 | [`src/context.ts`](src/context.ts) | Project logged system prompts and injected user messages into transcript sections |
 | [`src/navigation.ts`](src/navigation.ts) | The transcript as sections, the cursor that walks them along four axes, the turns those sections group into, and the inspector heading |
 | [`src/inspector.ts`](src/inspector.ts) | The docked inspector: the framed pane with its mode chip, the section heading, the numbered wrapping parts strip, the folded rows, and its mounted component |

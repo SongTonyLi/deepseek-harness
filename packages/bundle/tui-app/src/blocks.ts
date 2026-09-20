@@ -12,6 +12,18 @@
  * content wraps at and is prepended after any fade recoloring, so the fade
  * keeps matching the block's own text and the gutter's styling never enters
  * that match.
+ *
+ * pi-tui asks every component for its lines on every frame, and the
+ * transcript is never pruned, so each block keeps the lines it last drew
+ * ({@link LastDrawn}) and hands them back until its width, fold, focus, or
+ * content changes - a settled block costs a frame one key comparison. What
+ * changes per frame - a fade's level, the focus mark's lift - is drawn over
+ * those kept lines. Fenced code is the expensive part of a reply, so a reply
+ * also keeps the coloured fences of its last Markdown parse
+ * ({@link FenceMemo}): a stream delta re-parses the whole message but colours
+ * only the fence that changed. `invalidate()` drops all of it, which the
+ * application calls on every block when a grammar lands; a new terminal width
+ * needs no call, because it misses every key on its own.
  * @module @deepseek-ai/dsh-tui-app/blocks
  */
 
@@ -141,6 +153,89 @@ function markedRange(section: LineRange, marker: LineRange): LineRange {
   return section.to > section.from ? section : marker
 }
 
+/**
+ * The last drawing of one block and the key it was built for. One entry, so a
+ * block holds exactly one drawing however many frames ask for it, and a key
+ * that names every input the drawing depends on is what keeps it current.
+ */
+class LastDrawn<T> {
+  private entry: { key: string; value: T } | undefined
+
+  /**
+   * The drawing for `key`, built once per key change.
+   * @param key - every input the drawing depends on, joined.
+   * @param build - builds the drawing when the key differs from the last one.
+   * @returns the same value for the same key until {@link LastDrawn.clear}.
+   */
+  get(key: string, build: () => T): T {
+    if (this.entry?.key !== key) this.entry = { key, value: build() }
+    return this.entry.value
+  }
+
+  /** Forget the drawing, so the next frame builds it again. */
+  clear(): void {
+    this.entry = undefined
+  }
+}
+
+/**
+ * The coloured fences of one reply, kept from one Markdown parse to the next.
+ *
+ * pi-tui's `Markdown` re-parses the whole message whenever its text changes
+ * and asks the theme to colour every fence it finds, so a streaming reply
+ * that already carries three fences would colour all three on every delta.
+ * This keeps what the last parse asked for: a fence that is asked for again
+ * is answered from memory, and a fence the last parse did not ask for is
+ * dropped at the next {@link FenceMemo.settle}, so the memo never holds more
+ * than the reply shows. A fence the highlighter left plain is not kept, so
+ * the grammar that lands is asked for it.
+ */
+class FenceMemo implements CodeHighlighter {
+  /** What the previous parse asked for. */
+  private previous = new Map<string, string[]>()
+  /** What the parse in progress has asked for so far. */
+  private current = new Map<string, string[]>()
+  /** Whether a parse asked for anything since the last settle. */
+  private asked = false
+
+  /** @param inner - the highlighter that colours a fence this memo does not hold. */
+  constructor(private readonly inner: CodeHighlighter) {}
+
+  lines(code: string, lang: string | undefined): string[] | undefined {
+    this.asked = true
+    // The language is part of the key: the same source under two fence
+    // labels colours differently. A bare fence keys under `undefined`.
+    const key = `${String(lang)} ${code}`
+    const known = this.current.get(key) ?? this.previous.get(key)
+    if (known !== undefined) {
+      this.current.set(key, known)
+      return known
+    }
+    const coloured = this.inner.lines(code, lang)
+    if (coloured !== undefined) this.current.set(key, coloured)
+    return coloured
+  }
+
+  /**
+   * Close the parse that just ran: what it asked for is kept for the next
+   * one, and what only the parse before it asked for goes. A render that
+   * parsed nothing - `Markdown` served its own cache - changes nothing.
+   */
+  settle(): void {
+    if (!this.asked) return
+    this.asked = false
+    this.previous = this.current
+    this.current = new Map()
+  }
+
+  /** Forget every fence, so the next parse colours each one afresh. */
+  clear(): void {
+    this.previous = new Map()
+    this.current = new Map()
+    this.asked = false
+  }
+}
+
 /** A prompt the user submitted, drawn with a leading `›`. */
 export class UserBlock implements Component, UserSection {
   readonly navigable = true as const
@@ -149,6 +244,8 @@ export class UserBlock implements Component, UserSection {
   private highlight: number | undefined
   /** How far above its settled accent the focus mark is drawn right now. */
   private highlightLevel: MotionLevel = 0
+  /** The wrapped prompt, by width and whether the gutter narrowed it. */
+  private readonly drawn = new LastDrawn<string[]>()
 
   constructor(private readonly theme: BlockTheme, private readonly text: string, readonly turn: number) {}
 
@@ -169,13 +266,17 @@ export class UserBlock implements Component, UserSection {
     this.highlightLevel = level
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.drawn.clear()
+  }
 
   render(width: number): string[] {
     const palette = this.theme.palette
     const { marked, content: inner } = focusFrame(width, this.highlight)
-    const body = wrapTextWithAnsi(this.text, Math.max(1, inner - 2))
-    const lines = ['', ...body.map((line, index) => `${palette.accent(index === 0 ? '›' : ' ')} ${palette.bold(line)}`)]
+    const lines = this.drawn.get(`${String(width)}:${String(marked)}`, () => {
+      const body = wrapTextWithAnsi(this.text, Math.max(1, inner - 2))
+      return ['', ...body.map((line, index) => `${palette.accent(index === 0 ? '›' : ' ')} ${palette.bold(line)}`)]
+    })
     // The prompt is one section, so every line of a focused prompt is its own.
     return marked ? withGutter(palette, lines, () => true, this.highlightLevel) : lines
   }
@@ -222,6 +323,8 @@ export class ContextBlock implements Component, ContextSection, Foldable {
   /** How far above its settled accent the focus mark is drawn right now. */
   private highlightLevel: MotionLevel = 0
   private expanded = false
+  /** The wrapped block, by width, fold, and whether the gutter narrowed it. */
+  private readonly drawn = new LastDrawn<ContextLayout>()
 
   /**
    * @param theme - the palette the glyph and title are styled with.
@@ -269,11 +372,39 @@ export class ContextBlock implements Component, ContextSection, Foldable {
     this.expanded = expanded
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.drawn.clear()
+  }
 
   render(width: number): string[] {
     const palette = this.theme.palette
     const { marked, content: inner } = focusFrame(width, this.highlight)
+    const layout = this.drawn.get(
+      `${String(width)}:${String(marked)}:${String(this.expanded)}`,
+      () => this.layout(inner, marked),
+    )
+    const { lines, head, ranges, cut, kept, body } = layout
+    if (this.highlight === undefined) return lines
+    const section = ranges[this.highlight]
+    if (section === undefined) return withGutter(palette, lines, () => true, this.highlightLevel)
+    // The fold marker stands for the rows every part lost, so it keeps the
+    // block's own gutter while the held part still has a row of its own here.
+    const drawn = Math.min(section.to, cut ? kept : body)
+    const held = markedRange(
+      { from: head + section.from, to: head + drawn },
+      { from: head + (cut ? kept : body), to: lines.length },
+    )
+    return withGutter(palette, lines, line => line >= held.from && line < held.to, this.highlightLevel)
+  }
+
+  /**
+   * Wrap the title and every body row, then fold the body.
+   * @param inner - the columns the block's own rows lay out in.
+   * @param marked - whether the block draws the focus gutter, which names the fold key.
+   * @returns the lines and where the head, each part, and the fold fall in them.
+   */
+  private layout(inner: number, marked: boolean): ContextLayout {
+    const palette = this.theme.palette
     const textWidth = Math.max(1, inner - 2)
     const indent = (line: string): string => `  ${line}`
     // Every row the body draws - a contribution's text, its label, and the
@@ -300,19 +431,24 @@ export class ContextBlock implements Component, ContextSection, Foldable {
     const kept = this.theme.contextPreviewLines
     const cut = !this.expanded && body.length > kept
     const shown = cut ? [...body.slice(0, kept), ...dimRows(foldMarker(body.length - kept, marked ? 'marked' : 'transcript'))] : body
-    const lines = [...head, ...shown]
-    if (this.highlight === undefined) return lines
-    const section = ranges[this.highlight]
-    if (section === undefined) return withGutter(palette, lines, () => true, this.highlightLevel)
-    // The fold marker stands for the rows every part lost, so it keeps the
-    // block's own gutter while the held part still has a row of its own here.
-    const drawn = Math.min(section.to, cut ? kept : body.length)
-    const held = markedRange(
-      { from: head.length + section.from, to: head.length + drawn },
-      { from: head.length + (cut ? kept : body.length), to: lines.length },
-    )
-    return withGutter(palette, lines, line => line >= held.from && line < held.to, this.highlightLevel)
+    return { lines: [...head, ...shown], head: head.length, ranges, cut, kept, body: body.length }
   }
+}
+
+/** One drawing of a {@link ContextBlock}, with the positions the focus gutter is placed by. */
+interface ContextLayout {
+  /** The lines drawn, gutter not yet applied. */
+  lines: string[]
+  /** How many lines the blank row and the title take. */
+  head: number
+  /** Each part's body rows, as offsets into the unfolded body. */
+  ranges: LineRange[]
+  /** Whether the fold left rows out. */
+  cut: boolean
+  /** Body rows drawn when the fold cut. */
+  kept: number
+  /** Body rows before the fold. */
+  body: number
 }
 
 /** The live fade of the one message streaming right now. */
@@ -388,10 +524,17 @@ export class AssistantBlock implements Component, AssistantSection {
   private highlight: number | undefined
   /** How far above its settled accent the focus mark is drawn right now. */
   private highlightLevel: MotionLevel = 0
+  /** The coloured fences of the last parse; absent when the theme colours none. */
+  private readonly fences: FenceMemo | undefined
+  /** The settled message, by width, focus, and content; a streaming message is drawn afresh each frame. */
+  private readonly drawn = new LastDrawn<AssistantLayout>()
+  /** Counts every change to the text, the reasoning, or the committed state. */
+  private revision = 0
 
   constructor(private readonly theme: BlockTheme, readonly turn: number) {
     const palette = theme.palette
-    this.markdown = new Markdown('', 0, 0, markdownTheme(palette, theme.codeHighlight))
+    this.fences = theme.codeHighlight === undefined ? undefined : new FenceMemo(theme.codeHighlight)
+    this.markdown = new Markdown('', 0, 0, markdownTheme(palette, this.fences))
     this.reasoningText = new Text('', 0, 0)
   }
 
@@ -456,6 +599,7 @@ export class AssistantBlock implements Component, AssistantSection {
    */
   appendText(delta: string): void {
     this.text += delta
+    this.revision += 1
     this.markdown.setText(this.text)
   }
 
@@ -465,6 +609,7 @@ export class AssistantBlock implements Component, AssistantSection {
    */
   appendReasoning(delta: string): void {
     this.reasoning += delta
+    this.revision += 1
     this.reasoningText.setText(this.theme.palette.dim(this.theme.palette.italic(this.reasoning.trimEnd())))
   }
 
@@ -478,6 +623,7 @@ export class AssistantBlock implements Component, AssistantSection {
     this.text = text
     this.reasoning = reasoning
     this.interrupted = interrupted
+    this.revision += 1
     // The committed content replaces what was streamed, so neither tail
     // describes anything on screen and this block is settled for good.
     this.fade = undefined
@@ -489,10 +635,30 @@ export class AssistantBlock implements Component, AssistantSection {
   invalidate(): void {
     this.markdown.invalidate()
     this.reasoningText.invalidate()
+    this.fences?.clear()
+    this.drawn.clear()
   }
 
   render(width: number): string[] {
-    const { content: inner } = focusFrame(width, this.highlight)
+    const { marked, content: inner } = focusFrame(width, this.highlight)
+    // A tail recolours the newest words by their age, which changes every
+    // frame, so a streaming message is composed each time it is asked for.
+    const streaming = this.fade !== undefined || this.reasoningFade !== undefined
+    const { lines, reasoning, reply } = streaming
+      ? this.compose(inner)
+      : this.drawn.get(`${String(width)}:${String(marked)}:${String(this.revision)}`, () => this.compose(inner))
+    if (this.highlight === undefined) return lines
+    const focused = this.parts()[this.highlight]
+    const section = focused?.kind === 'reasoning' ? reasoning : reply
+    return withGutter(this.theme.palette, lines, index => index >= section.from && index < section.to, this.highlightLevel)
+  }
+
+  /**
+   * Stack the reasoning over the reply, each through its own tail.
+   * @param inner - the columns the message lays out in.
+   * @returns the lines, gutter not yet applied, and where each section falls.
+   */
+  private compose(inner: number): AssistantLayout {
     const lines: string[] = ['']
     const reasoning = { from: 0, to: 0 }
     const reply = { from: 0, to: 0 }
@@ -508,10 +674,7 @@ export class AssistantBlock implements Component, AssistantSection {
       reply.to = lines.length
     }
     if (this.interrupted) lines.push(this.theme.palette.dim('[interrupted]'))
-    if (this.highlight === undefined) return lines
-    const focused = this.parts()[this.highlight]
-    const section = focused?.kind === 'reasoning' ? reasoning : reply
-    return withGutter(this.theme.palette, lines, index => index >= section.from && index < section.to, this.highlightLevel)
+    return { lines, reasoning, reply }
   }
 
   /**
@@ -547,11 +710,23 @@ export class AssistantBlock implements Component, AssistantSection {
   private renderText(width: number, at: number): string[] {
     const fade = this.fade
     const lines = this.markdown.render(width)
+    // The parse, if the render ran one, asked for its fences synchronously.
+    this.fences?.settle()
     if (fade === undefined) return lines
     if (this.fadeWidth !== undefined && this.fadeWidth !== width) fade.flush()
     this.fadeWidth = width
     return recolorTail(lines, fadingInSpans(fade), fade.style(), this.repaintFloor - at)
   }
+}
+
+/** One drawing of an {@link AssistantBlock}, with where its two sections fall. */
+interface AssistantLayout {
+  /** The lines drawn, gutter not yet applied. */
+  lines: string[]
+  /** The reasoning lines. */
+  reasoning: LineRange
+  /** The reply lines. */
+  reply: LineRange
 }
 
 /** Lifecycle of one tool card. */
@@ -581,6 +756,10 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private highlight: number | undefined
   /** How far above its settled accent the focus mark is drawn right now. */
   private highlightLevel: MotionLevel = 0
+  /** The coloured, folded, wrapped body, by width, fold, focus, status, and result. */
+  private readonly drawn = new LastDrawn<ToolLayout>()
+  /** Counts every result the card was given. */
+  private revision = 0
 
   constructor(
     private readonly theme: BlockTheme,
@@ -657,6 +836,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     this.resultLines = lines
     this.resultCode = code
     this.status = isError ? 'error' : 'done'
+    this.revision += 1
   }
 
   /**
@@ -675,11 +855,49 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     this.expanded = expanded
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.drawn.clear()
+  }
 
   render(width: number): string[] {
     const palette = this.theme.palette
     const { marked, content: outer } = focusFrame(width, this.highlight)
+    const layout = this.drawn.get(
+      `${String(width)}:${String(marked)}:${String(this.expanded)}:${this.status}:${String(this.revision)}`,
+      () => this.layout(outer, marked),
+    )
+    // The leading blank line is index 0 of the card, so the call group starts
+    // at 1 and the result group where the call group ended. A fade that has
+    // settled, or was never attached, hands the group back as it is.
+    const call = faded(layout.call, this.fade, this.repaintFloor - 1)
+    const result = faded(layout.result, this.resultFade, this.repaintFloor - 1 - layout.call.length)
+    const lines = call === layout.call && result === layout.result ? layout.lines : ['', ...call, ...result]
+    if (this.highlight === undefined) return lines
+    // The truncation marker belongs to the card rather than to either section:
+    // it stands for the rows both of them left out, so it keeps the block's own
+    // gutter while the held section still has a row of its own. It is the last
+    // row the fold produced.
+    const sections = lines.length - layout.marker
+    const focused = this.parts()[this.highlight]
+    const section = focused?.kind === 'result'
+      ? { from: 1 + layout.call.length, to: lines.length }
+      : { from: 1, to: 1 + layout.call.length }
+    const held = markedRange(
+      { from: section.from, to: Math.min(section.to, sections) },
+      { from: sections, to: lines.length },
+    )
+    return withGutter(palette, lines, index => index >= held.from && index < held.to, this.highlightLevel)
+  }
+
+  /**
+   * Colour, fold, and wrap the card body.
+   * @param outer - the columns the card lays out in.
+   * @param marked - whether the card draws the focus gutter, which names the fold key.
+   * @returns the header with the call rows, the result rows, both stacked
+   * under the blank line, and how many lines the fold marker took.
+   */
+  private layout(outer: number, marked: boolean): ToolLayout {
+    const palette = this.theme.palette
     const glyph = this.status === 'running'
       ? palette.warning('●')
       : this.status === 'done' ? palette.success('●') : palette.error('●')
@@ -704,30 +922,23 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const inner = Math.max(1, outer - 4)
     const rows = (lines: readonly string[]): string[] =>
       lines.flatMap(line => wrapTextWithAnsi(line, inner).map(part => `  ${palette.dim('│')} ${part}`))
-    const callLines = [...wrapTextWithAnsi(header, outer), ...rows(shown.slice(0, callCount))]
-    const resultLines = rows(shown.slice(callCount))
-    // The leading blank line is index 0 of the card, so the call group starts
-    // at 1 and the result group where the call group ended.
-    const call = faded(callLines, this.fade, this.repaintFloor - 1)
-    const result = faded(resultLines, this.resultFade, this.repaintFloor - 1 - callLines.length)
-    const lines = ['', ...call, ...result]
-    if (this.highlight === undefined) return lines
-    // The truncation marker belongs to the card rather than to either section:
-    // it stands for the rows both of them left out, so it keeps the block's own
-    // gutter while the held section still has a row of its own. It is the last
-    // row the fold produced.
+    const call = [...wrapTextWithAnsi(header, outer), ...rows(shown.slice(0, callCount))]
+    const result = rows(shown.slice(callCount))
     const cut = !this.expanded && body.length > this.theme.toolPreviewLines
-    const sections = lines.length - (cut ? rows(shown.slice(-1)).length : 0)
-    const focused = this.parts()[this.highlight]
-    const section = focused?.kind === 'result'
-      ? { from: 1 + callLines.length, to: lines.length }
-      : { from: 1, to: 1 + callLines.length }
-    const held = markedRange(
-      { from: section.from, to: Math.min(section.to, sections) },
-      { from: sections, to: lines.length },
-    )
-    return withGutter(palette, lines, index => index >= held.from && index < held.to, this.highlightLevel)
+    return { call, result, lines: ['', ...call, ...result], marker: cut ? rows(shown.slice(-1)).length : 0 }
   }
+}
+
+/** One drawing of a {@link ToolBlock}, in the two groups its fades recolour. */
+interface ToolLayout {
+  /** The header and the call rows. */
+  call: string[]
+  /** The result rows, the fold marker included. */
+  result: string[]
+  /** The blank line, then both groups, as the card draws with every fade settled. */
+  lines: string[]
+  /** Lines the fold marker took at the end of `result`; 0 while nothing was folded away. */
+  marker: number
 }
 
 /**
