@@ -25,7 +25,8 @@ describe('follow-up panel', () => {
     expect(shown).toContain('○ later')
     expect(shown).not.toContain('next step ·')
     expect(shown).not.toContain('next turn ·')
-    expect(shown).toContain('shift+↓ select')
+    expect(shown).toContain('shift+↑ select')
+    expect(shown).not.toContain('shift+↓ select')
     expect(shown.indexOf('○ steer now')).toBeLessThan(shown.indexOf('○ later'))
   })
 

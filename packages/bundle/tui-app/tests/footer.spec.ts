@@ -281,6 +281,8 @@ describe('renderFooter', () => {
     const built = buildFooterSegments(crowded())
     const at = (width: number): string => renderFooter(built, { palette, width })[0] ?? ''
     expect(at(95)).toContain('Shift+↑ read · Shift+↓ status')
+    expect(renderFooter(built, { palette, width: 95, queue: true })[0]).toContain('Shift+↑ select · Shift+↓ status')
+    expect(renderFooter(built, { palette, width: 95, queue: true })[0]).not.toContain('Shift+↑ read · Shift+↓ status')
     expect(at(60)).toContain('Shift+↑↓ nav')
     expect(at(60)).not.toContain('Shift+↑ read')
     expect(at(36)).not.toContain('Shift+')

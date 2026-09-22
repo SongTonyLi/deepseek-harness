@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { visibleWidth } from '@earendil-works/pi-tui'
 import {
   ENTRY_HINTS,
+  QUEUE_ENTRY_HINT,
+  entryHints,
   ESCAPE_HANDOFF_MS,
   FOCUS_REGIONS,
   HINTS,
@@ -41,8 +43,8 @@ describe('the keys every region answers', () => {
 })
 
 describe('the editor', () => {
-  it('names the transcript above it and the stack below it', () => {
-    expect(key('editor', KEY.shiftUp)).toEqual({ kind: 'focus', region: 'transcript' })
+  it('leaves the input along the stack in either direction', () => {
+    expect(key('editor', KEY.shiftUp)).toEqual({ kind: 'leave', direction: 'up' })
     expect(key('editor', KEY.shiftDown)).toEqual({ kind: 'leave', direction: 'down' })
   })
 
@@ -216,6 +218,14 @@ describe('the legends', () => {
     // The editor draws none, so its keys are listed only here, the entry keys
     // included exactly as the unfocused bar reserves them.
     expect(KEY_LINES.editor.some(line => line.startsWith(ENTRY_HINTS[0] as string))).toBe(true)
+    expect(KEY_LINES.editor).toContain('Shift+↑ selects follow-ups while they wait')
+  })
+
+  it('rewrites Shift+↑ on the unfocused bar while follow-ups wait', () => {
+    expect(ENTRY_HINTS[0]).toBe('Shift+↑ read · Shift+↓ status')
+    expect(entryHints({ queue: true })[0]).toBe('Shift+↑ select · Shift+↓ status')
+    expect(QUEUE_ENTRY_HINT).toBe('shift+↑ select')
+    expect(entryHints()).toEqual(ENTRY_HINTS)
   })
 })
 

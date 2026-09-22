@@ -282,7 +282,7 @@ describe('TuiApp user shell lines', () => {
     const edit = createUserMessage({ content: [{ type: 'text', text: '!echo hi' }], source: { kind: 'user' } })
     test.agent.inbox.append('next-turn', edit)
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: edit })
-    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftUp)
     test.terminal.type('e')
     test.terminal.type(KEY.enter)
     await test.settle()
