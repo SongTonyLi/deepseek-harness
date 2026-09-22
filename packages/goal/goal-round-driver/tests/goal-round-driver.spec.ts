@@ -198,7 +198,7 @@ function followUser(test: Harness, text: string): void {
 /** Notice bodies from one model request. */
 function requestNoticeTexts(request: GenerateOptions): string[] {
   return request.messages.flatMap(message =>
-    message.source.kind === 'goal-round-driver' && message.source.form === 'notice'
+    message.source?.kind === 'goal-round-driver' && message.source.form === 'notice'
       ? message.content.filter(block => block.type === 'text').map(block => block.text)
       : [])
 }
@@ -1301,7 +1301,7 @@ describe('continue-intent rearm', () => {
     expect(notices[0]).toContain('The active goal was resumed')
     expect(notices[0]).toContain('the previous turn made no file changes; do not repeat its plan')
     expect(test.adapter.requests[0]!.messages.some(message =>
-      message.source.kind === 'goal-round-driver' && message.source.form === 'notice')).toBe(true)
+      message.source?.kind === 'goal-round-driver' && message.source.form === 'notice')).toBe(true)
     expect(requestText(test.adapter.requests[1]!)).toContain('<goal_round>')
   })
 

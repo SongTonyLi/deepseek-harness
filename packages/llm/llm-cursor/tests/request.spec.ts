@@ -172,8 +172,7 @@ describe('conversationFromOptions', () => {
             text: 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nsandbox:policy',
           }],
           source: {
-            kind: 'plugin',
-            plugin: '@deepseek-ai/dsh-system-prompt',
+            kind: 'cursor-test-context',
             form: 'snapshot',
             sections: [{ name: 'sandbox:policy', text: 'sandbox:policy' }],
           },
@@ -183,7 +182,7 @@ describe('conversationFromOptions', () => {
             type: 'text',
             text: '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
           }],
-          source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-tool-skill', form: 'catalog' },
+          source: { kind: 'cursor-test-context', form: 'catalog' },
         }),
       ],
     })
@@ -204,29 +203,26 @@ describe('conversationFromOptions', () => {
       model: 'composer-2',
       messages: [
         createUserMessage({ content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }),
-        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'plugin', plugin: 'pad' } }),
+        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'user' } }),
         createUserMessage({
           content: [{ type: 'text', text: 'snapshot-v1' }],
           source: {
-            kind: 'plugin',
-            plugin: '@deepseek-ai/dsh-system-prompt',
+            kind: 'cursor-test-context',
             form: 'snapshot',
             sections: [{ name: 'sandbox:policy', text: 'snapshot-v1' }],
           },
         }),
-        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'plugin', plugin: 'pad-after' } }),
-        createMessage({
-          role: 'assistant',
-          source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
+        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'user' } }),
+        createAssistantMessage({
+          source: { provider: 'cursor', model: 'composer-2' },
           content: [{ type: 'text', text: 'hi' }],
         }),
-        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'plugin', plugin: 'pad' } }),
+        createUserMessage({ content: [{ type: 'text', text: '' }], source: { kind: 'user' } }),
         createUserMessage({ content: [{ type: 'text', text: 'next' }], source: { kind: 'user' } }),
         createUserMessage({
           content: [{ type: 'text', text: 'snapshot-v2' }],
           source: {
-            kind: 'plugin',
-            plugin: '@deepseek-ai/dsh-system-prompt',
+            kind: 'cursor-test-context',
             form: 'snapshot',
             sections: [{ name: 'sandbox:policy', text: 'snapshot-v2' }],
           },
@@ -448,26 +444,13 @@ describe('conversation edge cases', () => {
             { type: 'tool-call', id: ToolCallId('c1'), name: 'echo', arguments: 'not-json' },
           ],
         }),
-        createMessage({
-          role: 'user',
-          source: { kind: 'tool', callId: ToolCallId('c1') },
-          content: [{
-            type: 'tool-result',
-            toolCallId: ToolCallId('c1'),
-            isError: true,
-            content: [{ type: 'image', attachment: { id: 'img' } as never }],
-          }],
+        createToolResultMessage({
+          callId: ToolCallId('c1'),
+          isError: true,
+          content: [{ type: 'image', attachment: { id: 'img' } as never }],
         }),
-        createMessage({
-          role: 'system',
-          content: [{ type: 'text', text: 'later' }],
-          source: { kind: 'plugin', plugin: 'x' },
-        }),
-        createMessage({
-          role: 'system',
-          content: [{ type: 'text', text: '' }],
-          source: { kind: 'plugin', plugin: 'x' },
-        }),
+        createSystemMessage('later'),
+        createSystemMessage(''),
       ],
     })
     expect(parsed.systemPrompt).toBe('later')
@@ -490,27 +473,19 @@ describe('conversation edge cases', () => {
       messages: [
         createMessage({
           role: 'system',
-          source: { kind: 'plugin', plugin: 'x' },
+          source: { kind: 'system-prompt' },
           content: [
             { type: 'text', text: 'sys' },
             { type: 'reasoning', text: 'r' },
             { type: 'tool-call', id: ToolCallId('ignored'), name: 'n', arguments: '{}' },
-            {
-              type: 'tool-result',
-              toolCallId: ToolCallId('ignored'),
-              content: [
-                { type: 'text', text: 't' },
-                { type: 'image', attachment: { id: 'img' } as never },
-              ],
-            },
             { type: 'image', attachment: { id: 'img' } as never },
             { type: 'file', attachment: { id: 'file' } as never },
           ],
         }),
-        createMessage({
-          role: 'user',
-          source: { kind: 'tool', callId: ToolCallId('early') },
-          content: [{ type: 'tool-result', toolCallId: ToolCallId('early'), content: [{ type: 'text', text: 'early' }] }],
+        createToolResultMessage({
+          callId: ToolCallId('early'),
+          isError: false,
+          content: [{ type: 'text', text: 'early' }],
         }),
         createUserMessage({ content: [{ type: 'text', text: 'use echo' }], source: { kind: 'user' } }),
         createMessage({
@@ -524,15 +499,10 @@ describe('conversation edge cases', () => {
             { type: 'tool-call', id: ToolCallId('early'), name: 'echo', arguments: '{}' },
           ],
         }),
-        createMessage({
-          role: 'user',
-          source: { kind: 'tool', callId: ToolCallId('c1') },
-          content: [{
-            type: 'tool-result',
-            toolCallId: ToolCallId('c1'),
-            isError: true,
-            content: [{ type: 'text', text: 'boom' }],
-          }],
+        createToolResultMessage({
+          callId: ToolCallId('c1'),
+          isError: true,
+          content: [{ type: 'text', text: 'boom' }],
         }),
       ],
     })
@@ -558,11 +528,7 @@ describe('conversation edge cases', () => {
       provider: 'cursor',
       model: 'composer-2',
       messages: [
-        createMessage({
-          role: 'system',
-          content: [{ type: 'text', text: '' }],
-          source: { kind: 'plugin', plugin: 'x' },
-        }),
+        createSystemMessage(''),
         createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
       ],
     }).systemPrompt).toBe('')

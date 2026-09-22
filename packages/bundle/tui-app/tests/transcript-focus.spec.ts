@@ -8,6 +8,7 @@ import { FADE_TICK_MS } from '../src/fade.ts'
 import { ESCAPE_HANDOFF_MS } from '../src/keys.ts'
 import { LANDING_TICKS, SEGMENT_TICKS, STEP_TICKS } from '../src/motion.ts'
 import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
+import { testContextSource } from './message-sources.ts'
 
 /** The scrollback-clear sequence pi-tui writes on a full redraw. */
 const CLEAR_SCROLLBACK = '[3J'
@@ -253,14 +254,14 @@ describe('walking the transcript', () => {
 
   it('walks system prompts and injected context, and Left/Right walk snapshot contributions in full', async () => {
     const history = [
-      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('You are the agent.', 'system-prompt') } },
-      { type: 'user/message', seq: 1, time: 1, data: createUserMessage({ content: [{ type: 'text', text: '# AGENTS.md' }], source: { kind: 'plugin', plugin: 'agent-instructions', form: 'instructions' } }) },
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('You are the agent.') } },
+      { type: 'user/message', seq: 1, time: 1, data: createUserMessage({ content: [{ type: 'text', text: '# AGENTS.md' }], source: testContextSource({ form: 'instructions' }) }) },
       { type: 'user/message', seq: 2, time: 1, data: createUserMessage({
         content: [{ type: 'text', text: 'assembled' }],
-        source: { kind: 'plugin', plugin: 'workspace', form: 'snapshot', sections: [
+        source: testContextSource({ form: 'snapshot', sections: [
           { name: 'sandbox', text: 'allow python' },
           { name: 'git', text: 'clean tree' },
-        ] },
+        ] }),
       }) },
     ] as never[]
     const test = await bench({ history })
@@ -700,7 +701,7 @@ describe('the framed inspector', () => {
 
   it('folds a long system prompt and takes the frame down with the mode', async () => {
     const history = [
-      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage(LONG_PROMPT, 'system-prompt') } },
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage(LONG_PROMPT) } },
     ] as never[]
     const test = await bench({ history, focusPreviewLines: 3, contextPreviewLines: 4 })
     test.terminal.rows = 20
@@ -737,7 +738,7 @@ describe('folding the block the focus holds', () => {
    */
   async function injected(options: Parameters<typeof bench>[0] = {}): Promise<Bench> {
     const history = [
-      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage(LONG_PROMPT, 'system-prompt') } },
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage(LONG_PROMPT) } },
     ] as never[]
     return bench({ history, focusPreviewLines: 2, contextPreviewLines: 4, ...options })
   }

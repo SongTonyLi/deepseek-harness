@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { createPalette } from '../src/style.ts'
 import { queuePanelRows, renderQueuePanel } from '../src/queue-panel.ts'
+import { testContextSource } from './message-sources.ts'
 
 /** One ordinary user prompt for the panel. */
 function message(text: string) {
@@ -55,10 +56,10 @@ describe('follow-up panel', () => {
     expect(renderQueuePanel([], { palette: createPalette(true), width: 40 })).toBe('')
   })
 
-  it('omits plugin notices so a ! result waiting for the next prompt is not a queued prompt', () => {
+  it('omits injected notices so a ! result waiting for the next prompt is not a queued prompt', () => {
     const notice = createUserMessage({
       content: [{ type: 'text', text: 'The user ran `ls` in the terminal.' }],
-      source: { kind: 'plugin', plugin: 'tui-app', form: 'notice', summary: '! ls' },
+      source: testContextSource({ form: 'notice', summary: '! ls' }),
     })
     expect(queuePanelRows([notice], [message('ask about it')]).map(row => row.text)).toEqual(['ask about it'])
   })

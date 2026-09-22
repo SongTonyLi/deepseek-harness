@@ -1150,6 +1150,9 @@ importers:
       '@deepseek-ai/dsh-api-account-controller':
         specifier: workspace:^
         version: link:../account-controller
+      '@deepseek-ai/dsh-api-authorization-controller':
+        specifier: workspace:^
+        version: link:../authorization-controller
       '@deepseek-ai/dsh-api-gateway':
         specifier: workspace:^
         version: link:../gateway
@@ -1171,6 +1174,9 @@ importers:
       '@deepseek-ai/dsh-api-workspace-files':
         specifier: workspace:^
         version: link:../workspace-files
+      '@deepseek-ai/dsh-authorization':
+        specifier: workspace:^
+        version: link:../../credentials/authorization
       '@deepseek-ai/dsh-client-connection':
         specifier: workspace:^
         version: link:../../client/connection
@@ -2612,6 +2618,9 @@ importers:
       '@deepseek-ai/dsh-client-ui-settings-shell':
         specifier: workspace:^
         version: link:../../client/ui-settings-shell
+      '@deepseek-ai/dsh-client-ui-settings-signin':
+        specifier: workspace:^
+        version: link:../../client/ui-settings-signin
       '@deepseek-ai/dsh-client-ui-settings-subagent':
         specifier: workspace:^
         version: link:../../client/ui-settings-subagent

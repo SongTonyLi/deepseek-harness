@@ -488,6 +488,7 @@ describe('ModelsSection', () => {
         ...wireNamespaces(),
         {
           ns: 'llm-cursor',
+          autoGenerate: false,
           schema: { type: 'object', properties: { apiKeyEnv: { type: 'string' } } },
           value: { apiKeyEnv: 'CURSOR_ACCESS_TOKEN' },
           applies: 'live',

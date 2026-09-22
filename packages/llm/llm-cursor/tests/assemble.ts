@@ -26,7 +26,6 @@ export async function assemble(
   for await (const chunk of ctx.llm.stream(request)) assembler.push(chunk)
   return {
     message: assembler.message({
-      kind: 'model',
       provider: request.provider,
       model: request.model,
       ...assembler.replayState === undefined ? {} : { replayState: assembler.replayState },
