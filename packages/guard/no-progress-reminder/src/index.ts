@@ -13,6 +13,12 @@ import type { GoalChangeMeta } from '@deepseek-ai/dsh-goal'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageSource } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'no-progress-reminder': { kind: 'no-progress-reminder'; form: 'notice'; summary: string }
+  }
+}
 import type { PostToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -55,13 +61,10 @@ export const Config: z<Config> = z.object({
 })
 
 /**
- * The `{kind:'plugin'}` source stamped on every notice this guard injects —
- * the label is load-bearing (an unlabeled context would render as a user
- * prompt in derived history).
+ * Source stamped on every notice this guard injects.
  */
 const PLUGIN_SOURCE: MessageSource = {
-  kind: 'plugin',
-  plugin: 'no-progress-reminder',
+  kind: 'no-progress-reminder',
   form: 'notice',
   summary: 'no progress',
 }

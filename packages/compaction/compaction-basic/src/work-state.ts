@@ -11,6 +11,12 @@ import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Message, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'compaction-basic': { kind: 'compaction-basic'; form: 'notice'; summary: string }
+  }
+}
+
 const WORK_STATE_PLUGIN = 'compaction-basic'
 const WORK_STATE_SUMMARY = 'work state'
 const COMPACTED_SUMMARY_TAG = '<compacted-summary>'
@@ -91,8 +97,7 @@ function createWorkStateNotice(session: Session, admitted: readonly UserMessage[
       ),
     }],
     source: {
-      kind: 'plugin',
-      plugin: WORK_STATE_PLUGIN,
+      kind: WORK_STATE_PLUGIN,
       form: 'notice',
       summary: boundContextSummary(WORK_STATE_SUMMARY),
     },
@@ -107,11 +112,11 @@ function workStateNoticeText(hasCheckpoint: boolean, previousTurnChangedFiles: b
 }
 
 function isModelSelectionNotice(message: UserMessage): boolean {
-  return message.source.kind === 'plugin' && message.source.plugin === 'model-selection'
+  return message.source.kind === 'model-selection'
 }
 
 function isWorkStateNotice(message: UserMessage): boolean {
-  return message.source.kind === 'plugin' && message.source.plugin === WORK_STATE_PLUGIN
+  return message.source.kind === WORK_STATE_PLUGIN
 }
 
 function historyHasCompactedSummary(
@@ -164,5 +169,5 @@ function fileChangingSuccess(
   const name = names.get(event.data.message.source.callId)
   /* v8 ignore next -- a valid log pairs every tool/result with a same-turn tool/call. */
   if (name === undefined) return false
-  return FILE_CHANGING_TOOLS.has(name) && !event.data.message.content[0].isError
+  return FILE_CHANGING_TOOLS.has(name) && event.data.message.isError !== true
 }

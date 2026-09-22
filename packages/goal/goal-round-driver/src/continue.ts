@@ -7,6 +7,12 @@ import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'goal-round-driver': { kind: 'goal-round-driver'; form: 'notice'; summary: string }
+  }
+}
+
 const CONTINUE_PHRASES = new Set([
   'continue',
   'keep going',
@@ -75,7 +81,7 @@ function lastClosedTurnMutatedWorkspace(session: Session): boolean {
   }
   for (const event of window) {
     if (event.type !== 'tool/result') continue
-    if (event.data.message.content[0].isError === true) continue
+    if (event.data.message.isError === true) continue
     const name = names.get(event.data.message.source.callId) ?? ''
     if (MUTATING_TOOLS.has(name)) return true
   }
@@ -108,8 +114,7 @@ function renderContinueNotice(
   return createUserMessage({
     content: [{ type: 'text', text }],
     source: {
-      kind: 'plugin',
-      plugin: 'goal-round-driver',
+      kind: 'goal-round-driver',
       form: 'notice',
       summary: boundContextSummary(text),
     },
