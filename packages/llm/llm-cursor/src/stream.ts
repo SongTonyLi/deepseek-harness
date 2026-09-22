@@ -13,9 +13,12 @@ import type { IdleWatchdog } from '@deepseek-ai/dsh-timeout'
 import { openConnectStream } from './connect.ts'
 import type { ConnectFrame, ConnectHttp2, CursorConnectStream } from './connect.ts'
 import {
+  AfterAgentResponseRequestResponseSchema,
+  AfterAgentThoughtRequestResponseSchema,
   AgentClientMessageSchema,
   AgentServerMessageSchema,
   BackgroundShellSpawnResultSchema,
+  BeforeSubmitPromptRequestResponseSchema,
   ComputerUseErrorSchema,
   ComputerUseResultSchema,
   DeleteRejectedSchema,
@@ -25,6 +28,8 @@ import {
   ExecClientControlMessageSchema,
   ExecClientMessageSchema,
   ExecClientThrowSchema,
+  ExecuteHookResponseSchema,
+  ExecuteHookResultSchema,
   FetchErrorSchema,
   FetchResultSchema,
   GetBlobResultSchema,
@@ -36,6 +41,27 @@ import {
   ListMcpResourcesRejectedSchema,
   LsRejectedSchema,
   LsResultSchema,
+  McpStateExecResultSchema,
+  McpStateServerSchema,
+  McpStateSuccessSchema,
+  PiBashExecErrorSchema,
+  PiBashExecResultSchema,
+  PiEditExecRejectedSchema,
+  PiEditExecResultSchema,
+  PiFindExecErrorSchema,
+  PiFindExecResultSchema,
+  PiGrepExecErrorSchema,
+  PiGrepExecResultSchema,
+  PiLsExecErrorSchema,
+  PiLsExecResultSchema,
+  PiReadExecErrorSchema,
+  PiReadExecResultSchema,
+  PiWriteExecRejectedSchema,
+  PiWriteExecResultSchema,
+  PostToolUseFailureRequestResponseSchema,
+  PostToolUseRequestResponseSchema,
+  PreCompactRequestResponseSchema,
+  PreToolUseRequestResponseSchema,
   ReadMcpResourceExecResultSchema,
   ReadMcpResourceRejectedSchema,
   ReadRejectedSchema,
@@ -50,6 +76,9 @@ import {
   ShellRejectedSchema,
   ShellResultSchema,
   ShellStreamSchema,
+  StopRequestResponseSchema,
+  SubagentStartRequestResponseSchema,
+  SubagentStopRequestResponseSchema,
   WebSearchRequestResponse_ApprovedSchema,
   WebSearchRequestResponseSchema,
   WriteRejectedSchema,
@@ -59,8 +88,10 @@ import {
   type AgentServerMessage,
   type ExecClientMessage,
   type ExecServerMessage,
+  type ExecuteHookRequest,
   type InteractionQuery,
   type KvServerMessage,
+  type McpStateExecArgs,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
 import { CURSOR_RUN_PATH, MCP_PROMPT_TOOL_PREFIX } from './protocol.ts'
@@ -150,9 +181,104 @@ function answerRequestContext(stream: CursorConnectStream, exec: ExecServerMessa
   })
 }
 
+function answerMcpState(
+  stream: CursorConnectStream,
+  exec: ExecServerMessage,
+  args: McpStateExecArgs,
+  mcpTools: readonly McpToolDefinition[],
+): void {
+  const wanted = args.serverIdentifiers.length > 0 ? new Set(args.serverIdentifiers) : undefined
+  const byProvider = new Map<string, McpToolDefinition[]>()
+  for (const tool of mcpTools) {
+    const existing = byProvider.get(tool.providerIdentifier)
+    if (existing) existing.push(tool)
+    else byProvider.set(tool.providerIdentifier, [tool])
+  }
+  const servers = [...byProvider]
+    .filter(([identifier]) => wanted === undefined || wanted.has(identifier))
+    .map(([identifier, tools]) => create(McpStateServerSchema, {
+      serverName: identifier,
+      serverIdentifier: identifier,
+      tools,
+      status: 'connected',
+    }))
+  sendClient(stream, {
+    message: {
+      case: 'execClientMessage',
+      value: create(ExecClientMessageSchema, {
+        id: exec.id,
+        execId: exec.execId,
+        message: {
+          case: 'mcpStateExecResult',
+          value: create(McpStateExecResultSchema, {
+            result: { case: 'success', value: create(McpStateSuccessSchema, { servers }) },
+          }),
+        },
+      }),
+    },
+  })
+}
+
+type HookResponseCase = Exclude<
+  NonNullable<Parameters<typeof create<typeof ExecuteHookResponseSchema>>[1]>['response'],
+  undefined
+>
+
+function hookResult(response: HookResponseCase): ReturnType<typeof create<typeof ExecuteHookResultSchema>> {
+  return create(ExecuteHookResultSchema, {
+    response: create(ExecuteHookResponseSchema, { response }),
+  })
+}
+
+function neutralHookResponse(
+  request: ExecuteHookRequest | undefined,
+): ReturnType<typeof create<typeof ExecuteHookResultSchema>> | undefined {
+  switch (request?.request.case) {
+    case 'preCompact':
+      return hookResult({ case: 'preCompact', value: create(PreCompactRequestResponseSchema, {}) })
+    case 'subagentStart':
+      return hookResult({ case: 'subagentStart', value: create(SubagentStartRequestResponseSchema, {}) })
+    case 'subagentStop':
+      return hookResult({ case: 'subagentStop', value: create(SubagentStopRequestResponseSchema, {}) })
+    case 'preToolUse':
+      return hookResult({ case: 'preToolUse', value: create(PreToolUseRequestResponseSchema, {}) })
+    case 'postToolUse':
+      return hookResult({ case: 'postToolUse', value: create(PostToolUseRequestResponseSchema, {}) })
+    case 'postToolUseFailure':
+      return hookResult({ case: 'postToolUseFailure', value: create(PostToolUseFailureRequestResponseSchema, {}) })
+    case 'beforeSubmitPrompt':
+      return hookResult({ case: 'beforeSubmitPrompt', value: create(BeforeSubmitPromptRequestResponseSchema, {}) })
+    case 'afterAgentResponse':
+      return hookResult({ case: 'afterAgentResponse', value: create(AfterAgentResponseRequestResponseSchema, {}) })
+    case 'afterAgentThought':
+      return hookResult({ case: 'afterAgentThought', value: create(AfterAgentThoughtRequestResponseSchema, {}) })
+    case 'stop':
+      return hookResult({ case: 'stop', value: create(StopRequestResponseSchema, {}) })
+    default:
+      return undefined
+  }
+}
+
+function answerHook(stream: CursorConnectStream, exec: ExecServerMessage, request: ExecuteHookRequest | undefined): boolean {
+  const result = neutralHookResponse(request)
+  if (result === undefined) return false
+  sendClient(stream, {
+    message: {
+      case: 'execClientMessage',
+      value: create(ExecClientMessageSchema, {
+        id: exec.id,
+        execId: exec.execId,
+        message: { case: 'executeHookResult', value: result },
+      }),
+    },
+  })
+  return true
+}
+
 /** Harness tools that stand in for each Cursor-native exec, in preference order. */
 const NATIVE_TOOL_ALTERNATIVES: Readonly<Record<string, readonly string[]>> = {
   readArgs: ['read'],
+  redactedReadArgs: ['read'],
   lsArgs: ['glob'],
   grepArgs: ['grep'],
   writeArgs: ['write', 'edit'],
@@ -165,6 +291,14 @@ const NATIVE_TOOL_ALTERNATIVES: Readonly<Record<string, readonly string[]>> = {
   diagnosticsArgs: ['lsp'],
   listMcpResourcesExecArgs: ['list_mcp_resources'],
   readMcpResourceExecArgs: ['read_mcp_resource'],
+  piReadArgs: ['read'],
+  piBashArgs: ['bash', 'pwsh'],
+  piEditArgs: ['write', 'edit'],
+  piWriteArgs: ['write', 'edit'],
+  piGrepArgs: ['grep'],
+  piFindArgs: ['glob'],
+  piLsArgs: ['glob'],
+  miniSweAgentBashArgs: ['bash', 'pwsh'],
 }
 
 function nativeRejectionReason(execCase: string, mcpTools: readonly McpToolDefinition[]): string {
@@ -292,8 +426,73 @@ function nativeRejection(exec: ExecServerMessage, reason: string): ExecClientMes
           },
         }),
       }
+    case 'redactedReadArgs':
+      return {
+        case: 'redactedReadResult',
+        value: create(ReadResultSchema, {
+          result: { case: 'rejected', value: create(ReadRejectedSchema, { path: args.value.path, reason }) },
+        }),
+      }
+    case 'miniSweAgentBashArgs':
+      return {
+        case: 'miniSweAgentBashResult',
+        value: create(ShellResultSchema, {
+          result: { case: 'rejected', value: shellRejected(args.value.command, args.value.workingDirectory) },
+        }),
+      }
+    case 'piReadArgs':
+      return {
+        case: 'piReadResult',
+        value: create(PiReadExecResultSchema, {
+          result: { case: 'error', value: create(PiReadExecErrorSchema, { error: reason }) },
+        }),
+      }
+    case 'piBashArgs':
+      return {
+        case: 'piBashResult',
+        value: create(PiBashExecResultSchema, {
+          result: { case: 'error', value: create(PiBashExecErrorSchema, { error: reason }) },
+        }),
+      }
+    case 'piEditArgs':
+      return {
+        case: 'piEditResult',
+        value: create(PiEditExecResultSchema, {
+          result: { case: 'rejected', value: create(PiEditExecRejectedSchema, { reason }) },
+        }),
+      }
+    case 'piWriteArgs':
+      return {
+        case: 'piWriteResult',
+        value: create(PiWriteExecResultSchema, {
+          result: { case: 'rejected', value: create(PiWriteExecRejectedSchema, { reason }) },
+        }),
+      }
+    case 'piGrepArgs':
+      return {
+        case: 'piGrepResult',
+        value: create(PiGrepExecResultSchema, {
+          result: { case: 'error', value: create(PiGrepExecErrorSchema, { error: reason }) },
+        }),
+      }
+    case 'piFindArgs':
+      return {
+        case: 'piFindResult',
+        value: create(PiFindExecResultSchema, {
+          result: { case: 'error', value: create(PiFindExecErrorSchema, { error: reason }) },
+        }),
+      }
+    case 'piLsArgs':
+      return {
+        case: 'piLsResult',
+        value: create(PiLsExecResultSchema, {
+          result: { case: 'error', value: create(PiLsExecErrorSchema, { error: reason }) },
+        }),
+      }
     default:
-      // requestContextArgs and mcpArgs are answered before this point; anything else is wire drift.
+      // requestContextArgs, mcpArgs, mcpStateExecArgs, and executeHookArgs are
+      // answered before this point; anything else is an exec this build cannot
+      // type, answered with ExecClientThrow so the Run can continue.
       return undefined
   }
 }
@@ -553,12 +752,25 @@ function handleServerMessage(
         done: { type: 'finish', reason: { kind: 'tool-calls' } },
       }
     }
+    if (execCase === 'mcpStateExecArgs') {
+      answerMcpState(stream, exec, exec.message.value, payload.mcpTools)
+      return { chunks, nextIndex, open, outputTokens, sawContent }
+    }
+    if (execCase === 'executeHookArgs' && answerHook(stream, exec, exec.message.value.request)) {
+      return { chunks, nextIndex, open, outputTokens, sawContent }
+    }
     if (answerNativeExec(stream, exec, payload.mcpTools)) {
       return { chunks, nextIndex, open, outputTokens, sawContent }
     }
     rejectUnknownExec(stream, exec)
+    // A named exec or an unknown oneof field is answered with ExecClientThrow so
+    // the Run can continue. An exec with no payload is a malformed frame and
+    // still fails the turn.
+    if (execCase !== undefined || (exec.$unknown !== undefined && exec.$unknown.length > 0)) {
+      return { chunks, nextIndex, open, outputTokens, sawContent }
+    }
     throw new LlmError(
-      `llm-cursor: Cursor exec "${execCase ?? 'unknown'}" is not supported by this adapter`,
+      'llm-cursor: Cursor exec "unknown" is not supported by this adapter',
       'UNSUPPORTED_CONTENT',
     )
   }

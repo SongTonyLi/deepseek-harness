@@ -41,6 +41,7 @@ function blobOf(payload: CursorRunPayload, id: Uint8Array): Uint8Array {
 }
 
 function rootPromptOf(payload: CursorRunPayload): unknown[] {
+  // oxlint-disable-next-line typescript/no-deprecated -- Cursor still reads this prompt field
   return (decodeRun(payload).conversationState?.rootPromptMessagesJson ?? [])
     .map(id => JSON.parse(new TextDecoder().decode(blobOf(payload, id))) as unknown)
 }
@@ -320,7 +321,10 @@ describe('buildCursorRun', () => {
       tools: [{ name: 'echo', description: 'echo', parameters: { type: 'object', properties: {} } }],
     })
     const run = decodeRun(payload)
-    expect(run.conversationState?.clientName).toBe('dsh')
+    const clientName = new TextEncoder().encode('dsh')
+    expect(run.conversationState?.$unknown).toEqual([
+      { no: 22, wireType: 2, data: Uint8Array.from([clientName.length, ...clientName]) },
+    ])
     expect(run.conversationState?.turns).toEqual([])
     expect(run.requestedModel?.modelId).toBe('composer-2')
     expect(userActionText(payload)).toBe('hi')

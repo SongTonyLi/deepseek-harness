@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { create, fromBinary, fromJson, toBinary, toJson } from '@bufbuild/protobuf'
+import type { UnknownField } from '@bufbuild/protobuf'
 import { ValueSchema } from '@bufbuild/protobuf/wkt'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
@@ -47,6 +48,20 @@ import {
   type McpToolDefinition,
 } from './native/agent_pb.ts'
 import { MCP_PROMPT_TOOL_PREFIX, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
+
+/** Upstream `ConversationStateStructure.client_name = 22`; the vendored subset omits the typed field. */
+const CONVERSATION_CLIENT_NAME_FIELD = 22
+const CONVERSATION_CLIENT_NAME = 'dsh'
+
+/** Encode length-delimited bytes as an unknown field.
+ * The payload must be shorter than 128 bytes so the length fits in one varint byte. */
+function lengthDelimitedUnknownField(no: number, bytes: Uint8Array): UnknownField {
+  return { no, wireType: 2, data: Uint8Array.from([bytes.length, ...bytes]) }
+}
+
+function utf8UnknownField(no: number, value: string): UnknownField {
+  return lengthDelimitedUnknownField(no, new TextEncoder().encode(value))
+}
 
 /** One historical or in-flight assistant/tool step. */
 export type CursorTurnStep =
@@ -261,14 +276,19 @@ function buildTurnStepBytes(step: CursorTurnStep): Uint8Array {
 
 function createUserMessage(text: string, selectedContextBlob: Uint8Array) {
   const messageId = randomUUID()
-  return create(UserMessageSchema, {
+  const message = create(UserMessageSchema, {
     text,
     messageId,
     selectedContext: create(SelectedContextSchema, { selectedImages: [] }),
     mode: 1,
-    selectedContextBlob,
-    correlationId: messageId,
   })
+  // Upstream UserMessage.selected_context_blob = 10 and correlation_id = 17;
+  // the vendored subset omits those typed fields.
+  message.$unknown = [
+    lengthDelimitedUnknownField(10, selectedContextBlob),
+    utf8UnknownField(17, messageId),
+  ]
+  return message
 }
 
 /**
@@ -489,6 +509,7 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
     turnBlobIds.push(storeAsBlob(toBinary(ConversationTurnStructureSchema, turnStructure), blobStore))
   }
   const conversationState = create(ConversationStateStructureSchema, {
+    // oxlint-disable-next-line typescript/no-deprecated -- Cursor still reads this prompt field
     rootPromptMessagesJson: [systemBlobId, ...promptBlobIds],
     turns: turnBlobIds,
     todos: [],
@@ -496,14 +517,15 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
     previousWorkspaceUris: [pathToFileURL(process.cwd()).href],
     mode: 1,
     fileStates: {},
+    // oxlint-disable-next-line typescript/no-deprecated -- empty map keeps the previous wire field
     fileStatesV2: {},
     summaryArchives: [],
     turnTimings: [],
     subagentStates: {},
     selfSummaryCount: 0,
     readPaths: [],
-    clientName: 'dsh',
   })
+  conversationState.$unknown = [utf8UnknownField(CONVERSATION_CLIENT_NAME_FIELD, CONVERSATION_CLIENT_NAME)]
   const text = actionText(action)
   const userMessage = createUserMessage(text, selectedCtxBlob)
   const requestedModel = create(RequestedModelSchema, { modelId: options.model, maxMode: false, parameters: [] })

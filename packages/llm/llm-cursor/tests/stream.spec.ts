@@ -4,14 +4,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createUserMessage, LlmError } from '@deepseek-ai/dsh-llm'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
+  AfterAgentResponseRequestQuerySchema,
+  AfterAgentThoughtRequestQuerySchema,
   AgentClientMessageSchema,
   AgentServerMessageSchema,
+  BeforeSubmitPromptRequestQuerySchema,
   BackgroundShellSpawnArgsSchema,
   ComputerUseArgsSchema,
+  ConversationSearchArgsSchema,
   CreatePlanRequestQuerySchema,
   DeleteArgsSchema,
   DiagnosticsArgsSchema,
   ExecServerMessageSchema,
+  ExecuteHookArgsSchema,
+  ExecuteHookRequestSchema,
   FetchArgsSchema,
   GetBlobArgsSchema,
   GrepArgsSchema,
@@ -21,12 +27,27 @@ import {
   ListMcpResourcesExecArgsSchema,
   LsArgsSchema,
   McpArgsSchema,
+  McpStateExecArgsSchema,
+  PiBashExecArgsSchema,
+  PiEditExecArgsSchema,
+  PiFindExecArgsSchema,
+  PiGrepExecArgsSchema,
+  PiLsExecArgsSchema,
+  PiReadExecArgsSchema,
+  PiWriteExecArgsSchema,
+  PostToolUseFailureRequestQuerySchema,
+  PostToolUseRequestQuerySchema,
+  PreCompactRequestQuerySchema,
+  PreToolUseRequestQuerySchema,
   ReadArgsSchema,
   ReadMcpResourceExecArgsSchema,
   RecordScreenArgsSchema,
   RequestContextArgsSchema,
   SetBlobArgsSchema,
   ShellArgsSchema,
+  StopRequestQuerySchema,
+  SubagentStartRequestQuerySchema,
+  SubagentStopRequestQuerySchema,
   TextDeltaUpdateSchema,
   ThinkingDeltaUpdateSchema,
   TokenDeltaUpdateSchema,
@@ -36,7 +57,7 @@ import {
   WriteArgsSchema,
   WriteShellStdinArgsSchema,
 } from '../src/native/agent_pb.ts'
-import type { AgentClientMessage, ExecServerMessage } from '../src/native/agent_pb.ts'
+import type { AgentClientMessage, ExecServerMessage, ExecuteHookRequest } from '../src/native/agent_pb.ts'
 import { createOpenCursorStream, streamCursorRun } from '../src/stream.ts'
 import type { OpenCursorStream } from '../src/stream.ts'
 import { buildCursorRun } from '../src/request.ts'
@@ -74,18 +95,48 @@ function scripted(messages: ReturnType<typeof create<typeof AgentServerMessageSc
 function capturing(
   messages: ReturnType<typeof create<typeof AgentServerMessageSchema>>[],
 ): { open: OpenCursorStream; written: AgentClientMessage[] } {
+  return capturingBytes(messages.map(message => toBinary(AgentServerMessageSchema, message)))
+}
+
+/** Like `capturing`, for already-encoded AgentServerMessage payloads. */
+function capturingBytes(payloads: Uint8Array[]): { open: OpenCursorStream; written: AgentClientMessage[] } {
   const written: AgentClientMessage[] = []
   const open: OpenCursorStream = () => ({
     write: (bytes) => { written.push(fromBinary(AgentClientMessageSchema, bytes)) },
     end: () => {},
     destroy: () => {},
     frames: (async function* () {
-      for (const message of messages) {
-        yield { endStream: false, payload: toBinary(AgentServerMessageSchema, message) }
+      for (const payload of payloads) {
+        yield { endStream: false, payload }
       }
     })(),
   })
   return { open, written }
+}
+
+function protoVarint(value: number): number[] {
+  const bytes: number[] = []
+  let rest = value
+  while (rest > 0x7f) {
+    bytes.push((rest & 0x7f) | 0x80)
+    rest >>>= 7
+  }
+  bytes.push(rest)
+  return bytes
+}
+
+function protoStringField(field: number, value: string): Uint8Array {
+  const data = new TextEncoder().encode(value)
+  return Uint8Array.from([...protoVarint((field << 3) | 2), ...protoVarint(data.length), ...data])
+}
+
+/** AgentServerMessage whose exec oneof carries a length-delimited field this build may not name. */
+function agentExecWithLengthDelimitedField(id: number, execId: string, field: number, payload: Uint8Array): Uint8Array {
+  const idField = Uint8Array.from([8, id])
+  const execIdField = protoStringField(15, execId)
+  const unknown = Uint8Array.from([...protoVarint((field << 3) | 2), ...protoVarint(payload.length), ...payload])
+  const exec = Uint8Array.from([...idField, ...execIdField, ...unknown])
+  return Uint8Array.from([...protoVarint((2 << 3) | 2), ...protoVarint(exec.length), ...exec])
 }
 
 function execFrom(message: ExecServerMessage['message']) {
@@ -419,6 +470,15 @@ describe('streamCursorRun', () => {
       { exec: { case: 'fetchArgs', value: create(FetchArgsSchema, { url: 'https://x' }) }, result: 'fetchResult', variant: 'error', alternative: 'mcp_dsh_web_fetch', echo: { url: 'https://x' } },
       { exec: { case: 'recordScreenArgs', value: create(RecordScreenArgsSchema, {}) }, result: 'recordScreenResult', variant: 'failure', alternative: 'mcp_dsh_' },
       { exec: { case: 'computerUseArgs', value: create(ComputerUseArgsSchema, {}) }, result: 'computerUseResult', variant: 'error', alternative: 'mcp_dsh_' },
+      { exec: { case: 'redactedReadArgs', value: create(ReadArgsSchema, { path: '/w/secret.txt' }) }, result: 'redactedReadResult', variant: 'rejected', alternative: 'mcp_dsh_read', echo: { path: '/w/secret.txt' } },
+      { exec: { case: 'miniSweAgentBashArgs', value: create(ShellArgsSchema, { command: 'pwd', workingDirectory: '/w' }) }, result: 'miniSweAgentBashResult', variant: 'rejected', alternative: 'mcp_dsh_bash', echo: { command: 'pwd', workingDirectory: '/w' } },
+      { exec: { case: 'piReadArgs', value: create(PiReadExecArgsSchema, { path: '/w/README.md' }) }, result: 'piReadResult', variant: 'error', alternative: 'mcp_dsh_read' },
+      { exec: { case: 'piBashArgs', value: create(PiBashExecArgsSchema, { command: 'ls' }) }, result: 'piBashResult', variant: 'error', alternative: 'mcp_dsh_bash' },
+      { exec: { case: 'piEditArgs', value: create(PiEditExecArgsSchema, { path: '/w/a.txt' }) }, result: 'piEditResult', variant: 'rejected', alternative: 'mcp_dsh_write' },
+      { exec: { case: 'piWriteArgs', value: create(PiWriteExecArgsSchema, { path: '/w/a.txt', content: 'x' }) }, result: 'piWriteResult', variant: 'rejected', alternative: 'mcp_dsh_write' },
+      { exec: { case: 'piGrepArgs', value: create(PiGrepExecArgsSchema, { pattern: 'x' }) }, result: 'piGrepResult', variant: 'error', alternative: 'mcp_dsh_grep' },
+      { exec: { case: 'piFindArgs', value: create(PiFindExecArgsSchema, { pattern: '*.ts' }) }, result: 'piFindResult', variant: 'error', alternative: 'mcp_dsh_glob' },
+      { exec: { case: 'piLsArgs', value: create(PiLsExecArgsSchema, { path: '/w' }) }, result: 'piLsResult', variant: 'error', alternative: 'mcp_dsh_glob' },
     ]
     for (const entry of cases) {
       const { open, written } = capturing([execFrom(entry.exec), ...textThenEnd])
@@ -550,6 +610,132 @@ describe('streamCursorRun', () => {
         },
       }),
     ])))).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT' })
+  })
+
+  it('keeps the Run alive when Cursor sends a CLI Pi read exec', async () => {
+    const tools = [{ name: 'read', description: 'read', parameters: { type: 'object' } }]
+    const { open, written } = capturing([
+      execFrom({ case: 'piReadArgs', value: create(PiReadExecArgsSchema, { path: '/w/README.md' }) }),
+      ...textThenEnd,
+    ])
+    const chunks = await collect(streamCursorRun({ ...request, tools }, 'tok', 5_000, open))
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')).toBe(false)
+    const reply = execReply(written)
+    if (reply.message.case !== 'piReadResult' || reply.message.value.result.case !== 'error') {
+      throw new Error('expected a Pi read error')
+    }
+    expect(reply.message.value.result.value.error).toContain('mcp_dsh_read')
+  })
+
+  it('answers every CLI hook with an empty matching response', async () => {
+    const hooks: ExecuteHookRequest[] = [
+      create(ExecuteHookRequestSchema, { request: { case: 'preCompact', value: create(PreCompactRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'subagentStart', value: create(SubagentStartRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'subagentStop', value: create(SubagentStopRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'preToolUse', value: create(PreToolUseRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'postToolUse', value: create(PostToolUseRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'postToolUseFailure', value: create(PostToolUseFailureRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'beforeSubmitPrompt', value: create(BeforeSubmitPromptRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'afterAgentResponse', value: create(AfterAgentResponseRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'afterAgentThought', value: create(AfterAgentThoughtRequestQuerySchema, {}) } }),
+      create(ExecuteHookRequestSchema, { request: { case: 'stop', value: create(StopRequestQuerySchema, {}) } }),
+    ]
+    for (const hook of hooks) {
+      const { open, written } = capturing([
+        execFrom({
+          case: 'executeHookArgs',
+          value: create(ExecuteHookArgsSchema, { request: hook }),
+        }),
+        ...textThenEnd,
+      ])
+      const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+      expect(chunks.at(-1), hook.request.case).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+      const reply = execReply(written)
+      if (reply.message.case !== 'executeHookResult') throw new Error(`expected a hook result for ${hook.request.case}`)
+      expect(reply.message.value.response?.response.case, hook.request.case).toBe(hook.request.case)
+    }
+  })
+
+  it('throws on the wire and keeps the Run alive for a hook with no request', async () => {
+    const { open, written } = capturing([
+      execFrom({ case: 'executeHookArgs', value: create(ExecuteHookArgsSchema, {}) }),
+      ...textThenEnd,
+    ])
+    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(written.some(message => message.message.case === 'execClientControlMessage')).toBe(true)
+  })
+
+  it('answers MCP state with the advertised harness tools', async () => {
+    const { open, written } = capturing([
+      execFrom({ case: 'mcpStateExecArgs', value: create(McpStateExecArgsSchema, {}) }),
+      ...textThenEnd,
+    ])
+    const chunks = await collect(streamCursorRun({
+      ...request,
+      tools: [
+        { name: 'echo', description: 'echo', parameters: { type: 'object' } },
+        { name: 'read', description: 'read', parameters: { type: 'object' } },
+      ],
+    }, 'tok', 5_000, open))
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    const reply = execReply(written)
+    if (reply.message.case !== 'mcpStateExecResult' || reply.message.value.result.case !== 'success') {
+      throw new Error('expected MCP state success')
+    }
+    const servers = reply.message.value.result.value.servers
+    expect(servers).toHaveLength(1)
+    expect(servers[0]?.serverIdentifier).toBe('dsh')
+    expect(servers[0]?.tools.map(tool => tool.name)).toEqual(['echo', 'read'])
+  })
+
+  it('filters MCP state servers when Cursor names identifiers', async () => {
+    const tools = [{ name: 'echo', description: 'echo', parameters: { type: 'object' } }]
+    for (const [identifiers, expected] of [
+      [['other'], []],
+      [['dsh'], ['echo']],
+    ] as const) {
+      const { open, written } = capturing([
+        execFrom({
+          case: 'mcpStateExecArgs',
+          value: create(McpStateExecArgsSchema, { serverIdentifiers: [...identifiers] }),
+        }),
+        ...textThenEnd,
+      ])
+      await collect(streamCursorRun({ ...request, tools }, 'tok', 5_000, open))
+      const reply = execReply(written)
+      if (reply.message.case !== 'mcpStateExecResult' || reply.message.value.result.case !== 'success') {
+        throw new Error('expected MCP state success')
+      }
+      expect(reply.message.value.result.value.servers.map(server => server.serverIdentifier), identifiers.join(',')).toEqual(
+        expected.length === 0 ? [] : ['dsh'],
+      )
+      expect(reply.message.value.result.value.servers[0]?.tools.map(tool => tool.name) ?? [], identifiers.join(',')).toEqual(expected)
+    }
+  })
+
+  it('throws on the wire and keeps the Run alive for an unknown exec field', async () => {
+    const { open, written } = capturingBytes([
+      agentExecWithLengthDelimitedField(7, 'e7', 99, protoStringField(1, 'x')),
+      ...textThenEnd.map(message => toBinary(AgentServerMessageSchema, message)),
+    ])
+    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(written.some(message => message.message.case === 'execClientControlMessage')).toBe(true)
+  })
+
+  it('throws on the wire and keeps the Run alive for a typed control exec', async () => {
+    const { open, written } = capturing([
+      execFrom({
+        case: 'conversationSearchArgs',
+        value: create(ConversationSearchArgsSchema, { query: 'q', toolCallId: 't1' }),
+      }),
+      ...textThenEnd,
+    ])
+    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(written.some(message => message.message.case === 'execClientControlMessage')).toBe(true)
   })
 
   it('closes an open text block before MCP tool-calls', async () => {

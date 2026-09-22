@@ -26,11 +26,11 @@ harness 已能通过 `dsh-authorization` 登录 pi-ai 目录中的订阅（ChatG
 
 ### Streaming
 
-DSH 的每一步模型调用是一次 HTTP/2 Connect `AgentService/Run`。适配器把 harness 历史、系统提示与工具映射为 MCP 工具定义，再把文本、thinking、用量与 MCP 工具调用映射为 `StreamChunk`。一次 MCP 工具调用结束该流；DSH 在本地执行工具，下一步是新的 Run。Cursor 原生工作区 exec（`read`、`shell` 及同类）在链路上拒绝，以免该轮停住。pi-cursor 的会话 journal、挂起的 bridge 以及原生工具执行不在范围内。
+DSH 的每一步模型调用是一次 HTTP/2 Connect `AgentService/Run`。适配器把 harness 历史、系统提示与工具映射为 MCP 工具定义，再把文本、thinking、用量与 MCP 工具调用映射为 `StreamChunk`。一次 MCP 工具调用结束该流；DSH 在本地执行工具，下一步是新的 Run。Cursor 原生和 CLI Pi 工作区 exec（`read`、`shell`、`piRead` 及同类）在链路上拒绝，以免该轮停住。pi-cursor 的会话 journal、挂起的 bridge 以及原生工具执行不在范围内。
 
 Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示。2026-09-18 的实测探针表明 `conversation_state.turns` 从不到达模型，且根条目中的 `{"role":"system"}` 会被丢弃而使用 Cursor 自己的提示：重建的请求以一个没有系统提示、也不记得先前助手文本和工具结果的新问题到达，而在一次工具调用之后模型看到的是一条空的用户消息。因此 `buildPromptMessages` 把系统提示作为 `<rules>` user 消息发布，并把每个先前人类轮次重放为 `<user_query>` user 消息，把 harness 注入的目录、快照和通知重放为不加包裹的 user 消息，以及带 `text` 和名为 `mcp_dsh_<tool>` 的 `tool-call` 部分的 assistant 消息和带结果的 `tool` 消息，这与 pi-cursor 针对同一发现采用的渲染一致，只是注入上下文不再折进查询；轮次结构仍一同发送，供服务端记账。本地执行工具调用之后，进行中的轮次连同其结果被重放，Run 必需的用户消息是固定提示 `TOOL_RESULT_CONTINUATION_TEXT`。流解码器把模型回显的 `mcp_dsh_` 前缀还原为 harness 工具名。
 
-Cursor 仍在 MCP 工具之外提供其内建的 `read`、`shell`、`grep` 及同类，而 harness 工具名与之冲突，因此请求上下文的应答带一条全局 Cursor 规则 `NATIVE_TOOLS_RULE`，指出应调用 `mcp_dsh_` 工具；实测探针显示模型读到该规则并跳过了原生工具。当模型仍调用原生工具时，`stream.ts` 以该 exec 的类型化拒绝应答（`readResult.rejected`、`shellResult.rejected`、`grepResult.error` 等），拒绝原因指出对应的 harness 工具；线上服务端保持 Run 开启，模型把该拒绝当作工具结果读取。本构建不认识的 exec 仍作为线路漂移使该步失败。Cursor 不报告提示用量，因此 `inputTokens` 是 payload 基于字符数的估算；token meter 在自身估算更大时保留自己的值，TUI 上下文计量则显示适配器的数字而不是零。
+Cursor 仍在 MCP 工具之外提供其内建的 `read`、`shell`、`grep` 及同类，而 harness 工具名与之冲突，因此请求上下文的应答带一条全局 Cursor 规则 `NATIVE_TOOLS_RULE`，指出应调用 `mcp_dsh_` 工具；实测探针显示模型读到该规则并跳过了原生工具。当模型仍调用原生或 CLI Pi 工具时，`stream.ts` 以该 exec 的类型化拒绝应答（`readResult.rejected`、`piReadResult.error` 等），拒绝原因指出对应的 harness 工具；线上服务端保持 Run 开启，模型把该拒绝当作工具结果读取。没有 payload 的 exec 仍作为畸形帧使该步失败。本构建无法类型化的已命名 exec 或未知字段 exec 以 ExecClientThrow 应答，以便 Run 继续；[让非官方 Cursor Run 在 CLI Pi 与控制 exec 下保持存活](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.zh.md) 拥有这一反转。Cursor 不报告提示用量，因此 `inputTokens` 是 payload 基于字符数的估算；token meter 在自身估算更大时保留自己的值，TUI 上下文计量则显示适配器的数字而不是零。
 
 一次 Cursor Run 只有一个当前 `userMessageAction`。loop 在人类提示之后追加的 harness `user/message` 事件——运行时上下文快照、技能目录、技能指令正文、会话引用上下文——是连续的 user 角色消息。`conversationFromOptions` 把 `source.kind === 'user'` 的文本留作查询／动作，并把所有其他 user 角色来源放到根提示上，且不加 `<user_query>` 包裹。若把这些注入消息拼进动作（或拼进历史中的 `<user_query>`），Cursor 模型会把 skill 目录里“行动前先调用 skill 工具”的句子当成用户任务。
 
@@ -72,7 +72,7 @@ TUI `/login` 已经列出每条 flow；Cursor 行是 `llm-cursor/cursor`，没�
 
 挂载 base bundle 后，`authorization.list()` 包含带 `oauth` 订阅方法的 `llm-cursor/cursor`，并且 TUI `/login` 提供 Cursor。设置 → 模型在尚未添加提供方时就显示带订阅登录控件的 Cursor 卡片。PKCE 登录打开 `loginDeepControl`，轮询至拿到令牌，提交授权，并报告 `authorized`；中止或超时不存储任何内容。`cursor/<model>` 经 harness 的 `StreamChunk` 约定流出文本（以及模型发出的 thinking）；一次 MCP 工具调用结束该流；缺少令牌时在 HTTP/2 之前以 `MISSING_CREDENTIAL` 失败。
 
-Cursor 可能不预先通知就改 `agent.v1`、认证 URL 或头；包 README 写明该集成为非官方且可能损坏，未知 exec 使该轮失败而不是挂起。采集 IDE 或 CLI 令牌可能把账记到人类未预期的另一个 Cursor 账户；已存储的 DSH 登录优先，`reuseInstalledCursorLogin` 是退出开关。vendoring proto 与裁过的客户端会造成相对 pi-cursor 的维护分叉；接受协议漂移，以换取 Node 自有适配器，以及不依赖 Bun/ExtensionAPI。
+Cursor 可能不预先通知就改 `agent.v1`、认证 URL 或头；包 README 写明该集成为非官方且可能损坏，没有 payload 的 exec 使该轮失败，其他未应答 exec 在链路上 throw 并继续而不是挂起（[CLI Pi 与控制 exec](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.zh.md)）。采集 IDE 或 CLI 令牌可能把账记到人类未预期的另一个 Cursor 账户；已存储的 DSH 登录优先，`reuseInstalledCursorLogin` 是退出开关。vendoring proto 与裁过的客户端会造成相对社区 Cursor 客户端的维护分叉；接受协议漂移，以换取 Node 自有适配器，以及不依赖 Bun/ExtensionAPI。
 
 ## Testing
 
