@@ -150,7 +150,8 @@ describe('transcript', () => {
     expect(turnEndNotice({ kind: 'error', error: { code: 'X', message: 'why' } })).toBe('turn failed: X: why')
     expect(turnEndNotice({ kind: 'max-tokens' })).toContain('ceiling')
     expect(turnEndNotice({ kind: 'interrupted' })).toContain('interrupted')
-    expect(() => turnEndNotice({ kind: 'unknown' } as never)).toThrow()
+    // TurnEndReason is merge-extensible: a backend-added kind still names itself.
+    expect(turnEndNotice({ kind: 'forked' } as never)).toBe('turn ended: forked')
   })
 
   it('describes any failure value', () => {

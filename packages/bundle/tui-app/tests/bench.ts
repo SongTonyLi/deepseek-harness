@@ -340,6 +340,12 @@ export async function bench(options: {
   openedHistory?: readonly SessionEvent[]
   /** Authorization-page handoff; omitted to model a remote or headless terminal. */
   openUrl?: (url: string) => Promise<void>
+  /**
+   * Record each saved default-model selection instead of mounting the real
+   * default-model plugin, whose own write goes through a Loader entry no
+   * hand-built Context has.
+   */
+  saveDefaultModel?: (selection: { provider: string; model: string }) => Promise<void>
   before?(ctx: Context): Promise<void> | void
 } = {}): Promise<Bench> {
   const ctx = new Context()
@@ -347,7 +353,15 @@ export async function bench(options: {
   if (options.projections === undefined) await ctx.plugin(SessionProjectionRegistry)
   else if (options.projections !== 'none') ctx.provide('sessionProjections', options.projections as never)
   await ctx.plugin(AgentRegistry)
-  await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
+  if (options.saveDefaultModel === undefined) {
+    await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
+  } else {
+    const saveSelection = options.saveDefaultModel
+    ctx.provide('agentDefaultModel', {
+      selection: { provider: 'test-provider', model: 'test-model' },
+      saveSelection,
+    } as never)
+  }
   if (options.subagents !== undefined) {
     const listDescendants = options.subagents
     ctx.provide('subagents', { listDescendants: (sessionId: SessionId) => listDescendants(sessionId) } as never)

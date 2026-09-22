@@ -2463,7 +2463,7 @@ describe('model-switch work-state notice', () => {
     const decision = await admit(ctx, owner)
     expect(decision).toMatchObject({
       kind: 'enter',
-      messages: [{ source: { plugin: 'model-selection' } }, { source: workStateSource() }],
+      messages: [{ source: { kind: 'model-selection' } }, { source: workStateSource() }],
     })
     expect(noticeText(decision)).toBe(NOTICE_ACT_NO_EDITS)
   })
@@ -2530,7 +2530,7 @@ describe('model-switch work-state notice', () => {
     const decision = await admit(ctx, owner, () => Promise.resolve({ kind: 'enter', messages: [] }))
     expect(decision).toMatchObject({
       kind: 'enter',
-      messages: [{ source: { plugin: 'model-selection' } }, { source: workStateSource() }],
+      messages: [{ source: { kind: 'model-selection' } }, { source: workStateSource() }],
     })
     expect(noticeText(decision)).toBe(NOTICE_ACT_NO_EDITS)
   })

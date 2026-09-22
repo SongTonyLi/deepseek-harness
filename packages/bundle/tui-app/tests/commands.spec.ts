@@ -829,6 +829,7 @@ describe('references and model', () => {
   it('picks a reasoning effort after the model and saves the default', async () => {
     const saved: unknown[] = []
     const test = await bench({
+      saveDefaultModel: (value) => { saved.push(value); return Promise.resolve() },
       before: (ctx) => {
         ctx.provide('llm', {
           listProviders: () => [{ id: 'p', name: 'P' }],
@@ -845,7 +846,6 @@ describe('references and model', () => {
               : { reasoning: { efforts: [{ id: 'only', name: 'Only' }] } })
           },
         } as never)
-        ctx.provide('settings', { replace: (namespace: string, value: unknown) => { saved.push([namespace, value]); return Promise.resolve() } } as never)
       },
     })
     typeLine(test.terminal, '/model p/think')
@@ -893,7 +893,7 @@ describe('references and model', () => {
     expect(test.terminal.text()).toContain('usage: /model <provider>/<model>')
     typeLine(test.terminal, '/model save')
     await test.settle()
-    expect(saved).toEqual([['agent-default-model', { provider: 'p', model: 'blank' }]])
+    expect(saved).toEqual([{ provider: 'p', model: 'blank' }])
     expect(test.terminal.text()).toContain('default model saved: p/blank')
   })
 
@@ -901,18 +901,16 @@ describe('references and model', () => {
     const saved: unknown[] = []
     let failSave = false
     const test = await bench({
+      saveDefaultModel: (value) => {
+        if (failSave) return Promise.reject(new Error('disk full'))
+        saved.push(value)
+        return Promise.resolve()
+      },
       before: (ctx) => {
         ctx.provide('llm', {
           listProviders: () => [{ id: 'p', name: 'P' }],
           listModels: () => Promise.resolve([{ provider: 'p', id: 'one', name: 'One' }, { provider: 'p', id: 'two', name: 'Two' }]),
           resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: [] } }),
-        } as never)
-        ctx.provide('settings', {
-          replace: (namespace: string, value: unknown) => {
-            if (failSave) return Promise.reject(new Error('disk full'))
-            saved.push([namespace, value])
-            return Promise.resolve()
-          },
         } as never)
       },
     })
@@ -924,7 +922,7 @@ describe('references and model', () => {
     await test.settle()
     // The default is the highlighted row, not the session's model, and the
     // picker is still open: the session keeps its own model until Enter.
-    expect(saved).toEqual([['agent-default-model', { provider: 'p', model: 'two' }]])
+    expect(saved).toEqual([{ provider: 'p', model: 'two' }])
     expect(test.terminal.text()).toContain('default model saved: p/two')
     expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
     expect(test.terminal.text()).toContain('Model for the next request')

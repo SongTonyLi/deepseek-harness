@@ -39,7 +39,8 @@ function runResult(overrides: {
 }
 
 /**
- * Mount a scripted `ctx.shell` that records each resolve and answers `run`.
+ * Mount a scripted `ctx.shell` that records each resolve and answers the
+ * execution's `result()`.
  * @param ctx - the bench context.
  * @param run - the scripted result, or a function of the request.
  * @returns the recorded resolve requests.
@@ -54,7 +55,9 @@ function provideShell(
       requests.push(request)
       return request
     },
-    run: async (spec: ShellExecRequest) => typeof run === 'function' ? run(spec) : run,
+    execute: (spec: ShellExecRequest) => ({
+      result: async () => typeof run === 'function' ? run(spec) : run,
+    }),
   } as never)
   return requests
 }
@@ -83,8 +86,7 @@ describe('TuiApp user shell lines', () => {
       text: 'The user ran `echo hi` in the terminal.\n```\nhi\n```',
     }])
     expect(notice?.source).toEqual({
-      kind: 'plugin',
-      plugin: 'tui-app',
+      kind: 'tui-app',
       form: 'notice',
       summary: '! echo hi',
     })

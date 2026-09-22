@@ -18,8 +18,7 @@ const NUDGE = (n: number) =>
   `No file has changed in ${n} turns. Your next tool call must be read, edit, write, or bash, or explain what blocks you.`
 
 const guardSource = {
-  kind: 'plugin',
-  plugin: 'no-progress-reminder',
+  kind: 'no-progress-reminder',
   form: 'notice',
   summary: 'no progress',
 } as const

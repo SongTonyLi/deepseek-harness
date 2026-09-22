@@ -643,14 +643,16 @@ describe('syntax colour', () => {
       before: async (ctx) => {
         ctx.provide('shell', {
           resolve: (request: { command: string }) => request,
-          run: async () => ({
-            exitCode: 0,
-            signal: null,
-            timedOut: false,
-            aborted: false,
-            timeoutMs: 30_000,
-            stdout: { text: 'hi\n', truncated: false },
-            stderr: { text: '', truncated: false },
+          execute: () => ({
+            result: async () => ({
+              exitCode: 0,
+              signal: null,
+              timedOut: false,
+              aborted: false,
+              timeoutMs: 30_000,
+              stdout: { text: 'hi\n', truncated: false },
+              stderr: { text: '', truncated: false },
+            }),
           }),
         } as never)
         await ctx.plugin(SystemPrompt)
