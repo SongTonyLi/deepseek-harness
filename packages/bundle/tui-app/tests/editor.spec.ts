@@ -250,16 +250,23 @@ describe('shell draft colour', () => {
     expect(content).toContain('echo')
     expect(content).not.toContain('«echo»')
     expect(visibleWidth(content)).toBe(WIDTH)
+    const command = `echo ${'x'.repeat(30)}`
+    const swapped = `字cho ${'x'.repeat(29)}`
+    const sliced = renderShell(`!${command}`, shellPaint({ highlight: { lines: () => [swapped] } }))
+    expect(visibleWidth(command)).toBe(visibleWidth(swapped))
+    expect(sliced[1]).toContain('echo')
+    expect(sliced[1]).not.toContain('字')
+    expect(visibleWidth(sliced[1] ?? '')).toBe(WIDTH)
   })
 
   it('paints wrapped and multi-line drafts without touching the rules', () => {
-    const long = `!echo ${'x'.repeat(30)}`
+    const long = `!echo  ${'x'.repeat(30)}`
     const wrapped = renderShell(long)
     expect(wrapped[1]).toContain(warning('!'))
     expect(wrapped[1]).toContain('\u001b[38;2;1;2;3mecho ')
     expect(wrapped.some((line, index) => index > 1 && line.includes('\u001b[38;2;1;2;3mx'))).toBe(true)
     expect(wrapped[0]).toMatch(/─/u)
-    const broken = renderShell(`!${'x'.repeat(40)}`)
+    const broken = renderShell(`!${'x'.repeat(40)} `)
     expect(broken.filter(line => line.includes('\u001b[38;2;1;2;3m')).length).toBeGreaterThan(1)
     const scrolled = paintShellEditorLines(
       ['─'.repeat(WIDTH), ` ${'x'.repeat(18)} `],
@@ -305,6 +312,14 @@ describe('shell draft colour', () => {
     )
     expect(painted[1]).toBe(' not-a-pad')
     expect(painted[3]).toBe(' extra')
+    const noPad = paintShellEditorLines(
+      ['─'.repeat(WIDTH), 'not-a-pad', '─'.repeat(WIDTH)],
+      '!echo hi',
+      WIDTH,
+      shellPaint(),
+    )
+    expect(noPad[1]).toBe('not-a-pad')
+    expect(paintShellEditorLines(['─', '字'], '!\n字', 1, shellPaint({ paddingX: 0 }))[1]).toBeDefined()
     expect(paintShellEditorLines([], 'hello', WIDTH, shellPaint())).toEqual([])
     expect(paintShellEditorLines(['─'.repeat(WIDTH)], '!echo', WIDTH, shellPaint({ paddingX: 0 }))[0])
       .toMatch(/─/u)

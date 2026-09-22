@@ -133,16 +133,28 @@ export function paintShellEditorLines(
 function paintDraftLines(draft: UserShellDraft, paint: ShellEditorPaint): string[] {
   const commandLines = draft.command.split('\n')
   const coloured = paint.highlight.lines(draft.command, 'shellscript')
-  const paintedCommand = coloured !== undefined && coloured.length === commandLines.length
+  const paintedCommand = coloured !== undefined && sameVisibleWidths(coloured, commandLines)
     ? coloured
     : commandLines
   const indentLines = draft.indent.split('\n')
-  const first = indentLines[indentLines.length - 1] ?? ''
   return [
     ...indentLines.slice(0, -1),
-    `${first}${paint.warning(draft.bang)}${paintedCommand[0] ?? ''}`,
+    `${indentLines[indentLines.length - 1] as string}${paint.warning(draft.bang)}${paintedCommand[0] as string}`,
     ...paintedCommand.slice(1),
   ]
+}
+
+/**
+ * Whether two row lists have the same length and the same visible width on
+ * each row, so a highlighter result can replace the source without shifting
+ * columns.
+ * @param coloured - the highlighter's rows.
+ * @param plain - the source rows.
+ * @returns true when every row can stand in for its source.
+ */
+function sameVisibleWidths(coloured: readonly string[], plain: readonly string[]): boolean {
+  return coloured.length === plain.length
+    && coloured.every((line, index) => visibleWidth(line) === visibleWidth(plain[index] as string))
 }
 
 /**
@@ -160,9 +172,8 @@ function visualChunks(
 ): { plain: string; painted: string }[] {
   const logical = text.split('\n')
   const visual: { plain: string; painted: string }[] = []
-  for (let index = 0; index < logical.length; index += 1) {
-    const plainLine = logical[index] ?? ''
-    const paintedLine = paintedLogical[index] ?? plainLine
+  for (const [index, plainLine] of logical.entries()) {
+    const paintedLine = paintedLogical[index] as string
     for (const chunk of wrapEditorLine(plainLine, layoutWidth)) {
       const painted = `${slicePaintedBySource(paintedLine, chunk.startIndex, chunk.endIndex)}${RESET_PAINT}`
       visual.push({
@@ -240,9 +251,11 @@ function wrapEditorLine(line: string, maxWidth: number): { text: string; startIn
     }
     currentWidth += gWidth
     const next = segments[index + 1]
-    if (isWs && next !== undefined && !/\s/u.test(next.segment)) {
-      wrapOppIndex = next.index
-      wrapOppWidth = currentWidth
+    if (isWs && next !== undefined) {
+      if (!/\s/u.test(next.segment)) {
+        wrapOppIndex = next.index
+        wrapOppWidth = currentWidth
+      }
     }
   }
   chunks.push({ text: line.slice(chunkStart), startIndex: chunkStart, endIndex: line.length })
