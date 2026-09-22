@@ -112,9 +112,9 @@ export function colorEnabled(env: NodeJS.ProcessEnv, isTty: boolean): boolean {
 /** What a Markdown theme asks of a syntax highlighter. */
 export interface CodeHighlighter {
   /**
-   * Colour one fenced block.
+   * Colour one fenced block, file row group, or shell command.
    * @param code - the block's source.
-   * @param lang - the fence's info string, if it carried one.
+   * @param lang - the fence's info string, a file extension, or `shellscript`.
    * @returns one styled line per source line, or undefined to draw it plain.
    */
   lines(code: string, lang: string | undefined): string[] | undefined

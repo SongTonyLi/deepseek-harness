@@ -33,7 +33,7 @@ import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
 import { markdownTheme, paintDiffRows, type CodeHighlighter, type Palette } from './style.ts'
-import { foldMarker, foldRows, paintCodeRows, type CodeSpan, type ToolCallText } from './transcript.ts'
+import { foldMarker, foldRows, paintCodeRows, shellCommandBody, type CodeSpan, type ToolCallText } from './transcript.ts'
 
 /** Columns the focus gutter takes from the width a block's content wraps at. */
 const GUTTER_WIDTH = 2
@@ -63,7 +63,7 @@ export interface BlockTheme {
   toolPreviewLines: number
   /** Collapsed body rows of a system prompt or an injected context block. */
   contextPreviewLines: number
-  /** Colours fenced code in a reply and the file rows of a `read` or `diff` tool card; absent draws them plain. */
+  /** Colours fenced code, `read` / `diff` file rows, and shell commands; absent draws them plain. */
   codeHighlight?: CodeHighlighter
 }
 
@@ -237,6 +237,46 @@ class FenceMemo implements CodeHighlighter {
     this.previous = new Map()
     this.current = new Map()
     this.asked = false
+  }
+}
+
+/**
+ * A finished `!` / `!!` run: `$ command` in shellscript colour, then the
+ * output rows. Re-paints when a grammar lands because {@link LastDrawn}
+ * drops on `invalidate()`.
+ */
+export class UserShellBlock implements Component {
+  /** The wrapped rows, by width. */
+  private readonly drawn = new LastDrawn<string[]>()
+
+  /**
+   * @param theme - the highlighter that colours the command row.
+   * @param command - the text after `!` / `!!`.
+   * @param rows - the transcript rows of the finished run, `$ command` first.
+   */
+  constructor(
+    private readonly theme: BlockTheme,
+    private readonly command: string,
+    private readonly rows: readonly string[],
+  ) {}
+
+  invalidate(): void {
+    this.drawn.clear()
+  }
+
+  /**
+   * Draw the run, colouring `$ command` when the grammar answers.
+   * @param width - the columns the block lays out in.
+   * @returns a blank line, the wrapped rows, and a trailing blank line.
+   */
+  render(width: number): string[] {
+    return this.drawn.get(String(width), () => {
+      const { lines, code } = shellCommandBody(this.command, this.rows.slice(1))
+      const painted = paintCodeRows(lines, code, this.theme.codeHighlight)
+      const inner = Math.max(1, width)
+      const body = painted.flatMap(row => wrapTextWithAnsi(row, inner))
+      return ['', ...body, '']
+    })
   }
 }
 

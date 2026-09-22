@@ -636,6 +636,68 @@ describe('syntax colour', () => {
     expect(added).toMatch(/\+ \u001b\[/u)
   }, 20_000)
 
+  it('repaints a ! draft, a $ command row, and a terminal card once the shell grammar has landed', async () => {
+    const test = await bench({
+      ...TRUECOLOR,
+      reducedMotion: true,
+      before: async (ctx) => {
+        ctx.provide('shell', {
+          resolve: (request: { command: string }) => request,
+          run: async () => ({
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            aborted: false,
+            timeoutMs: 30_000,
+            stdout: { text: 'hi\n', truncated: false },
+            stderr: { text: '', truncated: false },
+          }),
+        } as never)
+        await ctx.plugin(SystemPrompt)
+        await ctx.plugin(ToolRuntime)
+        ctx.tools.register({
+          name: 'bash',
+          description: 'run',
+          parameters: { type: 'object', properties: {} },
+          output: { schema: { type: 'string' as const }, render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: String(value) }] },
+          execute: () => Promise.resolve('unused'),
+          presentCall: () => ({ card: 'terminal' as const, title: 'echo hi', cwd: '/w' }),
+        })
+      },
+    })
+    await test.settle()
+    const since = writesFrom(test)
+    for (const char of '!echo hi') test.terminal.type(char)
+    await test.settle()
+    let draft: string | undefined
+    for (let pass = 0; pass < 200 && draft === undefined; pass += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await test.settle()
+      draft = since().split('\n').findLast(row => row.includes('echo') && hasSyntaxColor(row))
+    }
+    expect(draft, 'the ! draft was never painted').toBeDefined()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    let submitted: string | undefined
+    for (let pass = 0; pass < 200 && submitted === undefined; pass += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await test.settle()
+      submitted = since().split('\n').findLast(row => row.includes('$') && row.includes('echo') && hasSyntaxColor(row))
+    }
+    expect(submitted, 'the $ command row was never painted').toBeDefined()
+    expect(submitted).toMatch(/\$ \u001b\[/u)
+    test.appendToolCall('call-1', 'bash', {})
+    await test.settle()
+    let card: string | undefined
+    for (let pass = 0; pass < 200 && card === undefined; pass += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await test.settle()
+      card = since().split('\n').findLast(row => row.includes('$') && row.includes('echo') && hasSyntaxColor(row))
+    }
+    expect(card, 'the terminal card command was never painted').toBeDefined()
+    expect(card).toMatch(/\$ \u001b\[/u)
+  }, 20_000)
+
   it('draws every fence plain where the setting is off', async () => {
     const test = await bench({ ...TRUECOLOR, codeHighlight: false })
     await test.settle()

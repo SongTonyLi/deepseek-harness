@@ -1,21 +1,21 @@
 /**
- * Syntax colour for fenced code in the transcript: the grammars a fence may
- * ask for, the theme its colours come from, and the SGR one token is drawn
- * with.
+ * Syntax colour for fenced code, file rows, and shell commands: the grammars
+ * a fence or a `shellscript` draft may ask for, the theme its colours come
+ * from, and the SGR one token is drawn with.
  *
  * Nothing loads at start. A grammar is a few hundred kilobytes of TextMate
  * patterns and the first tokenisation of one compiles them, so a session that
- * never renders a fenced block pays neither. The first block of a language
- * draws plain, its grammar is imported and warmed off the render path, and
- * the application is told to draw the frame again - the same "render what you
- * have, correct it when it lands" the rest of this surface uses.
+ * never renders a fenced block or a shell command pays neither. The first
+ * block of a language draws plain, its grammar is imported and warmed off the
+ * render path, and the application is told to draw the frame again - the same
+ * "render what you have, correct it when it lands" the rest of this surface uses.
  *
  * Colours come from a shiki theme rather than the palette: a theme
  * distinguishes a keyword from a type from a number, which the palette's
- * structural roles cannot, and the transcript is where the model's code is read. The
- * theme is chosen from the terminal's own background, so a light terminal is
- * not given dark-theme colours, and a terminal that answers neither a colour
- * depth nor a background gets no colour at all.
+ * structural roles cannot, and the transcript and the shell draft are where
+ * that code is read. The theme is chosen from the terminal's own background, so
+ * a light terminal is not given dark-theme colours, and a terminal that answers
+ * neither a colour depth nor a background gets no colour at all.
  * @module @deepseek-ai/dsh-tui-app/highlight
  */
 
@@ -232,8 +232,9 @@ export interface HighlightOptions {
 }
 
 /**
- * The transcript's syntax highlighter: one shiki core, built when the first
- * fence resolves a grammar and grown as further languages are asked for.
+ * The terminal's syntax highlighter: one shiki core, built when the first
+ * fence, file row, or shell command resolves a grammar and grown as further
+ * languages are asked for.
  */
 export class SyntaxHighlighter {
   /** The shiki core, once a theme and one grammar have landed. */
@@ -257,12 +258,13 @@ export class SyntaxHighlighter {
   constructor(private readonly options: HighlightOptions) {}
 
   /**
-   * Colour one fenced block.
+   * Colour one fenced block, file row group, or shell command.
    * @param code - the block's source, newline separated.
-   * @param lang - the fence's info string, or undefined for a bare fence.
+   * @param lang - the fence's info string, a file extension, `shellscript`, or
+   *   undefined for a bare fence.
    * @returns one styled line per source line, or undefined while the language
    * has no grammar here, its grammar is still loading, or the terminal takes
-   * no colour - all of which the Markdown renderer draws plain.
+   * no colour - all of which the caller draws plain.
    */
   lines(code: string, lang: string | undefined): string[] | undefined {
     if (this.options.depth === 'none') return undefined

@@ -1,10 +1,13 @@
 /**
  * Parse and present a user-typed `!` / `!!` shell line. The terminal runs the
- * command itself; `!` becomes next-step context and `!!` stays local.
+ * command itself; `!` becomes next-step context and `!!` stays local. A live
+ * draft keeps its exact columns so the editor can paint the bang and the
+ * command over pi-tui's own wrapping.
  * @module @deepseek-ai/dsh-tui-app/shell-line
  */
 
 import type { CollectedOutput, ShellRunResult } from '@deepseek-ai/dsh-shell'
+import { shellCommandRow } from './transcript.ts'
 
 /** A nonempty `!` or `!!` line after the prefix is stripped. */
 export interface UserShellLine {
@@ -26,6 +29,34 @@ export function parseUserShellLine(text: string): UserShellLine | undefined {
   const excluded = trimmed.startsWith('!!')
   const command = (excluded ? trimmed.slice(2) : trimmed.slice(1)).trim()
   return command === '' ? undefined : { command, excluded }
+}
+
+/**
+ * A `!` / `!!` editor draft, including a lone bang the submit path ignores.
+ * Columns stay as typed: leading space before the bang, and every character
+ * after it, so a live highlight can paint over the editor's own wrapping.
+ */
+export interface UserShellDraft {
+  /** Whitespace `trimStart` removes before the bang. */
+  indent: string
+  /** `!` or `!!`. */
+  bang: '!' | '!!'
+  /** Exact text after the bang, including spaces and further lines. */
+  command: string
+}
+
+/**
+ * Read the live editor text as a shell draft.
+ * @param text - the editor text, not trimmed.
+ * @returns the indent, bang, and command, or undefined when the text does not
+ *   start with `!` / `!!` after leading whitespace.
+ */
+export function parseUserShellDraft(text: string): UserShellDraft | undefined {
+  const indent = text.slice(0, text.length - text.trimStart().length)
+  const rest = text.slice(indent.length)
+  if (!rest.startsWith('!')) return undefined
+  const bang = rest.startsWith('!!') ? '!!' : '!'
+  return { indent, bang, command: rest.slice(bang.length) }
 }
 
 /**
@@ -53,7 +84,7 @@ export function userShellContextText(command: string, result: ShellRunResult): s
  */
 export function userShellTranscriptRows(command: string, result: ShellRunResult): string[] {
   const output = combinedOutput(result)
-  const rows = [`$ ${command}`]
+  const rows = [shellCommandRow(command)]
   if (output !== '') rows.push(output)
   if (result.aborted) rows.push('(command cancelled)')
   else if (result.exitCode !== null && result.exitCode !== 0) rows.push(`(exit ${String(result.exitCode)})`)

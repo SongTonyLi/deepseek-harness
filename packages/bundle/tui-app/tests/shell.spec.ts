@@ -317,6 +317,20 @@ describe('parseUserShellLine', () => {
   })
 })
 
+describe('parseUserShellDraft', () => {
+  it('keeps the exact columns after a leading ! or !!', async () => {
+    const { parseUserShellDraft } = await import('../src/shell-line.ts')
+    expect(parseUserShellDraft('!echo hi')).toEqual({ indent: '', bang: '!', command: 'echo hi' })
+    expect(parseUserShellDraft('!!echo secret')).toEqual({ indent: '', bang: '!!', command: 'echo secret' })
+    expect(parseUserShellDraft('  ! ls')).toEqual({ indent: '  ', bang: '!', command: ' ls' })
+    expect(parseUserShellDraft('\n!echo')).toEqual({ indent: '\n', bang: '!', command: 'echo' })
+    expect(parseUserShellDraft('!')).toEqual({ indent: '', bang: '!', command: '' })
+    expect(parseUserShellDraft('!!')).toEqual({ indent: '', bang: '!!', command: '' })
+    expect(parseUserShellDraft('hello !there')).toBeUndefined()
+    expect(parseUserShellDraft('')).toBeUndefined()
+  })
+})
+
 describe('user shell presentation', () => {
   it('formats the model-facing notice and transcript rows for each outcome', async () => {
     const { userShellContextText, userShellTranscriptRows } = await import('../src/shell-line.ts')

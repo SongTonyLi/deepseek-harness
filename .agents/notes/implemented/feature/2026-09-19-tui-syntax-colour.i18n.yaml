@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-19-tui-syntax-colour.md
-2026-09-19-tui-syntax-colour.md: 4cf332a3062a812f9e0f09e97e217b5bde074d84
-2026-09-19-tui-syntax-colour.zh.md: bcee557f75c183656369b6d2d9dc45b820820b6b
+2026-09-19-tui-syntax-colour.md: 7eb3fc4c0d090f4d6e2088fba91fd8a7ef92aafa
+2026-09-19-tui-syntax-colour.zh.md: 626701a4fdced58cda6cc5d8ec70c25c1a15884d
