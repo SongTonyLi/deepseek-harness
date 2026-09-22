@@ -1,5 +1,6 @@
 /** Strict per-session header/body content inserted into the resident conversation layout. */
 
+import { useEffect } from 'react'
 import clsx from 'clsx'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -63,6 +64,25 @@ export function ConversationSessionHeader({
   const selectedId = useStore(s => s.view)
   const active = resolveActiveView(tabs, selectedId)
   const ancestry = useSessions(s => deriveAncestry(s, sessionId), equalBreadcrumbs)
+  const rootAgent = ancestry[0]
+  const currentAgent = ancestry.at(-1)
+  const mainAgentId = rootAgent !== undefined && currentAgent?.subagent === true
+    ? rootAgent.id
+    : undefined
+  useEffect(() => {
+    if (mainAgentId === undefined) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'ArrowUp' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (event.isComposing) return
+      const target = event.target
+      if (target instanceof Element && target.closest('[role="dialog"]') !== null) return
+      event.preventDefault()
+      event.stopPropagation()
+      open(mainAgentId)
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => { document.removeEventListener('keydown', onKeyDown, true) }
+  }, [mainAgentId, open])
   const showTabs = !hideChrome && tabs.length > 1
   return (
     <>
@@ -87,6 +107,7 @@ export function ConversationSessionHeader({
                       <button
                         type="button"
                         className={clsx(css.crumb, summary.subagent && css.crumbSubagent)}
+                        title={summary.id === mainAgentId ? t('session.returnToMain') : undefined}
                         onClick={() => { open(summary.id) }}
                       >
                         {summary.displayTitle}

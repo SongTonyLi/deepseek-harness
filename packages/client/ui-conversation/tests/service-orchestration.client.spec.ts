@@ -755,21 +755,15 @@ describe('sendSession submission echo', () => {
     await b.runtime.dispose()
   })
 
-  it('sends a subagent continuation without registering an unobservable echo', async () => {
+  it('registers a subagent continuation echo and forwards its request identity', async () => {
     const b = await bench()
     const session = b.runtime.sessions.binding('s1')!.session
-    const snapshot = session.getSnapshot()
     const beginSubmission = vi.spyOn(session, 'beginSubmission')
-    vi.spyOn(session, 'getSnapshot').mockReturnValue({
-      ...snapshot,
-      subagent: {
-        address: { parentSessionId: 'parent', childSessionId: 'child', mode: 'continuable' } as never,
-      },
-    })
     const prompt = vi.spyOn(session, 'prompt').mockResolvedValue({ ok: true, value: { accepted: true } })
-    await expect(b.root.sendSession(session, '继续', [], 'queue')).resolves.toEqual({ kind: 'success' })
-    expect(beginSubmission).not.toHaveBeenCalled()
-    expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: '继续' }], 'queue', undefined)
+    await expect(b.root.sendSession(session, '继续', [], 'steer')).resolves.toEqual({ kind: 'success' })
+    expect(beginSubmission).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer', text: '继续' }))
+    const requestId = beginSubmission.mock.results[0]?.value.requestId as string
+    expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: '继续' }], 'steer', undefined, requestId)
     await b.runtime.dispose()
   })
 })

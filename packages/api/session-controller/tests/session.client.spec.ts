@@ -15,7 +15,7 @@ import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
 import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { JUMP_PAGE_MESSAGES, Session } from '../src/client/sessions/session.ts'
 import { SessionEventStream } from '../src/client/transport.ts'
-import type { SessionFollowRequest, SessionPage, SessionPageRequest } from '../src/types.ts'
+import type { SessionFollowRequest, SessionPage, SessionPageRequest, SessionRequestId } from '../src/types.ts'
 import { entries, ev, historyValue, plainTurn } from './event-script.client.ts'
 import { sessionBench } from './remote/bench.client.ts'
 import {
@@ -477,7 +477,12 @@ describe('prompt and cancel errors', () => {
     const session = await sessionBench(mock, start, SID, { address: CHILD, parentAvailable: true })
     await session.open()
     const prompted = await session.prompt([{ type: 'text', text: '继续' }], 'queue')
-    const steered = await session.prompt([{ type: 'text', text: '现在处理' }], 'steer')
+    const steered = await session.prompt(
+      [{ type: 'text', text: '现在处理' }],
+      'steer',
+      undefined,
+      'req-steer' as SessionRequestId,
+    )
     const cancelled = await session.cancel()
 
     expect(prompted).toEqual({ ok: true, value: { accepted: true } })
@@ -497,7 +502,7 @@ describe('prompt and cancel errors', () => {
         clientTimeZone: TIME_ZONE,
       },
       {
-        requestId: expect.any(String) as unknown as string,
+        requestId: 'req-steer',
         ...CHILD,
         delivery: 'steer',
         content: [{ type: 'text', text: '现在处理' }],
