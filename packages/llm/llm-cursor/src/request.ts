@@ -15,7 +15,7 @@ import { create, fromBinary, fromJson, toBinary, toJson } from '@bufbuild/protob
 import { ValueSchema } from '@bufbuild/protobuf/wkt'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import type { GenerateOptions, Message, ToolSchema } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, RequestMessage, ToolSchema } from '@deepseek-ai/dsh-llm'
 import {
   AgentClientMessageSchema,
   AgentConversationTurnStructureSchema,
@@ -143,19 +143,9 @@ export interface CursorPromptMessage {
   content: CursorPromptPart[]
 }
 
-function textOf(message: Message): string {
+function textOf(message: RequestMessage): string {
   return message.content
-    .map((block) => {
-      if (block.type === 'text') return block.text
-      if (block.type === 'reasoning') return ''
-      if (block.type === 'tool-call') return ''
-      if (block.type === 'tool-result') {
-        return block.content
-          .map(item => item.type === 'text' ? item.text : '')
-          .join('')
-      }
-      return ''
-    })
+    .map(block => block.type === 'text' ? block.text : '')
     .join('')
 }
 
@@ -169,8 +159,8 @@ function emptyTurn(): CursorTurn {
   return { userText: '', contextText: '', steps: [] }
 }
 
-function isHumanQuery(message: Message): boolean {
-  return message.source.kind === 'user'
+function isHumanQuery(message: RequestMessage): boolean {
+  return message.source?.kind === 'user'
 }
 
 function appendUserTurn(turns: CursorTurn[], text: string, asQuery: boolean): void {
@@ -308,17 +298,16 @@ export function conversationFromOptions(options: GenerateOptions): CursorConvers
       if (textOf(message).length > 0) systemPrompt = textOf(message)
       continue
     }
-    const toolResult = message.content.find(block => block.type === 'tool-result')
-    if (toolResult?.type === 'tool-result') {
+    if (message.role === 'tool') {
       const result = {
-        content: toolResult.content.map(item => item.type === 'text' ? item.text : '').join(''),
-        isError: toolResult.isError === true,
+        content: message.content.map(item => item.type === 'text' ? item.text : '').join(''),
+        isError: message.isError === true,
       }
-      pendingResults.set(toolResult.toolCallId, result)
+      pendingResults.set(message.toolCallId, result)
       const last = turns[turns.length - 1]
       if (last !== undefined) {
         for (const step of last.steps) {
-          if (step.kind === 'toolCall' && step.toolCallId === toolResult.toolCallId) {
+          if (step.kind === 'toolCall' && step.toolCallId === message.toolCallId) {
             step.result = result
           }
         }

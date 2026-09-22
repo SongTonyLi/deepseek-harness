@@ -47,6 +47,15 @@ const FIBER_PHASE = {
   [FIBER_STATE.UNLOADING]: 'unloading',
 } as const satisfies Record<FiberState, PluginFiberPhase>
 
+/**
+ * Project an optional Cordis fiber state to the inventory's public phase.
+ * @param state - state of the entry's root fiber, if present.
+ * @returns its public phase, or null when no live fiber exists.
+ */
+export function pluginFiberPhase(state: FiberState | undefined): PluginFiberPhase {
+  return state === undefined ? null : FIBER_PHASE[state]
+}
+
 /** Remote-only service exposing the Loader's current non-group entry state. */
 export class PluginInventoryGateway extends TypertRemoteService {
   static inject = ['loader']
@@ -90,7 +99,7 @@ export async function readPluginInventory(ctx: Context): Promise<PluginInventory
       entryId: pluginEntryId(entry.id),
       moduleName: entry.options.name,
       enabled: !entry.disabled,
-      fiberPhase: entry.fiber === undefined ? null : FIBER_PHASE[entry.fiber.state],
+      fiberPhase: pluginFiberPhase(entry.fiber?.state),
       ...meta === undefined ? {} : { meta },
     })
   }
@@ -104,7 +113,7 @@ export async function readPluginInventory(ctx: Context): Promise<PluginInventory
         const meta = ctx.baseUrl === undefined ? undefined : packages?.metaOf(row.moduleName, ctx.baseUrl)
         return {
           ...row,
-          fiberPhase: fiberState === undefined ? null : FIBER_PHASE[fiberState],
+          fiberPhase: pluginFiberPhase(fiberState),
           ...meta === undefined ? {} : { meta },
         }
       }),

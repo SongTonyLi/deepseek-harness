@@ -203,7 +203,7 @@ export function turnEndNotice(reason: TurnEndReason): string | undefined {
     case 'interrupted':
       return 'turn was interrupted by an earlier process exit'
     default:
-      return assertNever(reason, 'tui turn-end reason')
+      return `turn ended: ${reason.kind}`
   }
 }
 

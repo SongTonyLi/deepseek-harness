@@ -7,7 +7,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import { CursorAdapter } from './adapter.ts'
 import { CursorCatalog } from './catalog.ts'
 import { Config, resolveAdapterOptions } from './config.ts'
@@ -42,26 +41,9 @@ export const inject = ['llm']
  * @param config - composition config.
  */
 export function apply(ctx: Context, config: Config): void {
-  let current: () => Config = () => config
-  let lastRaw: Config | undefined
-  let lastGood: ResolvedCursorOptions | undefined
-  const options = (): ResolvedCursorOptions => {
-    const raw = current()
-    if (raw === lastRaw && lastGood !== undefined) return lastGood
-    try {
-      const next = resolveAdapterOptions(raw)
-      lastRaw = raw
-      lastGood = next
-      return next
-    } catch (error) {
-      if (lastGood === undefined) throw error
-      lastRaw = raw
-      ctx.logger.error('llm-cursor: keeping the last good configuration after an invalid settings section')
-      ctx.logger.error(error)
-      return lastGood
-    }
-  }
+  const options = (): ResolvedCursorOptions => resolveAdapterOptions(config)
   options()
+  ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
 
   const catalog = new CursorCatalog()
   const oauth = createCursorOauthClient()
@@ -87,25 +69,9 @@ export function apply(ctx: Context, config: Config): void {
   ctx.llm.registerConfigurableProviders([
     { provider: PROVIDER, displayName: 'Cursor', settingsNs: NS, settingsPath: [] },
   ])
-  const registration = ctx.llm.registerAdapter([PROVIDER], adapter)
-  let registeredPolicy = options().retryPolicy
-  const ensureRegistrationFacts = (): void => {
-    const policy = options().retryPolicy
-    if (deepEqualJson(policy, registeredPolicy)) return
-    registration.replace([PROVIDER])
-    registeredPolicy = policy
-  }
-
+  ctx.llm.registerAdapter([PROVIDER], adapter)
   ctx.inject(['authorization'], (authorized) => {
     registerCursorFlow(authorized, {}, () => resolveAccessToken().then(token => catalog.refresh(token)))
   })
 
-  ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.installSection(ctx, NS, Config, config, {
-      setSource: (source) => {
-        current = source
-      },
-      onChange: ensureRegistrationFacts,
-    })
-  })
 }

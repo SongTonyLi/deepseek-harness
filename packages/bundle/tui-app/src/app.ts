@@ -31,7 +31,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
-import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type ToolResultMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'tui-app': { kind: 'tui-app'; form: 'notice'; summary: string }
+  }
+}
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
@@ -1277,7 +1283,7 @@ export class TuiApp {
         return
       }
       case 'tool/result': {
-        const [result] = event.data.message.content
+        const result = event.data.message
         const call = this.activityChildCall
         this.activityChildCall = undefined
         const view = this.presentResult(
@@ -2642,7 +2648,7 @@ export class TuiApp {
     const controller = new AbortController()
     this.shellAbort = controller
     try {
-      const result = await shell.run(shell.resolve({
+      const result = await (await shell.execute(shell.resolve({
         command,
         workdir,
         signal: controller.signal,
@@ -2651,7 +2657,7 @@ export class TuiApp {
           workspaceRoot: workdir,
           sessionId: this.agent.session.id,
         },
-      }))
+      }))).result()
       if (!this.userShellCurrent(controller)) return
       this.showUserShell(command, result, excluded)
     } catch (error: unknown) {
@@ -2695,7 +2701,7 @@ export class TuiApp {
     if (excluded) return
     const message = createUserMessage({
       content: [{ type: 'text', text: userShellContextText(command, result) }],
-      source: { kind: 'plugin', plugin: 'tui-app', form: 'notice', summary: boundContextSummary(`! ${command}`) },
+      source: { kind: 'tui-app', form: 'notice', summary: boundContextSummary(`! ${command}`) },
     })
     this.submittedIds.add(message.id)
     this.agent.inject(message)
@@ -3867,7 +3873,7 @@ export class TuiApp {
         break
       }
       case 'tool/result': {
-        const [result] = event.data.message.content
+        const result = event.data.message
         const block = this.toolBlocks.get(result.toolCallId)
         if (block === undefined) break
         const isError = result.isError === true
@@ -4159,14 +4165,14 @@ export class TuiApp {
   private presentResult(
     name: string,
     args: unknown,
-    content: UserMessage['content'],
+    content: ToolResultMessage['content'],
     isError: boolean,
     meta: SessionEvent<'tool/result'>['data']['meta'],
   ): ToolResultView | undefined {
     const definition = this.deps.ctx.get('tools')?.get(name, this.agent)
     if (definition?.presentResult === undefined) return undefined
     try {
-      return definition.presentResult(args, { content, isError, ...meta === undefined ? {} : { meta } })
+      return definition.presentResult(args, { content: [...content], isError, ...meta === undefined ? {} : { meta } })
     } catch {
       // Same fallback as the call presenter: the raw result text still renders.
       return undefined

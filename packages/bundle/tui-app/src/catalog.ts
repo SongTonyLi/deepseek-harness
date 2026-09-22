@@ -17,7 +17,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-session-title/types'
 import type { TurnOutlineEntry } from '@deepseek-ai/dsh-session-turn-outline'
-import type { SettingsDescriptor, SettingsProvider } from '@deepseek-ai/dsh-settings'
+import type { SettingsDescriptor, SettingsForms } from '@deepseek-ai/dsh-settings'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { PresentedFile } from '@deepseek-ai/dsh-tool-present/types'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
@@ -36,14 +36,14 @@ function indent(depth: number): string {
 }
 
 /** The settings service, or a printable error naming its absence. */
-function requireSettings(ctx: Context): SettingsProvider {
+function requireSettings(ctx: Context): SettingsForms {
   const settings = ctx.get('settings')
   if (settings === undefined) throw new Error('settings are not mounted in this profile')
   return settings
 }
 
 /** One namespace's redacted descriptor, or a printable error when it is not registered. */
-function requireDescriptor(settings: SettingsProvider, ns: string): SettingsDescriptor {
+function requireDescriptor(settings: SettingsForms, ns: string): SettingsDescriptor {
   const descriptor = settings.describe({ redactSecrets: true }).find(candidate => candidate.ns === ns)
   if (descriptor === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
   return descriptor
