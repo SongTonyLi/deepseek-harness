@@ -66,7 +66,7 @@ Request-time token order is: launch-environment `CURSOR_ACCESS_TOKEN`, then the 
 
 Each DSH model step is a new HTTP/2 Connect `Run` rebuilt from harness history, system prompt, and MCP tool definitions (`providerIdentifier: dsh`, `clientName: dsh`). Cursor's server builds the model prompt from `root_prompt_messages_json`, never renders `conversation_state.turns` into it, and discards a `{"role":"system"}` entry there in favour of its own prompt. The adapter therefore publishes the system prompt as a `<rules>` user prompt message and replays every prior turn as `user`, `assistant`, and `tool` prompt messages, naming historic MCP calls `mcp_dsh_<tool>` as Cursor does; the turn structures ride along for the server's bookkeeping. The request-context answer adds one global Cursor rule telling the model that Cursor's built-in tools return a rejection here and that the `mcp_dsh_` tools are the ones to call.
 
-Text, thinking, usage, and MCP tool calls become `StreamChunk`. An MCP tool call finishes the stream so the agent loop can run the tool locally. The next Run replays that in-flight turn with its results and sends a fixed continuation notice as the user message a Run requires; a `resumeAction` is not used because the server restarts the turn from its user message instead of continuing it. A Cursor-native workspace exec (`read`, `shell`, `grep`, and kin) is answered with its typed rejection naming the harness tool to call instead, so the Run continues and the model reads the refusal as a tool outcome; an exec this build does not know fails the step.
+Text, thinking, usage, and MCP tool calls become `StreamChunk`. An MCP tool call finishes the stream so the agent loop can run the tool locally. The next Run replays that in-flight turn with its results and sends a fixed continuation notice as the user message a Run requires; a `resumeAction` is not used because the server restarts the turn from its user message instead of continuing it. A Cursor-native or CLI Pi workspace exec (`read`, `shell`, `piRead`, and kin) is answered with its typed rejection naming the harness tool to call instead, so the Run continues and the model reads the refusal as a tool outcome. A CLI hook is answered with an empty matching response. An MCP-state exec returns the advertised `mcp_dsh_` tools. Any other exec this build cannot type is answered with ExecClientThrow so the Run continues. An exec with no payload still fails the step.
 
 Attribution headers required by `LlmAdapter` go on every HTTP/2 request, with Cursor client headers `x-ghost-mode`, `x-cursor-client-version`, and `x-cursor-client-type`.
 
@@ -98,7 +98,7 @@ Each step is an independent Run. A changed system prompt, history, tool schema, 
 
 #### What the model sees
 
-Text deltas, thinking deltas, token usage, and MCP tool calls become harness chunks. An MCP tool call finishes the stream with `tool-calls`. A native exec is answered with a rejection and the stream continues; an unknown exec fails the turn.
+Text deltas, thinking deltas, token usage, and MCP tool calls become harness chunks. An MCP tool call finishes the stream with `tool-calls`. A native or CLI Pi workspace exec is answered with a rejection and the stream continues. A CLI hook or MCP-state exec is answered so the Run stays open. Any other exec this build cannot type is answered with ExecClientThrow and the stream continues. An exec with no payload fails the turn.
 
 #### Token effect
 
@@ -115,7 +115,8 @@ Loop-retained response blocks append to the next rebuilt Run. Unrecorded transpo
 These limits define where the adapter stops. They are current package constraints, not a Cursor product comparison.
 
 - **The integration is unofficial** — auth URLs, headers, client version, and `agent.v1` can change without notice and break this adapter.
-- **Native Cursor workspace execs are not executed** — `read`, `shell`, and kin receive a typed rejection naming the harness tool, so a model that picks one spends a round trip on the refusal before calling the `mcp_dsh_` tool.
+- **Native Cursor workspace execs are not executed** — `read`, `shell`, CLI Pi tools (`piRead`, `piBash`, and kin), and the same family receive a typed rejection naming the harness tool, so a model that picks one spends a round trip on the refusal before calling the `mcp_dsh_` tool.
+- **CLI control execs do not run Cursor hooks** — hook frames get an empty matching response, MCP-state frames list the advertised `dsh` tools, and any other unnamed exec is answered with ExecClientThrow so the Run continues; none of them execute workspace work.
 - **There is no parked HTTP/2 conversation** — each DSH step is a new Run; mid-tool resume on the same Cursor stream is out of scope.
 - **Tool results reach the model as replayed prompt messages plus a fixed continuation notice** — Cursor delivers results in-stream natively; the notice is adapter-owned text the human never typed.
 - **`GenerateOptions.stop` is unsupported** — the unofficial Run does not map stop sequences.
@@ -135,7 +136,7 @@ These limits define where the adapter stops. They are current package constraint
 
 This Dev Note is non-authoritative working context: undecided directions and notes for maintainers. Shipped behavior and accepted rationale live in the sections above, the package code, and the linked Agent Notes.
 
-- `src/native/agent_pb.ts` is the MIT-licensed generated schema from https://github.com/Rahularya01/pi-cursor. Coverage, oxlint, and verify-export-jsdoc exclude that file. There is no runtime dependency on `@rahularya01/pi-cursor`.
+- `src/native/agent_pb.ts` is the MIT-licensed generated schema from the community Cursor proto catalogs used by https://github.com/Rahularya01/pi-cursor and https://github.com/can1357/oh-my-pi. Coverage, oxlint, and verify-export-jsdoc exclude that file. There is no runtime dependency on those packages.
 
 </details>
 

@@ -66,7 +66,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 
 DSH 的每一步模型调用是一次新的 HTTP/2 Connect `Run`，由 harness 历史、系统提示和 MCP 工具定义重建（`providerIdentifier: dsh`，`clientName: dsh`）。Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示，从不把 `conversation_state.turns` 渲染进去，并且会丢弃其中的 `{"role":"system"}` 条目而使用自己的提示。因此适配器把系统提示作为 `<rules>` user 提示消息发布，并把每个先前轮次重放为 `user`、`assistant` 和 `tool` 提示消息，历史 MCP 调用按 Cursor 的命名写成 `mcp_dsh_<tool>`；轮次结构一同发送，供服务端记账。请求上下文的应答额外带一条全局 Cursor 规则，告知模型 Cursor 内建工具在这里会返回拒绝，应调用 `mcp_dsh_` 工具。
 
-文本、thinking、用量与 MCP 工具调用变成 `StreamChunk`。一次 MCP 工具调用结束该流，以便 agent loop 在本地跑工具。下一次 Run 重放该进行中的轮次及其结果，并把一条固定的继续提示作为 Run 必需的用户消息发送；不使用 `resumeAction`，因为服务端会从该轮的用户消息重新开始而不是继续。Cursor 原生工作区 exec（`read`、`shell`、`grep` 及同类）以其类型化的拒绝应答，并指出应改用的 harness 工具，因此 Run 继续进行，模型把该拒绝当作工具结果读取；本构建不认识的 exec 会使该步失败。
+文本、thinking、用量与 MCP 工具调用变成 `StreamChunk`。一次 MCP 工具调用结束该流，以便 agent loop 在本地跑工具。下一次 Run 重放该进行中的轮次及其结果，并把一条固定的继续提示作为 Run 必需的用户消息发送；不使用 `resumeAction`，因为服务端会从该轮的用户消息重新开始而不是继续。Cursor 原生或 CLI Pi 工作区 exec（`read`、`shell`、`piRead` 及同类）以其类型化的拒绝应答，并指出应改用的 harness 工具，因此 Run 继续进行，模型把该拒绝当作工具结果读取。CLI 钩子以空的匹配响应应答。MCP-state exec 返回已通告的 `mcp_dsh_` 工具。本构建无法类型化的其他 exec 以 ExecClientThrow 应答，以便 Run 继续。没有 payload 的 exec 仍使该步失败。
 
 `LlmAdapter` 要求的归属头出现在每一次 HTTP/2 请求上，并带有 Cursor 客户端头 `x-ghost-mode`、`x-cursor-client-version` 和 `x-cursor-client-type`。
 
@@ -98,7 +98,7 @@ DSH 的每一步模型调用是一次新的 HTTP/2 Connect `Run`，由 harness �
 
 #### 模型看见什么
 
-文本增量、thinking 增量、token 用量和 MCP 工具调用变成 harness 分片。一次 MCP 工具调用以 `tool-calls` 结束该流。原生 exec 以拒绝应答且流继续；未知 exec 使该轮失败。
+文本增量、thinking 增量、token 用量和 MCP 工具调用变成 harness 分片。一次 MCP 工具调用以 `tool-calls` 结束该流。原生或 CLI Pi 工作区 exec 以拒绝应答且流继续。CLI 钩子或 MCP-state exec 被应答以保持 Run 开启。本构建无法类型化的其他 exec 以 ExecClientThrow 应答且流继续。没有 payload 的 exec 使该轮失败。
 
 #### Token 影响
 
@@ -115,7 +115,8 @@ loop 保留的响应块追加到下一次重建的 Run。未记录的传输帧�
 这些限制划定适配器的停止点。它们是当前的包约束，不是与 Cursor 产品的对比。
 
 - **该集成是非官方的** — 认证 URL、头、客户端版本和 `agent.v1` 可能不预先通知就变更并弄坏本适配器。
-- **不执行原生 Cursor 工作区 exec** — `read`、`shell` 及同类收到指出 harness 工具的类型化拒绝，因此选中它们的模型会在调用 `mcp_dsh_` 工具之前多花一个往返。
+- **不执行原生 Cursor 工作区 exec** — `read`、`shell`、CLI Pi 工具（`piRead`、`piBash` 及同类）以及同一家族收到指出 harness 工具的类型化拒绝，因此选中它们的模型会在调用 `mcp_dsh_` 工具之前多花一个往返。
+- **CLI 控制 exec 不运行 Cursor 钩子** — 钩子帧得到空的匹配响应，MCP-state 帧列出已通告的 `dsh` 工具，其他未命名 exec 以 ExecClientThrow 应答以使 Run 继续；它们都不执行工作区工作。
 - **没有挂起的 HTTP/2 会话** — DSH 的每一步都是新的 Run；在同一次 Cursor 流上中途恢复工具不在范围内。
 - **工具结果以重放的提示消息加一条固定继续提示到达模型** — Cursor 原生是在流内交付结果；该提示是适配器自有的文本，人类从未输入过。
 - **不支持 `GenerateOptions.stop`** — 非官方 Run 不映射停止序列。
@@ -135,7 +136,7 @@ loop 保留的响应块追加到下一次重建的 Run。未记录的传输帧�
 
 本开发备注是非权威的工作上下文：未决方向与维护者备忘。已交付行为与被接受的理由写在上面各节、包代码以及链接的 Agent Note 中。
 
-- `src/native/agent_pb.ts` 是来自 https://github.com/Rahularya01/pi-cursor 的 MIT 许可生成 schema。覆盖率、oxlint 与 verify-export-jsdoc 排除该文件。运行时不依赖 `@rahularya01/pi-cursor`。
+- `src/native/agent_pb.ts` 是来自 https://github.com/Rahularya01/pi-cursor 与 https://github.com/can1357/oh-my-pi 所用社区 Cursor proto 目录的 MIT 许可生成 schema。覆盖率、oxlint 与 verify-export-jsdoc 排除该文件。运行时不依赖这些包。
 
 </details>
 
