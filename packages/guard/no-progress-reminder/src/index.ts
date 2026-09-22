@@ -16,6 +16,9 @@ import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
+    /** Reminder attribution; readers preserve the notice without this producer.
+     * @persistenceAttribution
+     */
     'no-progress-reminder': { kind: 'no-progress-reminder'; form: 'notice'; summary: string }
   }
 }

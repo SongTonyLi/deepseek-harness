@@ -35,6 +35,10 @@ import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmMode
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
+    /** Terminal-surface attribution; readers preserve the notice without this producer.
+     * The transcript uses the kind to draw the row as injected context rather than a prompt.
+     * @persistenceAttribution
+     */
     'tui-app': { kind: 'tui-app'; form: 'notice'; summary: string }
   }
 }

@@ -2504,14 +2504,14 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       'useSessionRetainInfo: UseSessionRetainInfo',
       'useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>',
     ],
-    keyDomain: 'open: any string the owner dispatches (no compile-time key set), already taken: llm-pi-ai',
+    keyDomain: 'open: any string the owner dispatches (no compile-time key set), none are taken yet',
     hookContext: '',
     slotInject: '',
     declaredBy: 'an entry in \'settings.section\' (client-ui-settings-models), so it exists while that entry is mounted',
     occupants: [
-      'client-ui-settings-signin SignInCard key \'llm-pi-ai\'',
+      'client-ui-settings-signin SignInCard',
     ],
-    replaceRisk: 'shadows-shipped-ui',
+    replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'settings.models.provider-card\', () => ctx.slots.register(\n      { name: \'settings.models.provider-card\', key: \'<one key the owner dispatches>\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
     source: 'packages/client/ui-settings-models/src/client/slot-contract.ts:33',
   },
@@ -2881,7 +2881,9 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ownerProps: [
       '/** Empty owner share for the sidebar brand-name occupant. */\nexport interface SidebarBrandNameOwnerProps {\n  /** Marker field: the occupant owns its own content and width. */\n  children?: never\n}',
     ],
-    ownerPropsReferences: [],
+    ownerPropsReferences: [
+      'Empty',
+    ],
     standardProps: [
       'useResource: UseResource',
       'useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>',

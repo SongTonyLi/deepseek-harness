@@ -13,6 +13,10 @@ import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
+    /** Work-state attribution; readers preserve the notice without this producer.
+     * Its admission uses the kind to avoid repeated injection.
+     * @persistenceAttribution
+     */
     'compaction-basic': { kind: 'compaction-basic'; form: 'notice'; summary: string }
   }
 }

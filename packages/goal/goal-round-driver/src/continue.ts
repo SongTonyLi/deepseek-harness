@@ -9,6 +9,9 @@ import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
+    /** Continuation attribution; readers preserve the notice without this producer.
+     * @persistenceAttribution
+     */
     'goal-round-driver': { kind: 'goal-round-driver'; form: 'notice'; summary: string }
   }
 }

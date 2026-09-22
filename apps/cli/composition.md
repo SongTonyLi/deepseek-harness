@@ -3,7 +3,7 @@
 
 # DSH Base Composition
 
-The dsh-base bundle patch shared by the web, tui, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.
+The dsh-base bundle patch shared by the web, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.
 
 ```mermaid
 flowchart LR
@@ -56,8 +56,6 @@ flowchart LR
   cfg --> plugin_dsh_base_deepseek_account
   plugin_dsh_base_credentials["credentials<br/>@deepseek-ai/dsh-credentials-local"]
   cfg --> plugin_dsh_base_credentials
-  plugin_dsh_base_authorization["authorization<br/>@deepseek-ai/dsh-authorization"]
-  cfg --> plugin_dsh_base_authorization
   plugin_dsh_base_llm_pi_ai["llm-pi-ai<br/>@deepseek-ai/dsh-llm-pi-ai"]
   cfg --> plugin_dsh_base_llm_pi_ai
   plugin_dsh_base_llm_cursor["llm-cursor<br/>@deepseek-ai/dsh-llm-cursor"]
@@ -176,8 +174,6 @@ flowchart LR
   cfg --> plugin_dsh_base_tool_ralph
   plugin_dsh_base_repeat_tool_reminder["repeat-tool-reminder<br/>@deepseek-ai/dsh-repeat-tool-reminder"]
   cfg --> plugin_dsh_base_repeat_tool_reminder
-  plugin_dsh_base_no_progress_reminder["no-progress-reminder<br/>@deepseek-ai/dsh-no-progress-reminder"]
-  cfg --> plugin_dsh_base_no_progress_reminder
   plugin_dsh_base_web["web<br/>@deepseek-ai/dsh-web"]
   cfg --> plugin_dsh_base_web
   plugin_dsh_base_web_search_deepseek["web-search-deepseek<br/>@deepseek-ai/dsh-web-search-deepseek"]
@@ -226,7 +222,6 @@ flowchart LR
 | `authorization` | `@deepseek-ai/dsh-authorization` |
 | `deepseek-account` | `@deepseek-ai/dsh-deepseek-account-platform` |
 | `credentials` | `@deepseek-ai/dsh-credentials-local` |
-| `authorization` | `@deepseek-ai/dsh-authorization` |
 | `llm-pi-ai` | `@deepseek-ai/dsh-llm-pi-ai` |
 | `llm-cursor` | `@deepseek-ai/dsh-llm-cursor` |
 | `session-persistence-jsonl` | `@deepseek-ai/dsh-session-persistence-jsonl` |
@@ -286,7 +281,6 @@ flowchart LR
 | `tool-goal` | `@deepseek-ai/dsh-tool-goal` |
 | `tool-ralph` | `@deepseek-ai/dsh-tool-ralph` |
 | `repeat-tool-reminder` | `@deepseek-ai/dsh-repeat-tool-reminder` |
-| `no-progress-reminder` | `@deepseek-ai/dsh-no-progress-reminder` |
 | `web` | `@deepseek-ai/dsh-web` |
 | `web-search-deepseek` | `@deepseek-ai/dsh-web-search-deepseek` |
 | `web-fetch-http` | `@deepseek-ai/dsh-web-fetch-http` |

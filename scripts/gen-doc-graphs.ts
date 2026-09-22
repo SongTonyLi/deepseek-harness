@@ -258,6 +258,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Streams one background job\'s observation record over the generated Remote namespace; the roster stays on the session control stream.',
   },
   {
+    key: 'authorizationController',
+    pkg: 'api-authorization-controller',
+    title: 'Host sign-in Remote controller',
+    mode: 'core',
+    note: 'Carries the authorization seam onto the wire: one attempt per stream, prompts answered by a second call, and the stored-record state a configuration surface shows.',
+  },
+  {
     key: 'credentialsController',
     pkg: 'api-settings-controller',
     title: 'Host credential-surface Remote controller',
