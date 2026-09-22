@@ -17,11 +17,12 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { errorChain, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { foldConsumedWork } from '@deepseek-ai/dsh-agent'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import { finalAssistantOutput } from './assistant-output.ts'
+import { optionalSubagentDiagnostic } from './diagnostic.ts'
 import { SubagentRunId } from './types.ts'
 import type { SubagentResult, SubagentRun, SubagentRunEndInfo, SubagentRunInfo } from './types.ts'
 
@@ -34,6 +35,8 @@ export interface ActivationTerminal {
   readonly stopReason: SubagentResult['stopReason']
   /** The epoch's final assistant content, absent when it produced none or failed. */
   readonly output?: readonly ContentBlock[]
+  /** Safe failure detail for an error epoch. */
+  readonly diagnostic?: string
 }
 
 /**
@@ -189,9 +192,7 @@ export function createActivationObserver(
   let captured: ActivationTerminal = { stopReason: 'completed' }
   // Teardown failure overrides the epoch's own outcome and withholds its
   // output: an answer this harness could not durably release is not a result.
-  const terminal = (failure: unknown): ActivationTerminal => failure === undefined
-    ? captured
-    : { stopReason: 'error' }
+  const terminal = (failure: unknown): ActivationTerminal => resolveActivationTerminal(captured, failure)
   return {
     start: (child: Agent): void => {
       boundary = child.session.seq
@@ -201,9 +202,11 @@ export function createActivationObserver(
       // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       const own = child.session.snapshotEvents(boundary)
       const output = finalAssistantOutput(own)
+      const diagnostic = epochDiagnostic(own)
       captured = {
         stopReason: epochStopReason(own),
         ...output === undefined ? {} : { output },
+        ...diagnostic === undefined ? {} : { diagnostic },
       }
     },
     terminal,
@@ -216,6 +219,19 @@ export function createActivationObserver(
       }, parent)
     },
   }
+}
+
+/**
+ * Resolve an epoch's terminal facts when teardown succeeds or fails.
+ * @param captured - facts captured before ownership release.
+ * @param failure - teardown or durability failure.
+ * @returns terminal facts safe for parent delivery.
+ */
+export function resolveActivationTerminal(captured: ActivationTerminal, failure: unknown): ActivationTerminal {
+  if (failure === undefined) return captured
+  const diagnostic = optionalSubagentDiagnostic(captured.diagnostic)
+    ?? optionalSubagentDiagnostic(errorChain(failure))
+  return { stopReason: 'error', ...diagnostic === undefined ? {} : { diagnostic } }
 }
 
 /**
@@ -260,6 +276,18 @@ function epochStopReason(events: readonly SessionEvent[]): SubagentResult['stopR
     default:
       return 'error'
   }
+}
+
+/**
+ * Return the recorded failure detail when this epoch ended in error.
+ * @param events - this epoch's event suffix.
+ * @returns limited error text, when available.
+ */
+function epochDiagnostic(events: readonly SessionEvent[]): string | undefined {
+  const { end } = foldConsumedWork(events)
+  return end?.data.reason.kind === 'error'
+    ? optionalSubagentDiagnostic(end.data.reason.error.message)
+    : undefined
 }
 
 /** Render any listener-thrown value without letting coercion escape containment. */
