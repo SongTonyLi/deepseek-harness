@@ -9,7 +9,7 @@ import type { ContentBlock, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { diffLines, hunks } from './diff.ts'
+import { diffLines, hunks, type DiffMark } from './diff.ts'
 
 /** Unchanged rows shown around each diff hunk. */
 const DIFF_CONTEXT_LINES = 2
@@ -270,6 +270,8 @@ export interface ToolBody {
   lines: string[]
   /** One entry per row; absent, or undefined at an index, for a row that is not code. */
   code?: (CodeSpan | undefined)[]
+  /** One entry per row; absent, or undefined at an index, for a row that is not a diff addition or removal. */
+  diff?: (DiffMark | undefined)[]
 }
 
 /** A tool card's call half. */
@@ -288,6 +290,39 @@ function extensionOf(path: string): string | undefined {
   const base = path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1)
   const dot = base.lastIndexOf('.')
   return dot <= 0 ? undefined : base.slice(dot + 1).toLowerCase()
+}
+
+/**
+ * Whether a tool delegates to a subagent, by the same name rule the browser's
+ * process view applies: the `subagent` tool and every `subagent_*` tool.
+ * @param name - the tool name.
+ * @returns true for a tool whose card draws as one compact subagent row.
+ */
+export function isSubagentTool(name: string): boolean {
+  return name === 'subagent' || name.startsWith('subagent_')
+}
+
+/** What a compact subagent row draws: the delegated task and its route. */
+export interface SubagentRowFacts {
+  /** The call's short task description; empty until the arguments carry one. */
+  description: string
+  /** Dim facts after the description: the requested model and the background mode, when the call names them. */
+  meta: string[]
+}
+
+/**
+ * Read a subagent call's arguments into the facts its compact row draws.
+ * @param args - the parsed arguments, or undefined while they do not parse yet.
+ * @returns the description and the dim facts; empty ones for arguments that carry none.
+ */
+export function subagentRowFacts(args: unknown): SubagentRowFacts {
+  const record: Partial<Record<string, unknown>> = typeof args === 'object' && args !== null ? { ...args } : {}
+  const text = (value: unknown): string | undefined => typeof value === 'string' && value !== '' ? value : undefined
+  const meta: string[] = []
+  const model = text(record.model)
+  if (model !== undefined) meta.push(model)
+  if (record.run_in_background === true) meta.push('background')
+  return { description: text(record.description) ?? '', meta }
 }
 
 /**
@@ -324,17 +359,20 @@ export function diffBody(diff: FileDiff): Required<ToolBody> {
   const rows = hunks(diffLines(diff.oldText, diff.newText), DIFF_CONTEXT_LINES)
   const lines: string[] = []
   const code: (CodeSpan | undefined)[] = []
+  const marks: (DiffMark | undefined)[] = []
   for (const row of rows) {
     if (row === undefined) {
       lines.push('  …')
       code.push(undefined)
+      marks.push(undefined)
       continue
     }
     const prefix = row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '- ' : '  '
     lines.push(prefix + row.text)
     code.push(lang === undefined ? undefined : { lang, prefix, source: row.text })
+    marks.push(row.kind === 'context' ? undefined : row.kind)
   }
-  return { lines, code }
+  return { lines, code, diff: marks }
 }
 
 /**
@@ -345,12 +383,14 @@ export function diffBody(diff: FileDiff): Required<ToolBody> {
 function diffsBody(diffs: readonly FileDiff[]): ToolBody {
   const lines: string[] = []
   const code: (CodeSpan | undefined)[] = []
+  const marks: (DiffMark | undefined)[] = []
   for (const diff of diffs) {
     const body = diffBody(diff)
     lines.push(diff.path, ...body.lines)
     code.push(undefined, ...body.code)
+    marks.push(undefined, ...body.diff)
   }
-  return { lines, code }
+  return { lines, code, diff: marks }
 }
 
 /**

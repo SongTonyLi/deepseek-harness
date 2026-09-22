@@ -3983,16 +3983,28 @@ export interface Config {
    */
   streamFadeSteps: number
   /**
-   * How long one fade tick lasts, in milliseconds, which is also the repaint
-   * period while anything is still moving. Duration of each fade is
-   * `streamFadeSteps * streamFadeStepMs`, and the app's own chrome motions -
-   * the keyboard landing on a region and a step of a walk - run for their own
-   * step counts at this same tick. The terminal arms this repaint only while
-   * something still differs from its settled drawing and disarms it as soon as
-   * the last one settles, so an idle session runs no timer. A shorter period
-   * draws a smoother fade at the cost of more redraws.
+   * How long one frame lasts, in milliseconds: the fade tick, the repaint
+   * period while anything is still moving, and the period at which paced
+   * stream text is drawn. The default of 16 draws about 60 frames per
+   * second. Duration of each fade is `streamFadeSteps * streamFadeStepMs`,
+   * and the app's own chrome motions - the keyboard landing on a region and
+   * a step of a walk - run for their own step counts at this same tick. The
+   * terminal arms this repaint only while something still differs from its
+   * settled drawing and disarms it as soon as the last one settles, so an
+   * idle session runs no timer. A shorter period draws a smoother fade at the
+   * cost of more redraws.
    */
   streamFadeStepMs: number
+  /**
+   * How many `streamFadeStepMs` frames a backlog of streamed reasoning, reply
+   * text, or tool arguments takes to reach the screen. The live stream is
+   * queued as it arrives and never waits on a redraw; each frame draws a
+   * share of the queue proportional to its length, so a network burst
+   * spreads over several frames instead of landing at once, and drawn text
+   * trails the stream by at most about this many frames. `0` draws every
+   * delta as it arrives, and so does `reducedMotion`.
+   */
+  streamPaceFrames: number
   /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
@@ -4007,7 +4019,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/bundle/tui-app/src/index.ts:43`](../packages/bundle/tui-app/src/index.ts)
+来源：[`packages/bundle/tui-app/src/index.ts:44`](../packages/bundle/tui-app/src/index.ts)
 
 <a id="deepseek-aidsh-typert-loader"></a>
 

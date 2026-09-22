@@ -137,8 +137,9 @@ function config(overrides: Partial<Config> = {}): Config {
     codeHighlight: true,
     toastMs: 2000,
     liveRefreshMs: 1000,
-    streamFadeSteps: 12,
-    streamFadeStepMs: 33,
+    streamFadeSteps: 24,
+    streamFadeStepMs: 16,
+    streamPaceFrames: 8,
     reducedMotion: false,
     openBrowser: true,
     ...overrides,
@@ -160,7 +161,7 @@ describe('tui runner', () => {
     expect(observed.created[0]?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
     expect(observed.terminal.started).toBe(true)
     expect(observed.order).toEqual(['followup'])
-    expect(observed.terminal.text()).toContain('› first')
+    expect(observed.terminal.text()).toContain('❯ first')
     observed.terminal.type(KEY.ctrlD)
     await settled()
     expect(observed.order).toEqual(['followup', 'release', 'cancel', 'flush', 'dispose', 'exit:0'])
@@ -199,8 +200,8 @@ describe('tui runner', () => {
     expect(observed.order).toEqual(['resume:session-old', 'observe:session-old', 'release-observation'])
     expect(observed.resumed.map(options => options.resumeSessionId)).toEqual(['session-old'])
     expect(observed.created).toHaveLength(0)
-    expect(observed.terminal.text()).toContain('› prompt 0')
-    expect(observed.terminal.text()).toContain('› prompt 299')
+    expect(observed.terminal.text()).toContain('❯ prompt 0')
+    expect(observed.terminal.text()).toContain('❯ prompt 299')
     expect(observed.exits).toEqual([])
   })
 
@@ -219,7 +220,7 @@ describe('tui runner', () => {
     apply(ctx, config({ resume: 'session-old' }))
     await settled()
     expect(observed.order[0]).toBe('resume:session-old')
-    expect(observed.terminal.text()).toContain('› hello')
+    expect(observed.terminal.text()).toContain('❯ hello')
     expect(observed.terminal.text()).toContain('turn was interrupted by an earlier process exit')
   })
 
@@ -265,6 +266,39 @@ describe('tui runner', () => {
     await settled()
     expect(observed.err).toContain('session session-old saved')
     expect(observed.exits).toEqual([0])
+  })
+
+  it('views a resident subagent without resuming it, and resumes and releases one that is not resident', async () => {
+    const { ctx, observed } = await bench({ observed: [] })
+    const child = (id: string, activity: string): unknown => ({ kind: 'child', id, activity, mode: 'one-shot', hasChildren: false, parentId: 'root', depth: 1 })
+    ctx.provide('subagents', {
+      listDescendants: () => Promise.resolve([child('session-kid', 'running'), child('session-old', 'inactive')]),
+    } as never)
+    apply(ctx, config())
+    await settled()
+    await ctx.agents.create({ sessionId: 'session-kid' as SessionId, meta: { cwd: process.cwd() } })
+    const start = observed.order.length
+    typeLine(observed.terminal, '/subagents')
+    await settled()
+    observed.terminal.type(KEY.enter)
+    await settled()
+    // The view reads the resident child's log; its detail rows read it again.
+    expect(observed.order.slice(start, start + 2)).toEqual(['observe:session-kid', 'release-observation'])
+    expect(observed.resumed).toEqual([])
+    expect(observed.terminal.text()).toContain('subagent view')
+    typeLine(observed.terminal, '/parent')
+    await settled()
+    // Returning re-reads the parent; the resident child is not released.
+    expect(observed.order.slice(start + 2).filter(entry => entry === 'dispose')).toEqual([])
+    typeLine(observed.terminal, '/subagents')
+    await settled()
+    observed.terminal.type(KEY.down)
+    observed.terminal.type(KEY.enter)
+    await settled()
+    expect(observed.resumed.map(options => options.resumeSessionId)).toEqual(['session-old'])
+    typeLine(observed.terminal, '/parent')
+    await settled()
+    expect(observed.order.at(-1)).toBe('dispose')
   })
 
   it('refuses to fork without a query engine or a completed turn', async () => {
@@ -407,8 +441,9 @@ describe('the presentation tunables', () => {
       codeHighlight: true,
       toastMs: 2000,
       liveRefreshMs: 1000,
-      streamFadeSteps: 12,
-      streamFadeStepMs: 33,
+      streamFadeSteps: 24,
+      streamFadeStepMs: 16,
+      streamPaceFrames: 8,
       reducedMotion: false,
       openBrowser: true,
     })
@@ -447,5 +482,11 @@ describe('the presentation tunables', () => {
       streamFadeStepMs: 16,
       reducedMotion: true,
     })
+  })
+
+  it('refuse a fractional or negative pace and accept 0, which draws deltas as they arrive', () => {
+    expect(() => validate({ streamPaceFrames: -1 })).toThrow()
+    expect(() => validate({ streamPaceFrames: 1.5 })).toThrow()
+    expect(validate({ streamPaceFrames: 0 })).toMatchObject({ streamPaceFrames: 0 })
   })
 })

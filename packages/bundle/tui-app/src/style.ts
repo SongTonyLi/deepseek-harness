@@ -5,7 +5,8 @@
  * @module @deepseek-ai/dsh-tui-app/style
  */
 
-import type { EditorTheme, MarkdownTheme, SelectListTheme } from '@earendil-works/pi-tui'
+import { visibleWidth, wrapTextWithAnsi, type EditorTheme, type MarkdownTheme, type SelectListTheme } from '@earendil-works/pi-tui'
+import type { DiffMark } from './diff.ts'
 
 /** One styling function: wraps `text` in an SGR pair, or returns it verbatim. */
 export type Style = (text: string) => string
@@ -30,6 +31,11 @@ export interface Palette {
   error: Style
   /** Inverted foreground/background, used for the selected row. */
   inverse: Style
+  /**
+   * A dark-grey background tint behind the user's own prompt rows; only the
+   * background changes, so every foreground role nests inside it.
+   */
+  band: Style
   /** Whether styling is active; false yields verbatim text from every role. */
   readonly enabled: boolean
 }
@@ -50,6 +56,7 @@ const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, clo
   warning: ['33', '39'],
   error: ['31', '39'],
   inverse: ['7', '27'],
+  band: ['48;5;236', '49'],
 }
 
 /**
@@ -75,6 +82,7 @@ export function createPalette(enabled: boolean): Palette {
     warning: role('warning'),
     error: role('error'),
     inverse: role('inverse'),
+    band: role('band'),
     enabled,
   }
 }
@@ -94,6 +102,63 @@ export function paintDiffRows(rows: readonly string[], source: readonly string[]
     if (plain?.startsWith('- ') === true) return palette.error(row)
     return row
   })
+}
+
+/**
+ * Lay one row on the {@link Palette.band} tint across the full width.
+ * @param palette - the active palette.
+ * @param row - the styled row, at most `width` columns.
+ * @param width - the columns the band spans.
+ * @returns the row padded to `width` under the tint; the row unchanged, with
+ * no padding, when the palette is disabled.
+ */
+export function bandRow(palette: Palette, row: string, width: number): string {
+  return palette.enabled ? palette.band(`${row}${' '.repeat(Math.max(0, width - visibleWidth(row)))}`) : row
+}
+
+/** Narrowest width a diff box is drawn at: two borders, two spaces, and one column of text. */
+const DIFF_BOX_MIN_WIDTH = 5
+
+/**
+ * Wrap rows to `width`, framing each run of consecutive additions in a green
+ * rounded box and each run of consecutive removals in a red one, so a change
+ * reads as one region. A removal run directly followed by an addition run
+ * draws as two stacked boxes, the old text above the new. Every returned line
+ * is at most `width` columns, and every box line is exactly `width`.
+ * @param rows - the styled rows.
+ * @param marks - per row, whether it is an addition or a removal; undefined
+ * for a row outside every box.
+ * @param width - the columns the rows fit.
+ * @param palette - the active palette; a disabled one draws the boxes uncolored.
+ * @returns the wrapped rows with the boxes drawn around the changes; rows
+ * wrapped without boxes when the width cannot hold a box.
+ */
+export function boxDiffRows(rows: readonly string[], marks: readonly (DiffMark | undefined)[], width: number, palette: Palette): string[] {
+  const out: string[] = []
+  const inner = width - 4
+  let open: DiffMark | undefined
+  const close = (): void => {
+    if (open === undefined) return
+    const paint = open === 'added' ? palette.success : palette.error
+    out.push(paint(`╰${'─'.repeat(width - 2)}╯`))
+    open = undefined
+  }
+  for (const [index, row] of rows.entries()) {
+    const mark = width < DIFF_BOX_MIN_WIDTH ? undefined : marks[index]
+    if (mark !== open) close()
+    if (mark === undefined) {
+      out.push(...wrapTextWithAnsi(row, Math.max(1, width)))
+      continue
+    }
+    const paint = mark === 'added' ? palette.success : palette.error
+    if (open === undefined) out.push(paint(`╭${'─'.repeat(width - 2)}╮`))
+    open = mark
+    for (const part of wrapTextWithAnsi(row, inner)) {
+      out.push(`${paint('│')} ${part}${' '.repeat(Math.max(0, inner - visibleWidth(part)))} ${paint('│')}`)
+    }
+  }
+  close()
+  return out
 }
 
 /**

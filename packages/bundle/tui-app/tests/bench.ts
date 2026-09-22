@@ -310,6 +310,8 @@ export async function bench(options: {
   hostFailure?: string
   /** Hold every host operation until the returned release is called. */
   hostGate?: { release: () => void }
+  /** Make releasing a session the host opened fail with this message; read at each release. */
+  disposeFailure?: string
   /** Replace the real projection registry: `none` mounts nothing, an object is provided as the service. */
   projections?: 'none' | { snapshot(session: Session, keys: readonly string[]): unknown; onChanged(listener: (session: Session) => void): () => void }
   /**
@@ -325,6 +327,8 @@ export async function bench(options: {
   fadeSteps?: number
   /** The fade period the app is configured with. */
   fadeStepMs?: number
+  /** Frames a streamed backlog drains over; `0`, the default, draws each delta as it arrives. */
+  streamPaceFrames?: number
   /** Ask for streamed text drawn with no ramp. */
   reducedMotion?: boolean
   /** The environment the fade capability is decided from; empty by default, which yields the two-level mode. */
@@ -424,7 +428,10 @@ export async function bench(options: {
         agent: handle.agent,
         selection: { current: { provider: 'test-provider', model: 'opened-model' }, assembled: undefined },
         history: options.openedHistory ?? [],
-        dispose: () => { entry.disposed += 1; return Promise.resolve() },
+        dispose: () => {
+          entry.disposed += 1
+          return options.disposeFailure === undefined ? Promise.resolve() : Promise.reject(new Error(options.disposeFailure))
+        },
       },
       disposed: 0,
     }
@@ -435,6 +442,18 @@ export async function bench(options: {
     create: () => open('create', `session-opened-${String(++openedCount)}` as SessionId),
     resume: id => open(`resume:${id}`, id),
     fork: (id, turn) => open(`fork:${id}${turn === undefined ? '' : `@${String(turn)}`}`, `session-fork-of-${id}` as SessionId),
+    observe: async (id) => {
+      const resident = ctx.agents.get(id)
+      if (resident === undefined) return open(`observe:${id}`, id)
+      hostCalls.push(`observe-resident:${id}`)
+      if (options.hostFailure !== undefined) throw new Error(options.hostFailure)
+      return {
+        agent: resident,
+        selection: { current: undefined, assembled: undefined },
+        history: resident.session.ownEvents(),
+        dispose: () => Promise.resolve(),
+      }
+    },
   }
   let disposed = 0
   const initial: BoundSession = {
@@ -472,6 +491,7 @@ export async function bench(options: {
     liveRefreshMs,
     fadeSteps: options.fadeSteps ?? FADE_STEPS,
     fadeStepMs,
+    streamPaceFrames: options.streamPaceFrames ?? 0,
     reducedMotion: options.reducedMotion ?? false,
     env: options.env ?? {},
     now: () => now,

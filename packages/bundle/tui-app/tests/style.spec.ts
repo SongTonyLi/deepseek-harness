@@ -1,7 +1,7 @@
 /** Palette roles, color detection, and the derived pi-tui themes. */
 
 import { describe, expect, it } from 'vitest'
-import { colorEnabled, createPalette, editorTheme, markdownTheme, paintDiffRows, selectListTheme } from '../src/style.ts'
+import { bandRow, boxDiffRows, colorEnabled, createPalette, editorTheme, markdownTheme, paintDiffRows, selectListTheme } from '../src/style.ts'
 
 describe('palette', () => {
   it('wraps text in SGR pairs when enabled and returns it verbatim otherwise', () => {
@@ -21,6 +21,15 @@ describe('palette', () => {
     expect(off.enabled).toBe(false)
   })
 
+  it('lays a row on the background band across the full width, and leaves it bare without color', () => {
+    const on = createPalette(true)
+    expect(on.band('x')).toBe('\u001b[48;5;236mx\u001b[49m')
+    expect(bandRow(on, on.bold('ab'), 5)).toBe('\u001b[48;5;236m\u001b[1mab\u001b[22m   \u001b[49m')
+    const off = createPalette(false)
+    expect(off.band('x')).toBe('x')
+    expect(bandRow(off, 'ab', 5)).toBe('ab')
+  })
+
   it('paints additions green and removals red without changing context rows', () => {
     const source = ['+ add', '- remove', '  keep', '@@ hunk']
     expect(paintDiffRows(source, source, createPalette(true))).toEqual([
@@ -30,6 +39,37 @@ describe('palette', () => {
       '@@ hunk',
     ])
     expect(paintDiffRows(source, source, createPalette(false))).toEqual(source)
+  })
+
+  it('frames each run of removals and each run of additions in its own box', () => {
+    const rows = ['  keep', '- old', '+ new', '+ newer', '  tail']
+    expect(boxDiffRows(rows, [undefined, 'removed', 'added', 'added', undefined], 12, createPalette(false))).toEqual([
+      '  keep',
+      '╭──────────╮',
+      '│ - old    │',
+      '╰──────────╯',
+      '╭──────────╮',
+      '│ + new    │',
+      '│ + newer  │',
+      '╰──────────╯',
+      '  tail',
+    ])
+  })
+
+  it('colors a box by its kind and wraps a long row inside it', () => {
+    const on = createPalette(true)
+    const boxed = boxDiffRows(['+ abc defghi'], ['added'], 10, on)
+    expect(boxed).toEqual([
+      on.success('╭────────╮'),
+      `${on.success('│')} + abc  ${on.success('│')}`,
+      `${on.success('│')} defghi ${on.success('│')}`,
+      on.success('╰────────╯'),
+    ])
+    expect(boxDiffRows(['- x'], ['removed'], 7, on)[0]).toBe(on.error('╭─────╮'))
+  })
+
+  it('draws no box where the width cannot hold one', () => {
+    expect(boxDiffRows(['+ ab'], ['added'], 4, createPalette(false))).toEqual(['+ ab'])
   })
 
   it('decides color from NO_COLOR, FORCE_COLOR, then the TTY', () => {

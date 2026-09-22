@@ -64,9 +64,9 @@ function clock(): { now: () => number; advance: (ms: number) => void } {
 }
 
 describe('defaults', () => {
-  it('ships twelve brightness levels, each lasting 33ms', () => {
-    expect(FADE_STEPS).toBe(12)
-    expect(FADE_TICK_MS).toBe(33)
+  it('ships twenty-four brightness levels, each lasting one 16ms frame', () => {
+    expect(FADE_STEPS).toBe(24)
+    expect(FADE_TICK_MS).toBe(16)
   })
 })
 
@@ -91,13 +91,16 @@ describe('buildFadeRamp', () => {
     ])
   })
 
-  it('brightens every level over the one below it', () => {
+  it('never darkens a level below the one before it', () => {
+    // Smoothstep flattens the ends, so neighbouring levels there can round
+    // onto the same bytes.
     const levels = buildFadeRamp(BLACK, INK).map(luminance)
     expect(levels).toHaveLength(FADE_STEPS)
     for (const [index, level] of levels.entries()) {
       const previous = levels[index - 1]
-      if (previous !== undefined) expect(level).toBeGreaterThan(previous)
+      if (previous !== undefined) expect(level).toBeGreaterThanOrEqual(previous)
     }
+    expect(levels.at(-1)).toBeGreaterThan(levels[0] ?? Infinity)
   })
 
   it('darkens every level towards a dark foreground over a light background', () => {
@@ -134,14 +137,20 @@ describe('mixFadeColor', () => {
 
 describe('fadeSgr', () => {
   it('writes 24-bit foreground bytes per ramp level', () => {
-    expect(sgrAt(0)).toBe('\u001b[38;2;28;8;2m')
-    expect(sgrAt(3)).toBe('\u001b[38;2;108;51;22m')
+    expect(sgrAt(0)).toBe('\u001b[38;2;10;2;1m')
+    expect(sgrAt(3)).toBe('\u001b[38;2;58;25;8m')
     expect(sgrAt(FADE_STEPS - 1)).toBe('\u001b[38;2;200;100;50m')
   })
 
-  it('floors a fractional age onto a ramp slot so reply text keeps integer fade-in levels', () => {
-    expect(fadeSgr(COLOR, 0.9)).toBe(sgrAt(0))
-    expect(fadeSgr(COLOR, 3.2)).toBe(sgrAt(3))
+  it('draws a fractional age between its two neighbouring levels in truecolor', () => {
+    expect(fadeSgr(COLOR, 0.5)).toBe('\u001b[38;2;21;5;2m')
+    expect(fadeSgr(COLOR, 3.5)).toBe('\u001b[38;2;65;29;10m')
+    expect(fadeSgr(COLOR, 4)).toBe(sgrAt(4))
+  })
+
+  it('floors a fractional age onto a ramp slot in the grayscale encoding', () => {
+    const gray: FadeStyle = { capability: 'ansi256', ramp: COLOR.ramp }
+    expect(fadeSgr(gray, 3.9)).toBe(fadeSgr(gray, 3))
   })
 
   it('draws an age past the ramp at its last level', () => {
@@ -655,9 +664,9 @@ describe('recolorTail', () => {
     expect(recolorTail([], [{ text: 'world', age: 0 }], COLOR)).toEqual([])
   })
 
-  it('floors a fractional age onto the fade-in ramp so reply text keeps integer slots', () => {
-    expect(recolorTail(['hello world'], [{ text: 'world', age: 0.9 }], COLOR)).toEqual([
-      `hello ${sgrAt(0)}world\u001b[39m`,
+  it('draws a fractional fade-in age at the mix between its levels', () => {
+    expect(recolorTail(['hello world'], [{ text: 'world', age: 0.5 }], COLOR)).toEqual([
+      `hello ${fadeSgr(COLOR, 0.5)}world\u001b[39m`,
     ])
   })
 })

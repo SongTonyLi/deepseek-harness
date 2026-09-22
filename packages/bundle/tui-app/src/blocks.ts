@@ -28,12 +28,13 @@
  * @module @deepseek-ai/dsh-tui-app/blocks
  */
 
-import { Markdown, Text, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
+import { Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
-import { markdownTheme, paintDiffRows, type CodeHighlighter, type Palette } from './style.ts'
-import { foldMarker, foldRows, paintCodeRows, shellCommandBody, type CodeSpan, type ToolCallText } from './transcript.ts'
+import type { DiffMark } from './diff.ts'
+import { bandRow, boxDiffRows, markdownTheme, paintDiffRows, type CodeHighlighter, type Palette } from './style.ts'
+import { foldMarker, foldRows, paintCodeRows, SHELL_COMMAND_PREFIX, shellCommandBody, type CodeSpan, type SubagentRowFacts, type ToolCallText } from './transcript.ts'
 
 /** Columns the focus gutter takes from the width a block's content wraps at. */
 const GUTTER_WIDTH = 2
@@ -55,6 +56,28 @@ const NO_OUTPUT = '(no output)'
 
 /** Body row a running tool card draws until the result lands. */
 export const TOOL_RUNNING_ROW = '…'
+
+/** Glyph a tool card header opens with, coloured by the card's status. */
+const TOOL_GLYPH = '◆'
+
+/** Glyph a subagent row opens with, coloured by status like {@link TOOL_GLYPH}. */
+export const SUBAGENT_RUNNING_GLYPH = TOOL_GLYPH
+
+/** Glyph a user prompt opens with. */
+const USER_GLYPH = '❯'
+
+/** Glyph the reasoning header opens with; the reader marks reasoning sections with the same one. */
+const REASONING_GLYPH = '✻'
+
+/**
+ * The header above a message's reasoning rows. It is one fixed string for a
+ * streaming and a committed message alike, so committing never rewrites a row
+ * that may already sit above the repaint floor.
+ */
+const REASONING_TITLE = 'Thinking'
+
+/** Columns the reasoning rows are indented under their header. */
+const REASONING_INDENT = '  '
 
 /** Shared presentation settings every block reads. */
 export interface BlockTheme {
@@ -265,7 +288,7 @@ export class UserShellBlock implements Component {
   }
 
   /**
-   * Draw the run, colouring `$ command` when the grammar answers.
+   * Draw the run, colouring `$ command` when the grammar answers and the `$` in the accent.
    * @param width - the columns the block lays out in.
    * @returns a blank line, the wrapped rows, and a trailing blank line.
    */
@@ -274,13 +297,18 @@ export class UserShellBlock implements Component {
       const { lines, code } = shellCommandBody(this.command, this.rows.slice(1))
       const painted = paintCodeRows(lines, code, this.theme.codeHighlight)
       const inner = Math.max(1, width)
-      const body = painted.flatMap(row => wrapTextWithAnsi(row, inner))
+      const [command = '', ...output] = painted
+      const prompt = `${this.theme.palette.accent(SHELL_COMMAND_PREFIX.trimEnd())} ${command.slice(SHELL_COMMAND_PREFIX.length)}`
+      const body = [prompt, ...output].flatMap(row => wrapTextWithAnsi(row, inner))
       return ['', ...body, '']
     })
   }
 }
 
-/** A prompt the user submitted, drawn with a leading `›`. */
+/**
+ * A prompt the user submitted, drawn with a leading {@link USER_GLYPH} on the
+ * palette's background band, which spans every row of the prompt.
+ */
 export class UserBlock implements Component, UserSection {
   readonly navigable = true as const
   readonly blockKind = 'user' as const
@@ -319,14 +347,17 @@ export class UserBlock implements Component, UserSection {
     const { marked, content: inner } = focusFrame(width, this.highlight)
     const lines = this.drawn.get(`${String(width)}:${String(marked)}`, () => {
       const body = wrapTextWithAnsi(this.text, Math.max(1, inner - 2))
-      return ['', ...body.map((line, index) => `${palette.accent(index === 0 ? '›' : ' ')} ${palette.bold(line)}`)]
+      return ['', ...body.map((line, index) => bandRow(palette, `${palette.accent(index === 0 ? USER_GLYPH : ' ')} ${palette.bold(line)}`, inner))]
     })
     // The prompt is one section, so every line of a focused prompt is its own.
     return marked ? withGutter(palette, lines, () => true, this.highlightLevel) : lines
   }
 }
 
-/** What a compact context row uses in place of the user prompt's `›`. */
+/**
+ * What a compact context row uses in place of the user prompt's
+ * {@link USER_GLYPH}; the reader marks context sections with the same one.
+ */
 const CONTEXT_GLYPH = '⬡'
 
 /** A dim one-line notice about the session (a stopped turn, a command result, a model switch). */
@@ -763,7 +794,8 @@ export class AssistantBlock implements Component, AssistantSection {
   }
 
   /**
-   * Stack the reasoning over the reply, each through its own tail.
+   * Stack the reasoning, under its {@link REASONING_TITLE} header and
+   * indented, over the reply, each through its own tail.
    * @param inner - the columns the message lays out in.
    * @returns the lines, gutter not yet applied, and where each section falls.
    */
@@ -772,8 +804,11 @@ export class AssistantBlock implements Component, AssistantSection {
     const reasoning = { from: 0, to: 0 }
     const reply = { from: 0, to: 0 }
     if (this.reasoning.trim() !== '') {
+      const palette = this.theme.palette
       reasoning.from = lines.length
-      lines.push(...this.renderReasoning(inner, lines.length))
+      lines.push(truncateToWidth(`${palette.heading(REASONING_GLYPH)} ${palette.dim(REASONING_TITLE)}`, inner, '…'))
+      const width = Math.max(1, inner - REASONING_INDENT.length)
+      lines.push(...this.renderReasoning(width, lines.length).map(line => `${REASONING_INDENT}${line}`))
       reasoning.to = lines.length
       lines.push('')
     }
@@ -885,7 +920,8 @@ interface AssistantLayout {
 export type ToolCardStatus = 'running' | 'done' | 'error'
 
 /**
- * A tool call card: status glyph, tool name, headline, then a foldable body.
+ * A tool call card: the status-coloured {@link TOOL_GLYPH}, the bold tool
+ * name, the headline in the link colour, then a foldable body.
  *
  * The card arrives in two pieces, and each floats out on its own: the header
  * and the call rows when the model starts the call (a stream delta, or the
@@ -901,6 +937,10 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private resultLines: string[] = []
   /** The code span behind each result row, for a `read` or `diff` result; absent otherwise. */
   private resultCode: (CodeSpan | undefined)[] | undefined
+  /** Which result rows are diff additions or removals, for a `diff` result; absent otherwise. */
+  private resultDiff: (DiffMark | undefined)[] | undefined
+  /** The facts a folded subagent card draws as one row; absent for every other tool. */
+  private subagent: SubagentRowFacts | undefined
   private expanded = false
   private fade: BlockFade | undefined
   private resultFade: BlockFade | undefined
@@ -973,6 +1013,17 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   }
 
   /**
+   * Draw this card, while folded, as one subagent row: the task description
+   * and its route, with the tool name while it runs and the outcome tag once
+   * it settled. Unfolding draws the full card.
+   * @param facts - the row's description and dim facts.
+   */
+  setSubagent(facts: SubagentRowFacts): void {
+    this.subagent = facts
+    this.revision += 1
+  }
+
+  /**
    * Draw the header and the call rows through `fade` until it settles.
    * @param fade - the level and drawing settings of this card's own fade.
    */
@@ -1007,10 +1058,12 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    * @param lines - the result rows before preview truncation.
    * @param isError - whether the tool reported failure.
    * @param code - the span behind each row, for a result the card colours as code.
+   * @param diff - which rows are diff additions or removals, for a result the card boxes as a diff.
    */
-  setResult(lines: string[], isError: boolean, code?: (CodeSpan | undefined)[]): void {
+  setResult(lines: string[], isError: boolean, code?: (CodeSpan | undefined)[], diff?: (DiffMark | undefined)[]): void {
     this.resultLines = lines
     this.resultCode = code
+    this.resultDiff = diff
     this.status = isError ? 'error' : 'done'
     this.revision += 1
   }
@@ -1074,10 +1127,11 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    */
   private layout(outer: number, marked: boolean): ToolLayout {
     const palette = this.theme.palette
-    const glyph = this.status === 'running'
-      ? palette.warning('●')
-      : this.status === 'done' ? palette.success('●') : palette.error('●')
-    const header = `${glyph} ${palette.bold(this.toolName)}${this.call.title === '' ? '' : ` ${palette.dim(this.call.title)}`}`
+    if (this.subagent !== undefined && !this.expanded) {
+      const row = this.subagentRow(this.subagent, outer)
+      return { call: [row], result: [], lines: ['', row], marker: 0 }
+    }
+    const header = `${this.statusStyle()(TOOL_GLYPH)} ${palette.bold(this.toolName)}${this.call.title === '' ? '' : ` ${palette.link(this.call.title)}`}`
     const loading = this.status === 'running' ? [TOOL_RUNNING_ROW] : []
     const body = [...this.call.lines, ...loading, ...this.resultLines]
     // The spans align with the body by index; a half with no code gets a
@@ -1099,13 +1153,59 @@ export class ToolBlock implements Component, ToolSection, Foldable {
       : foldRows(body, this.theme.toolPreviewLines, hidden => foldMarker(hidden, marked ? 'marked' : 'transcript'))
     const shown = paintDiffRows(paintCodeRows(kept, code, this.theme.codeHighlight), kept, palette)
     const callCount = Math.min(this.call.lines.length + loading.length, shown.length)
-    const inner = Math.max(1, outer - 4)
-    const rows = (lines: readonly string[]): string[] =>
-      lines.flatMap(line => wrapTextWithAnsi(line, inner).map(part => `  ${palette.dim('│')} ${part}`))
-    const call = [...wrapTextWithAnsi(header, outer), ...rows(shown.slice(0, callCount))]
-    const result = rows(shown.slice(callCount))
     const cut = !this.expanded && body.length > this.theme.toolPreviewLines
-    return { call, result, lines: ['', ...call, ...result], marker: cut ? rows(shown.slice(-1)).length : 0 }
+    // Marks align with the body like the spans; the fold marker, the last
+    // kept row of a cut body, is never boxed.
+    const marks = [
+      ...this.call.diff ?? new Array<undefined>(this.call.lines.length).fill(undefined),
+      ...new Array<undefined>(loading.length).fill(undefined),
+      ...this.resultDiff ?? new Array<undefined>(this.resultLines.length).fill(undefined),
+    ].slice(0, cut ? kept.length - 1 : kept.length)
+    const inner = Math.max(1, outer - 4)
+    const rows = (from: number, to: number): string[] =>
+      boxDiffRows(shown.slice(from, to), marks.slice(from, to), inner, palette).map(part => `  ${palette.dim('│')} ${part}`)
+    const call = [...wrapTextWithAnsi(header, outer), ...rows(0, callCount)]
+    const result = rows(callCount, shown.length)
+    return { call, result, lines: ['', ...call, ...result], marker: cut ? rows(shown.length - 1, shown.length).length : 0 }
+  }
+
+  /**
+   * The colour of this card's status glyph.
+   * @returns warning while running, success once done, error once failed.
+   */
+  private statusStyle(): (text: string) => string {
+    const palette = this.theme.palette
+    return this.status === 'running' ? palette.warning : this.status === 'done' ? palette.success : palette.error
+  }
+
+  /**
+   * The one row a folded subagent card draws, led by the status-coloured
+   * {@link SUBAGENT_RUNNING_GLYPH}. A running row carries the accent tool
+   * name; a settled row is dim and ends on its outcome tag at the right edge:
+   * `[failed]` for an error, `[started]` for a call that handed the child to
+   * the background, whose result reads `started …` and whose glyph is dim,
+   * and `[done]` for a call that returned the child's answer.
+   * @param facts - the description and the dim facts.
+   * @param width - the columns the row fits.
+   * @returns the row, no wider than `width`.
+   */
+  private subagentRow(facts: SubagentRowFacts, width: number): string {
+    const palette = this.theme.palette
+    const meta = facts.meta.length === 0 ? '' : ` ${palette.dim(facts.meta.join(' · '))}`
+    const description = facts.description === '' ? '' : `  ${facts.description}`
+    if (this.status === 'running') {
+      const name = palette.bold(palette.accent(this.toolName))
+      return truncateToWidth(`${palette.warning(SUBAGENT_RUNNING_GLYPH)} ${name}${description}${meta}`, width, '…')
+    }
+    const started = this.status === 'done' && this.resultLines[0]?.startsWith('started ') === true
+    const tag = this.status === 'error'
+      ? palette.error('[failed]')
+      : started ? palette.dim('[started]') : palette.success('[done]')
+    const glyph = started ? palette.dim(SUBAGENT_RUNNING_GLYPH) : this.statusStyle()(SUBAGENT_RUNNING_GLYPH)
+    const left = `${glyph} ${palette.dim(facts.description === '' ? this.toolName : facts.description)}${meta}`
+    const cut = truncateToWidth(left, Math.max(1, width - visibleWidth(tag) - 1), '…')
+    const gap = ' '.repeat(Math.max(1, width - visibleWidth(cut) - visibleWidth(tag)))
+    return truncateToWidth(`${cut}${gap}${tag}`, width, '…')
   }
 }
 

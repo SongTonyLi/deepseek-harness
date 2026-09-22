@@ -1,6 +1,7 @@
 /** The live subagent panel in the running terminal: membership, focus, Enter, and the absence cases. */
 
 import { describe, expect, it } from 'vitest'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
 import { createPalette } from '../src/style.ts'
@@ -112,7 +113,7 @@ describe('the live subagent panel', () => {
     test.terminal.type(KEY.shiftDown)
     const screen = await test.screen()
     expect(screen).toContain('subagents · 3 listed')
-    expect(screen).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(screen).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     expect(panelRow(screen, 'session-kid')).toBe('session-kid · one-shot · resident · running · 1m12s · ↑1.2k ↓300')
     expect(panelRow(screen, 'reviewer')).toBe('reviewer · continuable · resident · idle · 8s · ↑1.2k ↓300')
     expect(panelRow(screen, 'session-broken')).toBe('session-broken · unreadable: corrupt')
@@ -143,14 +144,14 @@ describe('the live subagent panel', () => {
     // Shift+Down at the editor reaches the panel, because one is drawn.
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     // Down past the panel's last row reaches the bar, and Up comes back.
     test.terminal.type(KEY.down)
     await test.settle()
     expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
     test.terminal.type(KEY.up)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     // Tab walks the regions, so the bar is one press away whatever row the
     // panel's selection sits on.
     test.terminal.type(KEY.tab)
@@ -191,7 +192,7 @@ describe('the live subagent panel', () => {
     await reconcile(test, kid)
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     listed = []
     kid.setStatus('idle')
     test.tick()
@@ -232,7 +233,31 @@ describe('the live subagent panel', () => {
     expect(test.calls.followups.map(message => message.content).at(-1)).toEqual([{ type: 'text', text: 'after' }])
   })
 
-  it('moves the selection with Up and Down, opens one session, and comes back to the panel', async () => {
+  it('moves the selection with Up and Down and leaves the panel for the editor above its first row', async () => {
+    const test = await bench({
+      subagents: () => Promise.resolve([entry('session-kid'), entry('session-other')] as never),
+    })
+    const kid = await test.createChild({ id: 'session-kid' })
+    await test.createChild({ id: 'session-other' })
+    await reconcile(test, kid)
+
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.up)
+    await test.settle()
+    expect(test.terminal.text()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
+    // Up from the first row leaves the panel for the editor, which is drawn
+    // directly above it, instead of wrapping.
+    test.terminal.type(KEY.up)
+    await test.settle()
+    expect(await test.screen()).not.toContain('↑↓ children · Enter opens · Tab regions · Esc input')
+    for (const char of 'typed') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'typed' }]])
+  })
+
+  it('opens a row as a live view of that subagent session and returns to the parent with /parent', async () => {
     const test = await bench({
       subagents: () => Promise.resolve([
         entry('session-kid'),
@@ -250,39 +275,100 @@ describe('the live subagent panel', () => {
       },
     })
     const kid = await test.createChild({ id: 'session-kid' })
-    await test.createChild({ id: 'session-other' })
+    const other = await test.createChild({ id: 'session-other' })
+    other.session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'review the diff' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
     await reconcile(test, kid)
 
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text()).toContain('workspace: /work/session-other')
-    expect(test.terminal.text()).toContain('↑ ↓ scroll · Enter, Esc, or ← returns')
+    const inside = await test.screen()
+    expect(inside).toContain('subagent view')
+    expect(inside).toContain('review the diff')
+    expect(inside).toContain('subagent reviewer · Ctrl+P or /parent returns to session session-tui-test')
+    // The listing entry's detail rows follow the entry notice.
+    expect(inside).toContain('workspace: /work/session-other')
+    expect(test.hostCalls).toContain('observe-resident:session-other')
 
-    // Leaving the page hands the keyboard back to the panel on the same row.
-    test.terminal.type(KEY.escape)
+    // The view is live: what the child logs next is drawn as it lands.
+    other.session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'second look' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
     await test.settle()
-    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
-    test.terminal.type(KEY.up)
+    expect(await test.screen()).toContain('second look')
+
+    // The parent keeps logging while it is not drawn; returning reads it again.
+    test.appendPrompt('parent kept going')
+    for (const char of '/parent') test.terminal.type(char)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text()).toContain('workspace: /work/session-kid')
+    const back = await test.screen()
+    expect(back).toContain('back in session session-tui-test')
+    expect(back).toContain('parent kept going')
+    expect(back).not.toContain('subagent view')
+    expect(back).not.toContain('review the diff')
+
+    for (const char of '/parent') test.terminal.type(char)
     test.terminal.type(KEY.enter)
     await test.settle()
-    // Up from the first row leaves the panel for the editor, which is drawn
-    // directly above it, instead of wrapping.
-    test.terminal.type(KEY.up)
-    await test.settle()
-    expect(await test.screen()).not.toContain('↑↓ children · Enter details · Tab regions · Esc input')
-    for (const char of 'typed') test.terminal.type(char)
+    expect(await test.screen()).toContain('this is the root session; /parent returns from a subagent view')
+  })
+
+  it('refuses to open a row while a session switch is still opening', async () => {
+    const gate = { release: () => {} }
+    const options: Parameters<typeof bench>[0] & object = { subagents: () => Promise.resolve([entry('session-kid')] as never) }
+    const test = await bench(options)
+    const kid = await test.createChild({ id: 'session-kid' })
+    await reconcile(test, kid)
+    options.hostGate = gate
+    for (const char of '/new') test.terminal.type(char)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'typed' }]])
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('wait for the session switch to finish')
+    gate.release()
+    await test.settle()
+  })
+
+  it('enters a row with Right and returns with Ctrl+P', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([entry('session-kid', { label: 'explorer' })] as never) })
+    const kid = await test.createChild({ id: 'session-kid' })
+    await reconcile(test, kid)
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
+    await test.settle()
+    expect(await test.screen()).toContain('◆ subagent view ›')
+    test.terminal.type('\u0010')
+    await test.settle()
+    expect(await test.screen()).toContain('back in session session-tui-test')
+  })
+
+  it('enters a subagent from /subagents, releases every view on a session switch, and quits the root', async () => {
+    const test = await bench({
+      subagents: () => Promise.resolve([entry('session-kid', { label: 'explorer' })] as never),
+    })
+    await test.createChild({ id: 'session-kid' })
+    for (const char of '/subagents') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('subagent explorer')
+
+    for (const char of '/new') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('new session: session session-opened-1')
+    expect(await test.screen()).not.toContain('subagent view')
+    test.terminal.type(KEY.ctrlD)
+    await test.settle()
+    expect(test.quits.map(bound => bound.agent.session.id)).toEqual(['session-opened-1'])
   })
 
   it('reaches the first and last row with the Shift arrows, Home, End, and the page keys', async () => {
     const test = await bench({
+      color: true,
       subagents: () => Promise.resolve([
         entry('session-kid'),
         entry('session-other'),
@@ -304,14 +390,13 @@ describe('the live subagent panel', () => {
     await test.createChild({ id: 'session-third' })
     await reconcile(test, kid)
 
-    /** Open the selected row's details, read which child it names, and return to the panel. */
+    /** Read which child the accented panel row names, without leaving the panel. */
     const selected = async (): Promise<string> => {
-      test.terminal.type(KEY.enter)
-      await test.settle()
-      const line = test.terminal.text().split('\n').findLast(row => row.includes('workspace: /work/'))?.trim() ?? ''
-      test.terminal.type(KEY.escape)
-      await test.settle()
-      return line
+      const accent = '\u001b[36m'
+      await test.screen()
+      const row = test.terminal.output.split('\n').find(line => line.includes(accent) && /session-(kid|other|third)/u.test(line))
+      const id = /session-(kid|other|third)/u.exec(row ?? '')?.[0] ?? ''
+      return `workspace: /work/${id}`
     }
 
     test.terminal.type(KEY.shiftDown)
@@ -623,7 +708,7 @@ describe('renderSubagentPanel', () => {
     const entries = Array.from({ length: SUBAGENT_PANEL_MAX_ROWS + 1 }, (_, index) => listed(`session-${String(index)}`))
     const view = subagentPanelView({ entries, facts: new Map(), now: BENCH_NOW })
     const drawn = renderSubagentPanel(view, { palette, selected: 0, width: WIDE, failure: 'the listing timed out' })
-    expect(drawn.split('\n')[0]).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(drawn.split('\n')[0]).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     expect(drawn).toContain('session-0 · one-shot · resident · idle')
     expect(drawn).toContain('+1 more · /subagents lists them all')
     expect(drawn).toContain('listing failed: the listing timed out')

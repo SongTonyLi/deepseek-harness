@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import { turnGroups, type SectionSource, type TranscriptCursor } from '../src/navigation.ts'
+import type { FadeStyle } from '../src/fade.ts'
 import {
   READER_MIN_COLUMNS,
   TOO_SMALL,
@@ -13,10 +14,12 @@ import {
   readerGeometryFor,
   readerOutline,
   readerRows,
+  readerTints,
   reduceReader,
+  type ReaderRender,
   type ReaderState,
 } from '../src/reader.ts'
-import { GONE, transcript } from './section-source.ts'
+import { GONE, source, transcript } from './section-source.ts'
 import { createPalette } from '../src/style.ts'
 
 /** A palette that returns its text unchanged, so a spec reads the drawn columns. */
@@ -44,10 +47,10 @@ describe('readerGeometry', () => {
   const state: ReaderState = { cursor: { block: 0, part: 0 }, column: 'pane', offset: 0 }
 
   it('gives the turn list a share of the terminal between its two bounds', () => {
-    expect(readerGeometry(95, 40, state, 60)).toMatchObject({ list: 26, pane: 65, body: 37, tiny: false })
-    // The share is clamped at both ends: 18 columns at 60, 30 at 200.
+    expect(readerGeometry(95, 40, state, 60)).toMatchObject({ list: 23, pane: 68, body: 37, tiny: false })
+    // The share is clamped at both ends: 18 columns at 60, 28 at 200.
     expect(readerGeometry(60, 40, state, 60)).toMatchObject({ list: 18, pane: 38 })
-    expect(readerGeometry(200, 40, state, 60)).toMatchObject({ list: 30, pane: 166 })
+    expect(readerGeometry(200, 40, state, 60)).toMatchObject({ list: 28, pane: 168 })
   })
 
   it('draws one panel at a time below the configured width', () => {
@@ -71,13 +74,14 @@ describe('measurePane', () => {
     const groups = turnGroups(blocks)
     const group = groups[1]
     expect(group).toBeDefined()
-    // The prompt, the reasoning, the reply, and the tool's two sections, each
-    // under one header row.
-    expect(measurePane(group!, blocks, 60)).toEqual({ headers: [0, 2, 4, 45, 47], total: 49 })
+    // The prompt's one band row, then the reasoning, the reply, and the tool's
+    // two sections, each under one header row, with a blank row between each
+    // two sections.
+    expect(measurePane(group!, blocks, 60)).toEqual({ headers: [0, 2, 5, 47, 50], total: 52 })
   })
 
   it('reports nothing for a section the transcript no longer carries', () => {
-    expect(measurePane(GONE, transcript(), 60)).toEqual({ headers: [0], total: 1 })
+    expect(measurePane(GONE, transcript(), 60)).toEqual({ headers: [0], total: 0 })
   })
 })
 
@@ -104,7 +108,7 @@ describe('reduceReader over the turn list', () => {
 
   it('scrolls the panel to the section the list lands on', () => {
     const { blocks, groups, state, geometry } = reader({ block: 1, part: 0 }, { column: 'list' })
-    // The reply is the turn's third section, four rows into the panel.
+    // The reasoning is the turn's second section, two rows into the panel.
     expect(reduceReader(state, { kind: 'section', to: 'next' }, groups, geometry, blocks)).toMatchObject({
       cursor: { block: 2, part: 0 },
       offset: 2,
@@ -190,11 +194,11 @@ describe('reduceReader over the turn panel', () => {
   it('reads the cursor off the row the scroll landed on', () => {
     const { blocks, groups, state, geometry } = reader({ block: 1, part: 0 })
     // The turn opens on its prompt, with the reasoning two rows down and the
-    // reply four: the section under the top row is where the transcript
+    // reply five: the section under the top row is where the transcript
     // resumes, so the reading itself moves it.
     expect(reduceReader(state, { kind: 'scroll', to: 'next' }, groups, geometry, blocks).cursor).toEqual({ block: 1, part: 0 })
     expect(reduceReader({ ...state, offset: 1 }, { kind: 'scroll', to: 'next' }, groups, geometry, blocks).cursor).toEqual({ block: 2, part: 0 })
-    const reply = reduceReader({ ...state, offset: 3 }, { kind: 'scroll', to: 'next' }, groups, geometry, blocks)
+    const reply = reduceReader({ ...state, offset: 4 }, { kind: 'scroll', to: 'next' }, groups, geometry, blocks)
     expect(reply.cursor).toEqual({ block: 2, part: 1 })
     expect(reduceReader(reply, { kind: 'scroll', to: 'first' }, groups, geometry, blocks).cursor).toEqual({ block: 1, part: 0 })
     // The reply is the turn's longest section, so its last page starts in it.
@@ -227,8 +231,8 @@ describe('reduceReader over the turn panel', () => {
     const groups = turnGroups(blocks)
     const state: ReaderState = { cursor: { block: 2, part: 1 }, column: 'pane', offset: 0 }
     const wide = readerGeometryFor(state, groups, blocks, 95, 40, READER_MIN_COLUMNS)
-    // The reply is the turn's third section, which starts four rows down.
-    expect(reduceReader(state, { kind: 'anchor' }, groups, wide, blocks).offset).toBe(4)
+    // The reply is the turn's third section, which starts five rows down.
+    expect(reduceReader(state, { kind: 'anchor' }, groups, wide, blocks).offset).toBe(5)
     // A terminal with no panel at all has no row to anchor on.
     const narrow = readerGeometryFor({ ...state, column: 'list' }, groups, blocks, 50, 20, READER_MIN_COLUMNS)
     expect(reduceReader(state, { kind: 'anchor' }, groups, narrow, blocks).offset).toBe(0)
@@ -317,7 +321,7 @@ describe('readerRows', () => {
     }).map(stripTerminalSequences)
   }
 
-  const held: ReaderState = { cursor: { block: 2, part: 1 }, column: 'pane', offset: 4 }
+  const held: ReaderState = { cursor: { block: 2, part: 1 }, column: 'pane', offset: 5 }
 
   it('fills exactly the rows it was given at every size', () => {
     for (const [width, rows] of [[95, 40], [80, 24], [59, 20], [40, 12], [20, 6]] as const) {
@@ -334,26 +338,45 @@ describe('readerRows', () => {
     // readout under it states too: the blocks before the first prompt are a
     // row of the list too, so a turn's own number sits one behind its position.
     expect(lines).toContain('turn 2 of 3')
-    expect(lines).toContain('  1  [fix the fade a…]')
-    expect(lines).toContain('▸   ¶ reply')
-    expect(lines).toContain('⬡1')
-    expect(lines).toContain('✻¶⚒1')
-    expect(lines).toContain('── ¶ reply · turn 1 ')
-    expect(lines).toContain('reply row 0')
+    // The turn being read leads with `❯`, its prompt is cut before the
+    // markers, and the section the reader holds is marked under it.
+    expect(lines).toContain('│ ❯ 1  fix the fade… ✻¶◆1│')
+    expect(lines).toContain('│     ✻ Thinking         │')
+    expect(lines).toContain('│   ▸ ¶ Reply            │')
+    expect(lines).toContain('│   0  session start   ⬡1│')
+    // The held section carries the conversation walk's own gutter.
+    expect(lines).toContain('│ ┃ ¶ Reply')
+    expect(lines).toContain('│ ┃   reply row 0')
     expect(lines).toContain('↑↓ scrolls · PgUp PgDn pages · ← turns · Esc closes')
-    expect(lines).toContain('turn 2/3 · row 5/49')
+    expect(lines).toContain('turn 2/3 · row 6/52')
   })
 
-  it('marks every kind of section with its own glyph', () => {
-    const lines = draw({ ...held, cursor: { block: 0, part: 0 }, offset: 0 }, 95, 40).join('\n')
-    expect(lines).toContain('── ⬡ system prompt · turn 0 ')
-    const turn = draw({ ...held, cursor: { block: 2, part: 0 }, offset: 0 }, 95, 40).join('\n')
-    expect(turn).toContain('── you · turn 0 ')
-    expect(turn).toContain('── ✻ reasoning · turn 1 ')
-    // The tool's own sections sit past the reply, which the reading scrolls to.
-    const tool = draw({ ...held, cursor: { block: 3, part: 1 }, offset: 45 }, 95, 40).join('\n')
-    expect(tool).toContain('── ⚒ bash git status · call · turn 1 ')
-    expect(tool).toContain('── ⚒ bash git status · result · turn 1 ')
+  it('opens the turn on its prompt and heads every other section with its kind', () => {
+    const turn = draw({ ...held, cursor: { block: 2, part: 0 }, offset: 0 }, 95, 40)
+    const pane = turn.map(line => line.slice(27))
+    // The prompt, then each section under its header with a blank row between
+    // them, the held one behind the gutter.
+    expect(pane.slice(1, 7)).toEqual([
+      '  ❯ fix the fade at the top'.padEnd(68),
+      '',
+      '┃ ✻ Thinking',
+      '┃   the tail is matched backwards',
+      '',
+      '  ¶ Reply',
+    ])
+    const context = draw({ ...held, cursor: { block: 0, part: 0 }, offset: 0 }, 95, 40).join('\n')
+    expect(context).toContain('│ ┃ ⬡ system prompt')
+    expect(context).toContain('│ ┃   you are the agent')
+    // The tool's own sections sit past the reply, which the reading scrolls
+    // to: the call under the tool and its headline, the result indented under it.
+    const tool = draw({ ...held, cursor: { block: 3, part: 1 }, offset: 47 }, 95, 40)
+    expect(tool.map(line => line.slice(27)).slice(1, 6)).toEqual([
+      '  ◆ bash git status',
+      '    {"command":"git status"}',
+      '',
+      '┃   ⎿ Result',
+      '┃     clean tree',
+    ])
   })
 
   it('names the list\'s own keys while the list holds the keyboard', () => {
@@ -363,14 +386,14 @@ describe('readerRows', () => {
     // rather than the position.
     const narrow = draw({ ...held, column: 'list' }, 60, 20).join('\n')
     expect(narrow).toContain('↑↓ sections · → opens · Esc closes')
-    expect(narrow).toContain('turn 2/3 · row 5/49')
+    expect(narrow).toContain('turn 2/3 · row 6/52')
   })
 
   it('shows the query line and how much of the transcript it kept', () => {
     const lines = draw({ ...held, column: 'filter', query: 'green' }, 95, 40, 'green').join('\n')
     expect(lines).toContain('/ green')
     expect(lines).toContain('1/3 turns')
-    expect(lines).toContain('  2  [run the tests]')
+    expect(lines).toContain('❯ 2  run the tests')
   })
 
   it('says so when no turn matches', () => {
@@ -403,9 +426,11 @@ describe('readerRows', () => {
       rows: 40,
       minColumns: READER_MIN_COLUMNS,
       totalTurns: 1,
-    })
+    }).map(stripTerminalSequences)
     expect(lines).toHaveLength(40)
-    expect(lines.join('\n')).toContain('  9  [gone]')
+    // The turn row stands, and the section row under it names nothing.
+    expect(lines.join('\n')).toContain('❯ 9  gone')
+    expect(lines[2]).toBe(`│   ▸${' '.repeat(20)}│ `)
   })
 
   it('refuses a terminal the frame does not fit in', () => {
@@ -418,14 +443,171 @@ describe('readerRows', () => {
   it('draws the turn alone on a narrow terminal, and the list alone the other way', () => {
     expect(draw(held, 59, 20).join('\n')).toContain('reply row 0')
     const list = draw({ ...held, column: 'list' }, 59, 20).join('\n')
-    expect(list).toContain('  1  [fix the fade at the top]')
+    expect(list).toContain('  0  session start')
+    expect(list).toContain('❯ 1  fix the fade at the top')
     expect(list).not.toContain('reply row 0')
   })
 
-  it('cuts a listed prompt the width cannot hold, keeping both brackets and its markers', () => {
+  it('cuts a listed prompt the width cannot hold, keeping its markers', () => {
     const lines = draw({ ...held, column: 'list' }, 60, 20).join('\n')
-    expect(lines).toContain('✻¶⚒1')
-    expect(lines).toContain('  1  [fix th…]')
+    expect(lines).toContain('│ ❯ 1  fix the… ✻¶◆1│')
     expect(lines).toContain('Esc closes')
+  })
+
+  it('aligns every turn number in the column the widest one needs', () => {
+    const blocks = transcript()
+    const groups = turnGroups(blocks).map((group, index) => index === 2 ? { ...group, turn: 12 } : group)
+    const lines = readerRows({ ...held, column: 'list' }, groups, {
+      palette: PLAIN,
+      blocks,
+      width: 95,
+      rows: 40,
+      minColumns: READER_MIN_COLUMNS,
+      totalTurns: groups.length,
+    }).map(stripTerminalSequences).join('\n')
+    expect(lines).toContain('│    0  session start  ⬡1│')
+    expect(lines).toContain('│ ❯  1  fix the fad… ✻¶◆1│')
+    expect(lines).toContain('│   12  run the tests   ¶│')
+  })
+})
+
+/**
+ * A transcript whose second turn shows what the panel restyles: a two-row prompt, a
+ * reply with Markdown bullets, a running tool, and a tool that answered with a diff.
+ * @returns the navigable blocks, oldest first.
+ */
+function styled(): SectionSource[] {
+  return [
+    source('user', [{ kind: 'user', rows: ['patch checkout', 'and keep the tests'] }], { turn: 0 }),
+    source('assistant', [{ kind: 'reply', rows: ['- first', '  * nested', 'plain - dash'] }], { turn: 1 }),
+    source('tool', [{ kind: 'call', rows: ['src/api/checkout.ts', '{"path":"src/api/checkout.ts"}'] }, {
+      kind: 'result',
+      rows: ['@@ -1 +1 @@', '- old line', '+ new line', '  same'],
+    }], { turn: 1, name: 'edit', title: 'src/api/checkout.ts' }),
+    source('tool', [{ kind: 'call', rows: ['{"query":"p99"}'] }], { turn: 1, name: 'grep' }),
+  ]
+}
+
+/** The indent a tool result's header is drawn at. */
+const RESULT_INDENT = '  '
+
+describe('the turn panel\'s styling', () => {
+  /** A palette that emits its sequences, so a spec can read where each role lands. */
+  const COLOR = createPalette(true)
+
+  /** A truecolor ramp from black to a light gray foreground. */
+  const TRUECOLOR: FadeStyle = { capability: 'truecolor', ramp: [{ r: 8, g: 8, b: 8 }, { r: 220, g: 220, b: 220 }] }
+
+  /**
+   * Draw the styled transcript's turn.
+   * @param cursor - the section the reader holds.
+   * @param extra - the bands and the reveal.
+   * @param palette - the palette the frame is drawn with.
+   * @returns the lines.
+   */
+  function draw(cursor: TranscriptCursor, extra: Pick<ReaderRender, 'tints' | 'reveal'> = {}, palette = PLAIN): string[] {
+    const blocks = styled()
+    const groups = turnGroups(blocks)
+    return readerRows({ cursor, column: 'pane', offset: 0 }, groups, {
+      palette,
+      blocks,
+      width: 95,
+      rows: 30,
+      minColumns: READER_MIN_COLUMNS,
+      totalTurns: groups.length,
+      ...extra,
+    })
+  }
+
+  it('draws a reply\'s bullets as bullets and drops a call row its header already names', () => {
+    const pane = draw({ block: 1, part: 0 }).map(line => stripTerminalSequences(line).slice(27))
+    expect(pane.slice(1, 17)).toEqual([
+      '  ❯ patch checkout'.padEnd(68),
+      '    and keep the tests'.padEnd(68),
+      '',
+      '┃ ¶ Reply',
+      '┃   • first',
+      '┃     • nested',
+      '┃   plain - dash',
+      '',
+      '  ◆ edit src/api/checkout.ts',
+      '    {"path":"src/api/checkout.ts"}',
+      '',
+      '    ⎿ Result',
+      '      @@ -1 +1 @@',
+      '      - old line',
+      '      + new line',
+      '        same',
+    ])
+    // A tool whose result has not landed says it is still running.
+    expect(pane[18]).toBe('  ◆ grep · running')
+  })
+
+  it('paints a diff\'s rows green and red, on bands the width of the panel', () => {
+    const bare = draw({ block: 2, part: 1 }, {}, COLOR)
+    expect(bare.find(line => line.includes('+ new line'))).toContain('\u001b[32m+ new line\u001b[39m')
+    expect(bare.find(line => line.includes('- old line'))).toContain('\u001b[31m- old line\u001b[39m')
+    const tints = readerTints(TRUECOLOR, { r: 0, g: 0, b: 0 })
+    expect(tints).toBeDefined()
+    const banded = draw({ block: 2, part: 1 }, { tints }, COLOR)
+    const added = banded.find(line => line.includes('+ new line'))
+    expect(added).toMatch(/\u001b\[48;2;\d+;\d+;\d+m\u001b\[32m\+ new line\u001b\[39m {52}\u001b\[49m$/)
+    expect(banded.find(line => line.includes('- old line'))).toContain('\u001b[48;2;')
+    // The prompt band spans the whole panel.
+    const prompt = banded.find(line => line.includes('patch checkout'))
+    expect(prompt).toMatch(/\u001b\[48;2;\d+;\d+;\d+m.*patch checkout.* {50}\u001b\[49m$/)
+    // Every banded row still fits the frame exactly.
+    for (const line of banded) expect(visibleWidth(line)).toBeLessThanOrEqual(95)
+  })
+
+  it('accents the section the reader holds and draws the rest the way the conversation does', () => {
+    const lines = draw({ block: 2, part: 1 }, {}, COLOR).join('\n')
+    expect(lines).toContain(`${COLOR.accent('┃ ')}${RESULT_INDENT}${COLOR.bold(COLOR.accent('⎿ Result'))}`)
+    // A call's glyph takes its status color: green once answered, yellow while it runs.
+    expect(lines).toContain(`${COLOR.success('◆')} ${COLOR.bold('edit')}${COLOR.link(' src/api/checkout.ts')}`)
+    expect(lines).toContain(`${COLOR.warning('◆')} ${COLOR.bold('grep')}${COLOR.link(' · running')}`)
+    expect(lines).toContain(`${COLOR.accent('¶')} Reply`)
+    expect(lines).toContain(`${COLOR.accent('❯')} ${COLOR.bold('patch checkout')}`)
+    const prompt = draw({ block: 0, part: 0 }, {}, COLOR).join('\n')
+    expect(prompt).toContain(`${COLOR.bold(COLOR.accent('❯'))} ${COLOR.bold('patch checkout')}`)
+    expect(draw({ block: 0, part: 0 }, {}, COLOR).join('\n')).toContain(COLOR.dim('⎿ Result'))
+  })
+
+  it('floats out the whole turn, or only the section a step landed on, without moving a row', () => {
+    const settled = draw({ block: 2, part: 1 }, {}, COLOR)
+    const whole = draw({ block: 2, part: 1 }, { reveal: { age: 0, style: TRUECOLOR } }, COLOR)
+    const section = draw({ block: 2, part: 1 }, { reveal: { age: 0, style: TRUECOLOR, section: { block: 2, part: 1 } } }, COLOR)
+    expect(whole).toHaveLength(settled.length)
+    expect(whole.map(stripTerminalSequences)).toEqual(settled.map(stripTerminalSequences))
+    const changed = (lines: readonly string[]): string[] =>
+      lines.filter((line, index) => line !== settled[index]).map(stripTerminalSequences)
+    expect(changed(whole).some(line => line.includes('patch checkout'))).toBe(true)
+    expect(changed(whole).some(line => line.includes('clean') || line.includes('+ new line'))).toBe(true)
+    // A section reveal leaves every other section's rows byte for byte.
+    const moved = changed(section)
+    expect(moved.some(line => line.includes('+ new line'))).toBe(true)
+    expect(moved.some(line => line.includes('patch checkout') || line.includes('• first'))).toBe(false)
+    // At the end of the ramp the reveal draws exactly the settled turn.
+    expect(draw({ block: 2, part: 1 }, { reveal: { age: 2, style: TRUECOLOR } }, COLOR)).toEqual(settled)
+  })
+})
+
+describe('readerTints', () => {
+  const background = { r: 16, g: 16, b: 16 }
+  const ramp = [{ r: 30, g: 30, b: 30 }, { r: 220, g: 220, b: 220 }]
+
+  it('mixes the bands from the background under a color capability', () => {
+    const truecolor = readerTints({ capability: 'truecolor', ramp }, background)
+    expect(truecolor?.prompt('x')).toMatch(/^\u001b\[48;2;\d+;\d+;\d+mx\u001b\[49m$/)
+    const indexed = readerTints({ capability: 'ansi256', ramp }, background)
+    expect(indexed?.added('x')).toMatch(/^\u001b\[48;5;\d+mx\u001b\[49m$/)
+    expect(indexed?.removed('x')).toMatch(/^\u001b\[48;5;\d+mx\u001b\[49m$/)
+  })
+
+  it('draws no band where no color can be mixed', () => {
+    expect(readerTints({ capability: 'dim', ramp }, background)).toBeUndefined()
+    expect(readerTints({ capability: 'none', ramp: [] }, background)).toBeUndefined()
+    expect(readerTints({ capability: 'truecolor', ramp }, undefined)).toBeUndefined()
+    expect(readerTints({ capability: 'truecolor', ramp: [] }, background)).toBeUndefined()
   })
 })

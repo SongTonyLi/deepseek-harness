@@ -1,7 +1,7 @@
 /**
- * The reader: the whole conversation read full screen in two panels — every
- * turn listed on the left, the turn the list holds on the right, scrolled row
- * by row.
+ * The reader: the whole conversation read full screen, one turn at a time —
+ * the turn being read drawn as the main panel, and a narrow list of every turn
+ * beside it that steps between them.
  *
  * The transcript above the editor is the terminal's own scrollback and is
  * never rewritten; this surface is the opposite — free geometry over the
@@ -11,12 +11,15 @@
  *
  * Everything in this module is plain data: it reads the transcript's own
  * blocks and one {@link ReaderState} and returns lines. No pi-tui tree, no
- * clock, and no terminal — the overlay component owns those.
+ * clock, and no terminal — the pane component owns those. A reveal is drawn
+ * from the age the pane passes in, and changes only the colors of the rows it
+ * covers, never how many rows anything draws.
  * @module @deepseek-ai/dsh-tui-app/reader
  */
 
-import { fuzzyFilter, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
+import { fuzzyFilter, truncateToWidth, visibleWidth, wrapTextWithAnsi, type RgbColor } from '@earendil-works/pi-tui'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { mixFadeColor, nearestAnsi256, recolorLines, type FadeStyle } from './fade.ts'
 import { bottomRule, chip, fitLegend, legendRule, ruleRoom, topRule } from './frame.ts'
 import {
   cursorAt,
@@ -29,7 +32,7 @@ import {
   type TurnGroup,
   type TurnMarkers,
 } from './navigation.ts'
-import type { Palette } from './style.ts'
+import { createPalette, type Palette, type Style } from './style.ts'
 
 /** Columns the reader needs before it draws the held turn beside the turn list. */
 export const READER_MIN_COLUMNS = 60
@@ -44,10 +47,10 @@ export const READER_MIN_ROWS = 8
 const LIST_MIN_WIDTH = 18
 
 /** Widest turn list. */
-const LIST_MAX_WIDTH = 30
+const LIST_MAX_WIDTH = 28
 
 /** Share of the terminal the turn list asks for between its two bounds. */
-const LIST_SHARE = 0.28
+const LIST_SHARE = 0.25
 
 /** Rows the frame itself takes: the top rule, the legend rule, and the bottom rule. */
 const CHROME_ROWS = 3
@@ -64,14 +67,53 @@ const ELLIPSIS = '…'
 /** The left border of a body row and the border between the two panels. */
 const SIDE = '│'
 
-/** Marks the listed turn the keyboard holds. */
-const LIST_MARK = '▸ '
+/** Marks the listed section the keyboard holds. */
+const LIST_MARK = '▸'
 
-/** What a section header opens with before its label. */
-const HEADER_LEAD = '──'
+/** Opens the prompt band and the list's row for the turn being read, as it opens a prompt in the conversation. */
+const PROMPT_GLYPH = '❯'
 
-/** What a section header fills the rest of its panel with. */
-const HEADER_FILL = '─'
+/** The gutter beside every row of the section the reader holds: the conversation walk's own mark. */
+const HELD_GUTTER = '┃ '
+
+/** The gutter beside every other row of the panel. */
+const GUTTER = '  '
+
+/** Columns a section's rows are indented by under its header. */
+const BODY_INDENT = '  '
+
+/** Columns a tool result's header is indented by, so it reads as the answer to the call above it. */
+const RESULT_INDENT = '  '
+
+/** What a Markdown bullet of a reply is drawn as. */
+const BULLET = '• '
+
+/** A Markdown bullet at the start of a reply row: its indentation, then the marker and one space. */
+const MARKDOWN_BULLET = /^(\s*)[-*+] /
+
+/** What opens a source row a diff adds. */
+const ADDED_PREFIX = '+ '
+
+/** What opens a source row a diff removes. */
+const REMOVED_PREFIX = '- '
+
+/** Share of the way from the terminal background toward the foreground the prompt band is mixed at. */
+const PROMPT_TINT = 0.12
+
+/** Share of the way from the terminal background toward green or red a diff band is mixed at. */
+const DIFF_TINT = 0.22
+
+/** The color the added band is mixed toward: the palette's own `success` green. */
+const ADDED_RGB: RgbColor = { r: 0, g: 205, b: 0 }
+
+/** The color the removed band is mixed toward: the palette's own `error` red. */
+const REMOVED_RGB: RgbColor = { r: 205, g: 0, b: 0 }
+
+/** Control Sequence Introducer. */
+const CSI = '\u001b['
+
+/** Ends a background a band set, and nothing else. */
+const RESET_BACKGROUND = `${CSI}49m`
 
 /** What the reader says on a terminal it cannot draw its frame in. */
 export const TOO_SMALL = `terminal too small for the reader (needs ${String(READER_MIN_WIDTH)}×${String(READER_MIN_ROWS)})`
@@ -85,11 +127,13 @@ export const TOO_SMALL = `terminal too small for the reader (needs ${String(READ
  */
 export const READER_HINTS: Record<'list' | 'pane', readonly [string, ...string[]]> = {
   list: [
+    '↑↓ jk sections · PgUp PgDn [ ] turns · → opens · / filters · Esc q closes',
     '↑↓ sections · PgUp PgDn turns · → opens · / filters · Esc closes',
     '↑↓ sections · → opens · Esc closes',
     'Esc closes',
   ],
   pane: [
+    '↑↓ jk scrolls · PgUp PgDn Space b pages · [ ] turns · ← list · Esc q closes',
     '↑↓ scrolls · PgUp PgDn pages · ← turns · Esc closes',
     '↑↓ scrolls · ← turns · Esc closes',
     'Esc closes',
@@ -120,9 +164,9 @@ export interface ReaderState {
 
 /** Where each section of the held turn begins in the turn panel, and how many rows it has in all. */
 export interface PaneMeasure {
-  /** The panel row each section's header is drawn on, in reading order. */
+  /** The panel row each section's first row is drawn on, in reading order. */
   headers: readonly number[]
-  /** Rows the panel has in all, headers included. */
+  /** Rows the panel has in all, headers and the blank rows between sections included. */
   total: number
 }
 
@@ -168,6 +212,29 @@ export type ReaderIntent =
   /** Put the section being read back in view after the panel was rewrapped. */
   | { kind: 'anchor' }
 
+/**
+ * The background bands the turn panel lays under the prompt and under the
+ * rows a diff adds or removes. Each wraps text that already fills its columns.
+ */
+export interface ReaderTints {
+  /** The band under the prompt that opens the turn. */
+  prompt: Style
+  /** The band under a row a diff adds. */
+  added: Style
+  /** The band under a row a diff removes. */
+  removed: Style
+}
+
+/** A reveal in flight: the rows it covers are drawn floating out toward their settled colors. */
+export interface ReaderReveal {
+  /** Elapsed time in fade periods; `style.ramp.length` is the settled end. */
+  age: number
+  /** The capability and the ramp the float-out is encoded with. */
+  style: FadeStyle
+  /** The one section whose rows float out; absent floats out the whole turn. */
+  section?: TranscriptCursor
+}
+
 /** How the reader is drawn. */
 export interface ReaderRender {
   /** The palette the frame, the list, and the headers are styled with. */
@@ -182,6 +249,44 @@ export interface ReaderRender {
   minColumns: number
   /** Turn groups the transcript has before a query narrowed the list. */
   totalTurns: number
+  /** The bands under the prompt and the diff rows; absent draws no band. */
+  tints?: ReaderTints | undefined
+  /** The reveal in flight; absent draws the settled turn. */
+  reveal?: ReaderReveal | undefined
+}
+
+/**
+ * Encode one band color as a background under the capability that reads it.
+ * @param capability - `truecolor` writes the color itself, `ansi256` the nearest index.
+ * @param color - the band color.
+ * @returns the style that lays the band under a text.
+ */
+function band(capability: 'truecolor' | 'ansi256', color: RgbColor): Style {
+  const open = capability === 'truecolor'
+    ? `${CSI}48;2;${String(color.r)};${String(color.g)};${String(color.b)}m`
+    : `${CSI}48;5;${String(nearestAnsi256(color))}m`
+  return text => `${open}${text}${RESET_BACKGROUND}`
+}
+
+/**
+ * The bands the turn panel lays under the prompt and the diff rows, mixed from
+ * the terminal's own background so they stay a shade off it on any theme.
+ * @param style - the fade drawing settings, whose capability says how far the
+ * terminal encodes a color and whose ramp ends on the assumed foreground.
+ * @param background - the terminal background, as the terminal reported it.
+ * @returns the bands, or undefined on a terminal that encodes no color, that
+ * reported no background, or that has no ramp to read the foreground from.
+ */
+export function readerTints(style: FadeStyle, background: RgbColor | undefined): ReaderTints | undefined {
+  const capability = style.capability
+  const foreground = style.ramp.at(-1)
+  if (capability !== 'truecolor' && capability !== 'ansi256') return undefined
+  if (background === undefined || foreground === undefined) return undefined
+  return {
+    prompt: band(capability, mixFadeColor(background, foreground, PROMPT_TINT)),
+    added: band(capability, mixFadeColor(background, ADDED_RGB, DIFF_TINT)),
+    removed: band(capability, mixFadeColor(background, REMOVED_RGB, DIFF_TINT)),
+  }
 }
 
 /**
@@ -201,7 +306,7 @@ function clamp(value: number, min: number, max: number): number {
  * @param right - the other.
  * @returns true when both name the same block and part.
  */
-function sameCursor(left: TranscriptCursor, right: TranscriptCursor): boolean {
+export function sameSection(left: TranscriptCursor, right: TranscriptCursor): boolean {
   return left.block === right.block && left.part === right.part
 }
 
@@ -217,13 +322,24 @@ function groupIndex(state: ReaderState, groups: readonly TurnGroup[]): number {
 }
 
 /**
+ * The turn the panel shows.
+ * @param state - where the reader is.
+ * @param groups - the turns the list names.
+ * @returns the turn holding the cursor, the first listed turn when none
+ * holds it, and undefined for a list naming no turn.
+ */
+export function readerTurn(state: ReaderState, groups: readonly TurnGroup[]): TurnGroup | undefined {
+  return groups[groupIndex(state, groups)]
+}
+
+/**
  * Which section of its turn the reader is reading.
  * @param state - where the reader is.
  * @param group - the turn that holds the cursor.
  * @returns the index into the turn's sections, and 0 when the turn no longer carries it.
  */
 function sectionIndex(state: ReaderState, group: TurnGroup): number {
-  const index = group.sections.findIndex(section => sameCursor(section, state.cursor))
+  const index = group.sections.findIndex(section => sameSection(section, state.cursor))
   return index === -1 ? 0 : index
 }
 
@@ -241,23 +357,23 @@ function sectionAt(cursor: TranscriptCursor, blocks: readonly SectionSource[]): 
 }
 
 /**
- * What one section is called in the turn panel, with the glyph that says what
- * kind of thing it is at a glance.
+ * The glyph a section opens with, in the list and in its panel header: the
+ * glyph the conversation draws that kind of block with, so a section reads the
+ * same on both surfaces.
  * @param block - the block the section belongs to.
  * @param part - the section.
- * @returns the label, e.g. `✻ reasoning` or `⚒ bash git status · result`.
+ * @returns the glyph.
  */
-function paneLabel(block: SectionSource, part: SectionPart): string {
-  const label = sectionLabel(block, part)
+function sectionGlyph(block: SectionSource, part: SectionPart): string {
   switch (block.blockKind) {
-    case 'context':
-      return `⬡ ${label}`
-    case 'tool':
-      return `⚒ ${label}`
     case 'user':
-      return label
+      return PROMPT_GLYPH
+    case 'context':
+      return '⬡'
     case 'assistant':
-      return part.kind === 'reasoning' ? `✻ ${label}` : `¶ ${label}`
+      return part.kind === 'reasoning' ? '✻' : '¶'
+    case 'tool':
+      return part.kind === 'result' ? '⎿' : '◆'
     /* v8 ignore next 2 -- closed-union exhaustiveness guard */
     default:
       return assertNever(block, 'tui reader block kind')
@@ -265,32 +381,258 @@ function paneLabel(block: SectionSource, part: SectionPart): string {
 }
 
 /**
- * One section's rows as the panel wraps them; never folded, because folding is
- * a decision the transcript makes and this is where the rest of the text is.
+ * Whether a tool's result has landed.
+ * @param block - the tool's block.
+ * @returns true once the block carries its result section.
+ */
+function settledTool(block: SectionSource): boolean {
+  return block.parts().some(candidate => candidate.kind === 'result')
+}
+
+/**
+ * What a section is named after its glyph: `Prompt`, `Thinking`, and `Reply`
+ * for a message, the tool and its headline for a call, `Result` for its
+ * answer, and the injected context's own label. A tool whose result has not
+ * landed says it is still running.
+ * @param block - the block the section belongs to.
+ * @param part - the section.
+ * @returns the name, unstyled.
+ */
+function sectionName(block: SectionSource, part: SectionPart): string {
+  switch (block.blockKind) {
+    case 'user':
+      return 'Prompt'
+    case 'context':
+      return sectionLabel(block, part)
+    case 'assistant':
+      return part.kind === 'reasoning' ? 'Thinking' : 'Reply'
+    case 'tool': {
+      if (part.kind === 'result') return 'Result'
+      const card = block.title === '' ? block.name : `${block.name} ${block.title}`
+      return settledTool(block) ? card : `${card} · running`
+    }
+    /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+    default:
+      return assertNever(block, 'tui reader block kind')
+  }
+}
+
+/**
+ * One section's header as it is drawn at rest, styled the way the
+ * conversation draws that kind of block: a call's `◆` in its status color
+ * with the tool name in bold and its headline in the link blue, and a
+ * reasoning, a result, and an injected context recessed.
+ * @param block - the block the section belongs to.
+ * @param part - the section.
+ * @param palette - the palette the header is styled with.
+ * @returns the styled glyph and name.
+ */
+function restingHeader(block: SectionSource, part: SectionPart, palette: Palette): string {
+  const glyph = sectionGlyph(block, part)
+  const name = sectionName(block, part)
+  if (block.blockKind === 'tool' && part.kind === 'call') {
+    const status = settledTool(block) ? palette.success : palette.warning
+    return `${status(glyph)} ${palette.bold(block.name)}${palette.link(name.slice(block.name.length))}`
+  }
+  if (block.blockKind === 'assistant' && part.kind === 'reply') return `${palette.accent(glyph)} ${name}`
+  return palette.dim(`${glyph} ${name}`)
+}
+
+/** How a section's source rows are tinted in the panel. */
+type RowTone = 'plain' | 'dim' | 'added' | 'removed'
+
+/**
+ * The tone one source row draws in.
+ * @param block - the block the section belongs to.
+ * @param part - the section.
+ * @param row - the source row.
+ * @returns the tone: a tool's diff rows by their prefix, a reasoning or a
+ * call recessed, and everything else plain.
+ */
+function rowTone(block: SectionSource, part: SectionPart, row: string): RowTone {
+  if (block.blockKind === 'tool') {
+    if (row.startsWith(ADDED_PREFIX)) return 'added'
+    if (row.startsWith(REMOVED_PREFIX)) return 'removed'
+  }
+  return part.kind === 'reasoning' || part.kind === 'call' ? 'dim' : 'plain'
+}
+
+/**
+ * The source rows a section's body draws. A call whose first row repeats the
+ * headline the header already names starts after it, and a reply's Markdown
+ * bullets are drawn as `•`; every other row is the model-facing text as is.
+ * @param block - the block the section belongs to.
+ * @param part - the section.
+ * @returns the rows, unwrapped.
+ */
+function bodySource(block: SectionSource, part: SectionPart): readonly string[] {
+  if (block.blockKind === 'tool' && part.kind === 'call' && block.title !== '' && part.rows[0] === block.title) {
+    return part.rows.slice(1)
+  }
+  if (part.kind === 'reply') return part.rows.map(row => row.replace(MARKDOWN_BULLET, `$1${BULLET}`))
+  return part.rows
+}
+
+/** How the rows of one section are painted. */
+interface SectionLook {
+  /** The palette the rows are styled with. */
+  palette: Palette
+  /** The bands under the prompt and the diff rows; absent draws none. */
+  tints?: ReaderTints | undefined
+  /** Whether the reader holds this section. */
+  held: boolean
+}
+
+/**
+ * Fit one styled text to an exact number of columns.
+ * @param text - the text, already styled.
+ * @param width - the columns the cell takes.
+ * @returns the text cut and padded to exactly `width`.
+ */
+function cell(text: string, width: number): string {
+  const cut = truncateToWidth(text, Math.max(1, width), ELLIPSIS)
+  return `${cut}${' '.repeat(Math.max(0, width - visibleWidth(cut)))}`
+}
+
+/**
+ * The prompt that opens a turn: every wrapped row on one band across the
+ * panel, the first led by `❯`, as the conversation draws a prompt.
+ * @param rows - the prompt's source rows.
+ * @param width - the columns right of the gutter.
+ * @param look - the palette, the bands, and whether the reader holds the prompt.
+ * @returns the rows, each exactly `width` columns.
+ */
+function promptRows(rows: readonly string[], width: number, look: SectionLook): string[] {
+  const { palette, tints, held } = look
+  const room = Math.max(1, width - visibleWidth(BODY_INDENT))
+  const glyph = held ? palette.bold(palette.accent(PROMPT_GLYPH)) : palette.accent(PROMPT_GLYPH)
+  const wrapped = rows.flatMap(row => wrapTextWithAnsi(row, room))
+  return wrapped.map((line, index) => {
+    const lead = index === 0 ? `${glyph} ` : BODY_INDENT
+    const text = cell(`${lead}${palette.bold(line)}`, width)
+    return tints === undefined ? text : tints.prompt(text)
+  })
+}
+
+/**
+ * One section's header row: its glyph and name, accented end to end while the
+ * reader holds the section.
+ * @param block - the block the section belongs to.
+ * @param part - the section.
+ * @param width - the columns right of the gutter.
+ * @param look - the palette and whether the reader holds the section.
+ * @returns the header, no wider than `width`.
+ */
+function headerRow(block: SectionSource, part: SectionPart, width: number, look: SectionLook): string {
+  const { palette, held } = look
+  const indent = part.kind === 'result' ? RESULT_INDENT : ''
+  const text = held
+    ? palette.bold(palette.accent(`${sectionGlyph(block, part)} ${sectionName(block, part)}`))
+    : restingHeader(block, part, palette)
+  return truncateToWidth(`${indent}${text}`, Math.max(1, width), ELLIPSIS)
+}
+
+/**
+ * One wrapped body row, painted in its tone.
+ * @param line - the wrapped text.
+ * @param tone - how the source row it came from is tinted.
+ * @param indent - the columns before it.
+ * @param width - the columns right of the gutter.
+ * @param look - the palette and the bands.
+ * @returns the row; a diff row on a band fills the panel to its last column.
+ */
+function bodyRow(line: string, tone: RowTone, indent: string, width: number, look: SectionLook): string {
+  const { palette, tints } = look
+  switch (tone) {
+    case 'plain':
+      return `${indent}${line}`
+    case 'dim':
+      return `${indent}${palette.dim(line)}`
+    case 'added':
+    case 'removed': {
+      const paint = tone === 'added' ? palette.success : palette.error
+      const tint = tints === undefined ? undefined : tone === 'added' ? tints.added : tints.removed
+      if (tint === undefined) return `${indent}${paint(line)}`
+      return `${indent}${tint(cell(paint(line), Math.max(1, width - visibleWidth(indent))))}`
+    }
+    /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+    default:
+      return assertNever(tone, 'tui reader row tone')
+  }
+}
+
+/**
+ * One section's rows as the panel draws them: the prompt band, or a header
+ * and the section's rows wrapped under it, every row behind the gutter that
+ * carries the conversation walk's `┃` while the reader holds the section.
+ * Never folded, because folding is a decision the transcript makes and this
+ * is where the rest of the text is. How many rows come back depends on the
+ * text and the width alone, never on the palette, the bands, or whether the
+ * section is held.
  * @param cursor - the section.
  * @param blocks - the navigable blocks.
- * @param width - the panel's columns.
- * @returns the wrapped rows, unstyled.
+ * @param width - the panel's columns, the gutter included.
+ * @param look - the palette, the bands, and whether the reader holds the section.
+ * @returns the rows, or none for a section the transcript no longer carries.
  */
-function sectionBody(cursor: TranscriptCursor, blocks: readonly SectionSource[], width: number): string[] {
-  const held = sectionAt(cursor, blocks)
-  if (held === undefined) return []
-  return held.part.rows.flatMap(row => wrapTextWithAnsi(row, Math.max(1, width)))
+function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[], width: number, look: SectionLook): string[] {
+  const found = sectionAt(cursor, blocks)
+  if (found === undefined) return []
+  const { block, part } = found
+  const content = Math.max(1, width - visibleWidth(GUTTER))
+  let rows: string[]
+  if (block.blockKind === 'user') {
+    rows = promptRows(part.rows, content, look)
+  } else {
+    const indent = part.kind === 'result' ? `${RESULT_INDENT}${BODY_INDENT}` : BODY_INDENT
+    const room = Math.max(1, content - visibleWidth(indent))
+    rows = [headerRow(block, part, content, look), ...bodySource(block, part).flatMap((row) => {
+      const tone = rowTone(block, part, row)
+      return wrapTextWithAnsi(row, room).map(line => bodyRow(line, tone, indent, content, look))
+    })]
+  }
+  const gutter = look.held ? look.palette.accent(HELD_GUTTER) : GUTTER
+  return rows.map(row => `${gutter}${row}`)
 }
+
+/**
+ * Lay out every section of one turn, a blank row between each two.
+ * @param group - the turn the panel shows.
+ * @param blocks - the navigable blocks.
+ * @param width - the panel's columns.
+ * @param look - the palette and bands, and which section the reader holds.
+ * @returns each section's rows, the blank row after it included, in reading order.
+ */
+function turnLayout(
+  group: TurnGroup,
+  blocks: readonly SectionSource[],
+  width: number,
+  look: { palette: Palette; tints?: ReaderTints | undefined; cursor?: TranscriptCursor },
+): string[][] {
+  const last = group.sections.length - 1
+  return group.sections.map((section, index) => {
+    const held = look.cursor !== undefined && sameSection(section, look.cursor)
+    const rows = sectionRows(section, blocks, width, { palette: look.palette, tints: look.tints, held })
+    return index === last || rows.length === 0 ? rows : [...rows, '']
+  })
+}
+
+/** An unstyled palette, which is all measuring needs: styling never changes a row count. */
+const MEASURING = createPalette(false)
 
 /**
  * Measure the turn panel, which is what the scroll keys move over.
  * @param group - the turn the panel shows.
  * @param blocks - the navigable blocks.
  * @param width - the panel's columns.
- * @returns where each section's header lands and how many rows the panel has.
+ * @returns where each section's first row lands and how many rows the panel has.
  */
 export function measurePane(group: TurnGroup, blocks: readonly SectionSource[], width: number): PaneMeasure {
   const headers: number[] = []
   let total = 0
-  for (const cursor of group.sections) {
+  for (const rows of turnLayout(group, blocks, width, { palette: MEASURING })) {
     headers.push(total)
-    total += 1 + sectionBody(cursor, blocks, width).length
+    total += rows.length
   }
   return { headers, total }
 }
@@ -338,7 +680,7 @@ export function readerGeometryFor(
   minColumns: number,
 ): ReaderGeometry {
   const layout = readerGeometry(width, rows, state, minColumns)
-  const group = groups[groupIndex(state, groups)]
+  const group = readerTurn(state, groups)
   if (group === undefined || layout.pane === 0) return layout
   return { ...layout, measure: measurePane(group, blocks, layout.pane) }
 }
@@ -367,7 +709,7 @@ export function readerOutline(state: ReaderState, groups: readonly TurnGroup[]):
     return [turn, ...group.sections.map((cursor): OutlineRow => ({
       kind: 'section',
       cursor,
-      held: sameCursor(cursor, state.cursor),
+      held: sameSection(cursor, state.cursor),
     }))]
   })
 }
@@ -392,7 +734,7 @@ function maxOffset(geometry: ReaderGeometry): number {
 }
 
 /**
- * Where the panel scrolls to put one section's header on its first row.
+ * Where the panel scrolls to put one section's first row on its first row.
  * @param index - the section, by position in its turn.
  * @param geometry - the reader's geometry.
  * @returns the offset.
@@ -445,7 +787,7 @@ function measureOf(
 }
 
 /**
- * Put the reader on one section, with the panel scrolled to its header.
+ * Put the reader on one section, with the panel scrolled to its first row.
  * @param state - where the reader is.
  * @param cursor - the section to read.
  * @param groups - the turns the list names.
@@ -460,12 +802,12 @@ function readSection(
   geometry: ReaderGeometry,
   blocks: readonly SectionSource[],
 ): ReaderState {
-  const held = groups[groupIndex(state, groups)]
+  const held = readerTurn(state, groups)
   const next = groups[turnIndexOf(cursor, groups)]
   /* v8 ignore next -- every cursor the list steps to comes from a listed turn */
   if (next === undefined) return state
   const measure = measureOf(next, held, geometry, blocks)
-  const index = next.sections.findIndex(section => sameCursor(section, cursor))
+  const index = next.sections.findIndex(section => sameSection(section, cursor))
   /* v8 ignore next -- the cursor came from this turn's own sections, so the measure has its row */
   const header = measure.headers[index] ?? 0
   return { ...state, cursor, offset: Math.min(header, Math.max(0, measure.total - geometry.body)) }
@@ -490,9 +832,9 @@ function withoutQuery(state: ReaderState): ReaderState {
  * @returns the state at that row.
  */
 function readAt(state: ReaderState, offset: number, groups: readonly TurnGroup[], geometry: ReaderGeometry): ReaderState {
-  const group = groups[groupIndex(state, groups)]
-  // No header at or above the row leaves the index at -1, which names no
-  // section the same way a turn the list does not carry names none.
+  const group = readerTurn(state, groups)
+  // No section starting at or above the row leaves the index at -1, which
+  // names no section the same way a turn the list does not carry names none.
   const index = geometry.measure.headers.findLastIndex(header => header <= offset)
   const cursor = group?.sections[index]
   return cursor === undefined ? { ...state, offset } : { ...state, cursor, offset }
@@ -555,7 +897,7 @@ export function reduceReader(
   switch (intent.kind) {
     case 'section': {
       const sections = allSections(groups)
-      const at = sections.findIndex(section => sameCursor(section, state.cursor))
+      const at = sections.findIndex(section => sameSection(section, state.cursor))
       const cursor = sections[targetIndex(intent.to, Math.max(0, at), sections.length)]
       return cursor === undefined ? state : readSection(state, cursor, groups, geometry, blocks)
     }
@@ -597,7 +939,7 @@ export function reduceReader(
  * @returns the state with its offset settled.
  */
 function anchorOffset(state: ReaderState, groups: readonly TurnGroup[], geometry: ReaderGeometry): ReaderState {
-  const group = groups[groupIndex(state, groups)]
+  const group = readerTurn(state, groups)
   if (group === undefined) return state
   return { ...state, offset: showSection(sectionIndex(state, group), geometry) }
 }
@@ -634,130 +976,93 @@ function markerStrip(markers: TurnMarkers): string {
   if (markers.context > 0) marks.push(`⬡${String(markers.context)}`)
   if (markers.reasoning) marks.push('✻')
   if (markers.reply) marks.push('¶')
-  if (markers.tools > 0) marks.push(`⚒${String(markers.tools)}`)
+  if (markers.tools > 0) marks.push(`◆${String(markers.tools)}`)
   return marks.join('')
 }
 
-/**
- * Fit one styled text to an exact number of columns.
- * @param text - the text, already styled.
- * @param width - the columns the cell takes.
- * @returns the text cut and padded to exactly `width`.
- */
-function cell(text: string, width: number): string {
-  const cut = truncateToWidth(text, Math.max(1, width), ELLIPSIS)
-  return `${cut}${' '.repeat(Math.max(0, width - visibleWidth(cut)))}`
+/** How the turn list is drawn. */
+interface ListLook {
+  /** Whether the list itself has the keyboard, which draws its selection bold. */
+  focused: boolean
+  /** The palette the rows are styled with. */
+  palette: Palette
+  /** The list's columns. */
+  width: number
+  /** Columns every turn number is right-aligned in, so the prompts line up. */
+  digits: number
 }
 
 /**
- * One row of the turn list: the mark, the turn number, its prompt, and what
- * the turn contributed.
+ * Paint one list row by whether it is the selection.
+ * @param text - the row's text.
+ * @param selected - whether it is the open turn or the held section.
+ * @param look - the list's focus and palette.
+ * @returns the row accented for the selection, bold only while the list has
+ * the keyboard, and recessed otherwise.
+ */
+function listPaint(text: string, selected: boolean, look: ListLook): string {
+  const { palette, focused } = look
+  if (!selected) return palette.dim(text)
+  return focused ? palette.bold(palette.accent(text)) : palette.accent(text)
+}
+
+/**
+ * One turn row of the list: `❯` on the turn being read, the turn number, its
+ * prompt, and right-aligned what the turn contributed.
  * @param group - the turn.
  * @param open - whether this is the turn being read, whose sections follow it.
- * @param focused - whether the list itself has the keyboard.
- * @param palette - the palette the row is styled with.
- * @param width - the list's columns.
- * @returns the row, exactly `width` columns.
+ * @param look - the list's focus, palette, width, and number column.
+ * @returns the row, exactly `look.width` columns.
  */
-function listRow(group: TurnGroup, open: boolean, focused: boolean, palette: Palette, width: number): string {
+function turnRow(group: TurnGroup, open: boolean, look: ListLook): string {
   const marks = markerStrip(group.markers)
-  const room = Math.max(1, width - visibleWidth(marks))
-  // The turn being read heads its own sections, so its row carries no mark of
-  // its own: the mark is on the section row the cursor holds.
-  const lead = `  ${String(group.turn)}  `
-  // The prompt is cut before it is bracketed, so the selected row keeps both
-  // brackets however narrow the list is.
-  const label = truncateToWidth(group.label, Math.max(1, room - visibleWidth(lead) - (open ? 2 : 0)), ELLIPSIS)
-  const head = `${lead}${open ? `[${label}]` : label}`
-  // The open turn stays legible while the panel beside it has the keyboard,
-  // and only the focused list draws it bold.
-  const paint = (text: string): string => {
-    if (!open) return palette.dim(text)
-    return focused ? palette.bold(palette.accent(text)) : palette.accent(text)
-  }
-  const text = truncateToWidth(paint(head), room, ELLIPSIS)
-  return `${text}${' '.repeat(Math.max(0, room - visibleWidth(text)))}${palette.dim(marks)}`
+  // One column always parts the prompt from the markers, so a cut prompt
+  // never runs into them.
+  const room = Math.max(1, look.width - visibleWidth(marks) - (marks === '' ? 0 : 1))
+  const lead = `${open ? PROMPT_GLYPH : ' '} ${String(group.turn).padStart(look.digits)}  `
+  const text = truncateToWidth(listPaint(`${lead}${group.label}`, open, look), room, ELLIPSIS)
+  return cell(`${text}${' '.repeat(Math.max(0, look.width - visibleWidth(text) - visibleWidth(marks)))}${look.palette.dim(marks)}`, look.width)
 }
 
-/** Columns a section row is indented by, so the turn it belongs to reads as its heading. */
-const SECTION_INDENT = '  '
-
 /**
- * One section row of the turn list: the mark, the indent, and the label the
- * panel heads that section with.
+ * One section row of the list: `▸` on the section the reader holds, then the
+ * glyph and the name its header in the panel carries.
  * @param cursor - the section.
  * @param blocks - the navigable blocks.
- * @param selected - whether the cursor holds it.
- * @param focused - whether the list itself has the keyboard.
- * @param palette - the palette the row is styled with.
- * @param width - the list's columns.
- * @returns the row, exactly `width` columns.
+ * @param held - whether the cursor holds it.
+ * @param look - the list's focus, palette, and width.
+ * @returns the row, exactly `look.width` columns.
  */
-function sectionRow(
-  cursor: TranscriptCursor,
-  blocks: readonly SectionSource[],
-  selected: boolean,
-  focused: boolean,
-  palette: Palette,
-  width: number,
-): string {
+function outlineSectionRow(cursor: TranscriptCursor, blocks: readonly SectionSource[], held: boolean, look: ListLook): string {
   const found = sectionAt(cursor, blocks)
-  const label = found === undefined ? '' : paneLabel(found.block, found.part)
-  const head = `${selected ? LIST_MARK : '  '}${SECTION_INDENT}${label}`
-  const paint = (text: string): string => {
-    if (!selected) return palette.dim(text)
-    return focused ? palette.bold(palette.accent(text)) : palette.accent(text)
-  }
-  return cell(paint(head), width)
+  const label = found === undefined ? '' : `${sectionGlyph(found.block, found.part)} ${sectionName(found.block, found.part)}`
+  return cell(listPaint(`  ${held ? LIST_MARK : ' '} ${label}`, held, look), look.width)
 }
 
 /**
  * The turn list's rows, windowed so the row the cursor holds is always drawn.
  * @param rows - the outline the list draws.
  * @param blocks - the navigable blocks, for each section's own label.
- * @param focused - whether the list itself has the keyboard.
- * @param palette - the palette the rows are styled with.
- * @param width - the list's columns.
+ * @param look - the list's focus, palette, width, and number column.
  * @param body - the rows the body has.
  * @returns the rows to draw, oldest first.
  */
-function listColumn(
-  rows: readonly OutlineRow[],
-  blocks: readonly SectionSource[],
-  focused: boolean,
-  palette: Palette,
-  width: number,
-  body: number,
-): string[] {
+function listColumn(rows: readonly OutlineRow[], blocks: readonly SectionSource[], look: ListLook, body: number): string[] {
   const cursor = rows.findIndex(row => row.kind === 'section' && row.held)
   const start = clamp(Math.max(0, cursor) - Math.floor(Math.max(0, body - 1) / 2), 0, Math.max(0, rows.length - body))
   return rows.slice(start, start + body).map(row => row.kind === 'turn'
-    ? listRow(row.group, row.open, focused, palette, width)
-    : sectionRow(row.cursor, blocks, row.held, focused, palette, width))
-}
-
-/**
- * One section header inside the turn panel.
- * @param text - what the section is called, with its turn.
- * @param palette - the palette the header is styled with.
- * @param width - the panel's columns.
- * @param reading - whether this is the section the top row belongs to.
- * @returns the header row.
- */
-function headerRow(text: string, palette: Palette, width: number, reading: boolean): string {
-  const body = ` ${text} `
-  const fill = HEADER_FILL.repeat(Math.max(0, width - visibleWidth(HEADER_LEAD) - visibleWidth(body)))
-  const line = `${HEADER_LEAD}${body}${fill}`
-  return reading ? palette.bold(palette.accent(line)) : palette.dim(line)
+    ? turnRow(row.group, row.open, look)
+    : outlineSectionRow(row.cursor, blocks, row.held, look))
 }
 
 /**
  * The turn panel's rows: every section of the held turn, in reading order,
- * each under its own header.
+ * the prompt on its band and every other section under its own header, with a
+ * reveal in flight floating out the rows it covers.
  * @param group - the turn the panel shows.
  * @param blocks - the navigable blocks.
- * @param cursor - the section the top row belongs to.
- * @param palette - the palette the headers are styled with.
+ * @param cursor - the section the reader holds.
+ * @param render - the palette, the bands, and the reveal.
  * @param width - the panel's columns.
  * @returns the rows, before the scroll window is applied.
  */
@@ -765,17 +1070,16 @@ function paneColumn(
   group: TurnGroup,
   blocks: readonly SectionSource[],
   cursor: TranscriptCursor,
-  palette: Palette,
+  render: ReaderRender,
   width: number,
 ): string[] {
-  return group.sections.flatMap((section) => {
-    const found = sectionAt(section, blocks)
-    if (found === undefined) return []
-    const label = `${paneLabel(found.block, found.part)} · turn ${String(found.block.turn)}`
-    return [
-      headerRow(label, palette, width, sameCursor(section, cursor)),
-      ...sectionBody(section, blocks, width),
-    ]
+  const { palette, tints, reveal } = render
+  const sections = turnLayout(group, blocks, width, { palette, tints, cursor })
+  return sections.flatMap((rows, index) => {
+    const section = group.sections[index]
+    const covered = reveal !== undefined
+      && (reveal.section === undefined || (section !== undefined && sameSection(section, reveal.section)))
+    return covered ? recolorLines(rows, reveal.age, reveal.style) : rows
   })
 }
 
@@ -795,15 +1099,15 @@ interface BodyColumn {
  * @param width - the frame's columns.
  * @returns the row, no wider than `width`.
  */
-function bodyRow(columns: readonly BodyColumn[], row: number, palette: Palette, width: number): string {
-  const border = palette.accent(SIDE)
-  let line = `${border} `
+function frameRow(columns: readonly BodyColumn[], row: number, palette: Palette, width: number): string {
+  let line = `${palette.accent(SIDE)} `
   for (const [index, column] of columns.entries()) {
     const text = column.rows[row] ?? ''
-    // The last column has no border after it, so it is not padded either.
+    // The last column has no border after it, so it is not padded either; the
+    // border between the two panels is recessed, so the turn reads as one page.
     line += index === columns.length - 1
       ? truncateToWidth(text, Math.max(1, column.width), ELLIPSIS)
-      : `${cell(text, column.width)}${border} `
+      : `${cell(text, column.width)}${palette.dim(SIDE)} `
   }
   return truncateToWidth(line, Math.max(1, width), ELLIPSIS)
 }
@@ -862,7 +1166,8 @@ function readout(state: ReaderState, groups: readonly TurnGroup[], geometry: Rea
  * Draw the reader.
  * @param state - where the reader is.
  * @param groups - the turns the list names, already narrowed by the query.
- * @param render - the palette, the blocks, the geometry inputs, and the turn total.
+ * @param render - the palette, the blocks, the geometry inputs, the turn
+ * total, and the bands and reveal the turn panel is drawn with.
  * @returns exactly `render.rows` lines, none wider than `render.width`.
  */
 export function readerRows(state: ReaderState, groups: readonly TurnGroup[], render: ReaderRender): string[] {
@@ -878,21 +1183,27 @@ export function readerRows(state: ReaderState, groups: readonly TurnGroup[], ren
   const group = groups[selected]
   const columns: BodyColumn[] = []
   if (geometry.list > 0) {
+    const look: ListLook = {
+      focused: state.column !== 'pane',
+      palette,
+      width: geometry.list,
+      digits: Math.max(1, ...groups.map(entry => String(entry.turn).length)),
+    }
     columns.push({
       width: geometry.list,
       rows: groups.length === 0
         ? [palette.dim(`no turn matches "${state.query ?? ''}"`)]
-        : listColumn(readerOutline(state, groups), blocks, state.column !== 'pane', palette, geometry.list, geometry.body),
+        : listColumn(readerOutline(state, groups), blocks, look, geometry.body),
     })
   }
   if (geometry.pane > 0) {
     columns.push({
       width: geometry.pane,
-      rows: group === undefined ? [] : paneColumn(group, blocks, state.cursor, palette, geometry.pane).slice(state.offset),
+      rows: group === undefined ? [] : paneColumn(group, blocks, state.cursor, render, geometry.pane).slice(state.offset),
     })
   }
   const body: string[] = []
-  for (let row = 0; row < geometry.body; row += 1) body.push(bodyRow(columns, row, palette, width))
+  for (let row = 0; row < geometry.body; row += 1) body.push(frameRow(columns, row, palette, width))
   // The readout is reserved before the legend is chosen: how far the read has
   // come must not be what a narrow terminal drops.
   const report = readout(state, groups, geometry, totalTurns)

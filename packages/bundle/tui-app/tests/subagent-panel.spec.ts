@@ -119,7 +119,7 @@ describe('renderSubagentPanel', () => {
     const built = view([child('session-kid'), child('session-other')])
     const drawn = renderSubagentPanel(built, { palette: createPalette(true), selected: 1, width: WIDE })
     const [heading, first, second] = drawn.split('\n')
-    expect(heading).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(heading).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     expect(first).toContain('\u001b[2msession-kid')
     expect(second).toContain('\u001b[36msession-other')
   })
@@ -128,7 +128,7 @@ describe('renderSubagentPanel', () => {
     const built = view([child('session-kid'), child('session-other')])
     const heading = (width: number): string =>
       (renderSubagentPanel(built, { palette, selected: 0, width }).split('\n')[0] ?? '')
-    expect(heading(WIDE)).toBe('subagents · 2 listed · ↑↓ children · Enter details · Tab regions · Esc input')
+    expect(heading(WIDE)).toBe('subagents · 2 listed · ↑↓ children · Enter opens · Tab regions · Esc input')
     expect(heading(50)).toBe('subagents · 2 listed · ↑↓ children · Esc input')
     expect(heading(30)).toBe('subagents · 2 listed · Esc input')
     for (const width of [WIDE, 50]) expect(heading(width).length).toBeLessThanOrEqual(width)

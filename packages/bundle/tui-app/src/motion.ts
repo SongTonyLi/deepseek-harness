@@ -23,13 +23,13 @@ import type { RegisteredFade } from './fade.ts'
 import type { Palette } from './style.ts'
 
 /** Ticks the keyboard landing on a docked region lasts. */
-export const LANDING_TICKS = 6
+export const LANDING_TICKS = 12
 
 /** Ticks one step of the transcript walk lasts. */
-export const STEP_TICKS = 3
+export const STEP_TICKS = 6
 
 /** Ticks one step of the status bar's own walk lasts. */
-export const SEGMENT_TICKS = 4
+export const SEGMENT_TICKS = 8
 
 /** Share of a motion drawn at its peak. */
 const PEAK_SHARE = 1 / 3

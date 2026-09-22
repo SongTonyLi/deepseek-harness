@@ -42,19 +42,19 @@
 import { sliceByColumn, stripTerminalSequences, visibleWidth, type RgbColor } from '@earendil-works/pi-tui'
 
 /**
- * Brightness levels a chunk passes through. A chunk of age `a` draws at
- * `ramp[min(a, steps - 1)]`, and leaves the tail once its age reaches `steps`.
- * Fewer than two levels leaves no visible ramp, so the application's config
- * field should require at least 2.
+ * Brightness levels a chunk passes through. A chunk of age `a` draws between
+ * `ramp[floor(a)]` and the level after it, and leaves the tail once its age
+ * reaches `steps`. Fewer than two levels leaves no visible ramp, so the
+ * application's config field should require at least 2.
  *
- * Twelve at {@link FADE_TICK_MS} is a ramp of about four hundred milliseconds,
- * one level per repaint: enough levels that a word climbs rather than steps,
- * and short enough that a settled line is never waited for.
+ * Twenty-four at {@link FADE_TICK_MS} is a ramp of about four hundred
+ * milliseconds, one level per frame: enough levels that a word climbs rather
+ * than steps, and short enough that a settled line is never waited for.
  */
-export const FADE_STEPS = 12
+export const FADE_STEPS = 24
 
-/** Duration of one brightness level in milliseconds, and so the repaint period of fading text: about 30 frames per second. */
-export const FADE_TICK_MS = 33
+/** Duration of one brightness level in milliseconds, and so the repaint period of fading text: about 60 frames per second. */
+export const FADE_TICK_MS = 16
 
 /** Control Sequence Introducer. */
 const CSI = '\u001b['
@@ -262,6 +262,11 @@ function toSrgb(value: number): number {
 
 /**
  * The SGR sequence one age draws under.
+ *
+ * Truecolor draws a fractional age between its two neighbouring ramp levels,
+ * mixed in linear light, so a word brightens continuously however the frames
+ * fall against the level boundaries. The grayscale encoding has fewer values
+ * than the ramp has levels and draws the level the age floors onto.
  * @param style - the capability and the ramp.
  * @param age - the brightness level; levels past the ramp draw its last one.
  * @returns the sequence to open the run with, or the empty string when the
@@ -271,9 +276,15 @@ function toSrgb(value: number): number {
 export function fadeSgr(style: FadeStyle, age: number): string {
   if (style.capability === 'none') return ''
   if (style.capability === 'dim') return age < DIM_AGES ? DIM : ''
-  const level = style.ramp[Math.max(0, Math.min(Math.floor(age), style.ramp.length - 1))]
+  const last = style.ramp.length - 1
+  const floor = Math.max(0, Math.min(Math.floor(age), last))
+  const level = style.ramp[floor]
   if (level === undefined) return ''
-  return style.capability === 'truecolor' ? truecolorSgr(level) : grayscaleSgr(level)
+  if (style.capability !== 'truecolor') return grayscaleSgr(level)
+  const next = style.ramp[floor + 1]
+  const fraction = age - floor
+  if (next === undefined || fraction <= 0) return truecolorSgr(level)
+  return truecolorSgr({ r: mix(level.r, next.r, fraction), g: mix(level.g, next.g, fraction), b: mix(level.b, next.b, fraction) })
 }
 
 /**

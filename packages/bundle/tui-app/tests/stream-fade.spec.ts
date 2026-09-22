@@ -365,6 +365,8 @@ describe('streaming fade', () => {
     await test.settle()
     test.stream.start()
     await streamReasoning(test, 'thinking ')
+    // Two frames lift the first word far enough to round below the second.
+    await fadeTick(test)
     await fadeTick(test)
     drawn(test)
     await streamReasoning(test, 'harder')
@@ -687,7 +689,7 @@ describe('syntax colour', () => {
       submitted = since().split('\n').findLast(row => row.includes('$') && row.includes('echo') && hasSyntaxColor(row))
     }
     expect(submitted, 'the $ command row was never painted').toBeDefined()
-    expect(submitted).toMatch(/\$ \u001b\[/u)
+    expect(submitted).toMatch(/\$(?:\u001b\[39m)? \u001b\[/u)
     test.appendToolCall('call-1', 'bash', {})
     await test.settle()
     let card: string | undefined

@@ -358,7 +358,7 @@ describe('subagent sessions', () => {
     expect(test.terminal.text()).toContain('/subagents failed: subagents are not mounted in this profile')
   })
 
-  it('walks the sessions, shows one session, and reopens the list on it', async () => {
+  it('walks the sessions, opens one as a live view, and shows an unreadable row\'s reason', async () => {
     const test = await benchWithSubagents(descendants)
     typeLine(test.terminal, '/subagents')
     await test.settle()
@@ -368,27 +368,21 @@ describe('subagent sessions', () => {
     expect(listed).toContain('inactive · one-shot')
     expect(listed).toContain('reviewer')
 
+    // A readable row opens as a live view of that session, with its details
+    // under the entry notice; /parent comes back, and the list reopens.
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.enter)
     await test.settle()
-    const detail = test.terminal.text()
+    const detail = await test.screen()
+    expect(detail).toContain('subagent view')
     expect(detail).toContain('workspace: /work/session-grandkid')
     expect(detail).toContain('title: session-grandkid title')
     expect(detail).toContain('created: 2026-02-03 14:25')
-    expect(detail).toContain('↑ ↓ scroll · Enter, Esc, or ← returns')
-
-    // Leaving the details reopens the list on the session just read.
-    test.terminal.type(KEY.enter)
+    typeLine(test.terminal, '/parent')
     await test.settle()
-    expect(test.terminal.text()).toContain('reviewer ✓')
-
-    test.terminal.type(KEY.up)
-    test.terminal.type(KEY.enter)
+    expect(await test.screen()).toContain('back in session session-tui-test')
+    typeLine(test.terminal, '/subagents')
     await test.settle()
-    expect(test.terminal.text()).toContain('workspace: /work/session-kid')
-    test.terminal.type(KEY.escape)
-    await test.settle()
-    expect(test.terminal.text()).toContain('session-kid ✓')
 
     // A row the listing could not read opens its details all the same.
     test.terminal.type(KEY.down)
@@ -696,7 +690,7 @@ describe('the status bar ends and the region cycle', () => {
     // Shift+Tab used to move the bar's selection, which Left already does.
     test.terminal.type(KEY.shiftTab)
     await test.settle()
-    expect(await test.screen()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(await test.screen()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     test.terminal.type(KEY.tab)
     await test.settle()
     expect(await test.screen()).toContain('←→ segments · Enter details · Tab regions · Esc input')
@@ -717,7 +711,7 @@ describe('the status bar ends and the region cycle', () => {
     const region = async (): Promise<string> => {
       const shown = await test.screen()
       if (shown.includes('↑↓ sections · ←→ parts')) return 'conversation'
-      if (shown.includes('↑↓ children · Enter details')) return 'panel'
+      if (shown.includes('↑↓ children · Enter opens')) return 'panel'
       if (shown.includes('←→ segments · Enter details')) return 'bar'
       return 'editor'
     }

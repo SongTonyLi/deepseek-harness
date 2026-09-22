@@ -14,11 +14,19 @@
  * turns on every render, so a reply that is still streaming grows inside it,
  * a tool result that lands appears, and a new turn joins the list, all with
  * no push and no second clock.
+ *
+ * Opening the reader, showing another turn, and stepping the list to another
+ * section of the same turn each start a reveal: the rows newly in view float
+ * out from a lifted color to the colors they settle at, on a clock the
+ * application runs on its fade tick. Scrolling, live growth, and a rewrap
+ * reveal nothing. A reveal changes colors only, and a terminal that runs no
+ * motion draws the settled reader from the first frame.
  * @module @deepseek-ai/dsh-tui-app/reader-screen
  */
 
-import { matchesKey, type Component } from '@earendil-works/pi-tui'
+import { matchesKey, type Component, type RgbColor } from '@earendil-works/pi-tui'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import type { FadeStyle } from './fade.ts'
 import { typedText } from './keys.ts'
 import { clampCursor, lastSection, turnGroups, type SectionSource, type TranscriptCursor, type TurnGroup } from './navigation.ts'
 import {
@@ -26,9 +34,13 @@ import {
   readerClosesOnEscape,
   readerGeometryFor,
   readerRows,
+  readerTints,
+  readerTurn,
   reduceReader,
+  sameSection,
   type ReaderGeometry,
   type ReaderIntent,
+  type ReaderReveal,
   type ReaderState,
 } from './reader.ts'
 import type { Palette } from './style.ts'
@@ -36,12 +48,72 @@ import type { Palette } from './style.ts'
 /** The key that opens the query line. */
 const FILTER_KEY = '/'
 
+/** Printable keys either panel answers the way a pager does, beside the named keys. */
+const ALIASES: ReadonlyArray<readonly [string, ReaderIntent]> = [
+  ['[', { kind: 'turn', step: -1 }],
+  [']', { kind: 'turn', step: 1 }],
+]
+
+/** Printable keys the turn list answers beside the named keys. */
+const LIST_ALIASES: ReadonlyMap<string, ReaderIntent> = new Map([
+  ...ALIASES,
+  ['k', { kind: 'section', to: 'previous' }],
+  ['j', { kind: 'section', to: 'next' }],
+  ['g', { kind: 'section', to: 'first' }],
+  ['G', { kind: 'section', to: 'last' }],
+  [FILTER_KEY, { kind: 'filter' }],
+])
+
+/** Printable keys the turn panel answers beside the named keys. */
+const PANE_ALIASES: ReadonlyMap<string, ReaderIntent> = new Map([
+  ...ALIASES,
+  ['k', { kind: 'scroll', to: 'previous' }],
+  ['j', { kind: 'scroll', to: 'next' }],
+  ['g', { kind: 'scroll', to: 'first' }],
+  ['G', { kind: 'scroll', to: 'last' }],
+  [' ', { kind: 'page', step: 1 }],
+  ['b', { kind: 'page', step: -1 }],
+])
+
+/** The printable key that closes the reader from either panel, as `Escape` does. */
+const QUIT_KEY = 'q'
+
 /** Where the reader left the keyboard and the reading when it closed. */
 export interface ReaderExit {
   /** The section last read, which the transcript resumes on. */
   cursor: TranscriptCursor
   /** Which region takes the keyboard back. */
   target: 'transcript' | 'editor'
+}
+
+/** The clock of one reveal, which the application runs on its fade tick. */
+export interface RevealClock {
+  /**
+   * How far through the reveal the clock is.
+   * @returns the age in fade periods, or undefined once the reveal settled.
+   */
+  age(): number | undefined
+}
+
+/** What the reader draws its bands and its reveals with, read from the application's terminal. */
+export interface ReaderEffects {
+  /**
+   * The fade drawing settings: how far the terminal encodes a color, and the
+   * ramp that ends on the assumed foreground.
+   * @returns the settings, re-read on every render so a late background answer applies.
+   */
+  style(): FadeStyle
+  /**
+   * The terminal's background color, which the bands are mixed from.
+   * @returns the color, or undefined while the terminal reported none.
+   */
+  background(): RgbColor | undefined
+  /**
+   * Start one reveal on the application's fade tick, which repaints the
+   * reader until the reveal settles.
+   * @returns its clock, or undefined on a terminal that runs no motion.
+   */
+  startReveal(): RevealClock | undefined
 }
 
 /** What the reader pane reads from the application. */
@@ -62,6 +134,8 @@ export interface ReaderPaneOptions {
   minColumns: number
   /** The section the reader opens on. */
   cursor: TranscriptCursor
+  /** The bands and the reveals; absent draws the settled reader with no band. */
+  effects?: ReaderEffects
   /**
    * Called once, where the reader closes: on the key that closes it, and on
    * the render that finds the conversation gone. It runs inside that step
@@ -84,6 +158,10 @@ export class ReaderPane implements Component {
   private width = 0
   /** The body the last render anchored on, so one rewrap re-anchors exactly once. */
   private layout = ''
+  /** The turn the last render showed, by index into every turn; -1 for none, undefined before the first render. */
+  private shownTurn: number | undefined
+  /** The reveal in flight, and the one section it covers when it covers no whole turn. */
+  private reveal: { clock: RevealClock; section?: TranscriptCursor } | undefined
 
   /**
    * @param options - the palette, the live transcript reads, and the section to open on.
@@ -124,15 +202,25 @@ export class ReaderPane implements Component {
       // section it was reading rather than on the row it had reached.
       this.state = reduceReader(this.state, { kind: 'anchor' }, visible, geometry, blocks)
     }
-    const full = readerRows(this.state, visible, {
+    // Another turn in the panel is new content wherever it came from: a key,
+    // a query that narrowed the list, or the reader opening.
+    const held = readerTurn(this.state, visible)
+    const turn = held === undefined ? -1 : groups.indexOf(held)
+    if (this.shownTurn !== turn) {
+      this.shownTurn = turn
+      this.startReveal(undefined)
+    }
+    const effects = this.options.effects
+    return readerRows(this.state, visible, {
       palette: this.options.palette,
       blocks,
       width,
       rows,
       minColumns: this.options.minColumns,
       totalTurns: groups.length,
+      tints: effects === undefined ? undefined : readerTints(effects.style(), effects.background()),
+      reveal: this.revealNow(),
     })
-    return full
   }
 
   /**
@@ -152,18 +240,50 @@ export class ReaderPane implements Component {
       if (matchesKey(data, 'escape')) this.close('transcript')
       return
     }
-    if (matchesKey(data, 'escape') && readerClosesOnEscape(this.state)) {
+    // Both panels close on `Escape` and on `q`; the query line types `q`.
+    if (readerClosesOnEscape(this.state) && (matchesKey(data, 'escape') || typedText(data) === QUIT_KEY)) {
       this.close('transcript')
       return
     }
     const intent = this.intentOf(data)
     if (intent === undefined) return
+    const before = this.state.cursor
     this.state = reduceReader(this.state, intent, visible, geometry, blocks)
+    // The list stepping to another section reveals that section; a step into
+    // another turn is answered by the render, which reveals the whole turn.
+    if (intent.kind === 'section' && !sameSection(before, this.state.cursor)) this.startReveal(this.state.cursor)
   }
 
   /** Close the reader from outside, which is what quitting and `Ctrl+C` do. */
   withdraw(): void {
     this.close('editor')
+  }
+
+  /**
+   * Start a reveal, replacing the one in flight.
+   * @param section - the one section it covers; undefined covers the whole turn.
+   */
+  private startReveal(section: TranscriptCursor | undefined): void {
+    const clock = this.options.effects?.startReveal()
+    if (clock === undefined) return
+    this.reveal = section === undefined ? { clock } : { clock, section }
+  }
+
+  /**
+   * The reveal as this render draws it.
+   * @returns the age, the drawing settings, and the section it covers, or
+   * undefined once it settled, which also forgets it.
+   */
+  private revealNow(): ReaderReveal | undefined {
+    const reveal = this.reveal
+    const effects = this.options.effects
+    const age = reveal?.clock.age()
+    if (reveal === undefined || effects === undefined || age === undefined) {
+      this.reveal = undefined
+      return undefined
+    }
+    const style = effects.style()
+    return reveal.section === undefined ? { age, style } : { age, style, section: reveal.section }
   }
 
   /**
@@ -236,7 +356,7 @@ function listIntent(data: string): ReaderIntent | undefined {
   if (matchesKey(data, 'pageUp')) return { kind: 'turn', step: -1 }
   if (matchesKey(data, 'pageDown')) return { kind: 'turn', step: 1 }
   if (matchesKey(data, 'right') || matchesKey(data, 'tab') || matchesKey(data, 'enter')) return { kind: 'column', to: 'pane' }
-  return typedText(data) === FILTER_KEY ? { kind: 'filter' } : undefined
+  return aliasOf(data, LIST_ALIASES)
 }
 
 /**
@@ -252,5 +372,16 @@ function paneIntent(data: string): ReaderIntent | undefined {
   if (matchesKey(data, 'pageUp')) return { kind: 'page', step: -1 }
   if (matchesKey(data, 'pageDown')) return { kind: 'page', step: 1 }
   if (matchesKey(data, 'left') || matchesKey(data, 'tab') || matchesKey(data, 'shift+tab')) return { kind: 'column', to: 'list' }
-  return undefined
+  return aliasOf(data, PANE_ALIASES)
+}
+
+/**
+ * What one printable key means in a panel's alias table.
+ * @param data - the raw key bytes.
+ * @param aliases - the panel's printable keys.
+ * @returns the intent, or undefined for a key the table names nothing for.
+ */
+function aliasOf(data: string, aliases: ReadonlyMap<string, ReaderIntent>): ReaderIntent | undefined {
+  const text = typedText(data)
+  return text === undefined ? undefined : aliases.get(text)
 }

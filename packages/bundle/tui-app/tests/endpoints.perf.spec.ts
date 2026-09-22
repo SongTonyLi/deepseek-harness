@@ -84,8 +84,8 @@ describe('TUI measurement cards', () => {
     }
     const elapsed = performance.now() - started
     const screen = await test.screen()
-    expect(screen).toContain('› prompt 1')
-    expect(screen).toContain('› prompt 20')
+    expect(screen).toContain('❯ prompt 1')
+    expect(screen).toContain('❯ prompt 20')
     expect({ card: 'D', frames, elapsedMs: elapsed }).toMatchObject({ card: 'D', frames: 12 })
     test.app.stop()
   })
