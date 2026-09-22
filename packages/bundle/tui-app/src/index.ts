@@ -79,11 +79,13 @@ export interface Config {
    */
   readerMinColumns: number
   /**
-   * Draw fenced code in a reply in syntax colours, from a theme picked by the
-   * terminal's own background. The grammars load on the first block that asks
-   * for one, so a session with no code in it loads none; a language with no
-   * grammar here, and a terminal that reports neither 24-bit nor 256 colours,
-   * draw the block plain. Turn it off to read every block in one colour.
+   * Draw fenced code, `read` and diff file rows, and shell commands — a `!` /
+   * `!!` draft, a `$ command` user-shell row, and a terminal tool card — in
+   * syntax colours, from a theme picked by the terminal's own background. The
+   * grammars load on the first block that asks for one, so a session with no
+   * code in it loads none; a language with no grammar here, and a terminal that
+   * reports neither 24-bit nor 256 colours, draw the block plain. Turn it off
+   * to read every block in one colour.
    */
   codeHighlight: boolean
   /**

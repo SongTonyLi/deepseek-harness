@@ -32,7 +32,7 @@ Nothing was missing from pi-tui. Its `Markdown` theme carries a `highlightCode(c
 
 **Load a small grammar set at start, as the client does for its boot languages.** Rejected: the client's boot set serves a document that is already open, while a terminal session's cost is measured from the key that launched it. Most sessions never render a fence, and the first one that does pays a redraw rather than every session paying a start.
 
-**Highlight tool-card bodies — a written file, a read, a diff — as well.** Not done here: a card body is folded to a line budget and carries its own status glyphs and gutters, so it needs a decision of its own about what a partial block means. The fence in a reply is where a model's code is read.
+**Highlight tool-card bodies — a written file, a read, a diff — as well.** File rows of a `read` card and changed rows of a `diff` card now colour through the same `CodeSpan` / `paintCodeRows` path this highlighter serves. [Syntax colour for shell-mode drafts and `$ command` rows](2026-09-22-tui-shell-syntax-colour.md) colours `!` / `!!` drafts and `$ command` rows.
 
 **Let the block stay plain until the next render happens anyway.** Rejected: a reply that lands while the user watches would sit plain until an unrelated key was pressed. The highlighter asks for the frame itself, which is the same "draw what you have, correct it when it lands" the streamed fade and the subagent panel already use.
 

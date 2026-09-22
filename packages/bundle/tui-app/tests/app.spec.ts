@@ -446,7 +446,7 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).toContain(TOOL_RUNNING_ROW)
     test.appendToolResult('call-1', [{ type: 'text', text: 'a\nb\nc\nd\n' }], true, { extra: 1 })
     await test.settle()
-    expect(test.terminal.text()).toContain('… 4 more rows · Ctrl+O expands')
+    expect(test.terminal.text()).toContain('… 5 more rows · Ctrl+O expands')
     expect(test.terminal.text()).not.toContain('exit 2')
     test.terminal.type(KEY.ctrlO)
     await test.settle()

@@ -173,8 +173,17 @@ describe('transcript', () => {
       .toEqual({ title: 'Read x', lines: ['a', 'b'] })
     expect(toolCallText('{}', { card: 'generic', title: 'Read x' })).toEqual({ title: 'Read x', lines: [] })
     expect(toolCallText('{}', { card: 'terminal', title: 'ls', description: 'list', cwd: '/w' }))
-      .toEqual({ title: 'ls', lines: ['list', 'cwd: /w'] })
-    expect(toolCallText('{}', { card: 'terminal', title: 'ls' })).toEqual({ title: 'ls', lines: [] })
+      .toEqual({
+        title: 'ls',
+        lines: ['$ ls', 'list', 'cwd: /w'],
+        code: [{ lang: 'shellscript', prefix: '$ ', source: 'ls' }, undefined, undefined],
+      })
+    expect(toolCallText('{}', { card: 'terminal', title: 'ls' })).toEqual({
+      title: 'ls',
+      lines: ['$ ls'],
+      code: [{ lang: 'shellscript', prefix: '$ ', source: 'ls' }],
+    })
+    expect(toolCallText('{}', { card: 'terminal', title: '' })).toEqual({ title: '', lines: [] })
     expect(toolCallText('{}', { card: 'diff', title: 'Edit', diffs: [{ path: 'f.ts', oldText: 'a\n', newText: 'b\n' }] }))
       .toEqual({
         title: 'Edit',

@@ -2,7 +2,14 @@
 
 import { describe, expect, it } from 'vitest'
 import { CURSOR_MARKER, Editor, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui'
-import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR, stripBlockCursor } from '../src/editor.ts'
+import {
+  BarCursorEditor,
+  SET_BLINKING_BAR_CURSOR,
+  SET_TERMINAL_DEFAULT_CURSOR,
+  paintShellEditorLines,
+  stripBlockCursor,
+  type ShellEditorPaint,
+} from '../src/editor.ts'
 import { createPalette, editorTheme } from '../src/style.ts'
 import { FakeTerminal, KEY } from './bench.ts'
 
@@ -147,6 +154,175 @@ describe('stripBlockCursor', () => {
   it('returns a reverse-video run with no reset after it unchanged, because its end is unknown', () => {
     const line = `ab${CURSOR_MARKER}${REVERSE_VIDEO}cd`
     expect(stripBlockCursor(line)).toBe(line)
+  })
+})
+
+/** A zero-width colour wrap so painted text keeps the plain visible width. */
+function colorWrap(code: string): string[] {
+  return code.split('\n').map(line => `\u001b[38;2;1;2;3m${line}\u001b[39m`)
+}
+
+/** Warning wrap used for the bang in paint tests. */
+function warning(text: string): string {
+  return `\u001b[33m${text}\u001b[39m`
+}
+
+/** A shell paint that colours every command line without changing its width. */
+function shellPaint(overrides: Partial<ShellEditorPaint> = {}): ShellEditorPaint {
+  return {
+    highlight: { lines: code => colorWrap(code) },
+    warning,
+    paddingX: 1,
+    ...overrides,
+  }
+}
+
+/**
+ * Render a draft through the bar-cursor editor with shell paint attached.
+ * @param text - the editor text.
+ * @param paint - the shell paint, or undefined to leave the editor unpainted.
+ * @param presses - keys typed after the text.
+ * @param focused - whether the editor holds the keyboard.
+ * @returns the rendered lines.
+ */
+function renderShell(
+  text: string,
+  paint: ShellEditorPaint | undefined = shellPaint(),
+  presses: readonly string[] = [],
+  focused = true,
+): string[] {
+  const editor = new BarCursorEditor(
+    new TuiMainScreen(new FakeTerminal()),
+    editorTheme(createPalette(false)),
+    { paddingX: 1 },
+  )
+  editor.shellPaint = paint
+  editor.setText(text)
+  for (const press of presses) editor.handleInput(press)
+  editor.focused = focused
+  return editor.render(WIDTH)
+}
+
+describe('shell draft colour', () => {
+  it('paints the bang in warning and the command in syntax colour', () => {
+    const lines = renderShell('!echo hi')
+    const content = lines[1] ?? ''
+    expect(content).toContain(warning('!'))
+    expect(content).toContain('\u001b[38;2;1;2;3mecho hi\u001b[39m')
+    expect(content).toContain(CURSOR_MARKER)
+    expect(visibleWidth(content)).toBe(WIDTH)
+    expect(lines[0]).toMatch(/─/u)
+    expect(lines.at(-1)).toMatch(/─/u)
+  })
+
+  it('paints !! as the bang and leaves a non-shell draft unchanged', () => {
+    const bang = renderShell('!!true')[1] ?? ''
+    expect(bang).toContain(warning('!!'))
+    expect(bang).toContain('\u001b[38;2;1;2;3mtrue\u001b[39m')
+    const plain = renderShell('hello')
+    const unpainted = renderShell('hello', undefined)
+    expect(plain[1]?.replace(CURSOR_MARKER, '')).toBe(unpainted[1]?.replace(CURSOR_MARKER, ''))
+    expect(plain[1]).not.toContain('\u001b[38;2;1;2;3m')
+  })
+
+  it('paints the bang while the grammar is still loading', () => {
+    const lines = renderShell('!echo hi', shellPaint({ highlight: { lines: () => undefined } }))
+    const content = lines[1] ?? ''
+    expect(content).toContain(warning('!'))
+    expect(content).toContain('echo hi')
+    expect(content).not.toContain('\u001b[38;2;1;2;3m')
+  })
+
+  it('keeps the caret marker at its column on a coloured command', () => {
+    const lines = renderShell('!echo hi', shellPaint(), [KEY.left, KEY.left])
+    const content = lines[1] ?? ''
+    expect(content).toContain(CURSOR_MARKER)
+    expect(content.indexOf(CURSOR_MARKER)).toBeLessThan(content.indexOf('hi') === -1 ? content.length : content.indexOf('hi') + 2)
+    expect(visibleWidth(content)).toBe(WIDTH)
+  })
+
+  it('leaves a chunk plain when the highlighter changes its visible width', () => {
+    const lines = renderShell('!echo', shellPaint({
+      highlight: { lines: code => code.split('\n').map(line => `«${line}»`) },
+    }))
+    const content = lines[1] ?? ''
+    expect(content).toContain(warning('!'))
+    expect(content).toContain('echo')
+    expect(content).not.toContain('«echo»')
+    expect(visibleWidth(content)).toBe(WIDTH)
+    const command = `echo ${'x'.repeat(30)}`
+    const swapped = `字cho ${'x'.repeat(29)}`
+    const sliced = renderShell(`!${command}`, shellPaint({ highlight: { lines: () => [swapped] } }))
+    expect(visibleWidth(command)).toBe(visibleWidth(swapped))
+    expect(sliced[1]).toContain('echo')
+    expect(sliced[1]).not.toContain('字')
+    expect(visibleWidth(sliced[1] ?? '')).toBe(WIDTH)
+  })
+
+  it('paints wrapped and multi-line drafts without touching the rules', () => {
+    const long = `!echo  ${'x'.repeat(30)}`
+    const wrapped = renderShell(long)
+    expect(wrapped[1]).toContain(warning('!'))
+    expect(wrapped[1]).toContain('\u001b[38;2;1;2;3mecho ')
+    expect(wrapped.some((line, index) => index > 1 && line.includes('\u001b[38;2;1;2;3mx'))).toBe(true)
+    expect(wrapped[0]).toMatch(/─/u)
+    const broken = renderShell(`!${'x'.repeat(40)} `)
+    expect(broken.filter(line => line.includes('\u001b[38;2;1;2;3m')).length).toBeGreaterThan(1)
+    const scrolled = paintShellEditorLines(
+      ['─'.repeat(WIDTH), ` ${'x'.repeat(18)} `],
+      `!echo ${'x'.repeat(30)}`,
+      WIDTH,
+      shellPaint(),
+    )
+    expect(scrolled[1]).toContain('\u001b[38;2;1;2;3mx')
+    const multi = renderShell('!echo hi\n\nls -la')
+    expect(multi.some(line => line.includes('\u001b[38;2;1;2;3mls -la\u001b[39m'))).toBe(true)
+    expect(multi.some(line => line.includes(warning('!')))).toBe(true)
+  })
+
+  it('paints while unfocused and falls back when the highlighter row count misses', () => {
+    const unfocused = renderShell('!echo hi', shellPaint(), [], false)
+    expect(unfocused[1]).not.toContain(CURSOR_MARKER)
+    expect(unfocused[1]).toContain(warning('!'))
+    expect(unfocused[1]).toContain('\u001b[38;2;1;2;3mecho hi\u001b[39m')
+    const missed = renderShell('!echo', shellPaint({ highlight: { lines: () => ['a', 'b'] } }))
+    expect(missed[1]).toContain(warning('!'))
+    expect(missed[1]).toContain('echo')
+    expect(missed[1]).not.toContain('\u001b[38;2;1;2;3mecho')
+    const open = paintShellEditorLines(
+      ['─'.repeat(WIDTH), ` !echo hi${' '.repeat(WIDTH - 10)}`],
+      '!echo hi',
+      WIDTH,
+      shellPaint(),
+    )
+    expect(open[1]).toContain('\u001b[38;2;1;2;3mecho hi\u001b[39m')
+  })
+
+  it('paints an indented lone bang and skips lines that are not content', () => {
+    const bang = renderShell('  !')[1] ?? ''
+    expect(bang).toContain(warning('!'))
+    const lead = renderShell('\n!echo hi')
+    expect(lead.some(line => line.includes(warning('!')))).toBe(true)
+    expect(lead.some(line => line.includes('\u001b[38;2;1;2;3mecho hi\u001b[39m'))).toBe(true)
+    const painted = paintShellEditorLines(
+      ['─'.repeat(WIDTH), ' not-a-pad', '─'.repeat(WIDTH), ' extra'],
+      '!echo hi',
+      WIDTH,
+      shellPaint(),
+    )
+    expect(painted[1]).toBe(' not-a-pad')
+    expect(painted[3]).toBe(' extra')
+    const noPad = paintShellEditorLines(
+      ['─'.repeat(WIDTH), 'not-a-pad', '─'.repeat(WIDTH)],
+      '!echo hi',
+      WIDTH,
+      shellPaint(),
+    )
+    expect(noPad[1]).toBe('not-a-pad')
+    expect(paintShellEditorLines(['─', '字'], '!\n字', 1, shellPaint({ paddingX: 0 }))[1]).toBeDefined()
+    expect(paintShellEditorLines([], 'hello', WIDTH, shellPaint())).toEqual([])
+    expect(paintShellEditorLines(['─'.repeat(WIDTH)], '!echo', WIDTH, shellPaint({ paddingX: 0 }))[0])
+      .toMatch(/─/u)
   })
 })
 

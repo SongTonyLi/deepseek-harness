@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Markdown } from '@earendil-works/pi-tui'
-import { AssistantBlock, ContextBlock, NoticeBlock, TOOL_RUNNING_ROW, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, TOOL_RUNNING_ROW, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
 import type { CodeSpan } from '../src/transcript.ts'
@@ -557,6 +557,21 @@ describe('render reuse', () => {
     expect(block.render(40)[2]).toBe('┃   rule 0')
     block.setHighlight(undefined)
     expect(block.render(40)).toEqual(expanded)
+  })
+
+  it('paints a user-shell $ command and rebuilds after invalidate', () => {
+    const { highlight, counter } = countingHighlighter()
+    const block = new UserShellBlock({ ...theme, codeHighlight: highlight }, 'echo hi', ['$ echo hi', 'out'])
+    const first = block.render(40)
+    expect(first).toEqual(['', '$ «echo hi»', 'out', ''])
+    expect(block.render(40)).toBe(first)
+    expect(counter.calls).toBe(1)
+    block.invalidate()
+    expect(block.render(40)).toEqual(first)
+    expect(counter.calls).toBe(2)
+    const plain = new UserShellBlock(theme, 'true', ['$ true'])
+    expect(plain.render(20)).toEqual(['', '$ true', ''])
+    plain.invalidate()
   })
 
   it('hands back the same prompt lines while nothing changed', () => {

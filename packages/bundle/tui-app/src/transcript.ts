@@ -229,6 +229,41 @@ export interface CodeSpan {
   source: string
 }
 
+/** The prompt drawn before a user-typed or model-run shell command. */
+export const SHELL_COMMAND_PREFIX = '$ '
+
+/**
+ * The transcript row for one shell command, with the prompt outside the source.
+ * @param command - the command text, one logical line or the first of several.
+ * @returns `$ ${command}`.
+ */
+export function shellCommandRow(command: string): string {
+  return `${SHELL_COMMAND_PREFIX}${command}`
+}
+
+/**
+ * The span that colours one shell command after {@link SHELL_COMMAND_PREFIX}.
+ * @param command - the command text the highlighter tokenises.
+ * @returns the span; an unknown or unloaded grammar leaves the row plain.
+ */
+export function shellCommandSpan(command: string): CodeSpan {
+  return { lang: 'shellscript', prefix: SHELL_COMMAND_PREFIX, source: command }
+}
+
+/**
+ * One `$ command` row plus any following plain rows, with the span only on
+ * the command so output, a cwd, or a description stays uncoloured.
+ * @param command - the command text.
+ * @param extra - rows drawn under the command.
+ * @returns the body the card or the user-shell block paints.
+ */
+export function shellCommandBody(command: string, extra: readonly string[] = []): { lines: string[]; code: (CodeSpan | undefined)[] } {
+  return {
+    lines: [shellCommandRow(command), ...extra],
+    code: [shellCommandSpan(command), ...extra.map(() => undefined)],
+  }
+}
+
 /** Card body rows with, per row, the code span a highlighter may colour. */
 export interface ToolBody {
   /** The plain rows, as the inspector and the keyboard walk read them. */
@@ -338,10 +373,11 @@ export function toolCallText(argumentsJson: string, view: ToolCallView | undefin
       return { title: view.title, lines }
     }
     case 'terminal': {
-      const lines: string[] = []
-      if (view.description !== undefined) lines.push(view.description)
-      if (view.cwd !== undefined) lines.push(`cwd: ${view.cwd}`)
-      return { title: view.title, lines }
+      const extra: string[] = []
+      if (view.description !== undefined) extra.push(view.description)
+      if (view.cwd !== undefined) extra.push(`cwd: ${view.cwd}`)
+      if (view.title === '') return { title: view.title, lines: extra }
+      return { title: view.title, ...shellCommandBody(view.title, extra) }
     }
     case 'diff':
       return { title: view.title, ...diffsBody(view.diffs) }

@@ -79,7 +79,7 @@ import {
   subagentDetail,
   type SubagentChoice,
 } from './catalog.ts'
-import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
@@ -762,6 +762,7 @@ export class TuiApp {
     // pi-tui starts the spinner interval in the constructor; it runs only while mounted.
     this.loader.stop()
     this.editor = new BarCursorEditor(this.tui, editorTheme(palette), { paddingX: 1 })
+    this.editor.shellPaint = { highlight: this.codeHighlight, warning: palette.warning, paddingX: 1 }
     this.editor.setAutocompleteProvider(editorCompletion({
       commands: () => this.completableCommands(),
       references: (query, quoted, signal) => this.references(query, quoted, signal),
@@ -2689,7 +2690,8 @@ export class TuiApp {
    * @param excluded - true when the line used `!!`.
    */
   private showUserShell(command: string, result: ShellRunResult, excluded: boolean): void {
-    this.showBlock(userShellTranscriptRows(command, result))
+    this.chat.addChild(new UserShellBlock(this.theme, command, userShellTranscriptRows(command, result)))
+    this.tui.requestRender()
     if (excluded) return
     const message = createUserMessage({
       content: [{ type: 'text', text: userShellContextText(command, result) }],
