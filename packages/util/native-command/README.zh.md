@@ -1,5 +1,5 @@
 ---
-description: "宿主原生命令、路径打开与默认浏览器 URL 交接工具，提供无 shell 执行、取消、桌面探测与凭据擦除。"
+description: "宿主原生命令与路径打开工具，提供无 shell 执行、取消、桌面探测与 WSL 路径交接。"
 kind: "package-library"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-`dsh-native-command` 无需 shell 即可运行 Host 可执行文件、通过桌面打开 Host 文件系统路径，并把 HTTP(S) URL 交给默认浏览器。命令运行器捕获 utf8 输出、传播取消，并隐藏 Windows 瞬时控制台。路径打开器支持默认应用与文本编辑器意图、浏览器可渲染文档、WSL 转换与桌面可用性检查。URL 打开器让 Harness 凭据不进入浏览器的环境。它是库而非插件：没有 `ctx`、无状态、不发事件。
+`dsh-native-command` 无需 shell 即可运行 Host 可执行文件，并通过桌面打开 Host 文件系统路径。命令运行器捕获 utf8 输出、传播取消，并隐藏 Windows 瞬时控制台。路径打开器支持默认应用与文本编辑器意图、浏览器可渲染文档、WSL 转换与桌面可用性检查。它是库而非插件：没有 `ctx`、无状态、不发事件。
 
 ## 目录
 
@@ -45,13 +45,11 @@ const { stdout, stderr } = await runNativeCommand('osascript', ['-e', script], s
 
 ### 打开 Host 路径
 
-`openNativePath(path, signal)` 将路径交给默认应用；平台能够确定默认浏览器时，HTML 与 SVG 会优先交给该浏览器。`openNativeTextFile(path, signal)` 选择文本编辑器意图；macOS 使用 `open -t`。WSL 路径先通过 `wslpath -w` 转换，再交给 Windows 桌面。`canOpenNativePath()` 报告当前 Host 是否可能具备桌面目标。
+`openNativePath(path, signal)` 将路径交给默认应用；平台能够确定默认浏览器时，HTML 与 SVG 会优先交给该浏览器。`openNativeAssociatedPath(path, signal)` 始终使用文件类型关联，不覆盖为浏览器。`openNativeTextFile(path, signal)` 选择文本编辑器意图；macOS 使用 `open -t`。WSL 路径先通过 `wslpath -w` 转换，再交给 Windows 桌面。`canOpenNativePath()` 报告当前 Host 是否可能具备桌面目标。
 
 `revealNativePath(path, signal)` 在 Finder 或文件资源管理器中选中文件，包含 WSL 路径转换；在桌面 Linux 上通过 `xdg-open` 打开上层目录。`nativeFileManager()` 标识该操作，供 UI 根据 Host 选择文案；桌面是否可用仍由独立的 `canOpenNativePath()` 检查决定。调用方必须先授权绝对文件路径，再执行操作。平台分派由注入运行器的测试覆盖；原生桌面验证由对应平台负责。 Explorer 接收独立参数中的编码文件 URI。退出码 1 按已转交请求处理；取消、找不到可执行文件和其他退出码仍然报错。该确认不能证明桌面窗口已选中文件。
 
-### 在默认浏览器中打开 URL
-
-`openNativeUrl(url)` 把一个 HTTP(S) URL 交给操作系统的默认浏览器，并在启动任何进程前拒绝其他协议。URL 经由一个短生命周期的 Node 辅助进程传递，该进程运行受维护的 `open` 包且使用擦除后的环境，因此 API 密钥与 Harness 主目录等 Harness 凭据不会进入新启动的浏览器进程；在 Windows 上辅助进程会存活到 PowerShell 接受交接为止。返回的 promise 在操作系统启动器退出时结算，而不是在浏览器窗口关闭时；启动失败会以辅助进程 stderr 的首行拒绝，调用方因此可以回退到展示 URL。这是与文件系统路径打开器对应的 URL 能力——不要把 URL 传给 `openNativePath`，后者把参数当作文件系统路径处理。
+`nativeFileApplications(path, signal)` 返回关联应用、本地化名称、图标和当前默认项。macOS 12 及以上版本使用 LaunchServices，Windows 使用 Shell 关联处理器，Linux 使用 GIO，并共用 XDG 桌面文件和图标读取逻辑。macOS 上 bundle 标识符与显示名都相同的多份拷贝（自更新暂存副本、按版本安装的拷贝）合并为系统默认项，否则保留最高版本；显示名不同的并存安装两项都保留。`openNativeFileApplication(path, application, signal)` 按完整的当前注册列表重新验证关联应用，展示列表中被合并掉的拷贝仍可打开，且不修改系统默认值。Windows 交给 Shell 启动应用，Linux 交给 `gio launch` 展开参数。WSL 转换路径后使用 Windows 适配器。调用方负责验证本地文件路径。原生集成测试分别在相应平台使用独立的 Windows 文件关联和 Linux XDG 目录。
 
 -----
 
@@ -70,7 +68,6 @@ const { stdout, stderr } = await runNativeCommand('osascript', ['-e', script], s
 | [`src/index.ts`](src/index.ts) | 命令运行器与路径打开器的公共导出 |
 | [`src/runner.ts`](src/runner.ts) | 无 shell 的 `execFile` 适配器 |
 | [`src/path-opener.ts`](src/path-opener.ts) | 桌面探测、打开意图、浏览器偏好与 WSL 转换 |
-| [`src/url-opener.ts`](src/url-opener.ts) | 面向 HTTP(S) URL 的凭据擦除默认浏览器交接 |
 | — | 不发布运行时不变式伴生入口；每次运行都是一次无状态的子进程往返，不拥有事件流或可变运行时数据；相关行为由单元测试保障。 |
 
 ### execFile 给了运行器什么
@@ -88,7 +85,7 @@ const { stdout, stderr } = await runNativeCommand('osascript', ['-e', script], s
 
 - [原生目录选择器](../../host/directory-picker-native/README.zh.md)——本运行器执行的 OS 选择器命令。
 - [Session Controller](../../api/session-controller/README.zh.md)——打开前解析 Session 相对 workspace 路径。
-- [Settings Controller](../../api/settings-controller/README.zh.md)——选择 settings 文档与 agent-preset 目录。
+- [Settings Controller](../../api/settings-controller/README.zh.md)——选择 settings 文档。
 - [子进程能力](../../subprocess/subprocess/README.zh.md)——通用子进程 seam，本包并非其组成部分。
 
 -----
@@ -106,10 +103,12 @@ const { stdout, stderr } = await runNativeCommand('osascript', ['-e', script], s
 
 <a id="known-limitations-and-deferred-work"></a>
 
+Linux 的关联查询和指定应用启动需要 GIO。缺少原生命令时查询失败，缺失的图标返回 null；调用方可以保留文件定位作为备用动作。
+
 
 这些限制说明本运行器何时不是合适的工具。它们是当前包约束，不是任务积压。
 
-- **不做输出限量**——两路流在内存中无界缓冲；当前每个调用方只运行输出为一个路径或一行错误的小型原生工具。把它指向输出量可观的命令之前，先接入 `dsh-output-retention` 限量。
+- 命令输出受 Node 的 `execFile` 缓冲上限约束，超过上限时拒绝结果。流式输出由 subprocess 能力处理。
 
 <a id="dev-note"></a>
 ### 开发备注

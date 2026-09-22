@@ -11,6 +11,7 @@ export {
   nativeFileManager,
   revealNativePath,
   openNativePath,
+  openNativeAssociatedPath,
   openNativeTextFile,
 } from './path-opener.ts'
 export type {
@@ -18,3 +19,8 @@ export type {
   PathOpenerInternals,
   PathOpenerRunner,
 } from './path-opener.ts'
+
+export { nativeFileApplications, openNativeFileApplication } from './file-applications.ts'
+export type { NativeFileApplication } from './types.ts'
+
+export { desktopEntryFields, desktopDataDirectories, desktopApplicationIcon } from './desktop-entry.ts'

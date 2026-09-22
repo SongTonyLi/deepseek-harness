@@ -146,7 +146,7 @@ ctx.llm.registerAdapter(['my-provider'], adapter)
 
 仓库中包含以下完整实现：
 
-- `packages/llm/llm-deepseek/` — DeepSeek API 适配器（OpenAI 兼容格式）
+- `packages/llm/llm-deepseek/` — 使用 Messages API 的 DeepSeek 适配器
 - `packages/llm/llm-pi-ai/` — Pi AI 适配器（不同的 API 格式）
 - `packages/llm/llm-cursor/` — Cursor 订阅适配器（非官方 Connect/protobuf HTTP/2）
 

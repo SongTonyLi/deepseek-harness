@@ -31,7 +31,7 @@ interface ServiceRole {
   key: string
   pkg: string
   title: string
-  mode: 'core' | 'seam' | 'bundle'
+  mode: 'core' | 'seam' | 'bundle' | 'service'
   implementations?: string[]
   consumers?: string[]
   companions?: string[]
@@ -185,8 +185,8 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'llm',
     title: 'LLM adapter registry',
     mode: 'seam',
-    implementations: ['llm-deepseek', 'llm-pi-ai', 'llm-replay', 'llm-cursor'],
-    consumers: ['agent-loop', 'compaction-basic', 'tui-app'],
+    implementations: ['llm-deepseek', 'llm-pi-ai', 'llm-replay'],
+    consumers: ['agent-loop', 'compaction-basic'],
     note: 'Adapters register provider implementations; the loop and compaction call the provider-neutral stream service.',
   },
   {
@@ -219,8 +219,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'session',
     title: 'In-memory session store',
     mode: 'core',
-    consumers: ['agent-loop', 'agent', 'session-persistence', 'session-query', 'session-query-sqlite', 'subagent-in-process-driver', 'invariants', 'message-feedback', 'headless', 'tui-app'],
+    consumers: ['agent-loop', 'agent', 'session-persistence', 'session-query', 'session-query-sqlite', 'subagent-in-process-driver', 'invariants', 'message-feedback'],
     note: 'Owns append-only Session instances and emits the durable session event feed.',
+  },
+  {
+    key: 'speechController',
+    pkg: 'experimental-api-speech-to-text',
+    title: 'Experimental transcription Remote',
+    mode: 'core',
+    note: 'Validates bounded browser audio before provider dispatch.',
   },
   {
     key: 'sessionController',
@@ -244,11 +251,11 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Lists the Session composition\'s user-invocable skills without activating a cold Agent.',
   },
   {
-    key: 'authorizationController',
-    pkg: 'api-authorization-controller',
-    title: 'Host sign-in Remote controller',
+    key: 'jobController',
+    pkg: 'api-job-controller',
+    title: 'Host job Remote controller',
     mode: 'core',
-    note: 'Carries the authorization seam onto the wire: one attempt per stream, prompts answered by a second call, and the stored-record state a configuration surface shows.',
+    note: 'Streams one background job\'s observation record over the generated Remote namespace; the roster stays on the session control stream.',
   },
   {
     key: 'credentialsController',
@@ -328,17 +335,24 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Durable session persistence seam',
     mode: 'seam',
     implementations: ['session-persistence-jsonl'],
-    consumers: ['agent-loop', 'tool-bash', 'hooks-claude-code', 'hooks-codex', 'session-query', 'session-query-sqlite', 'message-feedback', 'tui-app'],
+    consumers: ['agent-loop', 'tool-bash', 'hooks-claude-code', 'hooks-codex', 'session-query', 'session-query-sqlite', 'message-feedback'],
     note: 'The JSONL backend persists the SessionEvent vocabulary as one artifact per Session.',
+  },
+  {
+    key: 'configEditor',
+    pkg: 'config-editor',
+    title: 'Profile configuration edits',
+    mode: 'core',
+    consumers: ['settings', 'agent-default-model'],
+    note: 'Persists profile config patches under the application file lock and HMR queue, then reconciles Loader entries.',
   },
   {
     key: 'settings',
     pkg: 'settings',
-    title: 'User-settings seam',
-    mode: 'seam',
-    implementations: ['settings-file'],
-    consumers: ['api-settings-controller', 'llm-deepseek', 'llm-pi-ai', 'llm-cursor'],
-    note: 'Plugins register namespace schemas and resolve layered values; providers store the raw document. The LLM adapters register their entry config as the composition base under the user section; the settings controller serves redacted layered descriptors and writes the user layer.',
+    title: 'Plugin configuration forms',
+    mode: 'core',
+    consumers: ['api-settings-controller'],
+    note: 'Forms project volatile Config fields from active profile entries and delegate validated edits to config-editor. Plugins consume their own Config references.',
   },
   {
     key: 'subagentModelSelection',
@@ -354,8 +368,17 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Credential seam',
     mode: 'seam',
     implementations: ['credentials-local'],
-    consumers: ['api-settings-controller', 'llm-deepseek', 'llm-pi-ai', 'llm-cursor'],
+    consumers: ['api-settings-controller', 'llm-deepseek', 'llm-pi-ai'],
     note: 'Configuration carries references to secrets; providers own the values. Consumers resolve per operation, so a rotated credential reaches the very next request; the settings controller exposes value-free views and write-only storage.',
+  },
+  {
+    key: 'deepseekAccount',
+    pkg: 'deepseek-account',
+    title: 'DeepSeek account',
+    mode: 'seam',
+    implementations: ['deepseek-account-platform'],
+    consumers: ['api-account-controller', 'llm-deepseek'],
+    note: 'The Host owns browser authorization and local credentials; UI consumers receive state without tokens.',
   },
   {
     key: 'authorization',
@@ -363,9 +386,17 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Authorization flow registry',
     mode: 'seam',
     implementations: [],
-    consumers: ['api-authorization-controller', 'llm-pi-ai', 'llm-cursor'],
+    consumers: ['llm-pi-ai'],
     note: 'Flows are registered by the plugin that knows how to obtain one credential and keyed by the record they write; the seam owns the conversation and the one-attempt-per-key lifecycle, never the protocol.',
   },
+  {
+    key: 'productTelemetry',
+    pkg: 'host-product-telemetry-otel',
+    title: 'Product usage event sender',
+    mode: 'service',
+    note: 'Exports explicitly submitted analytics events through OTLP/HTTP; mounting alone collects nothing.',
+  },
+
   {
     key: 'sessionTelemetry',
     pkg: 'session-telemetry',
@@ -460,7 +491,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'tools',
     title: 'Tool registry and guarded execution pipeline',
     mode: 'core',
-    consumers: ['agent-loop', 'tool-ask-user', 'tool-bash', 'tool-cordis', 'tool-fs', 'tool-terminal', 'tool-skill', 'tool-subagent', 'tool-todo', 'tool-web', 'tui-app'],
+    consumers: ['agent-loop', 'tool-ask-user', 'tool-bash', 'tool-cordis', 'tool-fs', 'tool-terminal', 'tool-skill', 'tool-subagent', 'tool-todo', 'tool-web'],
     note: 'Registers capabilities, owns PTC mode transport, and routes calls through pre-policy, monotonic guards, around dispatch, post-policy, and final-result observation.',
   },
   {
@@ -468,7 +499,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'user-questions',
     title: 'Human question/answer seam',
     mode: 'seam',
-    consumers: ['tool-ask-user', 'tui-app'],
+    consumers: ['tool-ask-user'],
     note: 'UI front ends provide the active human-answer provider; tool-ask-user pauses a tool call on the provider-neutral ask() promise.',
   },
   {
@@ -480,10 +511,10 @@ const SERVICE_ROLES: ServiceRole[] = [
   },
   {
     key: 'agentPresets',
-    pkg: 'agent-presets',
+    pkg: 'agent-preset-registry',
     title: 'Per-session agent composition',
     mode: 'core',
-    note: 'Discovers preset directories over trusted and user-authored roots and mounts one preset cordis.yml under an agent scope during creation, rejecting a row that never activates or that publishes into the root service realm.',
+    note: 'Eagerly mounts YAML-declared preset revisions, binds Agents and cold readers to scoped contributions, and retains retired revisions until their last user releases them.',
   },
   {
     key: 'commands',
@@ -522,7 +553,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'agent',
     title: 'Agent service',
     mode: 'core',
-    consumers: ['agent-loop', 'acp', 'subagent-in-process-driver', 'headless', 'tui-app'],
+    consumers: ['agent-loop', 'acp', 'subagent-in-process-driver'],
     note: 'Owns live Agent handles, the create/resume factory seam, and process-local initiator propagation.',
   },
   {
@@ -530,8 +561,8 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'agent-default-model',
     title: 'Default Agent model selection',
     mode: 'core',
-    consumers: ['api-session-controller', 'headless', 'tui-app'],
-    note: 'Layers the default ModelSelection through settings so direct and Host-backed Agent entry points share one state owner.',
+    consumers: ['api-session-controller', 'headless'],
+    note: 'Reads the default ModelSelection from volatile Config and saves selections through the profile editor.',
   },
   {
     key: 'agentLoop',
@@ -615,7 +646,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Approval seam',
     mode: 'seam',
     implementations: [],
-    consumers: ['tools', 'tool-bash', 'acp', 'tui-app'],
+    consumers: ['tools', 'tool-bash', 'acp'],
     note: 'One-shot permission decisions dispatched over the `approval/request` waterfall; answerers are listeners (the ACP bridge for its own agents), absence fails closed to `unavailable`.',
   },
   {
@@ -664,6 +695,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Providers implement transports; the service also owns optional Activation-based continuation orchestration, tool-subagent selects one-shot or continuable delegation, tool-subagent-control delivers follow-ups, and tool-ralph requires one fresh structured-output route.',
   },
   {
+    key: 'speechToText',
+    pkg: 'experimental-speech-to-text',
+    title: 'Experimental speech recognition providers',
+    mode: 'seam',
+    implementations: ['experimental-speech-to-text-sensevoice'],
+    consumers: ['experimental-api-speech-to-text'],
+    note: 'Routes explicit recognizers; the browser uses the authenticated Remote and keeps transcripts in the draft until submission.',
+  },
+  {
     key: 'agentTeams',
     pkg: 'experimental-agent-team',
     title: 'Agent Teams coordination domain',
@@ -684,8 +724,8 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Background job registry',
     mode: 'seam',
     implementations: ['jobs-local'],
-    consumers: ['tool-bash', 'tool-terminal', 'tool-subagent', 'tool-jobs'],
-    note: 'Producers (background bash, PTY sends, and subagent delegations) register running work; tool-jobs is the model-facing controller that reads, lists, and kills it; jobs-local is the process-local registry.',
+    consumers: ['tool-bash', 'tool-pwsh', 'tool-terminal', 'tool-subagent', 'tool-jobs', 'api-job-controller'],
+    note: 'Producers (background bash/pwsh, PTY sends, and subagent delegations) register running work; record-declaring jobs additionally stream raw output for non-consuming observers; tool-jobs is the model-facing controller that reads, lists, and kills it; jobs-local is the process-local registry.',
   },
   {
     key: 'web',
@@ -847,7 +887,7 @@ function renderCapabilitySeams(pkgs: Pkg[], services: readonly ServiceEntry[]): 
   const addEdge = (from: string, to: string): void => { edges.add(`  ${from} --> ${to}`) }
   const lines = generatedHeader('Capability Seams And Core Services')
   lines.push(
-    'A service can be a core spine service, a swappable capability seam, or a bundle/composition point. The graph shows the package that owns the service declaration, known implementation packages, and packages that consume the service directly.',
+    'A service can be a core spine service, a swappable capability seam, a bundle/composition point, or a standalone service. The graph shows the package that owns the service declaration, known implementation packages, and packages that consume the service directly.',
     '',
     '```mermaid',
     'flowchart LR',
@@ -913,7 +953,7 @@ const APP_EXAMPLES = [
     title: 'DSH Base Composition',
     label: 'packages/bundle/base/cordis.patch.yml',
     config: 'packages/bundle/base/cordis.patch.yml',
-    summary: 'The dsh-base bundle patch shared by the web, tui, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.',
+    summary: 'The dsh-base bundle patch shared by the web, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.',
   },
 ]
 

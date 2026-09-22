@@ -91,25 +91,31 @@
     - id: llm-retry
       name: '@deepseek-ai/dsh-llm-retry'
 
-    # User-settings document (`$DSH_HOME/settings.yaml`, hot-reloaded): a
-    # `llm-deepseek:`, `llm-pi-ai:`, or `llm-cursor:` section there overrides the
-    # adapter entries below without a restart, and is what the web Models page writes.
+    # Live Config forms persist through the active profile patch.
+
+    # Live configuration forms persist through the launcher's profile.
+    - id: config-editor
+      name: '@deepseek-ai/dsh-config-editor'
+      disabled: !!js "!ctx.get('profileContext')"
+
     - id: settings
-      name: '@deepseek-ai/dsh-settings-file'
+      name: '@deepseek-ai/dsh-settings'
+      disabled: !!js "!ctx.get('profileContext')"
 
     # Credential sources: inherited environment over the managed
     # `$DSH_HOME/.credentials.yaml`, with project and user `.env` fallbacks.
     # Adapters resolve references per request; the Models page writes only the
     # managed document, which is never materialized into the process environment.
-    - id: credentials
-      name: '@deepseek-ai/dsh-credentials-local'
-
-    # Human-guided credential acquisition: the registry a plugin registers its
-    # own sign-in flow on. It offers no flow of its own, so a composition with
-    # no registrant (headless, ACP) asks nobody to sign in; what makes the
-    # subscription logins reachable are the llm-pi-ai and llm-cursor rows below.
     - id: authorization
       name: '@deepseek-ai/dsh-authorization'
+
+    - id: deepseek-account
+      name: '@deepseek-ai/dsh-deepseek-account-platform'
+      config:
+        desktopPlatform: !!js "ctx.get('profileContext')?.name === 'desktop' && ['darwin', 'win32'].includes(process.platform) ? process.platform : null"
+
+    - id: credentials
+      name: '@deepseek-ai/dsh-credentials-local'
 
     # The pi-ai multi-provider twin, mounted dormant: zero routes (and no extra
     # models in the picker) until a `llm-pi-ai:` settings section supplies provider
@@ -121,9 +127,8 @@
     - id: llm-pi-ai
       name: '@deepseek-ai/dsh-llm-pi-ai'
 
-    # Always-on Cursor subscription route: PKCE sign-in at `llm-cursor/cursor`,
-    # unofficial Connect/protobuf HTTP/2 streaming, optional reuse of an installed
-    # Cursor IDE or CLI login. Headless uses CURSOR_ACCESS_TOKEN or a stored grant.
+    # Always-on Cursor subscription route. Its stored grant is managed through
+    # the authorization and credentials rows above.
     - id: llm-cursor
       name: '@deepseek-ai/dsh-llm-cursor'
 
@@ -302,8 +307,6 @@
 
     - id: tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
-      config:
-        closedCatalogProviders: [cursor]
 
     - id: commands
       name: '@deepseek-ai/dsh-commands'
@@ -458,22 +461,13 @@
       config:
         thresholds: [3, 5, 8]
         argumentsPreviewChars: 500
-        blockThreshold: 2
-        blockProviders: [cursor]
-
-    # Idle-goal turns with no successful edit/write/bash.
-    - id: no-progress-reminder
-      name: '@deepseek-ai/dsh-no-progress-reminder'
-      config:
-        idleTurns: 5
-        providers: [cursor]
 
     # The shared base enables the stable model-facing web_search and web_fetch
     # tools. The Web app disables this host row and composes both tools per agent
     # preset; products with a stricter network policy override tool-web. DeepSeek
     # search resolves the same DEEPSEEK_API_KEY
     # credential the Models page manages for chat, at each search; its Messages
-    # endpoint is separate from the chat-completions endpoint, so it takes its own
+    # endpoint is configured independently from the model route, so it takes its own
     # base-URL override. Anonymous fetch accepts only public HTTP(S) destinations,
     # resolves and validates every destination, and pins every actual connection.
     # Search is a full auxiliary model request with server-side retrieval, so this

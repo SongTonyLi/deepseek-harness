@@ -1,9 +1,9 @@
 /** Platform-neutral assembly of generated Host Remote contributions. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import agentPresetsRemote from '@deepseek-ai/dsh-agent-presets/remote'
-import authorizationControllerRemote from '@deepseek-ai/dsh-api-authorization-controller/remote'
+import agentPresetsRemote from '@deepseek-ai/dsh-agent-preset-registry/remote'
 import commandsRemote from '@deepseek-ai/dsh-commands/remote'
+import accountRemote from '@deepseek-ai/dsh-api-account-controller/remote'
 import settingsControllerRemote from '@deepseek-ai/dsh-api-settings-controller/remote'
 import officeToPdfRemote from '@deepseek-ai/dsh-office-to-pdf/remote'
 import goalsRemote from '@deepseek-ai/dsh-goal/remote'
@@ -18,6 +18,7 @@ import fileUploadsRemote from '@deepseek-ai/dsh-client-file-upload/remote'
 import sessionReferencesRemote from '@deepseek-ai/dsh-session-reference/remote'
 import subagentsRemote from '@deepseek-ai/dsh-subagent/remote'
 import sessionRemote from '@deepseek-ai/dsh-api-session-controller/remote'
+import jobRemote from '@deepseek-ai/dsh-api-job-controller/remote'
 import workspaceRemote from '@deepseek-ai/dsh-api-workspace-controller/remote'
 import terminalRemote from '@deepseek-ai/dsh-api-terminal-controller/remote'
 import workspaceFilesRemote from '@deepseek-ai/dsh-api-workspace-files/remote'
@@ -25,16 +26,16 @@ import type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
 
 export type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
 export type {
-  BundleInfo, BundleRowInfo, ChangeResult, InstallBundleOptions, InstallSpecKind, ManagementError, PackageResult, PluginChange,
-  PluginEntryId, PluginInfo, PluginInspectProblem, PluginInstallCancellation, PluginInstallFailureKind, PluginInstallLogChunk,
-  PluginInstallProgress, PluginInstallRequestId, PluginSpecInspection, ReadOnlyReason,
+  BundleInfo, BundleRowInfo, ChangeResult, InspectOptions, InstallBundleOptions, InstallSpecKind, ManagementError, PackageResult,
+  PluginChange, PluginEntryId, PluginInfo, PluginInspectProblem, PluginInstallCancellation, PluginInstallFailureKind,
+  PluginInstallLogChunk, PluginInstallProgress, PluginInstallRequestId, PluginRegistries, PluginSpecInspection, ReadOnlyReason, Registry,
 } from '@deepseek-ai/dsh-plugin-manager/types'
 export type {} from '@deepseek-ai/dsh-plugin-manager/remote'
 export type { PluginInventorySnapshot } from '@deepseek-ai/dsh-host-plugin-inventory/types'
-export type {} from '@deepseek-ai/dsh-agent-presets/remote'
+export type {} from '@deepseek-ai/dsh-agent-preset-registry/remote'
 export type {} from '@deepseek-ai/dsh-commands/remote'
-export type {} from '@deepseek-ai/dsh-api-authorization-controller/remote'
 export type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
+export type {} from '@deepseek-ai/dsh-api-account-controller/remote'
 export type {} from '@deepseek-ai/dsh-goal/remote'
 export type {} from '@deepseek-ai/dsh-office-to-pdf/remote'
 export type {} from '@deepseek-ai/dsh-llm/remote'
@@ -48,13 +49,14 @@ export type {} from '@deepseek-ai/dsh-subagent/remote'
 export type * from '@deepseek-ai/dsh-subagent/client'
 export type {} from '@deepseek-ai/dsh-api-session-controller/remote'
 export type * from '@deepseek-ai/dsh-api-session-controller/types'
+export type {} from '@deepseek-ai/dsh-api-job-controller/remote'
+export type * from '@deepseek-ai/dsh-api-job-controller/types'
 export type {} from '@deepseek-ai/dsh-api-workspace-controller/remote'
 export type * from '@deepseek-ai/dsh-api-workspace-controller/types'
 export type {} from '@deepseek-ai/dsh-api-workspace-files/remote'
 export type * from '@deepseek-ai/dsh-api-workspace-files/types'
 export type {} from '@deepseek-ai/dsh-api-terminal-controller/remote'
 export type * from '@deepseek-ai/dsh-api-terminal-controller/types'
-export type { SessionJob as JobView } from '@deepseek-ai/dsh-api-session-controller/types'
 // The forwarded-event allowlist's selection seat: without it in the consumer's
 // compilation face `TypertRemoteEvent` is `never` and every `$on` call fails.
 export type { ApiRemoteForwardedEvent } from '../types.ts'
@@ -63,10 +65,9 @@ export type { ApiRemoteForwardedEvent } from '../types.ts'
 // declaration the Host emits rather than a flattened restatement of it.
 export type {} from '@deepseek-ai/dsh-commands/types'
 export type {} from '@deepseek-ai/dsh-cordis-host-runner/types'
-export type {} from '@deepseek-ai/dsh-authorization/types'
 export type {} from '@deepseek-ai/dsh-credentials/types'
 export type {} from '@deepseek-ai/dsh-llm/types'
-export type {} from '@deepseek-ai/dsh-agent-presets/types'
+export type {} from '@deepseek-ai/dsh-agent-preset-registry/types'
 export type {} from '@deepseek-ai/dsh-permission-presets/types'
 export type {} from '@deepseek-ai/dsh-settings/types'
 export type {} from '@deepseek-ai/dsh-user-approval/types'
@@ -126,12 +127,6 @@ export type {
 } from '@deepseek-ai/dsh-cordis-host-runner/types'
 // Credential state vocabulary for the credentials namespace (values never ride it).
 export type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
-// Sign-in vocabulary for the authorization namespace (a prompt answer never rides back).
-export type {
-  AuthorizationBeginRequest, AuthorizationFlowView, AuthorizationFrame, AuthorizationNoticeFrame,
-  AuthorizationPromptFrame, AuthorizationPromptWithdrawnFrame, AuthorizationSettledFrame,
-} from '@deepseek-ai/dsh-api-authorization-controller/types'
-export type { AuthorizationMethod, AuthorizationPromptOption } from '@deepseek-ai/dsh-authorization/types'
 // Redacted namespace vocabulary for the settings namespace (secrets never ride
 // it). It travels with its seam, whose `./types` the Client face already reads.
 export type {
@@ -175,9 +170,10 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposers: Array<() => Promise<void>> = []
   try {
     for (const contribution of [
-      agentPresetsRemote, authorizationControllerRemote, commandsRemote, settingsControllerRemote, goalsRemote, llmRemote, dynamicRemote,
+      agentPresetsRemote, commandsRemote, settingsControllerRemote, accountRemote, goalsRemote, llmRemote, dynamicRemote,
       pluginInventoryRemote, pluginManagerRemote, messageFeedbackRemote, sessionFeedbackRemote, fileUploadsRemote, sessionReferencesRemote,
-      permissionPresetsRemote, subagentsRemote, sessionRemote, workspaceRemote, workspaceFilesRemote, terminalRemote, officeToPdfRemote,
+      permissionPresetsRemote, subagentsRemote, sessionRemote, jobRemote, workspaceRemote, workspaceFilesRemote, terminalRemote,
+      officeToPdfRemote,
     ]) {
       disposers.push(await ctx.remote.$mount(contribution))
     }
