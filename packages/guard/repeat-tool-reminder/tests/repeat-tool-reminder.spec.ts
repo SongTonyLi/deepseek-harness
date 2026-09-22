@@ -84,7 +84,7 @@ function toolResults(agent: Agent): SessionEvent<'tool/result'>[] {
 }
 
 function resultText(event: SessionEvent<'tool/result'>): string {
-  return event.data.message.content[0].content
+  return event.data.message.content
     .map(block => block.type === 'text' ? block.text : '')
     .join('|')
 }
@@ -360,8 +360,8 @@ describe('blockThreshold', () => {
     expect(counted.executions).toBe(1)
     const results = toolResults(agent)
     expect(results).toHaveLength(2)
-    expect(results[0]!.data.message.content[0].isError).toBe(false)
-    expect(results[1]!.data.message.content[0].isError).toBe(true)
+    expect(results[0]!.data.message.isError).toBe(false)
+    expect(results[1]!.data.message.isError).toBe(true)
     const denied = resultText(results[1]!)
     expect(denied.split('\n')[0]).toBe(`Error: ${IDENTICAL_DENY_LINE}`)
     expect(denied).toContain('tool: loop')
@@ -381,7 +381,7 @@ describe('blockThreshold', () => {
     await waitForIdle(ctx, agent)
 
     expect(counted.executions).toBe(2)
-    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+    expect(toolResults(agent).every(event => event.data.message.isError !== true)).toBe(true)
   })
 
   it('a different tracked call still runs', async () => {
@@ -398,7 +398,7 @@ describe('blockThreshold', () => {
     await waitForIdle(ctx, agent)
 
     expect(counted.executions).toBe(2)
-    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+    expect(toolResults(agent).every(event => event.data.message.isError !== true)).toBe(true)
   })
 
   it('untracked and excluded tools still run', async () => {
@@ -463,7 +463,7 @@ describe('blockThreshold', () => {
     await waitForIdle(ctx, agent)
 
     expect(counted.executions).toBe(2)
-    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+    expect(toolResults(agent).every(event => event.data.message.isError !== true)).toBe(true)
   })
 
   it('does not block a direct execute with no agent', async () => {
@@ -596,7 +596,7 @@ describe('blockProviders Cursor subscription default', () => {
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
     await waitForIdle(ctx, agent)
     expect(counted.executions).toBe(2)
-    expect(toolResults(agent).every(event => event.data.message.content[0].isError !== true)).toBe(true)
+    expect(toolResults(agent).every(event => event.data.message.isError !== true)).toBe(true)
   })
 
   it('does not deny when the agent has no routed provider', async () => {
