@@ -122,7 +122,7 @@ function execReply(written: AgentClientMessage[]) {
 const request = {
   provider: 'cursor' as const,
   model: 'composer-2',
-  messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+  messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
 }
 
 describe('streamCursorRun', () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import * as LlmCursor from '@deepseek-ai/dsh-llm-cursor'
 import { assemble } from './assemble.ts'
@@ -56,9 +56,8 @@ describe.skipIf(!process.env.CURSOR_ACCESS_TOKEN)('llm-cursor e2e (real API)', (
       system: RULES,
       messages: [
         user('Pick one random fruit and reply with only its name.'),
-        createMessage({
-          role: 'assistant',
-          source: { kind: 'model', provider: 'cursor', model: MODEL },
+        createAssistantMessage({
+          source: { provider: 'cursor', model: MODEL },
           content: [{ type: 'text', text: 'kumquat' }],
         }),
         user('Which fruit did you pick just now, and what is the secret codeword? Reply with only those two words.'),
@@ -84,10 +83,10 @@ describe.skipIf(!process.env.CURSOR_ACCESS_TOKEN)('llm-cursor e2e (real API)', (
     const call = first.message.content.find(block => block.type === 'tool-call')
     if (call?.type !== 'tool-call') throw new Error('expected a tool call')
     expect(call.name).toBe('lookup_codeword')
-    const result = createMessage({
-      role: 'user',
-      source: { kind: 'tool', callId: call.id },
-      content: [{ type: 'tool-result', toolCallId: call.id, content: [{ type: 'text', text: 'violet-harbor' }] }],
+    const result = createToolResultMessage({
+      callId: call.id,
+      content: [{ type: 'text', text: 'violet-harbor' }],
+      isError: false,
     })
     const second = await assemble(ctx, {
       model: MODEL,

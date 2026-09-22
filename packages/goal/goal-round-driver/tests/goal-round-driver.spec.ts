@@ -6,7 +6,7 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
-import { createUserMessage, LlmAdapter, LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createToolResultMessage, createUserMessage, LlmAdapter, LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -198,7 +198,7 @@ function followUser(test: Harness, text: string): void {
 /** Notice bodies from one model request. */
 function requestNoticeTexts(request: GenerateOptions): string[] {
   return request.messages.flatMap(message =>
-    message.source.kind === 'plugin' && message.source.form === 'notice'
+    message.source.kind === 'goal-round-driver' && message.source.form === 'notice'
       ? message.content.filter(block => block.type === 'text').map(block => block.text)
       : [])
 }
@@ -1192,7 +1192,7 @@ describe('continue-intent helpers', () => {
   })
   const notice = createUserMessage({
     content: [{ type: 'text', text: 'notice' }],
-    source: { kind: 'plugin', plugin: 'goal-round-driver', form: 'notice', summary: 'notice' },
+    source: { kind: 'goal-round-driver', form: 'notice', summary: 'notice' },
   })
 
   it('skips attaching a notice when the step is rejected or aborted', () => {
@@ -1247,12 +1247,11 @@ describe('continue-intent helpers', () => {
         data: {
           turn: 1,
           step: 1,
-          message: {
-            id: 'result-missing' as never,
-            role: 'user',
-            source: { kind: 'tool', callId: ToolCallId('missing') },
-            content: [{ type: 'tool-result', toolCallId: ToolCallId('missing'), content: [], isError: false }],
-          },
+          message: createToolResultMessage({
+            callId: ToolCallId('missing'),
+            content: [],
+            isError: false,
+          }),
         },
       },
       { type: 'turn/end', seq: 2 as never, time: 3, data: { turn: 1, reason: { kind: 'completed' } } },
@@ -1302,8 +1301,7 @@ describe('continue-intent rearm', () => {
     expect(notices[0]).toContain('The active goal was resumed')
     expect(notices[0]).toContain('the previous turn made no file changes; do not repeat its plan')
     expect(test.adapter.requests[0]!.messages.some(message =>
-      message.source.kind === 'plugin' && message.source.plugin === 'goal-round-driver'
-      && message.source.form === 'notice')).toBe(true)
+      message.source.kind === 'goal-round-driver' && message.source.form === 'notice')).toBe(true)
     expect(requestText(test.adapter.requests[1]!)).toContain('<goal_round>')
   })
 
@@ -1451,7 +1449,7 @@ describe('continue-intent rearm', () => {
     createDisarmedGoal(test, 'ignore plugin continue')
     test.agent.followup(createUserMessage({
       content: [{ type: 'text', text: 'continue' }],
-      source: { kind: 'plugin', plugin: 'test' },
+      source: { kind: 'test' },
     }))
     await test.agent.whenIdle()
 

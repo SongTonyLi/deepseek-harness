@@ -7,7 +7,6 @@ import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import AuthorizationService from '@deepseek-ai/dsh-authorization'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
-import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
 import * as LlmCursor from '@deepseek-ai/dsh-llm-cursor'
 import http2 from 'node:http2'
 import * as harvest from '../src/harvest.ts'
@@ -34,10 +33,8 @@ async function boot(dir: string, config: LlmCursor.Config = { reuseInstalledCurs
   vi.stubEnv('DSH_HOME', dir)
   const ctx = new Context()
   cleanups.push(async () => { await ctx.fiber.dispose() })
-  await writeFile(join(dir, 'settings.yaml'), '# personal settings\n')
   await writeFile(join(dir, '.credentials.yaml'), 'version: 1\nrefs: {}\n', { mode: 0o600 })
   await ctx.plugin(LlmRuntime)
-  await ctx.plugin(FileSettingsProvider, { path: join(dir, 'settings.yaml'), watch: false })
   await ctx.plugin(LocalCredentialProvider, { path: join(dir, '.credentials.yaml'), watch: false })
   await ctx.plugin(AuthorizationService)
   await ctx.plugin(LlmCursor, config)
@@ -61,24 +58,6 @@ describe('llm-cursor plugin', () => {
     const ctx = await boot(await home())
     const result = await assemble(ctx, { model: 'composer-2', messages: [] })
     expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'MISSING_CREDENTIAL' } })
-  })
-
-  it('keeps the last good retry policy when a settings snapshot fails resolve', async () => {
-    const ctx = await boot(await home(), {
-      reuseInstalledCursorLogin: false,
-      retryPolicy: { mode: 'normal', maxRetries: 3 },
-    })
-    expect(ctx.llm.providerRetryPolicy('cursor')).toMatchObject({ mode: 'normal', maxRetries: 3 })
-    await ctx.settings.update(NS, { retryPolicy: { mode: 'normal', retryableCodes: [] } })
-    expect(ctx.llm.providerRetryPolicy('cursor')).toMatchObject({ mode: 'normal', maxRetries: 3 })
-    await ctx.settings.update(NS, {
-      retryPolicy: { mode: 'always', backoff: { initialDelayMs: 25, maxDelayMs: 100, jitterRatio: 0.2 } },
-    })
-    expect(ctx.llm.providerRetryPolicy('cursor')).toMatchObject({ mode: 'always' })
-    await ctx.settings.update(NS, {
-      retryPolicy: { mode: 'always', backoff: { initialDelayMs: 25, maxDelayMs: 100, jitterRatio: 0.2 } },
-    })
-    expect(ctx.llm.providerRetryPolicy('cursor')).toMatchObject({ mode: 'always' })
   })
 
   it('mounts without authorization and simply offers no sign-in', async () => {

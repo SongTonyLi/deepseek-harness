@@ -2,7 +2,9 @@
 import { describe, expect, it } from 'vitest'
 import { fromBinary, fromJson, toBinary } from '@bufbuild/protobuf'
 import { ValueSchema } from '@bufbuild/protobuf/wkt'
-import { createMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import {
+  createAssistantMessage, createMessage, createSystemMessage, createToolResultMessage, createUserMessage, ToolCallId,
+} from '@deepseek-ai/dsh-llm'
 import {
   buildCursorRun,
   buildMcpToolDefinitions,
@@ -19,6 +21,12 @@ import {
   ConversationTurnStructureSchema,
 } from '../src/native/agent_pb.ts'
 import type { AgentRunRequest } from '../src/native/agent_pb.ts'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'cursor-test-context': { kind: 'cursor-test-context' } & import('@deepseek-ai/dsh-llm').ContextFormed
+  }
+}
 
 function decodeRun(payload: CursorRunPayload): AgentRunRequest {
   const message = fromBinary(AgentClientMessageSchema, payload.requestBytes)
@@ -45,19 +53,18 @@ function userActionText(payload: CursorRunPayload): string | undefined {
 
 const toolCallHistory = [
   createUserMessage({ content: [{ type: 'text', text: 'use echo' }], source: { kind: 'user' } }),
-  createMessage({
-    role: 'assistant',
-    source: { kind: 'model', provider: 'cursor', model: 'composer-2' },
+  createAssistantMessage({
+    source: { provider: 'cursor', model: 'composer-2' },
     content: [
       { type: 'text', text: 'calling' },
       { type: 'reasoning', text: 'think' },
       { type: 'tool-call', id: ToolCallId('c1'), name: 'echo', arguments: '{"text":"hi"}' },
     ],
   }),
-  createMessage({
-    role: 'user',
-    source: { kind: 'tool', callId: ToolCallId('c1') },
-    content: [{ type: 'tool-result', toolCallId: ToolCallId('c1'), content: [{ type: 'text', text: 'hi' }] }],
+  createToolResultMessage({
+    callId: ToolCallId('c1'),
+    content: [{ type: 'text', text: 'hi' }],
+    isError: false,
   }),
 ]
 
@@ -77,7 +84,7 @@ describe('conversationFromOptions', () => {
       provider: 'cursor',
       model: 'composer-2',
       messages: [
-        createMessage({ role: 'system', content: [{ type: 'text', text: 'be brief' }], source: { kind: 'plugin', plugin: 'x' } }),
+        createSystemMessage('be brief'),
         createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
       ],
     })
@@ -88,7 +95,7 @@ describe('conversationFromOptions', () => {
       model: 'composer-2',
       system: 'sys',
       messages: [
-        createMessage({ role: 'system', content: [{ type: 'text', text: 'ignored' }], source: { kind: 'plugin', plugin: 'x' } }),
+        createSystemMessage('ignored'),
         createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
       ],
     })

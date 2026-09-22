@@ -87,7 +87,7 @@ describe('CursorAdapter', () => {
     const chunks = await Array.fromAsync(adapter.stream({
       provider: 'cursor',
       model: 'composer-2',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
     }))
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
     expect(refresh).toHaveBeenCalled()
@@ -105,7 +105,7 @@ describe('CursorAdapter', () => {
     await expect(Array.fromAsync(adapter.stream({
       provider: 'cursor',
       model: 'composer-2',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: 'test' } })],
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
     }))).rejects.toThrow('offline')
   })
 })

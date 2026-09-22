@@ -21,6 +21,7 @@ import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
 import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
+import { testContextSource } from './message-sources.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
   for (const char of text) terminal.type(char)
@@ -474,7 +475,7 @@ describe('TuiApp', () => {
 
   it('folds every tool card and context block together with Ctrl+O and /tools', async () => {
     const history = [
-      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage(RULES, 'system-prompt') } },
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage(RULES) } },
     ] as never[]
     const test = await bench({ history, toolPreviewLines: 1, contextPreviewLines: 2 })
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
@@ -506,16 +507,16 @@ describe('TuiApp', () => {
     const history = [
       { type: 'user/message', seq: 0, time: 1, data: createUserMessage({
         content: [{ type: 'text', text: 'assembled' }],
-        source: { kind: 'plugin', plugin: 'workspace', form: 'snapshot', sections: [
+        source: testContextSource({ form: 'snapshot', sections: [
           { name: 'sandbox', text: 'allow python' },
           { name: 'git', text: Array.from({ length: 20 }, (_, index) => `changed file ${String(index)}`).join('\n') },
-        ] },
+        ] }),
       }) },
     ] as never[]
     const test = await bench({ history })
     await test.settle()
     const screen = await test.screen()
-    expect(screen).toContain('⬡ snapshot · workspace')
+    expect(screen).toContain('⬡ snapshot · tui-test-context')
     // Four rows of body, and the injection is no longer than the conversation.
     expect(screen).toContain('  sandbox')
     expect(screen).toContain('  allow python')
@@ -526,21 +527,20 @@ describe('TuiApp', () => {
 
   it('draws resumed history, notices, and turn-end reasons', async () => {
     const history = [
-      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('You are the agent.', 'system-prompt') } },
-      { type: 'system/message', seq: 1, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('', 'system-prompt') } },
-      { type: 'system/message', seq: 2, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('Updated prompt.', 'system-prompt') } },
+      { type: 'system/message', seq: 0, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('You are the agent.') } },
+      { type: 'system/message', seq: 1, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('') } },
+      { type: 'system/message', seq: 2, time: 1, data: { turn: 0, step: 1, message: createSystemMessage('Updated prompt.') } },
       { type: 'user/message', seq: 3, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'earlier prompt' }], source: { kind: 'user' } }) },
-      { type: 'user/message', seq: 4, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'full notice body' }], source: { kind: 'plugin', plugin: 'skill', form: 'notice', summary: 'skill loaded' } }) },
-      { type: 'user/message', seq: 5, time: 1, data: createUserMessage({ content: [{ type: 'text', text: '# AGENTS.md' }], source: { kind: 'plugin', plugin: 'agent-instructions', form: 'instructions' } }) },
+      { type: 'user/message', seq: 4, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'full notice body' }], source: testContextSource({ form: 'notice', summary: 'skill loaded' }) }) },
+      { type: 'user/message', seq: 5, time: 1, data: createUserMessage({ content: [{ type: 'text', text: '# AGENTS.md' }], source: testContextSource({ form: 'instructions' }) }) },
       { type: 'user/message', seq: 6, time: 1, data: createUserMessage({
         content: [{ type: 'text', text: 'assembled' }],
-        source: { kind: 'plugin', plugin: 'workspace', form: 'snapshot', sections: [{ name: 'sandbox', text: 'allow python' }, { name: 'git', text: 'clean tree' }] },
+        source: testContextSource({ form: 'snapshot', sections: [{ name: 'sandbox', text: 'allow python' }, { name: 'git', text: 'clean tree' }] }),
       }) },
-      { type: 'user/message', seq: 7, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'hidden compact' }], source: { kind: 'plugin', plugin: 'compact' } }) },
       { type: 'turn/end', seq: 8, time: 1, data: { turn: 1, reason: { kind: 'error', error: { code: 'E_TEST', message: 'boom' } } } },
       { type: 'turn/end', seq: 9, time: 1, data: { turn: 2, reason: { kind: 'aborted', reason: { kind: 'user' } } } },
       { type: 'step/start', seq: 10, time: 1, data: { turn: 3, step: 1 } },
-      { type: 'user/message', seq: 11, time: 1, data: createUserMessage({ content: [{ type: 'text', text: 'tool text' }], source: { kind: 'tool', callId: 'c' as never } }) },
+      { type: 'tool/result', seq: 11, time: 1, data: { turn: 3, step: 1, message: createToolResultMessage({ callId: 'c' as ToolCallId, content: [{ type: 'text', text: 'tool text' }], isError: false }) } },
     ] as never[]
     const test = await bench({ history })
     await test.settle()
@@ -552,9 +552,9 @@ describe('TuiApp', () => {
     expect(screen).toContain('› earlier prompt')
     expect(screen).toContain('⬡ notice · skill loaded')
     expect(screen).toContain('full notice body')
-    expect(screen).toContain('⬡ instructions · agent-instructions')
+    expect(screen).toContain('⬡ instructions · tui-test-context')
     expect(screen).toContain('# AGENTS.md')
-    expect(screen).toContain('⬡ snapshot · workspace')
+    expect(screen).toContain('⬡ snapshot · tui-test-context')
     expect(screen).toContain('sandbox')
     expect(screen).toContain('allow python')
     expect(screen).toContain('clean tree')
