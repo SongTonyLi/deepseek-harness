@@ -92,7 +92,7 @@ describe('TuiApp user shell lines', () => {
     })
     expect(test.terminal.text()).toContain('$ echo hi')
     expect(test.terminal.text()).toContain('hi')
-    expect(test.terminal.text()).not.toContain('› !echo hi')
+    expect(test.terminal.text()).not.toContain('❯ !echo hi')
     expect(test.terminal.text()).not.toContain('QUEUE')
   })
 

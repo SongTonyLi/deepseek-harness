@@ -17,7 +17,9 @@ import {
   foldRows,
   withLiveUsage,
   paintCodeRows,
+  isSubagentTool,
   parseArguments,
+  subagentRowFacts,
   toolCallText,
   toolResultBody,
   toolResultLines,
@@ -192,6 +194,8 @@ describe('transcript', () => {
         // The path row is not code; the changed rows carry the file's own
         // language from its extension, behind the sign the card draws.
         code: [undefined, { lang: 'ts', prefix: '- ', source: 'a' }, { lang: 'ts', prefix: '+ ', source: 'b' }],
+        // Only the changed rows are marked, which is what the card boxes.
+        diff: [undefined, 'removed', 'added'],
       })
     expect(() => toolCallText('{}', { card: 'other' } as never)).toThrow()
   })
@@ -240,7 +244,7 @@ describe('transcript', () => {
     expect(toolResultBody({ card: 'diff', diffs: [{ path: 'a/b.rs', oldText: '1\n2\n3\n4\n5\n6\n7', newText: '1\n2\n3\n4\n5\n6\nX' }] }, text).code)
       .toEqual([undefined, undefined, { lang: 'rs', prefix: '  ', source: '5' }, { lang: 'rs', prefix: '  ', source: '6' }, { lang: 'rs', prefix: '- ', source: '7' }, { lang: 'rs', prefix: '+ ', source: 'X' }])
     expect(toolResultBody({ card: 'diff', diffs: [{ path: '.gitignore', oldText: null, newText: 'lib\n' }] }, text))
-      .toEqual({ lines: ['.gitignore', '+ lib'], code: [undefined, undefined] })
+      .toEqual({ lines: ['.gitignore', '+ lib'], code: [undefined, undefined], diff: [undefined, 'added'] })
     expect(toolResultBody({ card: 'terminal', output: 'a' }, text)).toEqual({ lines: ['a'] })
   })
 
@@ -273,5 +277,21 @@ describe('transcript', () => {
     const marker = (hidden: number): string => `${String(hidden)} left`
     expect(foldRows(lines, 4, marker)).toEqual(lines)
     expect(foldRows(lines, 2, marker)).toEqual(['a', 'b', '2 left'])
+  })
+
+  it('names the subagent tools by the browser\'s rule', () => {
+    expect(isSubagentTool('subagent')).toBe(true)
+    expect(isSubagentTool('subagent_explore')).toBe(true)
+    expect(isSubagentTool('subagents')).toBe(false)
+    expect(isSubagentTool('read')).toBe(false)
+  })
+
+  it('reads a subagent row from the description, the requested model, and the background mode', () => {
+    expect(subagentRowFacts({ description: 'Explore order services', prompt: 'p', model: 'deepseek-chat', run_in_background: true }))
+      .toEqual({ description: 'Explore order services', meta: ['deepseek-chat', 'background'] })
+    expect(subagentRowFacts({ description: 'Rank endpoints', model: '', run_in_background: false }))
+      .toEqual({ description: 'Rank endpoints', meta: [] })
+    expect(subagentRowFacts(undefined)).toEqual({ description: '', meta: [] })
+    expect(subagentRowFacts({ description: 7 })).toEqual({ description: '', meta: [] })
   })
 })

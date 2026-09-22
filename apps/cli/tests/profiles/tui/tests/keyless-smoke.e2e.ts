@@ -177,7 +177,7 @@ describe('tui profile keyless smoke', () => {
         { marker: ' ● READ ', keys: '' },
       ])
       expect(first.exitCode, `stderr:\n${first.stderr}\nstdout:\n${first.stdout}`).toBe(0)
-      expect(first.stdout).toContain('› I want to quickly do!')
+      expect(first.stdout).toContain('❯ I want to quickly do!')
       expect(first.stdout).toContain('Inspecting the task before the tool call.')
       expect(first.stdout).toContain(process.platform === 'win32' ? 'pwsh' : 'bash')
       expect(first.stdout).toContain('CLI_TOOL_ROUND_TRIP')
@@ -192,7 +192,8 @@ describe('tui profile keyless smoke', () => {
       expect(first.stdout).toContain(' ● READER ')
       // It opened on the section the walk held, so the turn panel owns the
       // keyboard and the readout states how far into that turn the reading is.
-      expect(first.stdout).toContain('↑↓ scrolls · PgUp PgDn pages · ← turns · Esc closes')
+      // The legend takes the widest of its steps the width holds.
+      expect(first.stdout).toMatch(/↑↓ (jk )?scrolls · PgUp PgDn (Space b )?pages · /u)
       expect(first.stdout).toMatch(/turn \d+\/\d+ · row \d+\/\d+/u)
       // The reader runs on the terminal's alternate screen: it switches away
       // from the conversation and back, and never writes a row of itself onto
@@ -215,7 +216,7 @@ describe('tui profile keyless smoke', () => {
       expect(viaPicker.exitCode, `stderr:\n${viaPicker.stderr}\nstdout:\n${viaPicker.stdout}`).toBe(0)
       expect(viaPicker.stdout).toContain('Switch to a session')
       expect(viaPicker.stdout).toContain(`resumed: session ${sessionId}`)
-      expect(viaPicker.stdout).toContain('› I want to quickly do!')
+      expect(viaPicker.stdout).toContain('❯ I want to quickly do!')
       expect(viaPicker.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
 
       const explicitResume = await runScript(cwd, ['--resume', sessionId], [
@@ -226,7 +227,7 @@ describe('tui profile keyless smoke', () => {
       // unfocused footer keeps the model id on its one key-facts line.
       expect(explicitResume.stdout).toContain(`I want to quickly do! (${sessionId})`)
       expect(explicitResume.stdout).toContain('cli-mock/cli-mock')
-      expect(explicitResume.stdout).toContain('› I want to quickly do!')
+      expect(explicitResume.stdout).toContain('❯ I want to quickly do!')
       expect(explicitResume.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(explicitResume.stderr).toContain(`--resume ${sessionId}`)
     } finally {

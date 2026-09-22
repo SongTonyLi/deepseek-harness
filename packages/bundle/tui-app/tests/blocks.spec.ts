@@ -1,8 +1,8 @@
 /** Transcript components rendered at fixed widths. */
 
 import { describe, expect, it } from 'vitest'
-import { Markdown } from '@earendil-works/pi-tui'
-import { AssistantBlock, ContextBlock, NoticeBlock, TOOL_RUNNING_ROW, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
+import { Markdown, visibleWidth } from '@earendil-works/pi-tui'
+import { AssistantBlock, ContextBlock, NoticeBlock, SUBAGENT_RUNNING_GLYPH, TOOL_RUNNING_ROW, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
 import type { CodeSpan } from '../src/transcript.ts'
@@ -24,8 +24,50 @@ function blockFade(age: number | undefined): BlockFade {
 describe('blocks', () => {
   it('wraps a long prompt under its marker', () => {
     const block = new UserBlock(theme, 'one two three four', 1)
-    expect(block.render(10)).toEqual(['', '› one two', '  three', '  four'])
+    expect(block.render(10)).toEqual(['', '❯ one two', '  three', '  four'])
     block.invalidate()
+  })
+
+  it('lays every prompt row on the background band, the leading blank line left bare', () => {
+    const block = new UserBlock({ ...theme, palette: createPalette(true) }, 'one two three', 1)
+    const lines = block.render(10)
+    expect(lines[0]).toBe('')
+    for (const line of lines.slice(1)) {
+      expect(line.startsWith('\u001b[48;5;236m')).toBe(true)
+      expect(visibleWidth(line)).toBe(10)
+    }
+    block.setHighlight(0)
+    expect(block.render(10).slice(1).map(line => visibleWidth(line))).toEqual([10, 10, 10])
+  })
+
+  it('heads reasoning with its glyph, cut to a narrow width, and indents the rows under it', () => {
+    const block = new AssistantBlock(theme, 1)
+    block.appendReasoning('hmm')
+    const lines = block.render(6)
+    expect(lines[1]?.startsWith('✻ Thi')).toBe(true)
+    expect(visibleWidth(lines[1] ?? '')).toBe(6)
+    expect(lines.slice(2).map(line => line.trimEnd())).toEqual(['  hmm', ''])
+  })
+
+  it('colours a subagent row glyph by status, dim for a child handed to the background', () => {
+    const on = createPalette(true)
+    const block = new ToolBlock({ ...theme, palette: on }, 'subagent', { title: '', lines: [] }, 1)
+    block.setSubagent({ description: 'Rank', meta: [] })
+    expect(block.render(40)[1]).toContain(on.warning(SUBAGENT_RUNNING_GLYPH))
+    block.setResult(['answer'], false)
+    expect(block.render(40)[1]).toContain(on.success(SUBAGENT_RUNNING_GLYPH))
+    block.setResult(['started subagent child-1'], false)
+    expect(block.render(40)[1]).toContain(on.dim(SUBAGENT_RUNNING_GLYPH))
+    block.setResult(['boom'], true)
+    expect(block.render(40)[1]).toContain(on.error(SUBAGENT_RUNNING_GLYPH))
+  })
+
+  it('draws a tool card header with the status-coloured glyph and the title in the link colour', () => {
+    const on = createPalette(true)
+    const block = new ToolBlock({ ...theme, palette: on }, 'edit', { title: 'src/a.ts', lines: [] }, 1)
+    expect(block.render(40)[1]).toBe(`${on.warning('◆')} ${on.bold('edit')} ${on.link('src/a.ts')}`)
+    block.setResult([], true)
+    expect(block.render(40)[1]?.startsWith(on.error('◆'))).toBe(true)
   })
 
   it('draws notices in their tone', () => {
@@ -40,9 +82,9 @@ describe('blocks', () => {
     expect(block.render(40)).toEqual([''])
     block.appendReasoning('thinking ')
     block.appendReasoning('hard\n')
-    expect(trimmed(block.render(40))).toEqual(['', 'thinking hard', ''])
+    expect(trimmed(block.render(40))).toEqual(['', '✻ Thinking', '  thinking hard', ''])
     block.appendText('Answer')
-    expect(trimmed(block.render(40))).toEqual(['', 'thinking hard', '', 'Answer'])
+    expect(trimmed(block.render(40))).toEqual(['', '✻ Thinking', '  thinking hard', '', 'Answer'])
     block.commit('Final', '', true)
     expect(trimmed(block.render(40))).toEqual(['', 'Final', '[interrupted]'])
     block.invalidate()
@@ -50,14 +92,14 @@ describe('blocks', () => {
 
   it('draws a tool card with its status glyph and folded body', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
-    expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w', `  │ ${TOOL_RUNNING_ROW}`])
+    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ cwd: /w', `  │ ${TOOL_RUNNING_ROW}`])
     block.setResult(['a', 'b', 'c'], false)
-    expect(block.render(40)).toEqual(['', '● bash ls', '  │ cwd: /w', '  │ a', '  │ … 2 more rows · Ctrl+O expands'])
+    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ cwd: /w', '  │ a', '  │ … 2 more rows · Ctrl+O expands'])
     block.setExpanded(true)
     expect(block.render(40)).toHaveLength(6)
     const failed = new ToolBlock(theme, 'bash', { title: '', lines: [] }, 1)
     failed.setResult(['boom'], true)
-    expect(failed.render(40)).toEqual(['', '● bash', '  │ boom'])
+    expect(failed.render(40)).toEqual(['', '◆ bash', '  │ boom'])
     failed.invalidate()
   })
 
@@ -70,6 +112,60 @@ describe('blocks', () => {
     expect(shown).toContain('\u001b[32m+ fresh\u001b[39m')
   })
 
+  it('boxes the changed rows of a diff card and leaves a fold marker outside every box', () => {
+    const block = new ToolBlock(theme, 'edit', {
+      title: 'Edit a.ts',
+      lines: ['a.ts', '- old', '+ fresh'],
+      diff: [undefined, 'removed', 'added'],
+    }, 1)
+    block.setResult(['a.ts', '+ one', '+ two', '+ three'], false, undefined, [undefined, 'added', 'added', 'added'])
+    block.setExpanded(true)
+    expect(block.render(20)).toEqual([
+      '',
+      '◆ edit Edit a.ts',
+      '  │ a.ts',
+      '  │ ╭──────────────╮',
+      '  │ │ - old        │',
+      '  │ ╰──────────────╯',
+      '  │ ╭──────────────╮',
+      '  │ │ + fresh      │',
+      '  │ ╰──────────────╯',
+      '  │ a.ts',
+      '  │ ╭──────────────╮',
+      '  │ │ + one        │',
+      '  │ │ + two        │',
+      '  │ │ + three      │',
+      '  │ ╰──────────────╯',
+    ])
+    block.setExpanded(false)
+    expect(block.render(60).at(-1)).toBe('  │ … 5 more rows · Ctrl+O expands')
+  })
+
+  it('draws a folded subagent card as one row: the tool while it runs, then the outcome at the right edge', () => {
+    const call = { title: '', lines: ['{"description":"Rank endpoints"}'] }
+    const block = new ToolBlock(theme, 'subagent', call, 1)
+    block.setSubagent({ description: 'Rank endpoints', meta: ['deepseek-chat'] })
+    expect(block.render(60)).toEqual(['', `${SUBAGENT_RUNNING_GLYPH} subagent  Rank endpoints deepseek-chat`])
+    block.setResult(['the slowest is /search'], false)
+    expect(block.render(40)).toEqual(['', `${SUBAGENT_RUNNING_GLYPH} Rank endpoints deepseek-chat    [done]`])
+    block.setResult(['started subagent child-1'], false)
+    expect(block.render(40).at(-1)).toMatch(/ \[started\]$/)
+    block.setResult(['boom'], true)
+    expect(block.render(40).at(-1)).toMatch(/ \[failed\]$/)
+    block.setExpanded(true)
+    expect(block.render(40)).toContain('  │ boom')
+  })
+
+  it('names a subagent row by its tool until the arguments carry a description, and fits a narrow width', () => {
+    const block = new ToolBlock({ ...theme, palette: createPalette(true) }, 'subagent', { title: '', lines: [] }, 1)
+    block.setSubagent({ description: '', meta: [] })
+    expect(block.render(40)[1]).toContain('subagent')
+    block.setResult(['answer'], false)
+    const narrow = block.render(12)[1] ?? ''
+    expect(narrow).toContain('[done]')
+    expect(visibleWidth(narrow)).toBeLessThanOrEqual(12)
+  })
+
   it('draws the header and call rows at the level of the card fade, and the result rows at their own', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     block.setResult(['out'], false)
@@ -77,7 +173,7 @@ describe('blocks', () => {
     block.setResultFade(blockFade(undefined))
     expect(block.render(40)).toEqual([
       '',
-      '\u001b[2m\u25cf bash ls\u001b[22m',
+      '\u001b[2m\u25c6 bash ls\u001b[22m',
       '\u001b[2m  \u2502 cwd: /w\u001b[22m',
       '  \u2502 out',
     ])
@@ -92,7 +188,7 @@ describe('blocks', () => {
     // and the marker fades with the call.
     expect(block.render(40)).toEqual([
       '',
-      '\u001b[2m\u25cf bash\u001b[22m',
+      '\u001b[2m\u25c6 bash\u001b[22m',
       '\u001b[2m  \u2502 a\u001b[22m',
       '\u001b[2m  \u2502 \u2026 2 more rows · Ctrl+O expands\u001b[22m',
     ])
@@ -124,7 +220,7 @@ describe('blocks', () => {
       steps: 5,
       flush: () => { flushed += 1 },
     })
-    expect(block.render(40)[1]).toContain('thinking \u001b[2mhard')
+    expect(block.render(40)[2]).toContain('  thinking \u001b[2mhard')
     expect(block.render(40).at(-1)?.trimEnd()).toBe('reply')
     expect(flushed).toBe(0)
     block.render(20)
@@ -139,7 +235,7 @@ describe('blocks', () => {
     expect(block.setRepaintFloor(2)).toBe(true)
     expect(block.render(40)).toEqual([
       '',
-      '● bash ls',
+      '◆ bash ls',
       '\u001b[2m  \u2502 cwd: /w\u001b[22m',
       '\u001b[2m  \u2502 out\u001b[22m',
     ])
@@ -151,7 +247,7 @@ describe('blocks', () => {
     expect(block.setRepaintFloor(2)).toBe(true)
     expect(block.setRepaintFloor(1)).toBe(false)
     // The header sits at index 1, which the floor of 2 keeps out of the fade.
-    expect(block.render(40)[1]).toBe('● bash ls')
+    expect(block.render(40)[1]).toBe('◆ bash ls')
 
     const settled = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     settled.setFade(blockFade(undefined))
@@ -170,13 +266,14 @@ describe('blocks', () => {
     block.appendText('reply')
     block.setReasoningFade(tail('hard'))
     block.setFade(tail('reply'))
-    // Line 0 is blank, 1 carries the reasoning, 2 is blank, 3 carries the reply.
-    expect(block.setRepaintFloor(3)).toBe(true)
-    const lines = block.render(40)
-    expect(lines[1]).not.toContain('\u001b[2m')
-    expect(lines[3]).toContain('\u001b[2mreply')
+    // Line 0 is blank, 1 is the reasoning header, 2 carries the reasoning, 3
+    // is blank, 4 carries the reply.
     expect(block.setRepaintFloor(4)).toBe(true)
-    expect(block.render(40)[3]).not.toContain('\u001b[2m')
+    const lines = block.render(40)
+    expect(lines[2]).not.toContain('\u001b[2m')
+    expect(lines[4]).toContain('\u001b[2mreply')
+    expect(block.setRepaintFloor(5)).toBe(true)
+    expect(block.render(40)[4]).not.toContain('\u001b[2m')
   })
 
   it('reports no change from a floor while no tail is drawing', () => {
@@ -192,7 +289,7 @@ describe('blocks', () => {
     block.appendReasoning('thinking hard')
     block.setReasoningFade({ spans: () => [{ text: 'hard', age: 0 }], style: () => FADE, steps: 5, flush: () => {} })
     block.commit('done', 'thinking hard', false)
-    expect(block.render(40)[1]).not.toContain('\u001b[2m')
+    expect(block.render(40)[2]).not.toContain('\u001b[2m')
   })
 })
 
@@ -218,13 +315,13 @@ describe('navigable sections', () => {
 
   it('replaces the call half and drops the loading row once the tool answers', () => {
     const block = new ToolBlock(theme, 'read', { title: '', lines: [] }, 1)
-    expect(block.render(40)).toEqual(['', '● read', `  │ ${TOOL_RUNNING_ROW}`])
+    expect(block.render(40)).toEqual(['', '◆ read', `  │ ${TOOL_RUNNING_ROW}`])
     block.setCall('read', { title: 'a.ts', lines: [] })
     expect(block.name).toBe('read')
     expect(block.title).toBe('a.ts')
-    expect(block.render(40)).toEqual(['', '● read a.ts', `  │ ${TOOL_RUNNING_ROW}`])
+    expect(block.render(40)).toEqual(['', '◆ read a.ts', `  │ ${TOOL_RUNNING_ROW}`])
     block.setResult(['ok'], false)
-    expect(block.render(40)).toEqual(['', '● read a.ts', '  │ ok'])
+    expect(block.render(40)).toEqual(['', '◆ read a.ts', '  │ ok'])
   })
 
   it('reports a card as its call, and its result once the tool answered', () => {
@@ -250,9 +347,9 @@ describe('the focus gutter', () => {
   it('draws a prompt behind the focus gutter, two columns narrower', () => {
     const block = new UserBlock(theme, 'one two three four', 1)
     block.setHighlight(0)
-    expect(block.render(10)).toEqual(['┃ ', '┃ › one', '┃   two', '┃   three', '┃   four'])
+    expect(block.render(10)).toEqual(['┃ ', '┃ ❯ one', '┃   two', '┃   three', '┃   four'])
     block.setHighlight(undefined)
-    expect(block.render(10)).toEqual(['', '› one two', '  three', '  four'])
+    expect(block.render(10)).toEqual(['', '❯ one two', '  three', '  four'])
   })
 
   it('accents only the focused half of a message and dims the rest of the block', () => {
@@ -260,38 +357,38 @@ describe('the focus gutter', () => {
     block.appendReasoning('weighing it up')
     block.appendText('done')
     block.setHighlight(0)
-    expect(trimmed(block.render(40))).toEqual(['│', '┃ weighing it up', '│', '│ done'])
+    expect(trimmed(block.render(40))).toEqual(['│', '┃ ✻ Thinking', '┃   weighing it up', '│', '│ done'])
     block.setHighlight(1)
-    expect(trimmed(block.render(40))).toEqual(['│', '│ weighing it up', '│', '┃ done'])
+    expect(trimmed(block.render(40))).toEqual(['│', '│ ✻ Thinking', '│   weighing it up', '│', '┃ done'])
     block.setHighlight(9)
-    expect(trimmed(block.render(40))).toEqual(['│', '│ weighing it up', '│', '┃ done'])
+    expect(trimmed(block.render(40))).toEqual(['│', '│ ✻ Thinking', '│   weighing it up', '│', '┃ done'])
   })
 
   it('accents the header with the call rows, or the result rows, and leaves the truncation marker dim', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     block.setResult(['out'], false)
     block.setHighlight(0)
-    expect(block.render(40)).toEqual(['│ ', '┃ ● bash ls', '┃   │ cwd: /w', '│   │ out'])
+    expect(block.render(40)).toEqual(['│ ', '┃ ◆ bash ls', '┃   │ cwd: /w', '│   │ out'])
     block.setHighlight(1)
-    expect(block.render(40)).toEqual(['│ ', '│ ● bash ls', '│   │ cwd: /w', '┃   │ out'])
+    expect(block.render(40)).toEqual(['│ ', '│ ◆ bash ls', '│   │ cwd: /w', '┃   │ out'])
     block.setHighlight(9)
-    expect(block.render(40)).toEqual(['│ ', '┃ ● bash ls', '┃   │ cwd: /w', '│   │ out'])
+    expect(block.render(40)).toEqual(['│ ', '┃ ◆ bash ls', '┃   │ cwd: /w', '│   │ out'])
 
     const long = new ToolBlock({ ...theme, toolPreviewLines: 1 }, 'bash', { title: '', lines: ['a', 'b'] }, 1)
     long.setResult(['c'], false)
     long.setHighlight(0)
     // The card holds the focus, so its marker names the key that opens this
     // block alone rather than the one that opens every block.
-    expect(long.render(40)).toEqual(['│ ', '┃ ● bash', '┃   │ a', '│   │ … 2 more rows · Space expands'])
+    expect(long.render(40)).toEqual(['│ ', '┃ ◆ bash', '┃   │ a', '│   │ … 2 more rows · Space expands'])
     // The result has no drawn row of its own here, so the marker that stands
     // for the rows the fold took carries the mark: a card the inspector
     // reports as marked always marks a line.
     long.setHighlight(1)
-    expect(long.render(40)).toEqual(['│ ', '│ ● bash', '│   │ a', '┃   │ … 2 more rows · Space expands'])
+    expect(long.render(40)).toEqual(['│ ', '│ ◆ bash', '│   │ a', '┃   │ … 2 more rows · Space expands'])
     long.setExpanded(true)
-    expect(long.render(40)).toEqual(['│ ', '│ ● bash', '│   │ a', '│   │ b', '┃   │ c'])
+    expect(long.render(40)).toEqual(['│ ', '│ ◆ bash', '│   │ a', '│   │ b', '┃   │ c'])
     long.setHighlight(0)
-    expect(long.render(40)).toEqual(['│ ', '┃ ● bash', '┃   │ a', '┃   │ b', '│   │ c'])
+    expect(long.render(40)).toEqual(['│ ', '┃ ◆ bash', '┃   │ a', '┃   │ b', '│   │ c'])
   })
 
   it('prepends the gutter after the fade, so the fade keeps matching the card own text', () => {
@@ -300,7 +397,7 @@ describe('the focus gutter', () => {
     block.setHighlight(0)
     expect(block.render(40)).toEqual([
       '│ ',
-      '┃ \u001b[2m● bash ls\u001b[22m',
+      '┃ \u001b[2m◆ bash ls\u001b[22m',
       '┃ \u001b[2m  │ cwd: /w\u001b[22m',
       `┃ \u001b[2m  │ ${TOOL_RUNNING_ROW}\u001b[22m`,
     ])
@@ -501,7 +598,7 @@ describe('render reuse', () => {
     const block = new ToolBlock({ ...theme, codeHighlight: highlight }, 'read', { title: 'a.ts', lines: [] }, 1)
     block.setResult(READ_ROWS, false, READ_CODE)
     const first = block.render(40)
-    expect(first).toEqual(['', '● read a.ts', '  │ 1│ «const a = 1»', '  │ 2│ «const b = 2»'])
+    expect(first).toEqual(['', '◆ read a.ts', '  │ 1│ «const a = 1»', '  │ 2│ «const b = 2»'])
     expect(block.render(40)).toBe(first)
     expect(block.render(40)).toBe(first)
     expect(counter.calls).toBe(1)

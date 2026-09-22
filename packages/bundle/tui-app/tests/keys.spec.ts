@@ -194,7 +194,7 @@ describe('the legends', () => {
   it('ends every docked legend on the way back to the input, and gives the editor none', () => {
     expect(widestHint('transcript')).toBe('↑↓ sections · ←→ parts · Space folds · Ctrl+G reader · Esc input')
     expect(widestHint('queue')).toBe('enter steer · ↑ select/edit · esc cancel')
-    expect(widestHint('panel')).toBe('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(widestHint('panel')).toBe('↑↓ children · Enter opens · Tab regions · Esc input')
     expect(widestHint('bar')).toBe('←→ segments · Enter details · Tab regions · Esc input')
     expect(widestHint('editor')).toBe('')
     expect(HINTS.queue.at(-1)).toBe('esc cancel')

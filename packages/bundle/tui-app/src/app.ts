@@ -97,6 +97,7 @@ import { parseUserShellLine, userShellContextText, userShellTranscriptRows } fro
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { matchPermission, permissionHint, permissionItems } from './permission.ts'
 import { exportSessionZip } from './export.ts'
+import { StreamPacer } from './pace.ts'
 import { BlockFadeClock, FadeRegistry, FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
 import { InspectorPane, type InspectorView } from './inspector.ts'
 import {
@@ -181,7 +182,9 @@ import {
   formatElapsed,
   formatLiveUsage,
   formatUsage,
+  isSubagentTool,
   parseArguments,
+  subagentRowFacts,
   toolCallText,
   toolResultBody,
   turnEndNotice,
@@ -369,6 +372,15 @@ export interface SessionHost {
    * @param turn - the completed turn to cut after; the last one when omitted.
    */
   fork(id: SessionId, turn?: number): Promise<BoundSession>
+  /**
+   * Open a session for viewing beside the one bound, without releasing it: a
+   * subagent session whose Agent is resident in this process is viewed live
+   * and its `dispose` releases nothing, and any other session is resumed and
+   * released by `dispose`. The history is read at the call, so a session
+   * returned to later is observed again rather than drawn from a stale copy.
+   * @param id - the session to view.
+   */
+  observe(id: SessionId): Promise<BoundSession>
 }
 
 /** What the application needs from its host. */
@@ -401,8 +413,13 @@ export interface TuiAppDeps {
   liveRefreshMs: number
   /** Brightness levels streamed text and tool cards climb; the oldest visible level is `fadeSteps - 1`. */
   fadeSteps: number
-  /** How long one brightness level lasts, in milliseconds, which is also the fade repaint period. */
+  /** How long one brightness level lasts, in milliseconds, which is also the frame period. */
   fadeStepMs: number
+  /**
+   * Frames a backlog of streamed text takes to drain on screen; `0` draws
+   * each delta as it arrives. Reduced motion also draws deltas as they arrive.
+   */
+  streamPaceFrames: number
   /** Draw streamed text and tool cards in their own colors, with no ramp and no fade tick. */
   reducedMotion: boolean
   /**
@@ -467,7 +484,8 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'outline', description: 'List the turns of this session with their prompts and replies' },
   { name: 'deliverables', description: 'List the files the agent presented in this session' },
   { name: 'changes', description: 'Browse the files the last turn changed (/changes <turn> for an earlier one; Enter shows a file\'s diff)' },
-  { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter shows one session\'s details)' },
+  { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter opens one as a live session view)' },
+  { name: 'parent', description: 'Return from a subagent view to the session it was opened from' },
   { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
   { name: 'plugins', description: 'List the composed plugins (/plugins bundles, /plugins enable|disable <id>, /plugins add <spec>, /plugins remove <name>)' },
   { name: 'tools', description: 'Expand or collapse every tool card and context row' },
@@ -673,6 +691,8 @@ export class TuiApp {
   private reasoningTail: FadeTracker | undefined
   /** The card fades running right now; each drops itself once it settles. */
   private readonly blockFades = new FadeRegistry()
+  /** Streamed deltas waiting for a frame; absent when deltas are drawn as they arrive. */
+  private readonly pacer: StreamPacer | undefined
   /**
    * The chrome motions running right now. It is consulted whatever the
    * terminal draws, because a transient line has to come down again even on a
@@ -711,6 +731,11 @@ export class TuiApp {
   /** How streamed text is drawn; `none` until the background query settles. */
   private fadeStyle: FadeStyle = NO_FADE
   private bound: BoundSession
+  /**
+   * The sessions a subagent view was entered from, root first; empty while
+   * the root session is bound. `/parent` returns to the last one.
+   */
+  private readonly parents: BoundSession[] = []
   private streaming: AssistantBlock | undefined
   /** Whether the fold keys left every foldable block open; one appended later follows it. */
   private toolsExpanded = false
@@ -739,6 +764,9 @@ export class TuiApp {
   constructor(private readonly deps: TuiAppDeps) {
     const palette = deps.palette
     this.bound = deps.initial
+    this.pacer = deps.reducedMotion || deps.streamPaceFrames === 0
+      ? undefined
+      : new StreamPacer({ drainFrames: deps.streamPaceFrames })
     this.codeHighlight = new SyntaxHighlighter({
       depth: deps.codeHighlight ? resolveColorDepth({ paletteEnabled: palette.enabled, env: deps.env }) : 'none',
       // Read per build: the background is a round trip to the terminal, and
@@ -926,7 +954,15 @@ export class TuiApp {
     this.deps.terminal.write(SET_TERMINAL_DEFAULT_CURSOR)
     this.tui.stop()
     this.deps.releaseInput()
-    this.deps.onQuit(this.bound)
+    const [root, ...views] = [...this.parents, this.bound]
+    for (const view of views.reverse()) {
+      view.dispose().catch((error: unknown) => {
+        this.deps.terminal.write(`releasing a subagent view failed: ${describeFailure(error)}\n`)
+      })
+    }
+    this.parents.length = 0
+    /* v8 ignore next -- the destructured list always holds the bound session */
+    this.deps.onQuit(root ?? this.bound)
   }
 
   // ── session binding ─────────────────────────────────────────────────────
@@ -962,6 +998,7 @@ export class TuiApp {
     this.turn = 0
     this.sawSystemPrompt = false
     this.turnStartedAt = undefined
+    this.pacer?.clear()
     this.streaming = undefined
     this.endFade()
     this.blockFades.clear()
@@ -996,7 +1033,7 @@ export class TuiApp {
    * @param verb - what the notice calls the move.
    */
   private async switchSession(open: () => Promise<BoundSession>, verb: string): Promise<void> {
-    if (this.agent.status === 'running') {
+    if ([this.bound, ...this.parents].some(bound => bound.agent.status === 'running')) {
       this.notice('stop the running turn (Esc twice) before switching sessions', 'error')
       return
     }
@@ -1017,15 +1054,94 @@ export class TuiApp {
       await next.dispose()
       return
     }
-    const previous = this.bound
+    // Every subagent view goes with the session it was entered from, newest first.
+    const released = [this.bound, ...this.parents.splice(0).reverse()]
     const dropped = this.pending.length
     this.bind(next)
     this.notice(`${verb}: session ${next.agent.session.id}`, 'success')
     if (dropped > 0) this.notice(`${String(dropped)} pending attachment(s) stayed with the previous session`)
+    for (const previous of released) {
+      try {
+        await previous.dispose()
+      } catch (error: unknown) {
+        this.notice(`releasing the previous session failed: ${describeFailure(error)}`, 'error')
+      }
+    }
+  }
+
+  /**
+   * Draw one subagent session in place of the bound one, keeping the bound
+   * one alive to return to: the whole conversation surface - the live
+   * transcript, the conversation walk, the inspector, the reader, and that
+   * session's own subagents - then reads the child. The entry's detail rows
+   * follow the entry notice.
+   * @param id - the subagent session.
+   * @param row - the listing entry, for its label and detail rows.
+   */
+  private async enterSubagent(id: SessionId, row: BrowseRow): Promise<void> {
+    if (this.switching) {
+      this.notice('wait for the session switch to finish', 'error')
+      return
+    }
+    this.switching = true
+    let next: BoundSession
     try {
-      await previous.dispose()
+      next = await this.deps.host.observe(id)
     } catch (error: unknown) {
-      this.notice(`releasing the previous session failed: ${describeFailure(error)}`, 'error')
+      this.switching = false
+      this.notice(`opening subagent ${id} failed: ${describeFailure(error)}`, 'error')
+      return
+    }
+    this.switching = false
+    if (this.stopped) {
+      await next.dispose()
+      return
+    }
+    const parent = this.bound
+    const dropped = this.pending.length
+    this.parents.push(parent)
+    this.bind(next)
+    this.notice(`subagent ${row.item.label} · Ctrl+P or /parent returns to session ${parent.agent.session.id}`, 'success')
+    if (dropped > 0) this.notice(`${String(dropped)} pending attachment(s) stayed with the parent session`)
+    for (const line of await this.detailRows(row)) this.notice(line)
+  }
+
+  /**
+   * Return from a subagent view to the session it was entered from, drawn
+   * from its log as it stands now, and release the view.
+   */
+  private async leaveSubagent(): Promise<void> {
+    const parent = this.parents.at(-1)
+    if (parent === undefined) {
+      this.notice('this is the root session; /parent returns from a subagent view', 'error')
+      return
+    }
+    if (this.switching) {
+      this.notice('wait for the session switch to finish', 'error')
+      return
+    }
+    this.switching = true
+    let history: readonly SessionEvent[]
+    try {
+      const observed = await this.deps.host.observe(parent.agent.session.id)
+      history = observed.history
+      await observed.dispose()
+    } catch (error: unknown) {
+      this.switching = false
+      this.notice(`returning to session ${parent.agent.session.id} failed: ${describeFailure(error)}`, 'error')
+      return
+    }
+    this.switching = false
+    /* v8 ignore next -- quitting releases every view before a pending return settles */
+    if (this.stopped) return
+    const view = this.bound
+    this.parents.pop()
+    this.bind({ ...parent, history })
+    this.notice(`back in session ${parent.agent.session.id}`, 'success')
+    try {
+      await view.dispose()
+    } catch (error: unknown) {
+      this.notice(`releasing the subagent view failed: ${describeFailure(error)}`, 'error')
     }
   }
 
@@ -1102,7 +1218,10 @@ export class TuiApp {
     const session = this.agent.session
     const title = this.deps.ctx.get('sessionTitle')?.get(session)?.title
     const name = title === undefined ? `session ${session.id}` : `${title} ${palette.dim(`(${session.id})`)}`
-    this.header.setText(`${palette.bold(palette.accent('dsh'))} ${palette.dim('·')} ${name} ${palette.dim('· /help for commands')}`)
+    const trail = this.parents.length === 0
+      ? palette.dim('· /help for commands')
+      : `${palette.accent(`◆ subagent view ${'›'.repeat(this.parents.length)}`)} ${palette.dim('· Ctrl+P returns')}`
+    this.header.setText(`${palette.bold(palette.accent('dsh'))} ${palette.dim('·')} ${name} ${trail}`)
     this.tui.requestRender()
   }
 
@@ -1712,6 +1831,31 @@ export class TuiApp {
   }
 
   /**
+   * Walk the subagent listing: `Enter` on a session opens it as a live view,
+   * and on a row the listing could not read shows why, then reopens the list
+   * on that row.
+   * @param choices - the listing rows, in listing order.
+   */
+  private async browseSubagents(choices: readonly SubagentChoice[]): Promise<void> {
+    const rows = choices.map(choice => this.subagentBrowseRow(choice))
+    let visited: string | undefined
+    for (;;) {
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Subagent sessions', rows.map(row => row.item), {
+        ...visited === undefined ? {} : { current: visited },
+      }))
+      const index = rows.findIndex(candidate => candidate.item.value === picked?.value)
+      const [choice, row] = [choices[index], rows[index]]
+      if (choice === undefined || row === undefined) return
+      if (choice.enterable) {
+        await this.enterSubagent(choice.id, row)
+        return
+      }
+      visited = choice.id
+      await this.showDetail(row)
+    }
+  }
+
+  /**
    * The browsable entry behind one subagent row: the same detail page the
    * `/subagents` list and the live panel open.
    * @param choice - the listing row.
@@ -1726,9 +1870,9 @@ export class TuiApp {
   }
 
   /**
-   * Open the selected panel row's session details, then give the keyboard
-   * back to the panel unless its last row left while the page was open. A
-   * diagnostic row explains itself in the panel and opens nothing.
+   * Open the selected panel row as a subagent view, which hands the keyboard
+   * to the input of that view. A diagnostic row explains itself in the panel
+   * and opens nothing.
    */
   private async openPanelRow(): Promise<void> {
     const rows = this.panelView.rows
@@ -1739,8 +1883,7 @@ export class TuiApp {
     const entry = this.subagentEntries.find(candidate => candidate.id === row.id)
     /* v8 ignore next -- every drawn row comes from the entries of the last listing */
     if (entry === undefined) return
-    await this.showDetail(this.subagentBrowseRow(subagentChoice(entry)))
-    if (this.panelView.rows.length > 0) this.focusRegion('panel')
+    await this.enterSubagent(entry.id, this.subagentBrowseRow(subagentChoice(entry)))
   }
 
   private async settings(argument: string): Promise<void> {
@@ -1912,6 +2055,22 @@ export class TuiApp {
         }
         void this.dispatchCommand('/effort')
         return { consume: true }
+      case 'todos':
+        this.focusEditor()
+        void this.dispatchCommand('/todos')
+        return { consume: true }
+      case 'parent':
+        this.focusEditor()
+        void this.leaveSubagent()
+        return { consume: true }
+      case 'help':
+        // `?` is a key only on an empty input; anywhere in a draft it is text.
+        if (this.editor.getText() !== '') return undefined
+        void this.dispatchCommand('/help')
+        return { consume: true }
+      case 'redraw':
+        this.tui.requestRender(true)
+        return { consume: true }
       case 'type':
         this.focusEditor()
         // The application consumed the key, so pi-tui draws nothing for it.
@@ -2059,10 +2218,34 @@ export class TuiApp {
       rows: () => Math.max(1, this.deps.terminal.rows),
       minColumns: this.deps.readerMinColumns,
       cursor,
+      effects: {
+        style: () => this.fadeStyle,
+        background: () => this.background,
+        startReveal: () => this.startReaderReveal(),
+      },
       onExit: (exit) => { this.closeReader(exit) },
     })
     this.reader = { pane }
     this.showReader()
+  }
+
+  /**
+   * Start one reveal of the reader on the application's fade tick, which
+   * repaints the reader until the reveal settles. A terminal that runs no
+   * motion reveals nothing, and the reader draws its settled rows.
+   * @returns the reveal's clock, or undefined on a terminal that runs no motion.
+   */
+  private startReaderReveal(): BlockFadeClock | undefined {
+    if (!this.fading) return undefined
+    const clock = new BlockFadeClock({
+      bornAt: this.deps.now(),
+      stepMs: this.deps.fadeStepMs,
+      steps: this.deps.fadeSteps,
+      now: () => this.deps.now(),
+    })
+    this.motions.add(clock)
+    this.updateFadeTicker()
+    return clock
   }
 
   /**
@@ -2866,9 +3049,12 @@ export class TuiApp {
           this.notice('no subagent sessions')
           return
         }
-        await this.browse('Subagent sessions', choices.map(choice => this.subagentBrowseRow(choice)))
+        await this.browseSubagents(choices)
         return
       }
+      case 'parent':
+        await this.leaveSubagent()
+        return
       case 'settings':
         await this.settings(argument)
         return
@@ -3501,6 +3687,23 @@ export class TuiApp {
   }
 
   /**
+   * Hand one live-stream delta to the transcript: through the pacer, which
+   * releases it on a later frame, or at once when deltas are not paced.
+   * @param channel - what the delta belongs to; consecutive deltas of one
+   * channel release through the first delta's `release`.
+   * @param text - the delta.
+   * @param release - draws a released part of the delta.
+   */
+  private pace(channel: string, text: string, release: (text: string) => void): void {
+    if (this.pacer === undefined) {
+      release(text)
+      return
+    }
+    this.pacer.push(channel, text, release)
+    this.updateFadeTicker()
+  }
+
+  /**
    * Take one visible text delta: the block draws it and the tail of that same
    * block ages it. The tail is created with the first delta of a message, so
    * a block rebuilt from history or committed from the log never carries one.
@@ -3696,7 +3899,8 @@ export class TuiApp {
    * @returns true while a tail or a card fade keeps changing what is drawn.
    */
   private fadesMoving(): boolean {
-    return this.textTail?.needsRepaint() === true
+    return this.pacer?.pending() === true
+      || this.textTail?.needsRepaint() === true
       || this.reasoningTail?.needsRepaint() === true
       || this.blockFades.needsRepaint()
       || this.motions.needsRepaint()
@@ -3762,6 +3966,7 @@ export class TuiApp {
    * levels the elapsed time asks for however long the period itself ran.
    */
   private onFadeTick(): void {
+    this.pacer?.frame()
     this.textTail?.tick()
     this.reasoningTail?.tick()
     this.blockFades.tick()
@@ -3779,6 +3984,7 @@ export class TuiApp {
   private onStreamFrame(frame: AssistantStreamFrame): void {
     switch (frame.type) {
       case 'start':
+        this.pacer?.flush()
         this.streaming = undefined
         this.endFade()
         this.beginLiveUsage()
@@ -3789,20 +3995,26 @@ export class TuiApp {
         switch (chunk.type) {
           case 'text-delta':
             if (chunk.text !== '') {
-              this.appendStreamedText(chunk.text)
+              this.pace('text', chunk.text, (text) => {
+                this.appendStreamedText(text)
+                this.setStreamActivity('writing')
+              })
               this.noteStreamedChars(chunk.text.length)
-              this.setStreamActivity('writing')
             }
             break
           case 'reasoning-delta':
             if (chunk.text !== '') {
-              this.appendStreamedReasoning(chunk.text)
+              this.pace('reasoning', chunk.text, (text) => {
+                this.appendStreamedReasoning(text)
+                this.setStreamActivity('thinking')
+              })
               this.noteStreamedChars(chunk.text.length)
-              this.setStreamActivity('thinking')
             }
             break
           case 'tool-call-delta':
-            this.onToolCallDelta(chunk)
+            this.pace(`tool:${chunk.id}:${chunk.name ?? ''}`, chunk.argumentsDelta, (text) => {
+              this.onToolCallDelta({ ...chunk, argumentsDelta: text })
+            })
             this.noteStreamedChars(chunk.argumentsDelta.length)
             break
           case 'usage':
@@ -3816,12 +4028,14 @@ export class TuiApp {
           default:
             assertNever(chunk, 'tui stream chunk')
         }
-        this.tui.requestRender()
+        // A paced delta is drawn by the frame tick that releases it.
+        if (this.pacer === undefined) this.tui.requestRender()
         return
       }
       case 'end':
         // An abandoned attempt keeps streamed text; unconfirmed tool cards do
         // not, because those calls never ran. A retry starts a new block.
+        this.pacer?.flush()
         this.streaming = undefined
         this.endFade()
         if (frame.outcome.kind === 'abandoned'
@@ -3848,6 +4062,8 @@ export class TuiApp {
       if (this.isBoundDescendant(session)) this.onDescendantActivity(session, event)
       return
     }
+    // A logged event is drawn after the streamed text that preceded it.
+    this.pacer?.flush()
     switch (event.type) {
       case 'turn/start':
         // The turn every later event of this turn belongs to, including the
@@ -3895,7 +4111,7 @@ export class TuiApp {
         const isError = result.isError === true
         const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
         const body = toolResultBody(view, result.content)
-        block.setResult(body.lines, isError, body.code)
+        block.setResult(body.lines, isError, body.code, body.diff)
         this.fadeBlock((fade) => { block.setResultFade(fade) })
         this.pendingToolNames.delete(result.toolCallId)
         this.syncLoaderFromPendingTools()
@@ -4138,10 +4354,12 @@ export class TuiApp {
     const existing = this.toolBlocks.get(callId)
     if (existing !== undefined) {
       existing.setCall(name, call)
+      if (isSubagentTool(name)) existing.setSubagent(subagentRowFacts(args))
       if (source === 'log') this.unconfirmedTools.delete(callId)
       return
     }
     const block = new ToolBlock(this.theme, name, call, this.turn)
+    if (isSubagentTool(name)) block.setSubagent(subagentRowFacts(args))
     block.setExpanded(this.toolsExpanded)
     this.toolBlocks.set(callId, block)
     this.chat.addChild(block)

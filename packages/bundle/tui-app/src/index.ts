@@ -27,6 +27,7 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 import { TuiApp, type BoundSession, type SessionHost } from './app.ts'
 import { CONTEXT_PREVIEW_LINES } from './blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from './fade.ts'
+import { STREAM_PACE_FRAMES } from './pace.ts'
 import { FOCUS_PREVIEW_LINES } from './inspector.ts'
 import { READER_MIN_COLUMNS } from './reader.ts'
 import { colorEnabled, createPalette } from './style.ts'
@@ -122,16 +123,28 @@ export interface Config {
    */
   streamFadeSteps: number
   /**
-   * How long one fade tick lasts, in milliseconds, which is also the repaint
-   * period while anything is still moving. Duration of each fade is
-   * `streamFadeSteps * streamFadeStepMs`, and the app's own chrome motions -
-   * the keyboard landing on a region and a step of a walk - run for their own
-   * step counts at this same tick. The terminal arms this repaint only while
-   * something still differs from its settled drawing and disarms it as soon as
-   * the last one settles, so an idle session runs no timer. A shorter period
-   * draws a smoother fade at the cost of more redraws.
+   * How long one frame lasts, in milliseconds: the fade tick, the repaint
+   * period while anything is still moving, and the period at which paced
+   * stream text is drawn. The default of 16 draws about 60 frames per
+   * second. Duration of each fade is `streamFadeSteps * streamFadeStepMs`,
+   * and the app's own chrome motions - the keyboard landing on a region and
+   * a step of a walk - run for their own step counts at this same tick. The
+   * terminal arms this repaint only while something still differs from its
+   * settled drawing and disarms it as soon as the last one settles, so an
+   * idle session runs no timer. A shorter period draws a smoother fade at the
+   * cost of more redraws.
    */
   streamFadeStepMs: number
+  /**
+   * How many `streamFadeStepMs` frames a backlog of streamed reasoning, reply
+   * text, or tool arguments takes to reach the screen. The live stream is
+   * queued as it arrives and never waits on a redraw; each frame draws a
+   * share of the queue proportional to its length, so a network burst
+   * spreads over several frames instead of landing at once, and drawn text
+   * trails the stream by at most about this many frames. `0` draws every
+   * delta as it arrives, and so does `reducedMotion`.
+   */
+  streamPaceFrames: number
   /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
@@ -157,6 +170,7 @@ export const Config: z<Config> = z.object({
   liveRefreshMs: z.natural().min(100).default(1000),
   streamFadeSteps: z.natural().min(2).default(FADE_STEPS),
   streamFadeStepMs: z.natural().min(16).default(FADE_TICK_MS),
+  streamPaceFrames: z.natural().default(STREAM_PACE_FRAMES),
   reducedMotion: z.boolean().default(false),
   openBrowser: z.boolean().default(true),
 })
@@ -279,23 +293,36 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string): SessionHost
       setup,
     })
   }, seed ?? [])
+  const resume = async (id: SessionId): Promise<BoundSession> => {
+    const selection: ModelSelectionRef = { current: undefined, assembled: undefined }
+    const handle = await agents.resume({
+      resumeSessionId: id,
+      setup: (agentCtx) => { installModelSelection(agentCtx, selection) },
+    })
+    await handle.agent.whenIdle()
+    return {
+      agent: handle.agent,
+      selection,
+      history: await observeBoundHistory(ctx, id),
+      dispose: () => handle.dispose(),
+    }
+  }
   return {
     create: () => create(undefined, undefined),
-    resume: async (id) => {
-      const selection: ModelSelectionRef = { current: undefined, assembled: undefined }
-      const handle = await agents.resume({
-        resumeSessionId: id,
-        setup: (agentCtx) => { installModelSelection(agentCtx, selection) },
-      })
-      await handle.agent.whenIdle()
+    resume,
+    fork: async (id, turn) => create(await forkSeed(ctx, id, turn), id),
+    observe: async (id) => {
+      const resident = agents.get(id)
+      if (resident === undefined) return resume(id)
+      // A resident subagent is owned by the run that started it; the view
+      // reads it live and releases nothing.
       return {
-        agent: handle.agent,
-        selection,
+        agent: resident,
+        selection: { current: undefined, assembled: undefined },
         history: await observeBoundHistory(ctx, id),
-        dispose: () => handle.dispose(),
+        dispose: () => Promise.resolve(),
       }
     },
-    fork: async (id, turn) => create(await forkSeed(ctx, id, turn), id),
   }
 }
 
@@ -345,6 +372,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     liveRefreshMs: config.liveRefreshMs,
     fadeSteps: config.streamFadeSteps,
     fadeStepMs: config.streamFadeStepMs,
+    streamPaceFrames: config.streamPaceFrames,
     reducedMotion: config.reducedMotion,
     env: process.env,
     now: () => Date.now(),

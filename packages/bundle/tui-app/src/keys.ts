@@ -78,6 +78,14 @@ export type KeyAction =
   | { kind: 'queue'; action: 'steer' | 'inject' | 'edit' }
   /** Open the current model's reasoning-effort picker. */
   | { kind: 'effort' }
+  /** Browse the agent's todo list, as `/todos` does. */
+  | { kind: 'todos' }
+  /** Return from a subagent view to the session it was opened from, as `/parent` does. */
+  | { kind: 'parent' }
+  /** List the commands and keys, as `/help` does; typed as `?` while the input holds text. */
+  | { kind: 'help' }
+  /** Draw the whole screen again from scratch. */
+  | { kind: 'redraw' }
   /** Type these characters at the editor's caret, wherever the keyboard was. */
   | { kind: 'type'; text: string }
 
@@ -111,7 +119,7 @@ export const HINTS: Record<FocusRegion, readonly string[]> = {
     'Esc input',
   ],
   queue: ['enter steer · ↑ select/edit · esc cancel', 'enter steer · esc cancel', 'esc cancel'],
-  panel: ['↑↓ children · Enter details · Tab regions · Esc input', '↑↓ children · Esc input', 'Esc input'],
+  panel: ['↑↓ children · Enter opens · Tab regions · Esc input', '↑↓ children · Esc input', 'Esc input'],
   bar: ['←→ segments · Enter details · Tab regions · Esc input', '←→ segments · Esc input', 'Esc input'],
 }
 
@@ -195,6 +203,7 @@ export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
     `${ENTRY_KEYS} · Ctrl+G reader`,
     'Shift+↑ selects follow-ups while they wait',
     'Ctrl+O folds every tool card and context row',
+    'Ctrl+T todos · Ctrl+P parent session · Ctrl+L redraw · ? keys',
     'Esc arms the stop · Esc again stops the turn',
     'Ctrl+C clears the input, twice quits · Ctrl+D quits an empty input',
   ],
@@ -222,8 +231,8 @@ const OPEN: KeyAction = { kind: 'open' }
 /**
  * What one key press means where the keyboard is.
  *
- * `Escape`, `Ctrl+O`, and `Ctrl+G` mean the same thing everywhere and are
- * answered first. Everything else is the region's own.
+ * `Escape`, `Ctrl+O`, `Ctrl+G`, `Ctrl+T`, `Ctrl+P`, and `Ctrl+L` mean the
+ * same thing everywhere and are answered first. Everything else is the region's own.
  * @param region - the region holding the keyboard.
  * @param data - the raw key bytes.
  * @returns the action to apply, or undefined when this region claims nothing
@@ -234,6 +243,9 @@ export function resolveKey(region: FocusRegion, data: string): KeyAction | undef
   if (matchesKey(data, 'escape')) return ESCAPE
   if (matchesKey(data, 'ctrl+o')) return FOLD_ALL
   if (matchesKey(data, 'ctrl+g')) return READER
+  if (matchesKey(data, 'ctrl+t')) return { kind: 'todos' }
+  if (matchesKey(data, 'ctrl+p')) return { kind: 'parent' }
+  if (matchesKey(data, 'ctrl+l')) return { kind: 'redraw' }
   switch (region) {
     case 'editor':
       return editorKey(data)
@@ -264,6 +276,7 @@ function editorKey(data: string): KeyAction | undefined {
   if (matchesKey(data, 'shift+down')) return { kind: 'leave', direction: 'down' }
   if (matchesKey(data, 'ctrl+s')) return { kind: 'steer' }
   if (matchesKey(data, 'shift+tab')) return { kind: 'effort' }
+  if (data === '?') return { kind: 'help' }
   return undefined
 }
 
@@ -393,7 +406,7 @@ function queueKey(data: string): KeyAction | undefined {
 function panelKey(data: string): KeyAction | undefined {
   const move = moveKey(data, PANEL_MOVES)
   if (move !== undefined) return move
-  if (matchesKey(data, 'enter')) return OPEN
+  if (matchesKey(data, 'enter') || matchesKey(data, 'right')) return OPEN
   return cycleKey(data) ?? typeKey(data)
 }
 

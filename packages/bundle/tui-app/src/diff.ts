@@ -10,6 +10,9 @@ export interface DiffLine {
   text: string
 }
 
+/** The kind of a changed diff row: the rows a card frames in a colored box. */
+export type DiffMark = Exclude<DiffLine['kind'], 'context'>
+
 /** Above this many old×new line pairs the quadratic alignment is skipped. */
 const MAX_ALIGNMENT_CELLS = 4_000_000
 

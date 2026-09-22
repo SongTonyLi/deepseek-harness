@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { FADE_TICK_MS } from '../src/fade.ts'
+import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
 import { ESCAPE_HANDOFF_MS } from '../src/keys.ts'
 import { LANDING_TICKS, SEGMENT_TICKS, STEP_TICKS } from '../src/motion.ts'
 import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
@@ -89,7 +89,7 @@ describe('walking the transcript', () => {
     await test.settle()
     const reasoning = await test.screen()
     expect(reasoning).toContain('2/3 · turn 1 · reasoning')
-    expect(reasoning).toContain('┃ weighing it up')
+    expect(reasoning).toContain('┃   weighing it up')
     test.terminal.type(KEY.up)
     await test.settle()
     expect(await test.screen()).toContain('1/3 · turn 0 · you')
@@ -183,22 +183,23 @@ describe('walking the transcript', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     const reading = await test.screen()
-    // The reader shows the held section in full, and the other sections of
-    // its turn under their own headers.
+    // The reader shows the held section in full behind the walk's gutter, and
+    // the other sections of its turn under their own headers.
     expect(reading).toContain(' ● READER ')
-    expect(reading).toContain('✻ reasoning · turn 1')
-    expect(reading).toContain('weighing it up')
-    expect(reading).toContain('¶ reply · turn 1')
-    expect(reading).toContain('⚒ bash · call · turn 1')
-    expect(reading).toContain('⚒ bash · result · turn 1')
-    expect(reading).toContain('↑↓ scrolls')
+    expect(reading).toContain('│   ❯ read the spec')
+    expect(reading).toContain('│ ┃ ✻ Thinking')
+    expect(reading).toContain('│ ┃   weighing it up')
+    expect(reading).toContain('│   ¶ Reply')
+    expect(reading).toContain('│   ◆ bash')
+    expect(reading).toContain('│     ⎿ Result')
+    expect(reading).toContain('scrolls · ')
     test.terminal.type(KEY.escape)
     await test.settle()
     // Esc returns to the conversation on the section last read, with the
     // gutter back on its block.
     const back = await test.screen()
     expect(back).toContain('2/3 · turn 1 · reasoning')
-    expect(back).toContain('┃ weighing it up')
+    expect(back).toContain('┃   weighing it up')
     expect(back).not.toContain(' ● READER ')
   })
 
@@ -213,7 +214,7 @@ describe('walking the transcript', () => {
     const reading = await test.screen()
     expect(reading).toContain(' ● READER ')
     // The walk had reached the reasoning, which is the section the reader opens on.
-    expect(reading).toContain('✻ reasoning · turn 1')
+    expect(reading).toContain('▸ ✻ Thinking')
     test.terminal.type(KEY.ctrlG)
     await test.settle()
     const back = await test.screen()
@@ -373,10 +374,10 @@ describe('the region stack around the editor', () => {
     await test.settle()
     const editor = await test.screen()
     expect(editor).not.toContain('3/3 · turn 1 · bash · result')
-    expect(editor).not.toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(editor).not.toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     test.terminal.type(KEY.down)
     await test.settle()
     expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
@@ -386,12 +387,12 @@ describe('the region stack around the editor', () => {
     expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
     test.terminal.type(KEY.up)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     // Up on the panel's first row reaches the editor, and Shift+Up from there
     // comes back to the section the walk was left on.
     test.terminal.type(KEY.up)
     await test.settle()
-    expect(await test.screen()).not.toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(await test.screen()).not.toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     test.terminal.type(KEY.shiftUp)
     await test.settle()
     expect(await test.screen()).toContain('3/3 · turn 1 · bash · result')
@@ -555,7 +556,7 @@ describe('Esc and the running turn', () => {
     const test = await running()
     test.terminal.type(KEY.shiftDown)
     await test.settle()
-    expect(test.terminal.text()).toContain('↑↓ children · Enter details · Tab regions · Esc input')
+    expect(test.terminal.text()).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     test.terminal.type('p')
     await test.settle()
     test.terminal.type(KEY.shiftDown)
@@ -581,14 +582,14 @@ describe('the in-place gutter inside the repaint window', () => {
     // The newest block sits at the bottom of the frame, well inside the window.
     test.terminal.type(KEY.shiftUp)
     await test.settle()
-    expect(test.terminal.text()).toContain('┃ › prompt number 7')
+    expect(test.terminal.text()).toContain('┃ ❯ prompt number 7')
     expect(test.terminal.text()).not.toContain('off screen')
 
     // The oldest block is above the last `rows` lines, so it cannot be marked.
     for (let index = 0; index < 7; index += 1) test.terminal.type(KEY.up)
     await test.settle()
     expect(test.terminal.text()).toContain('1/8 · turn 0 · you · off screen')
-    expect(test.terminal.text()).not.toContain('┃ › prompt number 0')
+    expect(test.terminal.text()).not.toContain('┃ ❯ prompt number 0')
 
     // A marked block loses the mark in the frame that pushes it out of reach.
     test.terminal.type(KEY.escape)
@@ -599,7 +600,7 @@ describe('the in-place gutter inside the repaint window', () => {
     test.terminal.type(KEY.shiftUp)
     test.terminal.type(KEY.end)
     await test.settle()
-    expect(test.terminal.text()).toContain('┃ › one more prompt')
+    expect(test.terminal.text()).toContain('┃ ❯ one more prompt')
     for (let index = 0; index < 6; index += 1) test.appendAssistant([{ type: 'text', text: `reply ${String(index)}` }])
     await test.settle()
     expect(test.terminal.text()).toContain('9/15 · turn 0 · you · off screen')
@@ -1206,21 +1207,29 @@ describe('the chrome motions', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
-  it('takes the terminal whole and gives it back whole, arming no motion of its own', async () => {
+  it('takes the terminal whole, reveals the turn on the fade tick, and gives the terminal back whole', async () => {
     const test = await moving()
     test.terminal.type(KEY.ctrlG)
     await test.settle()
     // The reader is on screen complete from its first drawing: it owns the
-    // alternate screen rather than growing into the conversation's own.
-    const open = (await paint(test)).shown
-    expect(open).toContain(' ● READER ')
-    expect(open).toContain('↑↓ scrolls')
+    // alternate screen rather than growing into the conversation's own, and
+    // the turn it opens on floats out on the one fade tick.
+    const open = await paint(test)
+    expect(open.shown).toContain(' ● READER ')
+    expect(open.shown).toContain('scrolls · ')
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
+    test.runTick(FADE_TICK_MS, FADE_STEPS * FADE_TICK_MS)
+    await test.settle()
+    // The reveal moved colors only, and once it settles nothing holds the tick.
+    const settled = await paint(test)
+    expect(settled.shown).toBe(open.shown)
+    expect(settled.raw).not.toBe(open.raw)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
 
     test.terminal.type(KEY.escape)
     await test.settle()
     const back = (await paint(test)).shown
-    expect(back).not.toContain('↑↓ scrolls')
+    expect(back).not.toContain('scrolls · ')
     expect(back).toContain('3/3 · turn 1 · bash · result')
     // The conversation took the keyboard back, so its own landing is moving;
     // once that settles, nothing holds the tick.
