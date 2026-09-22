@@ -422,6 +422,7 @@ class TodoWriteOutputCounts(TypedDict):
 class TodoWriteOutput(TypedDict):
     todos: list[TodoWriteOutputTodos]
     counts: TodoWriteOutputCounts
+    unchanged: bool
 
 class UpdateGoalArgs(TypedDict):
     # Exact id returned by get_goal.

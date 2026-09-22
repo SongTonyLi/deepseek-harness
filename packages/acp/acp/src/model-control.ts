@@ -191,7 +191,10 @@ export class AcpModelControl {
       category: 'model',
       type: 'select',
       currentValue,
-      options: groups.filter(group => group.options.length > 0),
+      // Adapter registration order follows plugin activation, which races
+      // between independently mounted providers; the client sees one order.
+      options: groups.filter(group => group.options.length > 0)
+        .sort((left, right) => left.group < right.group ? -1 : left.group > right.group ? 1 : 0),
     }]
     const info = routeAvailable
       ? await this.llm.resolveModelInfo(resolved.provider, resolved.model, signal)
