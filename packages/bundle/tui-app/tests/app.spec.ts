@@ -16,7 +16,7 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
 import { TOOL_RUNNING_ROW } from '../src/blocks.ts'
 import { FADE_TICK_MS } from '../src/fade.ts'
-import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, REGION_LABELS, widestHint } from '../src/keys.ts'
+import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, QUEUE_ENTRY_HINT, REGION_LABELS, entryHints, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
@@ -97,7 +97,7 @@ describe('TuiApp', () => {
     const inject = createUserMessage({ content: [{ type: 'text', text: 'context only' }], source: { kind: 'user' } })
     test.agent.inbox.append('next-turn', inject)
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: inject })
-    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftUp)
     await test.settle()
     expect(await test.screen()).toContain('enter steer · ↑ select/edit · esc cancel')
     test.terminal.type('i')
@@ -107,14 +107,14 @@ describe('TuiApp', () => {
     const steer = createUserMessage({ content: [{ type: 'text', text: 'change course' }], source: { kind: 'user' } })
     test.agent.inbox.append('next-turn', steer)
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: steer })
-    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftUp)
     test.terminal.type('s')
     expect(test.calls.steers).toEqual([steer])
 
     const edit = createUserMessage({ content: [{ type: 'text', text: 'draft answer' }], source: { kind: 'user' } })
     test.agent.inbox.append('next-turn', edit)
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: edit })
-    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftUp)
     test.terminal.type('e')
     test.terminal.type(' revised')
     test.terminal.type(KEY.enter)
@@ -126,7 +126,7 @@ describe('TuiApp', () => {
     const original = createUserMessage({ content: [{ type: 'text', text: 'keep this' }], source: { kind: 'user' } })
     test.agent.inbox.append('next-turn', original)
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: original })
-    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.shiftUp)
     test.terminal.type('e')
     expect(test.agent.inbox.nextTurn).toEqual([])
     test.terminal.type(KEY.ctrlC)
@@ -134,6 +134,29 @@ describe('TuiApp', () => {
     expect(test.calls.followups).toHaveLength(0)
     await test.settle()
     expect(await test.screen()).toContain('○ keep this')
+  })
+
+  it('enters follow-ups on Shift+Up and the status bar on Shift+Down while prompts wait', async () => {
+    const test = await bench({ running: true })
+    const later = createUserMessage({ content: [{ type: 'text', text: 'what\'s the current progress' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', later)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: later })
+    await test.settle()
+    const idle = await test.screen()
+    expect(idle).toContain(QUEUE_ENTRY_HINT)
+    expect(idle).not.toContain('shift+↓ select')
+    expect(idle).toContain('Shift+↑ select · Shift+↓ status')
+    expect(idle).not.toContain('Shift+↑ read · Shift+↓ status')
+
+    test.terminal.type(KEY.shiftDown)
+    await test.settle()
+    expect(test.terminal.text()).toContain('←→ segments · Enter details · Tab regions · Esc input')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+
+    test.terminal.type(KEY.shiftUp)
+    await test.settle()
+    expect(await test.screen()).toContain('enter steer · ↑ select/edit · esc cancel')
   })
 
   it('holds a queued prompt above the editor until the loop claims it, and draws it in the conversation then', async () => {
@@ -990,7 +1013,8 @@ describe('TuiApp', () => {
     const catalog: readonly (readonly [string, string])[] = [
       // The one editor line built from the entry keys is a template there, so
       // its fixed head is covered by the entry hints themselves.
-      ...[...HINTS.transcript, ...HINTS.panel, ...HINTS.bar, ...ENTRY_HINTS, ...KEY_LINES.transcript,
+      ...[...HINTS.transcript, ...HINTS.panel, ...HINTS.bar, ...ENTRY_HINTS, ...entryHints({ queue: true }),
+        QUEUE_ENTRY_HINT, ...KEY_LINES.transcript,
         ...KEY_LINES.editor.filter(line => !line.startsWith(ENTRY_HINTS[0] as string))]
         .map(step => [step, 'keys.ts'] as const),
       ...[...READER_HINTS.list, ...READER_HINTS.pane].map(step => [step, 'reader.ts'] as const),
@@ -1612,9 +1636,11 @@ describe('the running-turn counter', () => {
   it('details the turn, when it started, and what is queued behind it', async () => {
     const test = await bench({ running: true })
     startTurn(test, 4, 72_000)
-    test.agent.inbox.append('next-turn', createUserMessage({ content: [{ type: 'text', text: 'later' }], source: { kind: 'user' } }))
+    const later = createUserMessage({ content: [{ type: 'text', text: 'later' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', later)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: later })
     await test.settle()
-    // The bar holds the model segment first; effort is always next, then turn.
+    // Follow-ups are drawn; Shift+Down still reaches the bar, not the list.
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.right)

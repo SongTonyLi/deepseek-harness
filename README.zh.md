@@ -45,7 +45,7 @@ npx @deepseek-ai/dsh tui "explain this repository"
 npx @deepseek-ai/dsh tui --resume <session-id>
 ```
 
-`Enter` 发送，`Esc` 停止正在运行的轮次，`Ctrl+O` 展开所有工具卡片，连按两次 `Ctrl+C`（或在输入为空时按 `Ctrl+D`）退出，并打印该会话的恢复命令。`Shift+Up` 把焦点移入对话记录，`Shift+Down` 移入页脚状态栏；此后 `Up` / `Down` 遍历对话记录的每一个小节——包括系统提示词与注入的上下文——子 agent 面板的各行与状态栏，`Left` / `Right` 在块的各部分或状态栏的各分段之间移动，`Enter` 打开当前聚焦的小节或分段，`Esc` 返回编辑器。在终端内输入 `/help` 可查看命令，其中包括 `/model`、`/sessions`、`/attach` 与 `/status`。详见[终端应用](packages/bundle/tui-app/README.zh.md)。
+`Enter` 发送，`Esc` 停止正在运行的轮次，`Ctrl+O` 展开所有工具卡片，连按两次 `Ctrl+C`（或在输入为空时按 `Ctrl+D`）退出，并打印该会话的恢复命令。`Shift+Up` 把焦点移入对话记录，有提示等待时则移入 follow-ups 列表，`Shift+Down` 移入页脚状态栏；此后 `Up` / `Down` 遍历对话记录的每一个小节——包括系统提示词与注入的上下文——子 agent 面板的各行与状态栏，`Left` / `Right` 在块的各部分或状态栏的各分段之间移动，`Enter` 打开当前聚焦的小节或分段，`Esc` 返回编辑器。在终端内输入 `/help` 可查看命令，其中包括 `/model`、`/sessions`、`/attach` 与 `/status`。详见[终端应用](packages/bundle/tui-app/README.zh.md)。
 
 <a id="run-from-source"></a>
 

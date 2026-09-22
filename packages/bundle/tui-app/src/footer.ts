@@ -15,7 +15,7 @@
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { fitLegend } from './frame.ts'
-import { ENTRY_HINTS, HINTS } from './keys.ts'
+import { HINTS, entryHints } from './keys.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import {
   contextLines,
@@ -118,6 +118,11 @@ export interface FooterRender {
   level?: MotionLevel
   /** Terminal columns the bar must fit; pi-tui refuses any wider line. */
   width: number
+  /**
+   * True while the follow-ups list is drawn above the editor, so Shift+↑
+   * selects a waiting prompt instead of reading the conversation.
+   */
+  queue?: boolean
 }
 
 /** The segments and selection the status-bar component reads once per render. */
@@ -412,12 +417,13 @@ function anchorLabel(segment: FooterSegment | undefined): string {
 /**
  * The entry keys this width names.
  * @param width - terminal columns the line must fit.
+ * @param queue - whether follow-ups are drawn, which rewrites Shift+↑.
  * @returns the widest step that keeps the facts the majority of the line, and
  * the empty string on a terminal too narrow to spare the columns.
  */
-function entryHint(width: number): string {
+function entryHint(width: number, queue: boolean): string {
   if (width < HINT_MIN_WIDTH) return ''
-  return fitLegend(ENTRY_HINTS, Math.floor(width / HINT_WIDTH_SHARE))
+  return fitLegend(entryHints({ queue }), Math.floor(width / HINT_WIDTH_SHARE))
 }
 
 /**
@@ -458,12 +464,13 @@ function middleFacts(facts: readonly string[], hidden: number, room: number): st
  * @param segments - the segments in bar order.
  * @param palette - the palette the line is dimmed with.
  * @param width - terminal columns the line must fit.
+ * @param queue - whether follow-ups are drawn, which rewrites Shift+↑.
  * @returns one dim line.
  */
-function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, width: number): string {
+function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, width: number, queue: boolean): string {
   const [anchor, ...rest] = segments
   const model = anchorLabel(anchor)
-  const hint = entryHint(width)
+  const hint = entryHint(width, queue)
   const reserved = hint === '' ? 0 : visibleWidth(hint) + HINT_GAP
   const facts = rest.filter(segment => KEY_SEGMENT_IDS.has(segment.id)).map(segment => segment.label)
   const drawn = middleFacts(facts, rest.length - facts.length, width - visibleWidth(model) - reserved)
@@ -606,7 +613,7 @@ function focusedLines(
  */
 export function renderFooter(segments: readonly FooterSegment[], render: FooterRender): string[] {
   const width = Math.max(1, render.width)
-  if (render.selected === undefined) return [unfocusedLine(segments, render.palette, width)]
+  if (render.selected === undefined) return [unfocusedLine(segments, render.palette, width, render.queue === true)]
   return focusedLines(segments, render.selected, render.palette, width, render.level ?? 0)
 }
 

@@ -786,6 +786,7 @@ export class TuiApp {
       segments: this.segments,
       render: {
         palette: this.deps.palette,
+        queue: this.queueView.length > 0,
         ...this.focus === 'bar'
           ? { selected: footerSelectionIndex(this.segments, this.barSelection), level: this.markLift() }
           : {},
@@ -1865,8 +1866,12 @@ export class TuiApp {
         else this.focusBar()
         return { consume: true }
       case 'leave':
-        if (action.direction === 'down') this.focusBelowEditor()
-        else this.focusAboveBar()
+        if (this.focus === 'editor') {
+          if (action.direction === 'down') this.focusBelowEditor()
+          else this.focusAboveEditor()
+        } else {
+          this.focusAboveBar()
+        }
         return { consume: true }
       case 'cycle':
         this.cycleRegion(action.step)
@@ -2378,12 +2383,19 @@ export class TuiApp {
   }
 
   /**
-   * Give `Shift+Down` to the pending-prompt panel when it is drawn, then the
-   * first region below the editor.
+   * Give `Shift+Up` to the pending-prompt panel when it is drawn, then the
+   * conversation above the editor.
+   */
+  private focusAboveEditor(): void {
+    if (this.queueView.length > 0) this.focusQueue(0)
+    else this.focusTranscript()
+  }
+
+  /**
+   * Give `Shift+Down` to the first region below the editor.
    */
   private focusBelowEditor(): void {
-    if (this.queueView.length > 0) this.focusQueue(0)
-    else if (this.panelView.rows.length > 0) this.focusPanel(0)
+    if (this.panelView.rows.length > 0) this.focusPanel(0)
     else this.focusBar()
   }
 

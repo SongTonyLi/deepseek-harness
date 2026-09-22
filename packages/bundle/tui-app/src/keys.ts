@@ -53,7 +53,10 @@ export type KeyAction =
    * what they reach depends on what is drawn.
    */
   | { kind: 'focus'; region: 'transcript' | 'bar' }
-  /** Leave this region along the stack: the editor downwards, the status bar upwards. */
+  /**
+   * Leave this region along the stack: the editor in either direction, the
+   * status bar upwards.
+   */
   | { kind: 'leave'; direction: 'up' | 'down' }
   /** Give the keyboard to the next region drawn around the editor, or the previous one. */
   | { kind: 'cycle'; step: 1 | -1 }
@@ -129,16 +132,41 @@ export const REGION_LABELS: Record<FocusRegion, string> = {
   bar: 'status bar',
 }
 
-/** The two keys that leave the input, named on the unfocused status bar and in `/help`. */
+/** The two keys that leave the input when no follow-up waits. */
 const ENTRY_KEYS = 'Shift+↑ read · Shift+↓ status'
+
+/** The same pair while follow-ups wait: Shift+↑ selects one instead of reading. */
+const QUEUE_ENTRY_KEYS = 'Shift+↑ select · Shift+↓ status'
+
+/**
+ * The key the unfocused follow-ups list names. Shift+↑ is the direction out
+ * of the input toward whatever sits above it.
+ */
+export const QUEUE_ENTRY_HINT = 'shift+↑ select'
+
+/** Whether the follow-ups list is drawn above the editor right now. */
+export interface EntryDrawn {
+  /** True while a prompt waits in the boxed list above the input. */
+  readonly queue?: boolean
+}
 
 /**
  * The entry keys the unfocused status bar reserves before any fact is placed,
  * in declared degradation steps. Both directions are named: reaching the
- * conversation and reaching the bar are the two ways out of the input, and a
- * key nobody can see is a key nobody presses.
+ * conversation or a waiting follow-up, and reaching the bar, are the two
+ * ways out of the input, and a key nobody can see is a key nobody presses.
+ * @param drawn - whether follow-ups sit above the editor, which Shift+↑ enters.
+ * @returns the widest pair first, then the compact form.
  */
-export const ENTRY_HINTS: readonly string[] = [ENTRY_KEYS, 'Shift+↑↓ nav']
+export function entryHints(drawn: EntryDrawn = {}): readonly string[] {
+  return [drawn.queue === true ? QUEUE_ENTRY_KEYS : ENTRY_KEYS, 'Shift+↑↓ nav']
+}
+
+/**
+ * The entry keys with no follow-up waiting, the pair `/help` lists and the
+ * unfocused bar draws by default.
+ */
+export const ENTRY_HINTS: readonly string[] = entryHints()
 
 /**
  * The widest legend step of one region.
@@ -165,6 +193,7 @@ export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
     '@ completes paths and sessions · / completes commands · Tab takes one',
     '!cmd runs here · the next prompt can read it · !!cmd stays local',
     `${ENTRY_KEYS} · Ctrl+G reader`,
+    'Shift+↑ selects follow-ups while they wait',
     'Ctrl+O folds every tool card and context row',
     'Esc arms the stop · Esc again stops the turn',
     'Ctrl+C clears the input, twice quits · Ctrl+D quits an empty input',
@@ -223,12 +252,15 @@ export function resolveKey(region: FocusRegion, data: string): KeyAction | undef
 }
 
 /**
- * What one key means while the editor holds the keyboard.
+ * What one key means while the editor holds the keyboard. Shift+Up and
+ * Shift+Down leave along the stack: the application lands on the first
+ * drawn region in that direction — follow-ups or the conversation above,
+ * the subagent panel or the status bar below.
  * @param data - the raw key bytes.
  * @returns the action, or undefined for every key pi-tui's editor owns.
  */
 function editorKey(data: string): KeyAction | undefined {
-  if (matchesKey(data, 'shift+up')) return { kind: 'focus', region: 'transcript' }
+  if (matchesKey(data, 'shift+up')) return { kind: 'leave', direction: 'up' }
   if (matchesKey(data, 'shift+down')) return { kind: 'leave', direction: 'down' }
   if (matchesKey(data, 'ctrl+s')) return { kind: 'steer' }
   if (matchesKey(data, 'shift+tab')) return { kind: 'effort' }
