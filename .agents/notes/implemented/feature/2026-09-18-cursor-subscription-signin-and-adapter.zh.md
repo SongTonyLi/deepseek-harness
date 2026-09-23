@@ -26,11 +26,11 @@ harness 已能通过 `dsh-authorization` 登录 pi-ai 目录中的订阅（ChatG
 
 ### Streaming
 
-DSH 的每一步模型调用是一次 HTTP/2 Connect `AgentService/Run`。适配器把 harness 历史、系统提示与工具映射为 MCP 工具定义，再把文本、thinking、用量与 MCP 工具调用映射为 `StreamChunk`。一次 MCP 工具调用结束该流；DSH 在本地执行工具，下一步是新的 Run。Cursor 原生和 CLI Pi 工作区 exec（`read`、`shell`、`piRead` 及同类）在链路上拒绝，以免该轮停住。pi-cursor 的会话 journal、挂起的 bridge 以及原生工具执行不在范围内。
+DSH 的一步模型调用运行在一次 HTTP/2 Connect `AgentService/Run` 上。适配器把 harness 历史、系统提示与工具映射为 MCP 工具定义，再把文本、thinking、用量与 MCP 工具调用映射为 `StreamChunk`。MCP 工具调用结束该步；DSH 在本地执行工具。该 Run 挂起，直到下一次请求带来其结果并在同一条流上恢复，或者下一步打开由历史重建的新 Run；[跨工具调用挂起 Cursor Run，并通过 CallDynamicTool 路由 harness 工具](../architecture/2026-09-23-cursor-parked-runs-and-dynamic-tools.zh.md) 拥有该机制。Cursor 原生和 CLI Pi 工作区 exec（`read`、`shell`、`piRead` 及同类）在链路上拒绝。pi-cursor 的会话 journal 以及原生工具执行不在范围内。
 
-Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示。2026-09-18 的实测探针表明 `conversation_state.turns` 从不到达模型，且根条目中的 `{"role":"system"}` 会被丢弃而使用 Cursor 自己的提示：重建的请求以一个没有系统提示、也不记得先前助手文本和工具结果的新问题到达，而在一次工具调用之后模型看到的是一条空的用户消息。因此 `buildPromptMessages` 把系统提示作为 `<rules>` user 消息发布，并把每个先前人类轮次重放为 `<user_query>` user 消息，把 harness 注入的目录、快照和通知重放为不加包裹的 user 消息，以及带 `text` 和名为 `mcp_dsh_<tool>` 的 `tool-call` 部分的 assistant 消息和带结果的 `tool` 消息，这与 pi-cursor 针对同一发现采用的渲染一致，只是注入上下文不再折进查询；轮次结构仍一同发送，供服务端记账。本地执行工具调用之后，进行中的轮次连同其结果被重放，Run 必需的用户消息是固定提示 `TOOL_RESULT_CONTINUATION_TEXT`。流解码器把模型回显的 `mcp_dsh_` 前缀还原为 harness 工具名。
+Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示。2026-09-18 的实测探针表明 `conversation_state.turns` 从不到达模型，且根条目中的 `{"role":"system"}` 会被丢弃而使用 Cursor 自己的提示：重建的请求以一个没有系统提示、也不记得先前助手文本和工具结果的新问题到达，而在一次工具调用之后模型看到的是一条空的用户消息。因此 `buildPromptMessages` 把系统提示作为 `<rules>` user 消息发布，并把每个先前人类轮次重放为 `<user_query>` user 消息，把 harness 注入的目录、快照和通知重放为不加包裹的 user 消息，以及带 `text` 和写成命名空间 `dsh` 中 `CallDynamicTool` 调用的 `tool-call` 部分的 assistant 消息和带结果的 `tool` 消息，这与 pi-cursor 针对同一发现采用的渲染一致，只是注入上下文不再折进查询；轮次结构仍一同发送，供服务端记账。本地执行工具调用之后若 Run 无法恢复，进行中的轮次连同其结果被重放，Run 必需的用户消息是固定提示 `TOOL_RESULT_CONTINUATION_TEXT`。流解码器把模型回显的 `mcp_dsh_` 前缀还原为 harness 工具名。
 
-Cursor 仍在 MCP 工具之外提供其内建的 `read`、`shell`、`grep` 及同类，而 harness 工具名与之冲突，因此请求上下文的应答带一条全局 Cursor 规则 `NATIVE_TOOLS_RULE`，指出应调用 `mcp_dsh_` 工具；实测探针显示模型读到该规则并跳过了原生工具。当模型仍调用原生或 CLI Pi 工具时，`stream.ts` 以该 exec 的类型化拒绝应答（`readResult.rejected`、`piReadResult.error` 等），拒绝原因指出对应的 harness 工具；线上服务端保持 Run 开启，模型把该拒绝当作工具结果读取。没有 payload 的 exec 仍作为畸形帧使该步失败。本构建无法类型化的已命名 exec 或未知字段 exec 以 ExecClientThrow 应答，以便 Run 继续；[让非官方 Cursor Run 在 CLI Pi 与控制 exec 下保持存活](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.zh.md) 拥有这一反转。Cursor 不报告提示用量，因此 `inputTokens` 是 payload 基于字符数的估算；token meter 在自身估算更大时保留自己的值，TUI 上下文计量则显示适配器的数字而不是零。
+Cursor 仍在 MCP 工具之外提供其内建的 `read`、`shell`、`grep` 及同类，而 harness 工具名与之冲突，因此请求上下文的应答带一条全局 Cursor 规则 `nativeToolsRule`，指出以命名空间 `dsh` 中的 `CallDynamicTool` 调用 harness 工具。当模型仍调用原生或 CLI Pi 工具时，`stream.ts` 以该 exec 的类型化拒绝应答（`readResult.rejected`、`piReadResult.error` 等），拒绝原因指出对应的 harness 工具；线上服务端保持 Run 开启，模型把该拒绝当作工具结果读取。没有 payload 的 exec 仍作为畸形帧使该步失败。本构建无法类型化的已命名 exec 或未知字段 exec 以 ExecClientThrow 应答，以便 Run 继续；[让非官方 Cursor Run 在 CLI Pi 与控制 exec 下保持存活](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.zh.md) 拥有这一反转。Cursor 不报告提示用量，因此 `inputTokens` 是 payload 基于字符数的估算；token meter 在自身估算更大时保留自己的值，TUI 上下文计量则显示适配器的数字而不是零。
 
 一次 Cursor Run 只有一个当前 `userMessageAction`。loop 在人类提示之后追加的 harness `user/message` 事件——运行时上下文快照、技能目录、技能指令正文、会话引用上下文——是连续的 user 角色消息。`conversationFromOptions` 把 `source.kind === 'user'` 的文本留作查询／动作，并把所有其他 user 角色来源放到根提示上，且不加 `<user_query>` 包裹。若把这些注入消息拼进动作（或拼进历史中的 `<user_query>`），Cursor 模型会把 skill 目录里“行动前先调用 skill 工具”的句子当成用户任务。
 
@@ -52,7 +52,7 @@ TUI `/login` 已经列出每条 flow；Cursor 行是 `llm-cursor/cursor`，没�
 
 **依赖 `@rahularya01/pi-cursor` 并 shim Pi 的 ExtensionAPI。** 该包是仅支持 Bun 的 Pi Coding Agent 扩展（`pi.registerProvider`），不是库。DSH 是 Node，也没有 ExtensionAPI。对 `pi-coding-agent` 的 peer 依赖以及 `engines.bun` 会与源码启动和 CI 冲突。
 
-**像当前 pi-cursor 那样挂起 HTTP/2 会话并跑 Cursor 原生工具。** 这更接近 Cursor IDE 行为，也能在同一次 Run 的工具中途恢复。DSH 已经通过 agent loop 拥有工具：发出工具调用的步骤结束，本地工具运行，下一步发送历史。在适配器里保持挂起的 bridge 等于再做一遍该循环，并引入 journal、恢复以及本 harness 不得代 Cursor 执行的工作区 exec。
+**像当前 pi-cursor 那样挂起 HTTP/2 会话并跑 Cursor 原生工具。** 这更接近 Cursor IDE 行为，也能在同一次 Run 的工具中途恢复。DSH 已经通过 agent loop 拥有工具：发出工具调用的步骤结束，本地工具运行，下一步发送历史。在适配器里保持挂起的 bridge 等于再做一遍该循环，并引入 journal、恢复以及本 harness 不得代 Cursor 执行的工作区 exec。[跨工具调用挂起 Cursor Run，并通过 CallDynamicTool 路由 harness 工具](../architecture/2026-09-23-cursor-parked-runs-and-dynamic-tools.zh.md) 后来采用了不跑 Cursor 原生工具的挂起 Run：agent loop 仍执行每个工具，只有结果交付移到了打开的流上。
 
 **像目录型 pi-ai 提供方那样，在出现 `llm-cursor:` 设置之前保持休眠路由。** 这与「哪些提供方在跑由用户的 settings 文档决定」一致，也可以避免在无人关心时把 Cursor 显示在 `/model` 里。pi-cursor 与 `deepseek-official` 都在插件挂载后立即出现；在 `/login cursor` 之后还要 `/settings`，正是这篇记录的 TUI 兄弟已经要为 Codex 写进文档的陷阱。Cursor 适配器除采集外没有有用的配置，因此路由始终注册。
 

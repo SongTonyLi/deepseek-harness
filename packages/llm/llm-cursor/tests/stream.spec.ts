@@ -170,6 +170,8 @@ function execReply(written: AgentClientMessage[]) {
   return reply.message.value
 }
 
+const TIMING = { streamIdleTimeoutMs: 5_000, parkedRunTimeoutMs: 60_000, toolCallSettleMs: 50 }
+
 const request = {
   provider: 'cursor' as const,
   model: 'composer-2',
@@ -178,7 +180,7 @@ const request = {
 
 describe('streamCursorRun', () => {
   it('emits text, thinking, usage, and stop', async () => {
-    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    const chunks = await collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'interactionUpdate',
@@ -241,7 +243,7 @@ describe('streamCursorRun', () => {
   })
 
   it('ignores empty deltas and unknown interaction updates', async () => {
-    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    const chunks = await collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'interactionUpdate',
@@ -291,7 +293,7 @@ describe('streamCursorRun', () => {
     const chunks = await collect(streamCursorRun({
       ...request,
       tools: [{ name: 'echo', description: 'echo', parameters: { type: 'object' } }],
-    }, 'tok', 5_000, scripted([
+    }, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'execServerMessage',
@@ -316,7 +318,7 @@ describe('streamCursorRun', () => {
     expect(call).toMatchObject({ block: { name: 'echo', id: 'cursor-1' } })
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'tool-calls' } })
 
-    const named = await collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    const named = await collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'execServerMessage',
@@ -342,7 +344,7 @@ describe('streamCursorRun', () => {
 
   it('strips the replayed mcp_dsh_ prefix from a model-emitted tool name', async () => {
     for (const [name, toolName] of [['mcp_dsh_echo', ''], ['ignored', 'mcp_dsh_echo']] as const) {
-      const chunks = await collect(streamCursorRun(request, 'tok', 5_000, scripted([
+      const chunks = await collect(streamCursorRun(request, 'tok', TIMING, scripted([
         serverMessage({
           message: {
             case: 'execServerMessage',
@@ -362,7 +364,7 @@ describe('streamCursorRun', () => {
   it('answers KV get/set, request context, and web search, and rejects native execs', async () => {
     const payload = buildCursorRun(request)
     const blobId = Buffer.from([...payload.blobStore.keys()][0]!, 'hex')
-    await collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    await collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'kvServerMessage',
@@ -432,7 +434,7 @@ describe('streamCursorRun', () => {
       ...request,
       system: 'be brief',
       tools: [{ name: 'echo', description: 'echo', parameters: { type: 'object' } }],
-    }, 'tok', 5_000, open))
+    }, 'tok', TIMING, open))
     const reply = execReply(written)
     expect(reply.id).toBe(7)
     expect(reply.execId).toBe('e7')
@@ -440,7 +442,7 @@ describe('streamCursorRun', () => {
       throw new Error('expected a successful request context result')
     }
     const requestContext = reply.message.value.result.value.requestContext
-    expect(requestContext?.rules.map(rule => rule.content)).toEqual([expect.stringContaining('mcp_dsh_')])
+    expect(requestContext?.rules.map(rule => rule.content)).toEqual([expect.stringContaining('CallDynamicTool')])
     expect(requestContext?.tools.map(tool => tool.name)).toEqual(['echo'])
   })
 
@@ -455,34 +457,34 @@ describe('streamCursorRun', () => {
       alternative: string
       echo?: Record<string, unknown>
     }[] = [
-      { exec: { case: 'shellArgs', value: shell }, result: 'shellResult', variant: 'rejected', alternative: 'mcp_dsh_bash', echo: { command: 'ls -la', workingDirectory: '/w' } },
-      { exec: { case: 'shellStreamArgs', value: shell }, result: 'shellStream', variant: 'rejected', alternative: 'mcp_dsh_bash', echo: { command: 'ls -la' } },
-      { exec: { case: 'backgroundShellSpawnArgs', value: create(BackgroundShellSpawnArgsSchema, { command: 'sleep 9', workingDirectory: '/w' }) }, result: 'backgroundShellSpawnResult', variant: 'rejected', alternative: 'mcp_dsh_bash', echo: { command: 'sleep 9' } },
-      { exec: { case: 'writeShellStdinArgs', value: create(WriteShellStdinArgsSchema, { shellId: 1, chars: 'y' }) }, result: 'writeShellStdinResult', variant: 'error', alternative: 'mcp_dsh_bash' },
-      { exec: { case: 'writeArgs', value: create(WriteArgsSchema, { path: '/w/a.txt' }) }, result: 'writeResult', variant: 'rejected', alternative: 'mcp_dsh_write', echo: { path: '/w/a.txt' } },
-      { exec: { case: 'deleteArgs', value: create(DeleteArgsSchema, { path: '/w/a.txt' }) }, result: 'deleteResult', variant: 'rejected', alternative: 'mcp_dsh_bash', echo: { path: '/w/a.txt' } },
-      { exec: { case: 'grepArgs', value: create(GrepArgsSchema, { pattern: 'x' }) }, result: 'grepResult', variant: 'error', alternative: 'mcp_dsh_grep' },
-      { exec: { case: 'readArgs', value: create(ReadArgsSchema, { path: '/w/a.txt' }) }, result: 'readResult', variant: 'rejected', alternative: 'mcp_dsh_read', echo: { path: '/w/a.txt' } },
-      { exec: { case: 'lsArgs', value: create(LsArgsSchema, { path: '/w' }) }, result: 'lsResult', variant: 'rejected', alternative: 'mcp_dsh_glob', echo: { path: '/w' } },
-      { exec: { case: 'diagnosticsArgs', value: create(DiagnosticsArgsSchema, { path: '/w/a.ts' }) }, result: 'diagnosticsResult', variant: 'rejected', alternative: 'mcp_dsh_lsp', echo: { path: '/w/a.ts' } },
-      { exec: { case: 'listMcpResourcesExecArgs', value: create(ListMcpResourcesExecArgsSchema, {}) }, result: 'listMcpResourcesExecResult', variant: 'rejected', alternative: 'mcp_dsh_list_mcp_resources' },
-      { exec: { case: 'readMcpResourceExecArgs', value: create(ReadMcpResourceExecArgsSchema, { uri: 'res://x' }) }, result: 'readMcpResourceExecResult', variant: 'rejected', alternative: 'mcp_dsh_read_mcp_resource', echo: { uri: 'res://x' } },
-      { exec: { case: 'fetchArgs', value: create(FetchArgsSchema, { url: 'https://x' }) }, result: 'fetchResult', variant: 'error', alternative: 'mcp_dsh_web_fetch', echo: { url: 'https://x' } },
-      { exec: { case: 'recordScreenArgs', value: create(RecordScreenArgsSchema, {}) }, result: 'recordScreenResult', variant: 'failure', alternative: 'mcp_dsh_' },
-      { exec: { case: 'computerUseArgs', value: create(ComputerUseArgsSchema, {}) }, result: 'computerUseResult', variant: 'error', alternative: 'mcp_dsh_' },
-      { exec: { case: 'redactedReadArgs', value: create(ReadArgsSchema, { path: '/w/secret.txt' }) }, result: 'redactedReadResult', variant: 'rejected', alternative: 'mcp_dsh_read', echo: { path: '/w/secret.txt' } },
-      { exec: { case: 'miniSweAgentBashArgs', value: create(ShellArgsSchema, { command: 'pwd', workingDirectory: '/w' }) }, result: 'miniSweAgentBashResult', variant: 'rejected', alternative: 'mcp_dsh_bash', echo: { command: 'pwd', workingDirectory: '/w' } },
-      { exec: { case: 'piReadArgs', value: create(PiReadExecArgsSchema, { path: '/w/README.md' }) }, result: 'piReadResult', variant: 'error', alternative: 'mcp_dsh_read' },
-      { exec: { case: 'piBashArgs', value: create(PiBashExecArgsSchema, { command: 'ls' }) }, result: 'piBashResult', variant: 'error', alternative: 'mcp_dsh_bash' },
-      { exec: { case: 'piEditArgs', value: create(PiEditExecArgsSchema, { path: '/w/a.txt' }) }, result: 'piEditResult', variant: 'rejected', alternative: 'mcp_dsh_write' },
-      { exec: { case: 'piWriteArgs', value: create(PiWriteExecArgsSchema, { path: '/w/a.txt', content: 'x' }) }, result: 'piWriteResult', variant: 'rejected', alternative: 'mcp_dsh_write' },
-      { exec: { case: 'piGrepArgs', value: create(PiGrepExecArgsSchema, { pattern: 'x' }) }, result: 'piGrepResult', variant: 'error', alternative: 'mcp_dsh_grep' },
-      { exec: { case: 'piFindArgs', value: create(PiFindExecArgsSchema, { pattern: '*.ts' }) }, result: 'piFindResult', variant: 'error', alternative: 'mcp_dsh_glob' },
-      { exec: { case: 'piLsArgs', value: create(PiLsExecArgsSchema, { path: '/w' }) }, result: 'piLsResult', variant: 'error', alternative: 'mcp_dsh_glob' },
+      { exec: { case: 'shellArgs', value: shell }, result: 'shellResult', variant: 'rejected', alternative: 'toolName "bash"', echo: { command: 'ls -la', workingDirectory: '/w' } },
+      { exec: { case: 'shellStreamArgs', value: shell }, result: 'shellStream', variant: 'rejected', alternative: 'toolName "bash"', echo: { command: 'ls -la' } },
+      { exec: { case: 'backgroundShellSpawnArgs', value: create(BackgroundShellSpawnArgsSchema, { command: 'sleep 9', workingDirectory: '/w' }) }, result: 'backgroundShellSpawnResult', variant: 'rejected', alternative: 'toolName "bash"', echo: { command: 'sleep 9' } },
+      { exec: { case: 'writeShellStdinArgs', value: create(WriteShellStdinArgsSchema, { shellId: 1, chars: 'y' }) }, result: 'writeShellStdinResult', variant: 'error', alternative: 'toolName "bash"' },
+      { exec: { case: 'writeArgs', value: create(WriteArgsSchema, { path: '/w/a.txt' }) }, result: 'writeResult', variant: 'rejected', alternative: 'toolName "write"', echo: { path: '/w/a.txt' } },
+      { exec: { case: 'deleteArgs', value: create(DeleteArgsSchema, { path: '/w/a.txt' }) }, result: 'deleteResult', variant: 'rejected', alternative: 'toolName "bash"', echo: { path: '/w/a.txt' } },
+      { exec: { case: 'grepArgs', value: create(GrepArgsSchema, { pattern: 'x' }) }, result: 'grepResult', variant: 'error', alternative: 'toolName "grep"' },
+      { exec: { case: 'readArgs', value: create(ReadArgsSchema, { path: '/w/a.txt' }) }, result: 'readResult', variant: 'rejected', alternative: 'toolName "read"', echo: { path: '/w/a.txt' } },
+      { exec: { case: 'lsArgs', value: create(LsArgsSchema, { path: '/w' }) }, result: 'lsResult', variant: 'rejected', alternative: 'toolName "glob"', echo: { path: '/w' } },
+      { exec: { case: 'diagnosticsArgs', value: create(DiagnosticsArgsSchema, { path: '/w/a.ts' }) }, result: 'diagnosticsResult', variant: 'rejected', alternative: 'toolName "lsp"', echo: { path: '/w/a.ts' } },
+      { exec: { case: 'listMcpResourcesExecArgs', value: create(ListMcpResourcesExecArgsSchema, {}) }, result: 'listMcpResourcesExecResult', variant: 'rejected', alternative: 'toolName "list_mcp_resources"' },
+      { exec: { case: 'readMcpResourceExecArgs', value: create(ReadMcpResourceExecArgsSchema, { uri: 'res://x' }) }, result: 'readMcpResourceExecResult', variant: 'rejected', alternative: 'toolName "read_mcp_resource"', echo: { uri: 'res://x' } },
+      { exec: { case: 'fetchArgs', value: create(FetchArgsSchema, { url: 'https://x' }) }, result: 'fetchResult', variant: 'error', alternative: 'toolName "web_fetch"', echo: { url: 'https://x' } },
+      { exec: { case: 'recordScreenArgs', value: create(RecordScreenArgsSchema, {}) }, result: 'recordScreenResult', variant: 'failure', alternative: 'CallDynamicTool' },
+      { exec: { case: 'computerUseArgs', value: create(ComputerUseArgsSchema, {}) }, result: 'computerUseResult', variant: 'error', alternative: 'CallDynamicTool' },
+      { exec: { case: 'redactedReadArgs', value: create(ReadArgsSchema, { path: '/w/secret.txt' }) }, result: 'redactedReadResult', variant: 'rejected', alternative: 'toolName "read"', echo: { path: '/w/secret.txt' } },
+      { exec: { case: 'miniSweAgentBashArgs', value: create(ShellArgsSchema, { command: 'pwd', workingDirectory: '/w' }) }, result: 'miniSweAgentBashResult', variant: 'rejected', alternative: 'toolName "bash"', echo: { command: 'pwd', workingDirectory: '/w' } },
+      { exec: { case: 'piReadArgs', value: create(PiReadExecArgsSchema, { path: '/w/README.md' }) }, result: 'piReadResult', variant: 'error', alternative: 'toolName "read"' },
+      { exec: { case: 'piBashArgs', value: create(PiBashExecArgsSchema, { command: 'ls' }) }, result: 'piBashResult', variant: 'error', alternative: 'toolName "bash"' },
+      { exec: { case: 'piEditArgs', value: create(PiEditExecArgsSchema, { path: '/w/a.txt' }) }, result: 'piEditResult', variant: 'rejected', alternative: 'toolName "write"' },
+      { exec: { case: 'piWriteArgs', value: create(PiWriteExecArgsSchema, { path: '/w/a.txt', content: 'x' }) }, result: 'piWriteResult', variant: 'rejected', alternative: 'toolName "write"' },
+      { exec: { case: 'piGrepArgs', value: create(PiGrepExecArgsSchema, { pattern: 'x' }) }, result: 'piGrepResult', variant: 'error', alternative: 'toolName "grep"' },
+      { exec: { case: 'piFindArgs', value: create(PiFindExecArgsSchema, { pattern: '*.ts' }) }, result: 'piFindResult', variant: 'error', alternative: 'toolName "glob"' },
+      { exec: { case: 'piLsArgs', value: create(PiLsExecArgsSchema, { path: '/w' }) }, result: 'piLsResult', variant: 'error', alternative: 'toolName "glob"' },
     ]
     for (const entry of cases) {
       const { open, written } = capturing([execFrom(entry.exec), ...textThenEnd])
-      const chunks = await collect(streamCursorRun({ ...request, tools }, 'tok', 5_000, open))
+      const chunks = await collect(streamCursorRun({ ...request, tools }, 'tok', TIMING, open))
       expect(chunks.at(-1), entry.exec.case).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
       expect(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), entry.exec.case).toBe(false)
       const reply = execReply(written)
@@ -499,20 +501,39 @@ describe('streamCursorRun', () => {
     }
   })
 
-  it('names only the mcp_dsh_ prefix when no harness tool replaces the native one', async () => {
+  it('names only the dsh namespace when no harness tool replaces the native one', async () => {
     const { open, written } = capturing([
       execFrom({ case: 'readArgs', value: create(ReadArgsSchema, { path: '/w/a.txt' }) }),
       ...textThenEnd,
     ])
-    await collect(streamCursorRun(request, 'tok', 5_000, open))
+    await collect(streamCursorRun(request, 'tok', TIMING, open))
     const reply = execReply(written)
     if (reply.message.case !== 'readResult' || reply.message.value.result.case !== 'rejected') throw new Error('expected a read rejection')
-    expect(reply.message.value.result.value.reason).toContain('mcp_dsh_')
-    expect(reply.message.value.result.value.reason).not.toContain('mcp_dsh_read')
+    expect(reply.message.value.result.value.reason).toContain('namespace "dsh"')
+    expect(reply.message.value.result.value.reason).not.toContain('toolName')
+  })
+
+  it('ends the open text block at a refused exec so later text starts a new block', async () => {
+    const text = (value: string) => serverMessage({
+      message: {
+        case: 'interactionUpdate',
+        value: create(InteractionUpdateSchema, {
+          message: { case: 'textDelta', value: create(TextDeltaUpdateSchema, { text: value }) },
+        }),
+      },
+    })
+    const { open } = capturing([
+      text('Reading the file.'),
+      execFrom({ case: 'readArgs', value: create(ReadArgsSchema, { path: '/w/a.txt' }) }),
+      ...textThenEnd,
+    ])
+    const chunks = await collect(streamCursorRun(request, 'tok', TIMING, open))
+    const texts = chunks.flatMap(chunk => chunk.type === 'block-end' && chunk.block.type === 'text' ? [chunk.block.text] : [])
+    expect(texts).toEqual(['Reading the file.', 'ok'])
   })
 
   it('fails an unanswered blob get, an unknown KV, and an unknown interaction query', async () => {
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'kvServerMessage',
@@ -524,7 +545,7 @@ describe('streamCursorRun', () => {
       }),
     ])))).rejects.toMatchObject({ code: 'STREAM_CLOSED' })
 
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'kvServerMessage',
@@ -533,7 +554,7 @@ describe('streamCursorRun', () => {
       }),
     ])))).rejects.toMatchObject({ code: 'STREAM_CLOSED' })
 
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'interactionQuery',
@@ -545,7 +566,7 @@ describe('streamCursorRun', () => {
       }),
     ])))).rejects.toBeInstanceOf(LlmError)
 
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'interactionQuery',
@@ -556,7 +577,7 @@ describe('streamCursorRun', () => {
   })
 
   it('fails EMPTY_RESPONSE on a content-less turnEnded', async () => {
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'interactionUpdate',
@@ -569,7 +590,7 @@ describe('streamCursorRun', () => {
   })
 
   it('fails STREAM_CLOSED when the transport ends early', async () => {
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, () => ({
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, () => ({
       write: () => {},
       end: () => {},
       destroy: () => {},
@@ -578,7 +599,7 @@ describe('streamCursorRun', () => {
   })
 
   it('rethrows a non-abort transport failure', async () => {
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, () => ({
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, () => ({
       write: () => {},
       end: () => {},
       destroy: () => {},
@@ -589,7 +610,7 @@ describe('streamCursorRun', () => {
       },
     })))).rejects.toThrow('boom')
 
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, () => ({
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, () => ({
       write: () => {},
       end: () => {},
       destroy: () => {},
@@ -602,7 +623,7 @@ describe('streamCursorRun', () => {
   })
 
   it('rejects an exec with no native case as unknown', async () => {
-    await expect(collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    await expect(collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'execServerMessage',
@@ -618,14 +639,14 @@ describe('streamCursorRun', () => {
       execFrom({ case: 'piReadArgs', value: create(PiReadExecArgsSchema, { path: '/w/README.md' }) }),
       ...textThenEnd,
     ])
-    const chunks = await collect(streamCursorRun({ ...request, tools }, 'tok', 5_000, open))
+    const chunks = await collect(streamCursorRun({ ...request, tools }, 'tok', TIMING, open))
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
     expect(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')).toBe(false)
     const reply = execReply(written)
     if (reply.message.case !== 'piReadResult' || reply.message.value.result.case !== 'error') {
       throw new Error('expected a Pi read error')
     }
-    expect(reply.message.value.result.value.error).toContain('mcp_dsh_read')
+    expect(reply.message.value.result.value.error).toContain('toolName "read"')
   })
 
   it('answers every CLI hook with an empty matching response', async () => {
@@ -649,7 +670,7 @@ describe('streamCursorRun', () => {
         }),
         ...textThenEnd,
       ])
-      const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+      const chunks = await collect(streamCursorRun(request, 'tok', TIMING, open))
       expect(chunks.at(-1), hook.request.case).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
       const reply = execReply(written)
       if (reply.message.case !== 'executeHookResult') throw new Error(`expected a hook result for ${hook.request.case}`)
@@ -662,7 +683,7 @@ describe('streamCursorRun', () => {
       execFrom({ case: 'executeHookArgs', value: create(ExecuteHookArgsSchema, {}) }),
       ...textThenEnd,
     ])
-    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+    const chunks = await collect(streamCursorRun(request, 'tok', TIMING, open))
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
     expect(written.some(message => message.message.case === 'execClientControlMessage')).toBe(true)
   })
@@ -678,7 +699,7 @@ describe('streamCursorRun', () => {
         { name: 'echo', description: 'echo', parameters: { type: 'object' } },
         { name: 'read', description: 'read', parameters: { type: 'object' } },
       ],
-    }, 'tok', 5_000, open))
+    }, 'tok', TIMING, open))
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
     const reply = execReply(written)
     if (reply.message.case !== 'mcpStateExecResult' || reply.message.value.result.case !== 'success') {
@@ -703,7 +724,7 @@ describe('streamCursorRun', () => {
         }),
         ...textThenEnd,
       ])
-      await collect(streamCursorRun({ ...request, tools }, 'tok', 5_000, open))
+      await collect(streamCursorRun({ ...request, tools }, 'tok', TIMING, open))
       const reply = execReply(written)
       if (reply.message.case !== 'mcpStateExecResult' || reply.message.value.result.case !== 'success') {
         throw new Error('expected MCP state success')
@@ -720,7 +741,7 @@ describe('streamCursorRun', () => {
       agentExecWithLengthDelimitedField(7, 'e7', 99, protoStringField(1, 'x')),
       ...textThenEnd.map(message => toBinary(AgentServerMessageSchema, message)),
     ])
-    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+    const chunks = await collect(streamCursorRun(request, 'tok', TIMING, open))
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
     expect(written.some(message => message.message.case === 'execClientControlMessage')).toBe(true)
   })
@@ -733,13 +754,13 @@ describe('streamCursorRun', () => {
       }),
       ...textThenEnd,
     ])
-    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, open))
+    const chunks = await collect(streamCursorRun(request, 'tok', TIMING, open))
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
     expect(written.some(message => message.message.case === 'execClientControlMessage')).toBe(true)
   })
 
   it('closes an open text block before MCP tool-calls', async () => {
-    const chunks = await collect(streamCursorRun(request, 'tok', 5_000, scripted([
+    const chunks = await collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({
         message: {
           case: 'interactionUpdate',
@@ -781,7 +802,7 @@ describe('streamCursorRun', () => {
 
   it('fails ABORTED when the caller signal fires mid-read', async () => {
     const controller = new AbortController()
-    await expect(collect(streamCursorRun({ ...request, signal: controller.signal }, 'tok', 5_000, () => ({
+    await expect(collect(streamCursorRun({ ...request, signal: controller.signal }, 'tok', TIMING, () => ({
       write: () => {},
       end: () => {},
       destroy: () => {},
@@ -796,7 +817,7 @@ describe('streamCursorRun', () => {
     })))).rejects.toMatchObject({ code: 'ABORTED' })
 
     const cancelled = new AbortController()
-    await expect(collect(streamCursorRun({ ...request, signal: cancelled.signal }, 'tok', 5_000, () => ({
+    await expect(collect(streamCursorRun({ ...request, signal: cancelled.signal }, 'tok', TIMING, () => ({
       write: () => {},
       end: () => {},
       destroy: () => {},
@@ -812,7 +833,7 @@ describe('streamCursorRun', () => {
   })
 
   it('fails TIMEOUT when the idle watchdog fires', async () => {
-    await expect(collect(streamCursorRun(request, 'tok', 20, () => ({
+    await expect(collect(streamCursorRun(request, 'tok', { ...TIMING, streamIdleTimeoutMs: 20 }, () => ({
       write: () => {},
       end: () => {},
       destroy: () => {},
@@ -858,7 +879,7 @@ describe('streamCursorRun', () => {
     try {
       const open = createOpenCursorStream()
       expect(() => open({ accessToken: 'tok', rpcPath: '/agent.v1.AgentService/Run' })).toThrow('offline')
-      await expect(collect(streamCursorRun(request, 'tok', 5_000))).rejects.toThrow('offline')
+      await expect(collect(streamCursorRun(request, 'tok', TIMING))).rejects.toThrow('offline')
     } finally {
       connect.mockRestore()
     }

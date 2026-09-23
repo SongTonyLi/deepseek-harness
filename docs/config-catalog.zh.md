@@ -1432,6 +1432,18 @@ export interface Config {
   reuseInstalledCursorLogin?: boolean
   /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
   streamIdleTimeoutMs?: number
+  /**
+   * How long a Run parked on MCP tool calls waits for the next request to bring
+   * their results before the adapter cancels it (default thirty minutes). A
+   * later request then rebuilds the conversation on a new Run.
+   */
+  parkedRunTimeoutMs?: number
+  /**
+   * How long the adapter waits after an MCP tool call for the model's other
+   * parallel calls when Cursor has not yet sent the checkpoint that ends the
+   * model message (default one second).
+   */
+  toolCallSettleMs?: number
   /** Provider-owned model-request retry policy; omission uses normal mode with five retries. */
   retryPolicy?: RetryPolicyConfig
 }
@@ -1439,7 +1451,7 @@ export interface Config {
 
 Depends on: [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts)
 
-来源：[`packages/llm/llm-cursor/src/config.ts:19`](../packages/llm/llm-cursor/src/config.ts)
+来源：[`packages/llm/llm-cursor/src/config.ts:21`](../packages/llm/llm-cursor/src/config.ts)
 
 <a id="deepseek-aidsh-llm-deepseek"></a>
 

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-22-cursor-cli-pi-exec-continue.md
-2026-09-22-cursor-cli-pi-exec-continue.md: bd90fa3f098131a9fceda39a29847fdb4549df77
-2026-09-22-cursor-cli-pi-exec-continue.zh.md: 4f4ea90f8f05893e1e8c9552ea733266dcd1d298
+2026-09-22-cursor-cli-pi-exec-continue.md: e8da731a3bcb01a5c1d952f5f37ae0a798b92997
+2026-09-22-cursor-cli-pi-exec-continue.zh.md: 030d16c3382edde26c324a6d07bc5714ea5467a3

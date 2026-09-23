@@ -16,11 +16,19 @@ export const PROVIDER = 'cursor'
 export const MCP_PROVIDER_IDENTIFIER = 'dsh'
 
 /**
- * Prefix Cursor puts in front of an MCP tool's name when it shows the tool to
- * the model: `mcp_<providerIdentifier>_<toolName>`. Replayed prompt history uses
- * the same name, and a model that echoes it on a new call is unwrapped.
+ * Prefix of an MCP tool's name in Cursor's IDE: `mcp_<providerIdentifier>_<toolName>`.
+ * A model that echoes it on a call is unwrapped to the harness tool name.
  */
 export const MCP_PROMPT_TOOL_PREFIX = `mcp_${MCP_PROVIDER_IDENTIFIER}_`
+
+/** Cursor CLI tool that calls an MCP tool: `{ namespace, toolName, arguments }`. */
+export const DYNAMIC_TOOL_CALL = 'CallDynamicTool'
+
+/** Cursor CLI tool that searches MCP tools (`{ pattern }`) or returns one schema (`{ namespace, toolName }`). */
+export const DYNAMIC_TOOL_LOOKUP = 'GetDynamicTools'
+
+/** Interval of the `clientHeartbeat` the Cursor CLI sends on an open Run. */
+export const CLIENT_HEARTBEAT_INTERVAL_MS = 5_000
 
 /** Default credential reference resolved before a stored grant or harvest. */
 export const DEFAULT_API_KEY_ENV = 'CURSOR_ACCESS_TOKEN'
@@ -75,3 +83,9 @@ export const TOKEN_EXPIRY_SKEW_MS = 5 * 60 * 1000
 
 /** Fallback lifetime when a token is not a JWT with `exp`. */
 export const TOKEN_FALLBACK_TTL_MS = 60 * 60 * 1000
+
+/** Default lifetime of a Run parked on tool calls: thirty minutes. */
+export const DEFAULT_PARKED_RUN_TIMEOUT_MS = 30 * 60 * 1000
+
+/** Default wait for further parallel tool calls after one arrives. */
+export const DEFAULT_TOOL_CALL_SETTLE_MS = 1_000
