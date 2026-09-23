@@ -1,5 +1,5 @@
 /**
- * Translate one Cursor Connect Run into harness StreamChunks.
+ * Translate Cursor Connect Runs into harness StreamChunks, one DSH step at a time.
  *
  * @module @deepseek-ai/dsh-llm-cursor/stream
  */
@@ -9,7 +9,6 @@ import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
-import type { IdleWatchdog } from '@deepseek-ai/dsh-timeout'
 import { openConnectStream } from './connect.ts'
 import type { ConnectFrame, ConnectHttp2, CursorConnectStream } from './connect.ts'
 import {
@@ -94,8 +93,10 @@ import {
   type McpStateExecArgs,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
-import { CURSOR_RUN_PATH, MCP_PROMPT_TOOL_PREFIX } from './protocol.ts'
-import { buildCursorRun, decodeMcpArgsMap } from './request.ts'
+import { CursorRun, parkFingerprint } from './park.ts'
+import type { CursorRunRegistry } from './park.ts'
+import { CURSOR_RUN_PATH, DYNAMIC_TOOL_CALL, MCP_PROMPT_TOOL_PREFIX, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
+import { buildCursorRun, decodeMcpArgsMap, estimateRequestInputTokens } from './request.ts'
 import type { CursorRunPayload } from './request.ts'
 
 /** Open a Connect stream; tests inject a fake. */
@@ -306,8 +307,8 @@ function nativeRejectionReason(execCase: string, mcpTools: readonly McpToolDefin
   const alternative = (NATIVE_TOOL_ALTERNATIVES[execCase] ?? []).find(name => offered.has(name))
   const refusal = `Cursor's built-in ${execCase.replace(/Args$/, '')} tool is not available in DeepSeek Harness.`
   return alternative === undefined
-    ? `${refusal} Use the tools whose names start with ${MCP_PROMPT_TOOL_PREFIX} instead.`
-    : `${refusal} Call the ${MCP_PROMPT_TOOL_PREFIX}${alternative} tool instead.`
+    ? `${refusal} Call a tool in namespace "${MCP_PROVIDER_IDENTIFIER}" with ${DYNAMIC_TOOL_CALL} instead.`
+    : `${refusal} Call ${DYNAMIC_TOOL_CALL} with namespace "${MCP_PROVIDER_IDENTIFIER}" and toolName "${alternative}" instead.`
 }
 
 /**
@@ -583,191 +584,236 @@ function settledOnAbort(signal: AbortSignal): Promise<never> {
   })
 }
 
-async function nextFrame(
-  watchdog: IdleWatchdog,
-  iterator: AsyncIterator<ConnectFrame>,
-): Promise<IteratorResult<ConnectFrame>> {
-  return await Promise.race([watchdog.next(iterator), settledOnAbort(watchdog.signal)])
+/** Resolves `undefined` after `ms`; the timer is cleared by the returned disposer. */
+function settleTimer(ms: number): { elapsed: Promise<undefined>; clear: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const elapsed = new Promise<undefined>((resolve) => { timer = setTimeout(() => { resolve(undefined) }, ms) })
+  return { elapsed, clear: () => { clearTimeout(timer) } }
+}
+
+/** Streaming knobs {@link streamCursorRun} reads from the resolved adapter options. */
+export interface CursorStreamTiming {
+  /** Idle watchdog interval for one outstanding read. */
+  streamIdleTimeoutMs: number
+  /** Lifetime of a Run parked on tool calls. */
+  parkedRunTimeoutMs: number
+  /** Wait for further parallel tool calls after one arrives. */
+  toolCallSettleMs: number
+}
+
+/** Mutable per-step translation state. */
+interface StepState {
+  nextIndex: number
+  open: OpenBlock | undefined
+  outputTokens: number
+  sawContent: boolean
+  /** Harness tool-call ids emitted this step. */
+  toolCallIds: string[]
 }
 
 /**
- * Stream one rebuilt Cursor Run.
+ * Stream one DSH step on a Cursor Run. A request that carries the results of
+ * the Session's parked Run resumes that Run; any other request opens a new Run
+ * rebuilt from history. A step that ends on MCP tool calls parks its Run
+ * instead of closing it when the request names a Session and is not a
+ * compaction or title request.
  * @param options - assembled model request.
- * @param accessToken - bearer token.
- * @param idleTimeoutMs - idle watchdog.
+ * @param accessToken - bearer token for a new Run.
+ * @param timing - idle, park, and settle intervals.
  * @param openStream - injectable Connect opener.
+ * @param registry - parked Runs; omit to close every Run when its step ends.
  * @returns StreamChunks.
  */
 export async function* streamCursorRun(
   options: GenerateOptions,
   accessToken: string,
-  idleTimeoutMs: number,
+  timing: CursorStreamTiming,
   openStream: OpenCursorStream = input => openConnectStream(input),
+  registry?: CursorRunRegistry,
 ): AsyncIterable<StreamChunk> {
+  const sessionId = options.purpose === undefined ? options.sessionId : undefined
+  const resumed = sessionId === undefined ? undefined : registry?.take(sessionId, options)
+  if (resumed !== undefined) {
+    const produced = { chunks: false }
+    try {
+      resumed.run.sendResults(resumed.answers)
+      yield* stepOnRun(resumed.run, options, estimateRequestInputTokens(options), timing, produced, sessionId, registry)
+      return
+    } catch (error) {
+      // A Run that died while parked fails its first read. When nothing reached
+      // the caller and the caller neither cancelled nor timed out, the step
+      // continues on a new Run rebuilt from history.
+      const cancelled = options.signal?.aborted === true || (error instanceof LlmError && error.code === 'TIMEOUT')
+      if (produced.chunks || cancelled) throw error
+    }
+  }
   const payload = buildCursorRun(options)
-  const consumer = new AbortController()
-  const upstream = options.signal === undefined
-    ? consumer.signal
-    : AbortSignal.any([options.signal, consumer.signal])
-  using watchdog = idleWatchdog(upstream, idleTimeoutMs, 'LLM_STREAM_IDLE_TIMEOUT')
-  const stream = openStream({
-    accessToken,
-    rpcPath: CURSOR_RUN_PATH,
-    signal: watchdog.signal,
-  })
+  const run = new CursorRun(openStream({ accessToken, rpcPath: CURSOR_RUN_PATH }), payload)
+  run.stream.write(payload.requestBytes)
+  yield* stepOnRun(run, options, payload.inputTokenEstimate, timing, { chunks: false }, sessionId, registry)
+}
+
+async function* stepOnRun(
+  run: CursorRun,
+  options: GenerateOptions,
+  inputTokens: number,
+  timing: CursorStreamTiming,
+  produced: { chunks: boolean },
+  sessionId: string | undefined,
+  registry: CursorRunRegistry | undefined,
+): AsyncIterable<StreamChunk> {
+  using watchdog = idleWatchdog(options.signal, timing.streamIdleTimeoutMs, 'LLM_STREAM_IDLE_TIMEOUT')
+  let parked = false
+  // The caller may abort a finished step's signal; a parked Run outlives it.
+  const onAbort = (): void => { if (!parked) run.close() }
+  watchdog.signal.addEventListener('abort', onAbort, { once: true })
+  const reader: AsyncIterator<ConnectFrame> = { next: () => run.next() }
+  const state: StepState = { nextIndex: 0, open: undefined, outputTokens: 0, sawContent: false, toolCallIds: [] }
+  const finish = function* (reason: Extract<StreamChunk, { type: 'finish' }>['reason']): Generator<StreamChunk> {
+    yield* closeOpen(state.open)
+    state.open = undefined
+    const usage: TokenUsage = { inputTokens, outputTokens: state.outputTokens }
+    yield { type: 'usage', usage }
+    yield { type: 'finish', reason }
+  }
   try {
-    stream.write(payload.requestBytes)
-    let nextIndex = 0
-    let open: OpenBlock | undefined
-    let outputTokens = 0
-    let sawContent = false
-    const iterator = stream.frames[Symbol.asyncIterator]()
     while (true) {
-      let item: IteratorResult<ConnectFrame>
+      const settle = state.toolCallIds.length > 0 ? settleTimer(timing.toolCallSettleMs) : undefined
+      let item: IteratorResult<ConnectFrame> | undefined
       try {
-        item = await nextFrame(watchdog, iterator)
+        const read = Promise.race([watchdog.next(reader), settledOnAbort(watchdog.signal)])
+        item = settle === undefined ? await read : await Promise.race([read, settle.elapsed])
       } catch (error) {
         const timeout = timeoutOf(watchdog.signal, 'LLM_STREAM_IDLE_TIMEOUT')
         if (timeout !== undefined) {
           throw new LlmError(`llm-cursor: stream idle for ${timeout.timeoutMs}ms`, 'TIMEOUT', { cause: timeout })
         }
-        if (upstream.aborted) {
+        if (options.signal?.aborted === true) {
           throw new LlmError('llm-cursor: request aborted', 'ABORTED', { cause: error })
         }
         throw error
+      } finally {
+        settle?.clear()
       }
-      if (item.done) break
-      const message = fromBinary(AgentServerMessageSchema, item.value.payload)
-      const chunks = handleServerMessage(message, stream, payload, {
-        nextIndex,
-        open,
-        outputTokens,
-        sawContent,
-      })
-      nextIndex = chunks.nextIndex
-      open = chunks.open
-      outputTokens = chunks.outputTokens
-      sawContent = chunks.sawContent
-      yield* chunks.chunks
-      if (chunks.done !== undefined) {
-        yield* closeOpen(open)
-        const usage: TokenUsage = { inputTokens: payload.inputTokenEstimate, outputTokens }
-        yield { type: 'usage', usage }
-        yield chunks.done
+      if (item?.done === true) {
+        // A stream that closes after tool calls leaves nothing to park; the
+        // next step rebuilds the Run from history.
+        if (state.toolCallIds.length === 0) {
+          throw new LlmError('llm-cursor: Cursor stream ended before turnEnded', 'STREAM_CLOSED')
+        }
+        yield* finish({ kind: 'tool-calls' })
+        return
+      }
+      const endsToolBatch = item === undefined
+      const message = item === undefined ? undefined : fromBinary(AgentServerMessageSchema, item.value.payload)
+      const outcome = message === undefined ? {} : handleServerMessage(message, run, state)
+      if (outcome.chunks !== undefined && outcome.chunks.length > 0) {
+        produced.chunks = true
+        yield* outcome.chunks
+      }
+      if (outcome.turnEnded === true) {
+        run.close(false)
+        yield* finish({ kind: 'stop' })
+        return
+      }
+      if (endsToolBatch || (outcome.checkpoint === true && state.toolCallIds.length > 0)) {
+        if (sessionId !== undefined && registry !== undefined) {
+          registry.park(sessionId, run, parkFingerprint(options), timing.parkedRunTimeoutMs)
+          parked = true
+        }
+        yield* finish({ kind: 'tool-calls' })
         return
       }
     }
-    throw new LlmError('llm-cursor: Cursor stream ended before turnEnded', 'STREAM_CLOSED')
   } finally {
-    consumer.abort()
-    stream.destroy()
+    watchdog.signal.removeEventListener('abort', onAbort)
+    if (!parked) run.close()
   }
 }
 
 function handleServerMessage(
   message: AgentServerMessage,
-  stream: CursorConnectStream,
-  payload: CursorRunPayload,
-  state: { nextIndex: number; open: OpenBlock | undefined; outputTokens: number; sawContent: boolean },
-): {
-  chunks: StreamChunk[]
-  nextIndex: number
-  open: OpenBlock | undefined
-  outputTokens: number
-  sawContent: boolean
-  done?: Extract<StreamChunk, { type: 'finish' }>
-} {
+  run: CursorRun,
+  state: StepState,
+): { chunks?: StreamChunk[]; turnEnded?: true; checkpoint?: true } {
   const chunks: StreamChunk[] = []
-  let { nextIndex, open, outputTokens, sawContent } = state
+  const stream = run.stream
+  const payload = run.payload
   const msgCase = message.message.case
   if (msgCase === 'interactionUpdate') {
     const updateCase = message.message.value.message.case
-    if (updateCase === 'textDelta') {
+    if (updateCase === 'textDelta' || updateCase === 'thinkingDelta') {
       const text = message.message.value.message.value.text
       if (text.length > 0) {
-        if (open?.type !== 'text') {
-          chunks.push(...closeOpen(open))
-          open = { index: nextIndex, type: 'text', text: '' }
-          chunks.push({ type: 'block-start', index: nextIndex, blockType: 'text' })
-          nextIndex += 1
+        const type = updateCase === 'textDelta' ? 'text' : 'reasoning'
+        if (state.open?.type !== type) {
+          chunks.push(...closeOpen(state.open))
+          state.open = { index: state.nextIndex, type, text: '' }
+          chunks.push({ type: 'block-start', index: state.nextIndex, blockType: type })
+          state.nextIndex += 1
         }
-        open.text += text
-        chunks.push({ type: 'text-delta', index: open.index, text })
-        sawContent = true
-      }
-    } else if (updateCase === 'thinkingDelta') {
-      const text = message.message.value.message.value.text
-      if (text.length > 0) {
-        if (open?.type !== 'reasoning') {
-          chunks.push(...closeOpen(open))
-          open = { index: nextIndex, type: 'reasoning', text: '' }
-          chunks.push({ type: 'block-start', index: nextIndex, blockType: 'reasoning' })
-          nextIndex += 1
-        }
-        open.text += text
-        chunks.push({ type: 'reasoning-delta', index: open.index, text })
-        sawContent = true
+        state.open.text += text
+        chunks.push(type === 'text'
+          ? { type: 'text-delta', index: state.open.index, text }
+          : { type: 'reasoning-delta', index: state.open.index, text })
+        state.sawContent = true
       }
     } else if (updateCase === 'tokenDelta') {
-      outputTokens += message.message.value.message.value.tokens
+      state.outputTokens += message.message.value.message.value.tokens
     } else if (updateCase === 'turnEnded') {
-      if (!sawContent && open === undefined) {
+      if (!state.sawContent && state.open === undefined) {
         throw new LlmError('llm-cursor: Cursor returned no content', 'EMPTY_RESPONSE')
       }
-      return {
-        chunks,
-        nextIndex,
-        open,
-        outputTokens,
-        sawContent,
-        done: { type: 'finish', reason: { kind: 'stop' } },
-      }
+      return { chunks, turnEnded: true }
     }
-    return { chunks, nextIndex, open, outputTokens, sawContent }
+    return { chunks }
+  }
+  if (msgCase === 'conversationCheckpointUpdate') {
+    return { checkpoint: true }
   }
   if (msgCase === 'kvServerMessage') {
     answerKv(stream, message.message.value, payload.blobStore)
-    return { chunks, nextIndex, open, outputTokens, sawContent }
+    return {}
   }
   if (msgCase === 'execServerMessage') {
     const exec = message.message.value
     const execCase = exec.message.case
     if (execCase === 'requestContextArgs') {
       answerRequestContext(stream, exec, payload)
-      return { chunks, nextIndex, open, outputTokens, sawContent }
+      return {}
     }
     if (execCase === 'mcpArgs') {
       const mcp = exec.message.value
-      chunks.push(...closeOpen(open))
-      open = undefined
-      chunks.push(...emitToolCall(nextIndex, mcp.toolCallId || `cursor-${exec.id}`, harnessToolName(mcp), decodeMcpArgsMap(mcp.args)))
-      nextIndex += 1
-      sawContent = true
-      return {
-        chunks,
-        nextIndex,
-        open,
-        outputTokens,
-        sawContent,
-        done: { type: 'finish', reason: { kind: 'tool-calls' } },
-      }
+      const toolCallId = mcp.toolCallId || `cursor-${exec.id}`
+      chunks.push(...closeOpen(state.open))
+      state.open = undefined
+      chunks.push(...emitToolCall(state.nextIndex, toolCallId, harnessToolName(mcp), decodeMcpArgsMap(mcp.args)))
+      state.nextIndex += 1
+      state.sawContent = true
+      state.toolCallIds.push(toolCallId)
+      run.pending.set(toolCallId, { id: exec.id, execId: exec.execId })
+      return { chunks }
     }
     if (execCase === 'mcpStateExecArgs') {
       answerMcpState(stream, exec, exec.message.value, payload.mcpTools)
-      return { chunks, nextIndex, open, outputTokens, sawContent }
+      return {}
     }
     if (execCase === 'executeHookArgs' && answerHook(stream, exec, exec.message.value.request)) {
-      return { chunks, nextIndex, open, outputTokens, sawContent }
+      return {}
     }
+    // A refused exec is a tool call the model made between two stretches of
+    // output, so text written after the refusal starts its own block.
+    chunks.push(...closeOpen(state.open))
+    state.open = undefined
     if (answerNativeExec(stream, exec, payload.mcpTools)) {
-      return { chunks, nextIndex, open, outputTokens, sawContent }
+      return { chunks }
     }
     rejectUnknownExec(stream, exec)
     // A named exec or an unknown oneof field is answered with ExecClientThrow so
     // the Run can continue. An exec with no payload is a malformed frame and
     // still fails the turn.
     if (execCase !== undefined || (exec.$unknown !== undefined && exec.$unknown.length > 0)) {
-      return { chunks, nextIndex, open, outputTokens, sawContent }
+      return { chunks }
     }
     throw new LlmError(
       'llm-cursor: Cursor exec "unknown" is not supported by this adapter',
@@ -778,14 +824,14 @@ function handleServerMessage(
     const query = message.message.value
     if (query.query.case === 'webSearchRequestQuery') {
       approveWebSearch(stream, query)
-      return { chunks, nextIndex, open, outputTokens, sawContent }
+      return {}
     }
     throw new LlmError(
       `llm-cursor: unsupported Cursor interaction query ${query.query.case ?? 'unknown'}`,
       'UNSUPPORTED_CONTENT',
     )
   }
-  return { chunks, nextIndex, open, outputTokens, sawContent }
+  return {}
 }
 
 /**

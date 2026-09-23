@@ -11,6 +11,7 @@ import type {
 import type { CursorCatalog } from './catalog.ts'
 import type { ResolvedCursorOptions } from './config.ts'
 import type { ConnectHttp2 } from './connect.ts'
+import { CursorRunRegistry } from './park.ts'
 import { PROVIDER } from './protocol.ts'
 import { createOpenCursorStream, streamCursorRun } from './stream.ts'
 import type { OpenCursorStream } from './stream.ts'
@@ -34,6 +35,8 @@ export interface CursorAdapterOptions {
  */
 export class CursorAdapter extends LlmAdapter {
   private readonly openStream: OpenCursorStream
+  /** Runs parked on tool calls, resumed by the request that carries their results. */
+  private readonly runs = new CursorRunRegistry()
 
   /**
    * @param config - resolved options, token resolver, catalog, and transport.
@@ -95,6 +98,11 @@ export class CursorAdapter extends LlmAdapter {
     void this.config.catalog.refresh(accessToken, options.signal).catch((_catalogRefreshFailed: unknown) => {
       // Best-effort: a failed fetch must not fail the request.
     })
-    yield* streamCursorRun(options, accessToken, connection.streamIdleTimeoutMs, this.openStream)
+    yield* streamCursorRun(options, accessToken, connection, this.openStream, this.runs)
+  }
+
+  /** Close every parked Run; the plugin calls this when it is disposed. */
+  dispose(): void {
+    this.runs.closeAll()
   }
 }

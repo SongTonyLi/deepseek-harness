@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-vendored schema 是为这些 CLI 帧命名的社区 `agent.v1` 目录。工作区 exec（包括 Pi 以及 redacted / mini-swe 变体）仍收到指出 `mcp_dsh_*` 替代工具的类型化拒绝；本适配器不执行 Cursor 工作区工具。每个已知 CLI 钩子返回空的匹配 `ExecuteHookResponse`。MCP-state exec 返回按一个 `dsh` 服务器分组的已通告 harness 工具，并在 Cursor 发送 `serverIdentifiers` 时按标识过滤。任何其他已命名 exec，或存放在 `$unknown` 上的未知 oneof 字段，以 `ExecClientThrow` 应答，以便 Run 继续。没有 payload 的 exec 仍作为畸形帧使该轮失败。
+vendored schema 是为这些 CLI 帧命名的社区 `agent.v1` 目录。工作区 exec（包括 Pi 以及 redacted / mini-swe 变体）仍收到指出应通过 `CallDynamicTool` 调用的 harness 工具的类型化拒绝；本适配器不执行 Cursor 工作区工具。每个已知 CLI 钩子返回空的匹配 `ExecuteHookResponse`。MCP-state exec 返回按一个 `dsh` 服务器分组的已通告 harness 工具，并在 Cursor 发送 `serverIdentifiers` 时按标识过滤。任何其他已命名 exec，或存放在 `$unknown` 上的未知 oneof 字段，以 `ExecClientThrow` 应答，以便 Run 继续。没有 payload 的 exec 仍作为畸形帧使该轮失败。
 
 vendored 子集省略了 `ConversationStateStructure.client_name`；适配器仍把字段 22 作为 `dsh` 写到 `$unknown` 上，使线路身份与先前的类型化字段一致。`UserMessage.selected_context_blob`（字段 10）和 `correlation_id`（字段 17）以同样方式写入。
 
@@ -26,7 +26,7 @@ vendored 子集省略了 `ConversationStateStructure.client_name`；适配器仍
 
 ## Consequences
 
-- CLI Cursor 模型可以在钩子、MCP-state 和被拒绝的 Pi 工具期间保持 Run 开启，然后调用 `mcp_dsh_*`。
+- CLI Cursor 模型可以在钩子、MCP-state 和被拒绝的 Pi 工具期间保持 Run 开启，然后调用 harness 工具。
 - 未来未命名 exec 不再中止 DSH 轮次；它们仍不执行。
 - 没有 payload 的 exec 仍会大声失败。
 - `packages/llm/llm-cursor/tests/stream.spec.ts` 钉住 Pi 拒绝、每一个已建模钩子、MCP-state 列出与过滤、未知字段 99、已类型化的控制 exec，以及空 exec 失败。

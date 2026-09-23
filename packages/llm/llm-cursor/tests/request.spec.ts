@@ -11,7 +11,7 @@ import {
   buildPromptMessages,
   conversationFromOptions,
   decodeMcpArgsMap,
-  NATIVE_TOOLS_RULE,
+  nativeToolsRule,
   TOOL_RESULT_CONTINUATION_TEXT,
 } from '../src/request.ts'
 import type { CursorRunPayload } from '../src/request.ts'
@@ -119,6 +119,15 @@ describe('conversationFromOptions', () => {
         result: { content: 'hi', isError: false },
       },
     ])
+  })
+
+  it('continues the in-flight turn when harness context follows the tool results', () => {
+    const notice = createUserMessage({ content: [{ type: 'text', text: 'nested instructions' }], source: { kind: 'agent-instructions', form: 'instructions' } as never })
+    const parsed = conversationFromOptions({ provider: 'cursor', model: 'composer-2', messages: [...toolCallHistory, notice] })
+    expect(parsed.action).toEqual({ kind: 'continue' })
+    expect(parsed.actionContext).toBe('nested instructions')
+    expect(parsed.turns).toHaveLength(1)
+    expect(parsed.turns[0]?.steps.at(-1)).toMatchObject({ kind: 'toolCall', result: { content: 'hi' } })
   })
 
   it('keeps a trailing user message as the current action', () => {
@@ -257,15 +266,15 @@ describe('buildPromptMessages', () => {
         role: 'assistant',
         content: [
           { type: 'text', text: 'calling' },
-          { type: 'tool-call', toolCallId: 'c1', toolName: 'mcp_dsh_echo', args: { text: 'hi' } },
-          { type: 'tool-call', toolCallId: 'c2', toolName: 'mcp_dsh_echo', args: {} },
+          { type: 'tool-call', toolCallId: 'c1', toolName: 'CallDynamicTool', args: { namespace: 'dsh', toolName: 'echo', arguments: { text: 'hi' } } },
+          { type: 'tool-call', toolCallId: 'c2', toolName: 'CallDynamicTool', args: { namespace: 'dsh', toolName: 'echo', arguments: {} } },
         ],
       },
       {
         role: 'tool',
         content: [
-          { type: 'tool-result', toolCallId: 'c1', toolName: 'mcp_dsh_echo', result: 'hi' },
-          { type: 'tool-result', toolCallId: 'c2', toolName: 'mcp_dsh_echo', result: 'boom', isError: true },
+          { type: 'tool-result', toolCallId: 'c1', toolName: 'CallDynamicTool', result: 'hi' },
+          { type: 'tool-result', toolCallId: 'c2', toolName: 'CallDynamicTool', result: 'boom', isError: true },
         ],
       },
       { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
@@ -281,7 +290,7 @@ describe('buildPromptMessages', () => {
         { kind: 'toolCall', toolName: 'echo', toolCallId: 'c3', arguments: {} },
       ],
     }])).toEqual([
-      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c3', toolName: 'mcp_dsh_echo', args: {} }] },
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c3', toolName: 'CallDynamicTool', args: { namespace: 'dsh', toolName: 'echo', arguments: {} } }] },
     ])
     expect(buildPromptMessages('', [])).toEqual([])
   })
@@ -341,11 +350,14 @@ describe('buildCursorRun', () => {
       model: 'composer-2',
       system: 'sys',
       messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
+      tools: ['read', 'bash'].map(name => ({ name, description: name, parameters: { type: 'object' } })),
     })
     expect(payload.rules.map(rule => ({ fullPath: rule.fullPath, content: rule.content, type: rule.type?.type.case }))).toEqual([
-      { fullPath: 'dsh/cursor-adapter', content: NATIVE_TOOLS_RULE, type: 'global' },
+      { fullPath: 'dsh/cursor-adapter', content: nativeToolsRule(['read', 'bash']), type: 'global' },
     ])
-    expect(NATIVE_TOOLS_RULE).toContain('mcp_dsh_')
+    expect(nativeToolsRule(['read', 'bash'])).toContain('CallDynamicTool using namespace "dsh"')
+    expect(nativeToolsRule(['read', 'bash'])).toContain('Tools in namespace "dsh": read, bash.')
+    expect(nativeToolsRule([])).not.toContain('Tools in namespace')
   })
 
   it('estimates prompt tokens from rules, replayed history, the action text, and tool definitions', () => {
@@ -404,10 +416,10 @@ describe('buildCursorRun', () => {
         role: 'assistant',
         content: [
           { type: 'text', text: 'calling' },
-          { type: 'tool-call', toolCallId: 'c1', toolName: 'mcp_dsh_echo', args: { text: 'hi' } },
+          { type: 'tool-call', toolCallId: 'c1', toolName: 'CallDynamicTool', args: { namespace: 'dsh', toolName: 'echo', arguments: { text: 'hi' } } },
         ],
       },
-      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'mcp_dsh_echo', result: 'hi' }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'CallDynamicTool', result: 'hi' }] },
     ])
     const turnIds = run.conversationState?.turns ?? []
     expect(turnIds).toHaveLength(1)
@@ -516,8 +528,8 @@ describe('conversation edge cases', () => {
     expect(rootPromptOf(payload).at(-1)).toEqual({
       role: 'tool',
       content: [
-        { type: 'tool-result', toolCallId: 'c1', toolName: 'mcp_dsh_echo', result: 'boom', isError: true },
-        { type: 'tool-result', toolCallId: 'early', toolName: 'mcp_dsh_echo', result: 'early' },
+        { type: 'tool-result', toolCallId: 'c1', toolName: 'CallDynamicTool', result: 'boom', isError: true },
+        { type: 'tool-result', toolCallId: 'early', toolName: 'CallDynamicTool', result: 'early' },
       ],
     })
   })

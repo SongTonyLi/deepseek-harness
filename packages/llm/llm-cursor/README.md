@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`@deepseek-ai/dsh-llm-cursor` registers the always-on `cursor` route, signs in with a Cursor subscription through PKCE, and streams each harness step as one unofficial Connect/protobuf HTTP/2 `AgentService/Run`. Settings → Models shows a Cursor card with Sign in; TUI `/login llm-cursor/cursor` lists the same flow. This package can run beside the [DeepSeek](../llm-deepseek/README.md) and [pi-ai](../llm-pi-ai/README.md) adapters.
+`@deepseek-ai/dsh-llm-cursor` registers the always-on `cursor` route, signs in with a Cursor subscription through PKCE, and streams harness steps over unofficial Connect/protobuf HTTP/2 `AgentService/Run` streams; the steps of one turn share a Run while the adapter can resume it. Settings → Models shows a Cursor card with Sign in; TUI `/login llm-cursor/cursor` lists the same flow. This package can run beside the [DeepSeek](../llm-deepseek/README.md) and [pi-ai](../llm-pi-ai/README.md) adapters.
 
 ## Table of Contents
 
@@ -47,6 +47,8 @@ A request selects the route with `provider: cursor`. Model ids pass through; bun
 | `apiKeyEnv` | `CURSOR_ACCESS_TOKEN` | Credential reference resolved per request before a stored grant or harvest |
 | `reuseInstalledCursorLogin` | `true` | Whether a request may reuse a Cursor IDE or CLI login already on this machine |
 | `streamIdleTimeoutMs` | `300,000` | Maximum provider idle time per outstanding stream read |
+| `parkedRunTimeoutMs` | `1,800,000` | How long a Run parked on tool calls waits for their results before it is cancelled |
+| `toolCallSettleMs` | `1,000` | Wait for further parallel tool calls when Cursor has not yet sent the checkpoint that ends the model message |
 | `retryPolicy` | normal, 5 retries | Provider-owned retry policy executed by `dsh-llm-retry` |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-cursor) is the exhaustive source for every accepted field and its JSDoc.
@@ -64,9 +66,9 @@ Sign-out is `deleteRecord` on that key. It does not revoke the session at Cursor
 
 Request-time token order is: launch-environment `CURSOR_ACCESS_TOKEN`, then the stored OAuth grant (refresh inside `modifyRecord` when near expiry), then optional Keychain / `state.vscdb` harvest when `reuseInstalledCursorLogin` is true. A stored DSH login wins over harvest.
 
-Each DSH model step is a new HTTP/2 Connect `Run` rebuilt from harness history, system prompt, and MCP tool definitions (`providerIdentifier: dsh`, `clientName: dsh`). Cursor's server builds the model prompt from `root_prompt_messages_json`, never renders `conversation_state.turns` into it, and discards a `{"role":"system"}` entry there in favour of its own prompt. The adapter therefore publishes the system prompt as a `<rules>` user prompt message and replays every prior turn as `user`, `assistant`, and `tool` prompt messages, naming historic MCP calls `mcp_dsh_<tool>` as Cursor does; the turn structures ride along for the server's bookkeeping. The request-context answer adds one global Cursor rule telling the model that Cursor's built-in tools return a rejection here and that the `mcp_dsh_` tools are the ones to call.
+A new Run is rebuilt from harness history, system prompt, and MCP tool definitions (`providerIdentifier: dsh`, `clientName: dsh`). Cursor's server builds the model prompt from `root_prompt_messages_json`, never renders `conversation_state.turns` into it, and discards a `{"role":"system"}` entry there in favour of its own prompt. The adapter therefore publishes the system prompt as a `<rules>` user prompt message and replays every prior turn as `user`, `assistant`, and `tool` prompt messages, writing each historic harness tool call as the `CallDynamicTool` call Cursor records for an MCP tool; the turn structures ride along for the server's bookkeeping. A Cursor CLI Run exposes MCP tools to the model only through `GetDynamicTools` and `CallDynamicTool`, so the request-context answer adds one global Cursor rule telling the model that Cursor's built-in tools return a rejection here, that harness tools are called with `CallDynamicTool` in namespace `dsh`, and which tool names exist.
 
-Text, thinking, usage, and MCP tool calls become `StreamChunk`. An MCP tool call finishes the stream so the agent loop can run the tool locally. The next Run replays that in-flight turn with its results and sends a fixed continuation notice as the user message a Run requires; a `resumeAction` is not used because the server restarts the turn from its user message instead of continuing it. A Cursor-native or CLI Pi workspace exec (`read`, `shell`, `piRead`, and kin) is answered with its typed rejection naming the harness tool to call instead, so the Run continues and the model reads the refusal as a tool outcome. A CLI hook is answered with an empty matching response. An MCP-state exec returns the advertised `mcp_dsh_` tools. Any other exec this build cannot type is answered with ExecClientThrow so the Run continues. An exec with no payload still fails the step.
+Text, thinking, usage, and MCP tool calls become `StreamChunk`. MCP tool calls end the step once Cursor sends the checkpoint that follows the model's last parallel call, or after `toolCallSettleMs` without a frame. When the request names a Session and is not a compaction or title request, the Run then parks: the adapter keeps the stream open with a `clientHeartbeat` every five seconds. The next request from that Session resumes it when its history before the last assistant message is unchanged and that message is followed only by the pending calls' results and harness-injected user-role context; the adapter answers each call with `mcpResult` on the same stream, appends such context to the last result, and keeps reading. Any other request, a Run that died while parked, or one older than `parkedRunTimeoutMs` falls back to a new Run that replays the in-flight turn with its results and sends a fixed continuation notice as the user message a Run requires; a `resumeAction` is not used because the server restarts the turn from its user message instead of continuing it. A Cursor-native or CLI Pi workspace exec (`read`, `shell`, `piRead`, and kin) is answered with its typed rejection naming the harness tool to call through `CallDynamicTool`, so the Run continues and the model reads the refusal as a tool outcome; text after a refused exec starts a new text block. A CLI hook is answered with an empty matching response. An MCP-state exec returns the advertised `dsh` tools. Any other exec this build cannot type is answered with ExecClientThrow so the Run continues. An exec with no payload still fails the step.
 
 Attribution headers required by `LlmAdapter` go on every HTTP/2 request, with Cursor client headers `x-ghost-mode`, `x-cursor-client-version`, and `x-cursor-client-type`.
 
@@ -76,6 +78,7 @@ Attribution headers required by `LlmAdapter` go on every HTTP/2 request, with Cu
 - [Configure models](../../../docs/user/guide/providers.md) — Web and TUI sign-in, including Cursor beside Codex.
 - [LLM streaming subsystem](../../../docs/subsystems/llm-streaming.md) — `StreamChunk` and the adapter contract.
 - [Cursor subscription sign-in and native adapter](../../../.agents/notes/implemented/feature/2026-09-18-cursor-subscription-signin-and-adapter.md) — why this is a third adapter family rather than a pi-ai catalog entry.
+- [Park Cursor Runs across tool calls and route harness tools through CallDynamicTool](../../../.agents/notes/implemented/architecture/2026-09-23-cursor-parked-runs-and-dynamic-tools.md) — why a turn stays on one Run and how the model reaches harness tools.
 
 <a id="model-experience"></a>
 ## Model Experience
@@ -84,21 +87,21 @@ Attribution headers required by `LlmAdapter` go on every HTTP/2 request, with Cu
 
 #### What the model sees
 
-One rebuilt Cursor `AgentRunRequest` whose `root_prompt_messages_json` carries the model-visible history: the system prompt as a `<rules>` user message, then each prior human turn as a `<user_query>` user message, harness-injected catalogs, snapshots, and notices as separate user messages that are not wrapped in `<user_query>`, assistant messages holding text and `tool-call` parts named `mcp_dsh_<tool>`, and `tool` messages holding the results; thinking is not replayed. The current user action is the human prompt only — a Run has one `userMessageAction`, so skill catalogs and runtime snapshots ride the root prompt instead of joining that action. After locally executed tool calls, the in-flight turn is replayed with its results and the user action is the fixed notice `The results of your tool calls are in the tool messages above. Continue the task.`. The request context carries one global rule stating that Cursor's built-in tools return a rejection and naming the `mcp_dsh_` tools as the ones to call. Images reach the model as the harness's text-only placeholder because the route declares text-only input; no image bytes are sent. Cursor still offers its own built-in tools beside the harness MCP tools.
+A new Cursor `AgentRunRequest` whose `root_prompt_messages_json` carries the model-visible history: the system prompt as a `<rules>` user message, then each prior human turn as a `<user_query>` user message, harness-injected catalogs, snapshots, and notices as separate user messages that are not wrapped in `<user_query>`, assistant messages holding text and `tool-call` parts written as `CallDynamicTool` calls in namespace `dsh`, and `tool` messages holding the results; thinking is not replayed. The current user action is the human prompt only — a Run has one `userMessageAction`, so skill catalogs and runtime snapshots ride the root prompt instead of joining that action. A resumed Run sends no new request: the model reads each tool result as the outcome of its own pending call, with harness context that followed the results appended to the last one. When the Run cannot resume after locally executed tool calls, the in-flight turn is replayed with its results and the user action is the fixed notice `The results of your tool calls are in the tool messages above. This is not a new request: continue the current task from the last tool result. The user has already seen your earlier messages, so do not repeat or rephrase them or restate your plan; write only new information.`. The request context carries one global rule stating that Cursor's built-in tools return a rejection and that harness tools are called with `CallDynamicTool` in namespace `dsh`, followed by the harness tool names. Images reach the model as the harness's text-only placeholder because the route declares text-only input; no image bytes are sent. Cursor still offers its own built-in tools beside the harness MCP tools.
 
 #### Token effect
 
-Provider tokenization governs exact input. History is fully rebuilt on every DSH step, so the wire request is the current assembled messages rather than a resumed Cursor conversation. Replayed history travels twice on the wire, as prompt messages and as turn structures, but only the prompt messages reach the model. Cursor reports no prompt usage, so `inputTokens` is an estimate of one token per four characters of rules, replayed prompt messages, action text, and MCP tool definitions; `outputTokens` comes from Cursor's `tokenDelta` events.
+Provider tokenization governs exact input. A new Run carries the current assembled messages; a resumed Run adds only the tool results to the conversation Cursor already holds. Replayed history travels twice on the wire, as prompt messages and as turn structures, but only the prompt messages reach the model. Cursor reports no prompt usage, so `inputTokens` is an estimate of one token per four characters of rules, replayed prompt messages, action text, and MCP tool definitions for the request as a new Run would carry it; `outputTokens` comes from Cursor's `tokenDelta` events.
 
 #### KV Cache effect
 
-Each step is an independent Run. A changed system prompt, history, tool schema, or model id produces a new request and does not reuse a Cursor-side conversation prefix.
+The steps of a turn share one Cursor conversation while the Run resumes. A new Run, opened after a changed system prompt, history, tool schema, or model id, or after any fallback, does not reuse a Cursor-side conversation prefix.
 
 ### Cursor Run response
 
 #### What the model sees
 
-Text deltas, thinking deltas, token usage, and MCP tool calls become harness chunks. An MCP tool call finishes the stream with `tool-calls`. A native or CLI Pi workspace exec is answered with a rejection and the stream continues. A CLI hook or MCP-state exec is answered so the Run stays open. Any other exec this build cannot type is answered with ExecClientThrow and the stream continues. An exec with no payload fails the turn.
+Text deltas, thinking deltas, token usage, and MCP tool calls become harness chunks. MCP tool calls finish the step with `tool-calls` after the model's parallel calls arrive. A native or CLI Pi workspace exec is answered with a rejection and the stream continues. A CLI hook or MCP-state exec is answered so the Run stays open. Any other exec this build cannot type is answered with ExecClientThrow and the stream continues. An exec with no payload fails the turn.
 
 #### Token effect
 
@@ -106,7 +109,7 @@ Generated content affects later inputs only after the loop records it. Output to
 
 #### KV Cache effect
 
-Loop-retained response blocks append to the next rebuilt Run. Unrecorded transport frames do not affect later cache identity.
+A resumed Run already holds the model's own output. Loop-retained response blocks append to the next new Run. Unrecorded transport frames do not affect later cache identity.
 
 ## Known Limitations and Deferred Work
 
@@ -115,14 +118,14 @@ Loop-retained response blocks append to the next rebuilt Run. Unrecorded transpo
 These limits define where the adapter stops. They are current package constraints, not a Cursor product comparison.
 
 - **The integration is unofficial** — auth URLs, headers, client version, and `agent.v1` can change without notice and break this adapter.
-- **Native Cursor workspace execs are not executed** — `read`, `shell`, CLI Pi tools (`piRead`, `piBash`, and kin), and the same family receive a typed rejection naming the harness tool, so a model that picks one spends a round trip on the refusal before calling the `mcp_dsh_` tool.
+- **Native Cursor workspace execs are not executed** — `read`, `shell`, CLI Pi tools (`piRead`, `piBash`, and kin), and the same family receive a typed rejection naming the harness tool, so a model that picks one spends a round trip on the refusal before calling `CallDynamicTool`.
 - **CLI control execs do not run Cursor hooks** — hook frames get an empty matching response, MCP-state frames list the advertised `dsh` tools, and any other unnamed exec is answered with ExecClientThrow so the Run continues; none of them execute workspace work.
-- **There is no parked HTTP/2 conversation** — each DSH step is a new Run; mid-tool resume on the same Cursor stream is out of scope.
-- **Tool results reach the model as replayed prompt messages plus a fixed continuation notice** — Cursor delivers results in-stream natively; the notice is adapter-owned text the human never typed.
+- **A parked Run lives in one process** — it is not journaled, so a restarted process, a human message after the tool results, or any changed history falls back to a new Run rebuilt from history.
+- **A fallback Run delivers tool results as replayed prompt messages plus a fixed continuation notice** — the notice is adapter-owned text the human never typed; a resumed Run delivers injected context inside the last tool result instead of as its own message.
 - **`GenerateOptions.stop` is unsupported** — the unofficial Run does not map stop sequences.
 - **Image bytes are not sent** — the route declares text-only input, so every image reaches the model as the harness's text-only placeholder rather than as a Cursor selected image.
 - **`maxTokens`, `temperature`, and `reasoningEffort` are not mapped** — the Run has no fields for them; effort is chosen through the Cursor model id suffix such as `-high`.
-- **Reasoning is not replayed** — Cursor renders no `reasoning` prompt part, so a thinking model re-derives its plan after each locally executed tool call.
+- **Reasoning is not replayed** — Cursor renders no `reasoning` prompt part, so after a fallback a thinking model re-derives its plan; a resumed Run keeps its reasoning.
 - **Prompt token usage is an estimate** — Cursor reports none, so the TUI context meter shows the adapter's character-based estimate.
 - **Sign-out does not revoke at Cursor** — it only deletes the local grant; harvest can still satisfy the next request until `reuseInstalledCursorLogin` is false.
 - **Harvest can bill a different Cursor account** — a stored DSH grant wins; turn harvest off when this machine's IDE login is not the account to use.

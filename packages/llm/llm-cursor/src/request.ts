@@ -47,7 +47,7 @@ import {
   type CursorRule,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
-import { MCP_PROMPT_TOOL_PREFIX, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
+import { DYNAMIC_TOOL_CALL, DYNAMIC_TOOL_LOOKUP, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
 
 /** Upstream `ConversationStateStructure.client_name = 22`; the vendored subset omits the typed field. */
 const CONVERSATION_CLIENT_NAME_FIELD = 22
@@ -113,19 +113,33 @@ export interface CursorConversation {
 /**
  * User message sent after locally executed tool calls. A Run requires one user
  * message; the tool results themselves ride the root prompt as `tool` messages.
+ * Cursor presents this message as a new user query, so it states that the
+ * current task continues and that earlier assistant text was already shown.
  */
-export const TOOL_RESULT_CONTINUATION_TEXT = 'The results of your tool calls are in the tool messages above. Continue the task.'
+export const TOOL_RESULT_CONTINUATION_TEXT = 'The results of your tool calls are in the tool messages above. '
+  + 'This is not a new request: continue the current task from the last tool result. '
+  + 'The user has already seen your earlier messages, so do not repeat or rephrase them or restate your plan; '
+  + 'write only new information.'
 
 /**
  * Rule that tells the model Cursor's built-in tools answer with a rejection
- * here, so it calls the harness tools by their `mcp_dsh_` names instead.
+ * here and how Cursor exposes the harness tools: as MCP tools in namespace
+ * `dsh`, reached only through {@link DYNAMIC_TOOL_CALL}.
+ * @param toolNames - harness tool names advertised on the Run.
+ * @returns the rule text.
  */
-export const NATIVE_TOOLS_RULE = 'DeepSeek Harness runs this session. '
-  + 'Cursor\'s built-in tools (read, write, edit, delete, ls, grep, shell, fetch, diagnostics, and the rest) are not available: '
-  + `calling one returns a rejection and does nothing. Use only the tools whose names start with ${MCP_PROMPT_TOOL_PREFIX}, `
-  + `for example ${MCP_PROMPT_TOOL_PREFIX}read instead of read.`
+export function nativeToolsRule(toolNames: readonly string[]): string {
+  const catalog = toolNames.length === 0 ? '' : ` Tools in namespace "${MCP_PROVIDER_IDENTIFIER}": ${toolNames.join(', ')}.`
+  return 'DeepSeek Harness runs this session. '
+    + 'Cursor\'s built-in tools (Read, Write, StrReplace, Delete, LS, Glob, Grep, Shell, fetch, diagnostics, and the rest) are not available: '
+    + 'calling one returns a rejection and does nothing. '
+    + `The session's tools are MCP tools in namespace "${MCP_PROVIDER_IDENTIFIER}". `
+    + `Call one with ${DYNAMIC_TOOL_CALL} using namespace "${MCP_PROVIDER_IDENTIFIER}", its toolName, and its arguments. `
+    + `Before a tool's first call, get its argument schema with ${DYNAMIC_TOOL_LOOKUP} using namespace "${MCP_PROVIDER_IDENTIFIER}" and its toolName.`
+    + catalog
+}
 
-/** Rule path Cursor shows beside {@link NATIVE_TOOLS_RULE}. */
+/** Rule path Cursor shows beside {@link nativeToolsRule}. */
 const ADAPTER_RULE_PATH = 'dsh/cursor-adapter'
 
 /** Built Run payload plus the blob store Cursor may ask back for. */
@@ -136,7 +150,7 @@ export interface CursorRunPayload {
   blobStore: Map<string, Uint8Array>
   /** MCP tool definitions sent on the Run. */
   mcpTools: McpToolDefinition[]
-  /** Rules answered on `requestContextArgs`: {@link NATIVE_TOOLS_RULE} as one global rule. */
+  /** Rules answered on `requestContextArgs`: {@link nativeToolsRule} as one global rule. */
   rules: CursorRule[]
   /**
    * Prompt-side token estimate at one token per four characters of rules,
@@ -158,7 +172,12 @@ export interface CursorPromptMessage {
   content: CursorPromptPart[]
 }
 
-function textOf(message: RequestMessage): string {
+/**
+ * Concatenated text blocks of one message; other blocks contribute nothing.
+ * @param message - a request message.
+ * @returns the message text.
+ */
+export function textOf(message: RequestMessage): string {
   return message.content
     .map(block => block.type === 'text' ? block.text : '')
     .join('')
@@ -362,6 +381,11 @@ export function conversationFromOptions(options: GenerateOptions): CursorConvers
   if (last === undefined) {
     return { systemPrompt, turns: [], action: { kind: 'userMessage', text: '' }, actionContext: '' }
   }
+  if (last.steps.length === 0 && last.userText.length === 0 && turns.length > 1) {
+    // Harness context injected after tool results (nested workspace
+    // instructions, notices) carries no human text: the in-flight turn continues.
+    return { systemPrompt, turns: turns.slice(0, -1), action: { kind: 'continue' }, actionContext: last.contextText }
+  }
   if (last.steps.length === 0) {
     return {
       systemPrompt,
@@ -375,15 +399,16 @@ export function conversationFromOptions(options: GenerateOptions): CursorConvers
 
 /**
  * Rules Cursor renders inside its own system prompt when the Run asks for the
- * request context. Only {@link NATIVE_TOOLS_RULE} travels here: a rule carrying
+ * request context. Only {@link nativeToolsRule} travels here: a rule carrying
  * the harness system prompt lost its always-apply instructions once replayed
  * history was present, while the `<rules>` user prompt message kept them.
+ * @param mcpTools - MCP tool definitions advertised on the Run.
  * @returns the adapter's global rule.
  */
-export function buildRules(): CursorRule[] {
+export function buildRules(mcpTools: readonly McpToolDefinition[]): CursorRule[] {
   return [create(CursorRuleSchema, {
     fullPath: ADAPTER_RULE_PATH,
-    content: NATIVE_TOOLS_RULE,
+    content: nativeToolsRule(mcpTools.map(tool => tool.toolName)),
     source: 0,
     type: create(CursorRuleTypeSchema, { type: { case: 'global', value: create(CursorRuleTypeGlobalSchema, {}) } }),
   })]
@@ -394,8 +419,9 @@ export function buildRules(): CursorRule[] {
  * the model. The system prompt becomes a `<rules>` user message because the
  * server discards `system` entries in favour of its own prompt. Each turn
  * becomes a `<user_query>` user message, assistant messages holding text and
- * `tool-call` parts, and `tool` messages holding the results, with MCP tools
- * named `mcp_dsh_<tool>` as Cursor names them. Thinking is not replayed.
+ * `tool-call` parts, and `tool` messages holding the results. A harness tool
+ * call is written as the {@link DYNAMIC_TOOL_CALL} call Cursor itself records
+ * for an MCP tool. Thinking is not replayed.
  * @param systemPrompt - rendered harness system prompt; `''` adds no rules.
  * @param turns - turns to replay, oldest first.
  * @param actionContext - harness context for the current action; omitted from `<user_query>`.
@@ -435,13 +461,17 @@ export function buildPromptMessages(
         assistant.push({ type: 'text', text: step.text })
         continue
       }
-      const toolName = `${MCP_PROMPT_TOOL_PREFIX}${step.toolName}`
-      assistant.push({ type: 'tool-call', toolCallId: step.toolCallId, toolName, args: step.arguments })
+      assistant.push({
+        type: 'tool-call',
+        toolCallId: step.toolCallId,
+        toolName: DYNAMIC_TOOL_CALL,
+        args: { namespace: MCP_PROVIDER_IDENTIFIER, toolName: step.toolName, arguments: step.arguments },
+      })
       if (step.result !== undefined) {
         results.push({
           type: 'tool-result',
           toolCallId: step.toolCallId,
-          toolName,
+          toolName: DYNAMIC_TOOL_CALL,
           result: step.result.content,
           ...step.result.isError ? { isError: true } : {},
         })
@@ -469,6 +499,19 @@ function estimateInputTokens(
   return Math.ceil(chars / 4)
 }
 
+/**
+ * Prompt-side token estimate for one harness request, computed as
+ * {@link buildCursorRun} computes {@link CursorRunPayload.inputTokenEstimate}.
+ * A resumed Run reports this for the request that carried the tool results.
+ * @param options - assembled model request.
+ * @returns estimated prompt tokens.
+ */
+export function estimateRequestInputTokens(options: GenerateOptions): number {
+  const { systemPrompt, turns, action, actionContext } = conversationFromOptions(options)
+  const mcpTools = buildMcpToolDefinitions(options.tools)
+  return estimateInputTokens(buildRules(mcpTools), buildPromptMessages(systemPrompt, turns, actionContext), actionText(action), mcpTools)
+}
+
 function actionText(action: CursorRunAction): string {
   switch (action.kind) {
     case 'userMessage': return action.text
@@ -489,7 +532,7 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
   const blobStore = new Map<string, Uint8Array>()
   const encoder = new TextEncoder()
   const systemBlobId = storeAsBlob(encoder.encode(JSON.stringify({ role: 'system', content: systemPrompt })), blobStore)
-  const rules = buildRules()
+  const rules = buildRules(mcpTools)
   const promptMessages = buildPromptMessages(systemPrompt, turns, actionContext)
   const promptBlobIds = promptMessages.map(message => storeAsBlob(encoder.encode(JSON.stringify(message)), blobStore))
   const selectedCtxBlob = storeAsBlob(new Uint8Array(), blobStore)

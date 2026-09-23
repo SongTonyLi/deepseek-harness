@@ -70,6 +70,7 @@ export function apply(ctx: Context, config: Config): void {
     { provider: PROVIDER, displayName: 'Cursor', settingsNs: NS, settingsPath: [] },
   ])
   ctx.llm.registerAdapter([PROVIDER], adapter)
+  ctx.effect(() => () => { adapter.dispose() })
   ctx.inject(['authorization'], (authorized) => {
     registerCursorFlow(authorized, {}, () => resolveAccessToken().then(token => catalog.refresh(token)))
   })
