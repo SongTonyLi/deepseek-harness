@@ -983,10 +983,15 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    * @returns the call section, then the result section once the tool answered.
    */
   parts(): readonly SectionPart[] {
-    const call = [...this.call.title === '' ? [] : [this.call.title], ...this.call.lines]
-    const parts: SectionPart[] = [{ kind: 'call', rows: call.length === 0 ? [NO_ARGUMENTS] : call }]
+    const title = this.call.title === '' ? [] : [this.call.title]
+    const call = [...title, ...this.call.lines]
+    const parts: SectionPart[] = [call.length === 0
+      ? { kind: 'call', rows: [NO_ARGUMENTS] }
+      : { kind: 'call', rows: call, ...this.call.code === undefined ? {} : { code: [...title.map(() => undefined), ...this.call.code] } }]
     if (this.status !== 'running') {
-      parts.push({ kind: 'result', rows: this.resultLines.length === 0 ? [NO_OUTPUT] : this.resultLines })
+      parts.push(this.resultLines.length === 0
+        ? { kind: 'result', rows: [NO_OUTPUT] }
+        : { kind: 'result', rows: this.resultLines, ...this.resultCode === undefined ? {} : { code: this.resultCode } })
     }
     return parts
   }

@@ -43,7 +43,7 @@ import {
   type ReaderReveal,
   type ReaderState,
 } from './reader.ts'
-import type { Palette } from './style.ts'
+import type { CodeHighlighter, Palette } from './style.ts'
 
 /** The key that opens the query line. */
 const FILTER_KEY = '/'
@@ -136,6 +136,8 @@ export interface ReaderPaneOptions {
   cursor: TranscriptCursor
   /** The bands and the reveals; absent draws the settled reader with no band. */
   effects?: ReaderEffects
+  /** Colours fenced code in replies and the code rows of tool cards; absent draws them plain. */
+  highlight?: CodeHighlighter
   /**
    * Called once, where the reader closes: on the key that closes it, and on
    * the render that finds the conversation gone. It runs inside that step
@@ -220,6 +222,7 @@ export class ReaderPane implements Component {
       totalTurns: groups.length,
       tints: effects === undefined ? undefined : readerTints(effects.style(), effects.background()),
       reveal: this.revealNow(),
+      highlight: this.options.highlight,
     })
   }
 

@@ -19,6 +19,7 @@
 
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { MotionLevel } from './motion.ts'
+import type { CodeSpan } from './transcript.ts'
 
 /** What separates two facts inside one heading. */
 const SEPARATOR = ' · '
@@ -44,6 +45,8 @@ export interface SectionPart {
   kind: SectionKind
   /** The section's full source rows, unwrapped and without palette styling. */
   rows: readonly string[]
+  /** The code span behind each row, aligned with `rows` by index; absent draws every row plain. */
+  code?: readonly (CodeSpan | undefined)[]
   /** Strip and heading label when it is not the kind name, e.g. a snapshot contribution. */
   label?: string
 }

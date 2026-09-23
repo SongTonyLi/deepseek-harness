@@ -2218,6 +2218,7 @@ export class TuiApp {
       rows: () => Math.max(1, this.deps.terminal.rows),
       minColumns: this.deps.readerMinColumns,
       cursor,
+      highlight: this.codeHighlight,
       effects: {
         style: () => this.fadeStyle,
         background: () => this.background,

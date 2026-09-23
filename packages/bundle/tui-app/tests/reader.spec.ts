@@ -20,10 +20,19 @@ import {
   type ReaderState,
 } from '../src/reader.ts'
 import { GONE, source, transcript } from './section-source.ts'
-import { createPalette } from '../src/style.ts'
+import { createPalette, type CodeHighlighter } from '../src/style.ts'
 
 /** A palette that returns its text unchanged, so a spec reads the drawn columns. */
 const PLAIN = createPalette(false)
+
+/**
+ * The turn panel's part of one plain body row, without the frame's right border.
+ * @param line - the row, with no styling.
+ * @returns the panel's text, its padding trimmed.
+ */
+function panel(line: string): string {
+  return line.slice(27).replace(/ │$/, '').trimEnd()
+}
 
 /**
  * The reader over a scripted transcript.
@@ -47,19 +56,19 @@ describe('readerGeometry', () => {
   const state: ReaderState = { cursor: { block: 0, part: 0 }, column: 'pane', offset: 0 }
 
   it('gives the turn list a share of the terminal between its two bounds', () => {
-    expect(readerGeometry(95, 40, state, 60)).toMatchObject({ list: 23, pane: 68, body: 37, tiny: false })
+    expect(readerGeometry(95, 40, state, 60)).toMatchObject({ list: 23, pane: 66, body: 37, tiny: false })
     // The share is clamped at both ends: 18 columns at 60, 28 at 200.
-    expect(readerGeometry(60, 40, state, 60)).toMatchObject({ list: 18, pane: 38 })
-    expect(readerGeometry(200, 40, state, 60)).toMatchObject({ list: 28, pane: 168 })
+    expect(readerGeometry(60, 40, state, 60)).toMatchObject({ list: 18, pane: 36 })
+    expect(readerGeometry(200, 40, state, 60)).toMatchObject({ list: 28, pane: 166 })
   })
 
   it('draws one panel at a time below the configured width', () => {
-    expect(readerGeometry(59, 20, state, 60)).toMatchObject({ list: 0, pane: 57 })
-    expect(readerGeometry(59, 20, { ...state, column: 'list' }, 60)).toMatchObject({ list: 57, pane: 0 })
+    expect(readerGeometry(59, 20, state, 60)).toMatchObject({ list: 0, pane: 55 })
+    expect(readerGeometry(59, 20, { ...state, column: 'list' }, 60)).toMatchObject({ list: 55, pane: 0 })
     // The query line narrows the list, so it is the list that stays drawn.
-    expect(readerGeometry(59, 20, { ...state, column: 'filter' }, 60)).toMatchObject({ list: 57, pane: 0 })
+    expect(readerGeometry(59, 20, { ...state, column: 'filter' }, 60)).toMatchObject({ list: 55, pane: 0 })
     // A wider setting keeps one panel on a terminal two would cramp.
-    expect(readerGeometry(95, 40, state, 120)).toMatchObject({ list: 0, pane: 93 })
+    expect(readerGeometry(95, 40, state, 120)).toMatchObject({ list: 0, pane: 91 })
   })
 
   it('refuses a terminal the frame does not fit in', () => {
@@ -78,6 +87,15 @@ describe('measurePane', () => {
     // two sections, each under one header row, with a blank row between each
     // two sections.
     expect(measurePane(group!, blocks, 60)).toEqual({ headers: [0, 2, 5, 47, 50], total: 52 })
+  })
+
+  it('measures the same after its memo of measured replies starts over', () => {
+    const blocks = transcript()
+    const group = turnGroups(blocks)[1]!
+    const first = measurePane(group, blocks, 60)
+    // Every width is a reply the memo has not measured, which overflows it.
+    for (let width = 40; width < 340; width += 1) measurePane(group, blocks, width)
+    expect(measurePane(group, blocks, 60)).toEqual(first)
   })
 
   it('reports nothing for a section the transcript no longer carries', () => {
@@ -353,11 +371,13 @@ describe('readerRows', () => {
 
   it('opens the turn on its prompt and heads every other section with its kind', () => {
     const turn = draw({ ...held, cursor: { block: 2, part: 0 }, offset: 0 }, 95, 40)
-    const pane = turn.map(line => line.slice(27))
+    // Every body row closes the frame on the right.
+    for (const line of turn.slice(1, -2)) expect(line.endsWith(' │')).toBe(true)
+    const pane = turn.map(panel)
     // The prompt, then each section under its header with a blank row between
     // them, the held one behind the gutter.
     expect(pane.slice(1, 7)).toEqual([
-      '  ❯ fix the fade at the top'.padEnd(68),
+      '  ❯ fix the fade at the top',
       '',
       '┃ ✻ Thinking',
       '┃   the tail is matched backwards',
@@ -370,7 +390,7 @@ describe('readerRows', () => {
     // The tool's own sections sit past the reply, which the reading scrolls
     // to: the call under the tool and its headline, the result indented under it.
     const tool = draw({ ...held, cursor: { block: 3, part: 1 }, offset: 47 }, 95, 40)
-    expect(tool.map(line => line.slice(27)).slice(1, 6)).toEqual([
+    expect(tool.map(panel).slice(1, 6)).toEqual([
       '  ◆ bash git status',
       '    {"command":"git status"}',
       '',
@@ -430,7 +450,7 @@ describe('readerRows', () => {
     expect(lines).toHaveLength(40)
     // The turn row stands, and the section row under it names nothing.
     expect(lines.join('\n')).toContain('❯ 9  gone')
-    expect(lines[2]).toBe(`│   ▸${' '.repeat(20)}│ `)
+    expect(lines[2]).toBe(`│   ▸${' '.repeat(20)}│ ${' '.repeat(66)} │`)
   })
 
   it('refuses a terminal the frame does not fit in', () => {
@@ -479,7 +499,7 @@ describe('readerRows', () => {
 function styled(): SectionSource[] {
   return [
     source('user', [{ kind: 'user', rows: ['patch checkout', 'and keep the tests'] }], { turn: 0 }),
-    source('assistant', [{ kind: 'reply', rows: ['- first', '  * nested', 'plain - dash'] }], { turn: 1 }),
+    source('assistant', [{ kind: 'reply', rows: ['- first', '  * nested', '', 'plain - dash'] }], { turn: 1 }),
     source('tool', [{ kind: 'call', rows: ['src/api/checkout.ts', '{"path":"src/api/checkout.ts"}'] }, {
       kind: 'result',
       rows: ['@@ -1 +1 @@', '- old line', '+ new line', '  same'],
@@ -519,15 +539,16 @@ describe('the turn panel\'s styling', () => {
     })
   }
 
-  it('draws a reply\'s bullets as bullets and drops a call row its header already names', () => {
-    const pane = draw({ block: 1, part: 0 }).map(line => stripTerminalSequences(line).slice(27))
-    expect(pane.slice(1, 17)).toEqual([
-      '  ❯ patch checkout'.padEnd(68),
-      '    and keep the tests'.padEnd(68),
+  it('draws a reply as Markdown with its bullets as bullets and drops a call row its header already names', () => {
+    const pane = draw({ block: 1, part: 0 }).map(line => panel(stripTerminalSequences(line)))
+    expect(pane.slice(1, 18)).toEqual([
+      '  ❯ patch checkout',
+      '    and keep the tests',
       '',
       '┃ ¶ Reply',
       '┃   • first',
-      '┃     • nested',
+      '┃       • nested',
+      '┃',
       '┃   plain - dash',
       '',
       '  ◆ edit src/api/checkout.ts',
@@ -540,7 +561,7 @@ describe('the turn panel\'s styling', () => {
       '        same',
     ])
     // A tool whose result has not landed says it is still running.
-    expect(pane[18]).toBe('  ◆ grep · running')
+    expect(pane[19]).toBe('  ◆ grep · running')
   })
 
   it('paints a diff\'s rows green and red, on bands the width of the panel', () => {
@@ -551,13 +572,56 @@ describe('the turn panel\'s styling', () => {
     expect(tints).toBeDefined()
     const banded = draw({ block: 2, part: 1 }, { tints }, COLOR)
     const added = banded.find(line => line.includes('+ new line'))
-    expect(added).toMatch(/\u001b\[48;2;\d+;\d+;\d+m\u001b\[32m\+ new line\u001b\[39m {52}\u001b\[49m$/)
+    expect(added).toMatch(/\u001b\[48;2;\d+;\d+;\d+m\u001b\[32m\+ new line\u001b\[39m {50}\u001b\[49m \u001b\[\d+m│\u001b\[39m$/)
     expect(banded.find(line => line.includes('- old line'))).toContain('\u001b[48;2;')
     // The prompt band spans the whole panel.
     const prompt = banded.find(line => line.includes('patch checkout'))
-    expect(prompt).toMatch(/\u001b\[48;2;\d+;\d+;\d+m.*patch checkout.* {50}\u001b\[49m$/)
+    expect(prompt).toMatch(/\u001b\[48;2;\d+;\d+;\d+m.*patch checkout.* {48}\u001b\[49m \u001b\[\d+m│\u001b\[39m$/)
     // Every banded row still fits the frame exactly.
     for (const line of banded) expect(visibleWidth(line)).toBeLessThanOrEqual(95)
+  })
+
+  it('draws a reply\'s Markdown and fenced code, a tool\'s code rows, and reasoning in the conversation\'s colors', () => {
+    const asked: (string | undefined)[] = []
+    const highlight: CodeHighlighter = {
+      lines: (code, lang) => {
+        asked.push(lang)
+        return code.split('\n').map(line => `\u001b[35m${line}\u001b[39m`)
+      },
+    }
+    const blocks = [
+      source('user', [{ kind: 'user', rows: ['explain'] }], { turn: 0 }),
+      source('assistant', [
+        { kind: 'reasoning', rows: ['weighing it'] },
+        { kind: 'reply', rows: ['# Plan', 'use **bold** and `code`', '', '1. step', '', '```ts', 'const a = 1', '```'] },
+      ], { turn: 1 }),
+      source('tool', [
+        { kind: 'call', rows: ['a.ts'] },
+        { kind: 'result', rows: ['   1│ let b'], code: [{ lang: 'ts', prefix: '   1│ ', source: 'let b' }] },
+      ], { turn: 1, name: 'read', title: 'a.ts' }),
+    ]
+    const groups = turnGroups(blocks)
+    const render = (palette: typeof COLOR, withHighlight: boolean): string[] => readerRows({ cursor: { block: 1, part: 1 }, column: 'pane', offset: 0 }, groups, {
+      palette,
+      blocks,
+      width: 95,
+      rows: 30,
+      minColumns: READER_MIN_COLUMNS,
+      totalTurns: groups.length,
+      ...withHighlight ? { highlight } : {},
+    })
+    const lines = render(COLOR, true).join('\n')
+    expect(lines).toMatch(/\u001b\[38;5;117m\S*Plan/)
+    expect(lines).toContain(COLOR.bold('bold'))
+    expect(lines).toContain(COLOR.link('code'))
+    expect(lines).toContain('\u001b[35mconst a = 1\u001b[39m')
+    expect(lines).toContain('   1│ \u001b[35mlet b\u001b[39m')
+    expect(lines).toContain(COLOR.dim(COLOR.italic('weighing it')))
+    // An ordered list keeps its numbers; only an unordered marker becomes `•`.
+    expect(lines).toContain(`${COLOR.heading('1. ')}step`)
+    expect(asked).toEqual(['ts', 'ts'])
+    // Colour never moves a row: the plain drawing has the same text in every row.
+    expect(render(COLOR, true).map(stripTerminalSequences)).toEqual(render(PLAIN, false))
   })
 
   it('accents the section the reader holds and draws the rest the way the conversation does', () => {

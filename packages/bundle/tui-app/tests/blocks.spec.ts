@@ -333,6 +333,15 @@ describe('navigable sections', () => {
     expect(block.parts()[1]).toEqual({ kind: 'result', rows: ['a', 'b', 'c', 'd'] })
   })
 
+  it('carries the code span behind each call and result row, past the headline row', () => {
+    const span = { lang: 'ts', prefix: '   1│ ', source: 'const a = 1' }
+    const shell = { lang: 'shellscript', prefix: '$ ', source: 'ls' }
+    const block = new ToolBlock(theme, 'read', { title: 'a.ts', lines: ['$ ls'], code: [shell] }, 1)
+    expect(block.parts()[0]).toEqual({ kind: 'call', rows: ['a.ts', '$ ls'], code: [undefined, shell] })
+    block.setResult(['   1│ const a = 1'], false, [span])
+    expect(block.parts()[1]).toEqual({ kind: 'result', rows: ['   1│ const a = 1'], code: [span] })
+  })
+
   it('names an empty call and an empty result rather than reporting no rows', () => {
     const block = new ToolBlock(theme, 'read', { title: '', lines: [] }, 1)
     expect(block.parts()).toEqual([{ kind: 'call', rows: ['(no arguments)'] }])
