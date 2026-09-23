@@ -238,7 +238,8 @@ export class Session implements SessionFace {
    * @param content - text, browser-owned temporary image uploads, and staged-file receipts.
    * @param mode - queue appends after the current turn; steer interrupts it.
    * @param signal - optional caller cancellation for the complete admission round-trip.
-   * @param requestId - identity from {@link beginSubmission}; a failed identified prompt retires its echo.
+   * @param requestId - {@link beginSubmission} identity. Failure retires its echo.
+   * A subagent prompt persists this same identity.
    * @returns the prompt result (also mirrored into promptError on failure).
    */
   async prompt(
@@ -279,7 +280,7 @@ export class Session implements SessionFace {
       // wire type is used; this array is not filtered or reordered.
       const routedContent = content as Exclude<PromptContentPart, { readonly type: 'file' }>[]
       const routed = await this.remote.subagents.prompt({
-        requestId: randomUUID() as SessionRequestId,
+        requestId: requestId ?? randomUUID() as SessionRequestId,
         parentSessionId: this.address.parentSessionId,
         childSessionId: this.address.childSessionId,
         mode: 'continuable',

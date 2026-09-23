@@ -478,10 +478,54 @@ describe('ConversationRoot resident composer', () => {
   it('shows hierarchy only for subagents and opens their ordinary owner', () => {
     const b = mount(sessionSnapshotOf(), undefined, undefined, { summaryOrigin: 'subagent' })
     const root = b.view.getByRole('button', { name: 'Root' })
+    expect(root.getAttribute('title')).toBe('返回主智能体（Alt+↑）')
     expect(b.view.queryByRole('button', { name: 'Child' })).toBeNull()
     expect(b.view.getByText('Child').tagName).toBe('SPAN')
     fireEvent.click(root)
     expect(b.open).toHaveBeenCalledWith(sid('root'))
+  })
+
+  it('returns to the main agent with Alt+Up from a subagent conversation', () => {
+    const direct = mount(sessionSnapshotOf(), undefined, undefined, { summaryOrigin: 'subagent' })
+    for (const event of [
+      { key: 'ArrowDown', altKey: true },
+      { key: 'ArrowUp' },
+      { key: 'ArrowUp', altKey: true, ctrlKey: true },
+      { key: 'ArrowUp', altKey: true, metaKey: true },
+      { key: 'ArrowUp', altKey: true, shiftKey: true },
+      { key: 'ArrowUp', altKey: true, isComposing: true },
+    ]) fireEvent.keyDown(document, event)
+    expect(direct.open).not.toHaveBeenCalled()
+
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    const field = document.createElement('button')
+    dialog.append(field)
+    document.body.append(dialog)
+    fireEvent.keyDown(field, { key: 'ArrowUp', altKey: true })
+    dialog.remove()
+    expect(direct.open).not.toHaveBeenCalled()
+
+    const button = document.createElement('button')
+    document.body.append(button)
+    fireEvent.keyDown(button, { key: 'ArrowUp', altKey: true })
+    button.remove()
+    expect(direct.open).toHaveBeenCalledWith(sid('root'))
+    direct.view.unmount()
+
+    const nested = mount(sessionSnapshotOf(), undefined, undefined, {
+      summaryOrigin: 'subagent',
+      nestedSubagent: true,
+    })
+    expect(nested.view.getByRole('button', { name: 'Parent' }).getAttribute('title')).toBeNull()
+    fireEvent.keyDown(document, { key: 'ArrowUp', altKey: true })
+    expect(nested.open).toHaveBeenCalledWith(sid('root'))
+    expect(nested.open).not.toHaveBeenCalledWith(sid('parent'))
+    nested.view.unmount()
+
+    const ordinary = mount(sessionSnapshotOf())
+    fireEvent.keyDown(document, { key: 'ArrowUp', altKey: true })
+    expect(ordinary.open).not.toHaveBeenCalled()
   })
 
   it('keeps intermediate subagent breadcrumbs at the compact title size', () => {

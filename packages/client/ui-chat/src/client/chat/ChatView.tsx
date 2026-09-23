@@ -11,6 +11,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatViewSlotProps, OpenFileOptions } from '../contract/slots.ts'
 import type { ChatSnapshot } from '../contract/snapshot.ts'
+import { ContextInjectionRow } from './ContextInjectionRow.tsx'
+import { contextForm, contextProducer } from '../conversation-nodes/event-projection.ts'
 import { PendingSteeringBubble, PendingSubmissionBubble } from './MessageItem.tsx'
 import { ChatNodeSeat } from './ChatNodeSeat.tsx'
 import { ChatGroupSeat } from './ChatGroupSeat.tsx'
@@ -146,6 +148,10 @@ export function ChatView({
     () => inbox?.['next-step'].filter(message => message.source.kind === 'user') ?? [],
     [inbox],
   )
+  const inboxInjections = useMemo(
+    () => inbox?.['next-step'].filter(message => message.source.kind !== 'user') ?? [],
+    [inbox],
+  )
   const pendingSubmissions = useSession(s => s.pendingSubmissions)
   // Submission echoes still awaiting their durable counterpart. `order` is the
   // recompute trigger: durable user material always arrives as an append, and
@@ -255,6 +261,17 @@ export function ChatView({
               renderMessageImages={renderMessageImages}
               t={t}
             />
+          ))}
+          {inboxInjections.map(item => (
+            <div key={item.id} data-pending-injection="">
+              <ContextInjectionRow
+                content={item.content}
+                source={item.source}
+                producer={contextProducer(item.source)}
+                form={contextForm(item.source)}
+                t={t}
+              />
+            </div>
           ))}
         </div>
         {!scroll.followingTail && (

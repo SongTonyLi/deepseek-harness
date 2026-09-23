@@ -1561,6 +1561,26 @@ describe('ChatView', () => {
     expect(h.forkAt).toHaveBeenCalledWith(3)
   }))
 
+  it('renders a pending next-step injection until the host claims it', () => {
+    const injection = {
+      id: 'inject-occurrence' as never,
+      role: 'user' as const,
+      source: { kind: 'system-prompt' as const },
+      content: [{ type: 'text' as const, text: 'workspace snapshot' }],
+    }
+    const h = makeHarness(
+      { nodes: [assistant(1, 'working')] },
+      { testInbox: { 'next-turn': [], 'next-step': [injection] }, running: true },
+    )
+    const view = render(<h.ChatView {...h.props} />)
+    const row = view.getByText('上下文注入').closest('[data-pending-injection]')
+    expect(row).not.toBeNull()
+    expect(view.getByText('system-prompt')).toBeTruthy()
+
+    act(() => { h.setSession({ testInbox: { 'next-turn': [], 'next-step': [] } }) })
+    expect(view.container.querySelector('[data-pending-injection]')).toBeNull()
+  })
+
   it('keeps a later pending occurrence visible when it reuses a durable MessageId', () => {
     const pending = {
       id: 'steer-occurrence-later' as never,
