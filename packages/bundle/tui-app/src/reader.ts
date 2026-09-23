@@ -17,7 +17,7 @@
  * @module @deepseek-ai/dsh-tui-app/reader
  */
 
-import { fuzzyFilter, truncateToWidth, visibleWidth, wrapTextWithAnsi, type RgbColor } from '@earendil-works/pi-tui'
+import { Markdown, fuzzyFilter, truncateToWidth, visibleWidth, wrapTextWithAnsi, type RgbColor } from '@earendil-works/pi-tui'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { mixFadeColor, nearestAnsi256, recolorLines, type FadeStyle } from './fade.ts'
 import { bottomRule, chip, fitLegend, legendRule, ruleRoom, topRule } from './frame.ts'
@@ -32,7 +32,8 @@ import {
   type TurnGroup,
   type TurnMarkers,
 } from './navigation.ts'
-import { createPalette, type Palette, type Style } from './style.ts'
+import { createPalette, markdownTheme, type CodeHighlighter, type Palette, type Style } from './style.ts'
+import { paintCodeRows, type CodeSpan } from './transcript.ts'
 
 /** Columns the reader needs before it draws the held turn beside the turn list. */
 export const READER_MIN_COLUMNS = 60
@@ -58,13 +59,16 @@ const CHROME_ROWS = 3
 /** Columns one body column spends on the border before it and the space after it. */
 const COLUMN_MARGIN = 2
 
+/** Columns a body row spends closing the frame: the space and the right border. */
+const CLOSE_MARGIN = 2
+
 /** What the chip names this mode. */
 const READER_CHIP = 'READER'
 
 /** What ends a line the width cut short; one column, so the mark itself fits. */
 const ELLIPSIS = '…'
 
-/** The left border of a body row and the border between the two panels. */
+/** The left and right borders of a body row and the border between the two panels. */
 const SIDE = '│'
 
 /** Marks the listed section the keyboard holds. */
@@ -88,8 +92,8 @@ const RESULT_INDENT = '  '
 /** What a Markdown bullet of a reply is drawn as. */
 const BULLET = '• '
 
-/** A Markdown bullet at the start of a reply row: its indentation, then the marker and one space. */
-const MARKDOWN_BULLET = /^(\s*)[-*+] /
+/** The marker pi-tui's Markdown draws an unordered list item with. */
+const MARKDOWN_BULLET = '- '
 
 /** What opens a source row a diff adds. */
 const ADDED_PREFIX = '+ '
@@ -253,6 +257,8 @@ export interface ReaderRender {
   tints?: ReaderTints | undefined
   /** The reveal in flight; absent draws the settled turn. */
   reveal?: ReaderReveal | undefined
+  /** Colours fenced code in replies and the code rows of tool cards; absent draws them plain. */
+  highlight?: CodeHighlighter | undefined
 }
 
 /**
@@ -439,7 +445,7 @@ function restingHeader(block: SectionSource, part: SectionPart, palette: Palette
 }
 
 /** How a section's source rows are tinted in the panel. */
-type RowTone = 'plain' | 'dim' | 'added' | 'removed'
+type RowTone = 'plain' | 'dim' | 'thought' | 'added' | 'removed'
 
 /**
  * The tone one source row draws in.
@@ -454,23 +460,66 @@ function rowTone(block: SectionSource, part: SectionPart, row: string): RowTone 
     if (row.startsWith(ADDED_PREFIX)) return 'added'
     if (row.startsWith(REMOVED_PREFIX)) return 'removed'
   }
-  return part.kind === 'reasoning' || part.kind === 'call' ? 'dim' : 'plain'
+  if (part.kind === 'reasoning') return 'thought'
+  return part.kind === 'call' ? 'dim' : 'plain'
+}
+
+/** An unstyled palette, which is all measuring needs: styling never changes a row count. */
+const MEASURING = createPalette(false)
+
+/** Replies whose measured rows {@link measuredReplies} keeps before it starts over. */
+const MEASURED_REPLIES = 256
+
+/** Measured reply rows, by width and text. */
+const measuredReplies = new Map<string, string[]>()
+
+/** A section's body rows, and the code span behind each. */
+interface BodySource {
+  rows: readonly string[]
+  code?: readonly (CodeSpan | undefined)[] | undefined
 }
 
 /**
  * The source rows a section's body draws. A call whose first row repeats the
- * headline the header already names starts after it, and a reply's Markdown
- * bullets are drawn as `•`; every other row is the model-facing text as is.
+ * headline the header already names starts after it; every other row is the
+ * model-facing text as is.
  * @param block - the block the section belongs to.
  * @param part - the section.
- * @returns the rows, unwrapped.
+ * @returns the rows, unwrapped, with their code spans.
  */
-function bodySource(block: SectionSource, part: SectionPart): readonly string[] {
+function bodySource(block: SectionSource, part: SectionPart): BodySource {
   if (block.blockKind === 'tool' && part.kind === 'call' && block.title !== '' && part.rows[0] === block.title) {
-    return part.rows.slice(1)
+    return { rows: part.rows.slice(1), code: part.code?.slice(1) }
   }
-  if (part.kind === 'reply') return part.rows.map(row => row.replace(MARKDOWN_BULLET, `$1${BULLET}`))
-  return part.rows
+  return { rows: part.rows, code: part.code }
+}
+
+/**
+ * A reply drawn as the conversation draws it: Markdown, with fenced code in
+ * syntax colour, except that an unordered list item is marked `•`. The rows
+ * depend on the text and the width alone, since every theme role keeps the
+ * text it is given.
+ * @param rows - the reply's source rows.
+ * @param width - the columns the reply lays out in.
+ * @param look - the palette and the highlighter.
+ * @returns the rows, trailing padding removed.
+ */
+function replyRows(rows: readonly string[], width: number, look: SectionLook): string[] {
+  const text = rows.join('\n')
+  // Every paint measures the panel more than once, and a measure depends on
+  // the text and the width alone, so it is parsed once per reply and width.
+  const key = look.palette === MEASURING ? `${String(width)}\n${text}` : undefined
+  const known = key === undefined ? undefined : measuredReplies.get(key)
+  if (known !== undefined) return known
+  const theme = markdownTheme(look.palette, look.highlight)
+  const listBullet = theme.listBullet
+  theme.listBullet = marker => listBullet(marker === MARKDOWN_BULLET ? BULLET : marker)
+  const lines = new Markdown(text, 0, 0, theme).render(width).map(line => line.trimEnd())
+  if (key !== undefined) {
+    if (measuredReplies.size >= MEASURED_REPLIES) measuredReplies.clear()
+    measuredReplies.set(key, lines)
+  }
+  return lines
 }
 
 /** How the rows of one section are painted. */
@@ -481,6 +530,8 @@ interface SectionLook {
   tints?: ReaderTints | undefined
   /** Whether the reader holds this section. */
   held: boolean
+  /** Colours fenced code and the code rows of tool cards; absent draws them plain. */
+  highlight?: CodeHighlighter | undefined
 }
 
 /**
@@ -548,6 +599,8 @@ function bodyRow(line: string, tone: RowTone, indent: string, width: number, loo
       return `${indent}${line}`
     case 'dim':
       return `${indent}${palette.dim(line)}`
+    case 'thought':
+      return `${indent}${palette.dim(palette.italic(line))}`
     case 'added':
     case 'removed': {
       const paint = tone === 'added' ? palette.success : palette.error
@@ -572,7 +625,7 @@ function bodyRow(line: string, tone: RowTone, indent: string, width: number, loo
  * @param cursor - the section.
  * @param blocks - the navigable blocks.
  * @param width - the panel's columns, the gutter included.
- * @param look - the palette, the bands, and whether the reader holds the section.
+ * @param look - the palette, the bands, the highlighter, and whether the reader holds the section.
  * @returns the rows, or none for a section the transcript no longer carries.
  */
 function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[], width: number, look: SectionLook): string[] {
@@ -586,10 +639,18 @@ function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[],
   } else {
     const indent = part.kind === 'result' ? `${RESULT_INDENT}${BODY_INDENT}` : BODY_INDENT
     const room = Math.max(1, content - visibleWidth(indent))
-    rows = [headerRow(block, part, content, look), ...bodySource(block, part).flatMap((row) => {
-      const tone = rowTone(block, part, row)
-      return wrapTextWithAnsi(row, room).map(line => bodyRow(line, tone, indent, content, look))
-    })]
+    const header = headerRow(block, part, content, look)
+    if (block.blockKind === 'assistant' && part.kind === 'reply') {
+      rows = [header, ...replyRows(part.rows, room, look).map(line => `${indent}${line}`)]
+    } else {
+      const source = bodySource(block, part)
+      const painted = paintCodeRows(source.rows, source.code, look.highlight)
+      // The tone is read from the plain row, which `painted` aligns with by index.
+      rows = [header, ...painted.flatMap((row, index) => {
+        const tone = rowTone(block, part, source.rows[index] as string)
+        return wrapTextWithAnsi(row, room).map(line => bodyRow(line, tone, indent, content, look))
+      })]
+    }
   }
   const gutter = look.held ? look.palette.accent(HELD_GUTTER) : GUTTER
   return rows.map(row => `${gutter}${row}`)
@@ -607,18 +668,16 @@ function turnLayout(
   group: TurnGroup,
   blocks: readonly SectionSource[],
   width: number,
-  look: { palette: Palette; tints?: ReaderTints | undefined; cursor?: TranscriptCursor },
+  look: { palette: Palette; tints?: ReaderTints | undefined; highlight?: CodeHighlighter | undefined; cursor?: TranscriptCursor },
 ): string[][] {
   const last = group.sections.length - 1
   return group.sections.map((section, index) => {
     const held = look.cursor !== undefined && sameSection(section, look.cursor)
-    const rows = sectionRows(section, blocks, width, { palette: look.palette, tints: look.tints, held })
+    const rows = sectionRows(section, blocks, width, { palette: look.palette, tints: look.tints, highlight: look.highlight, held })
     return index === last || rows.length === 0 ? rows : [...rows, '']
   })
 }
 
-/** An unstyled palette, which is all measuring needs: styling never changes a row count. */
-const MEASURING = createPalette(false)
 
 /**
  * Measure the turn panel, which is what the scroll keys move over.
@@ -653,11 +712,11 @@ export function readerGeometry(width: number, rows: number, state: ReaderState, 
   if (width < minColumns) {
     // The query line narrows the list, so it is the list that stays drawn.
     return state.column === 'pane'
-      ? { ...base, list: 0, pane: width - COLUMN_MARGIN }
-      : { ...base, list: width - COLUMN_MARGIN, pane: 0 }
+      ? { ...base, list: 0, pane: width - COLUMN_MARGIN - CLOSE_MARGIN }
+      : { ...base, list: width - COLUMN_MARGIN - CLOSE_MARGIN, pane: 0 }
   }
   const list = clamp(Math.floor(width * LIST_SHARE), LIST_MIN_WIDTH, LIST_MAX_WIDTH)
-  return { ...base, list, pane: width - list - 2 * COLUMN_MARGIN }
+  return { ...base, list, pane: width - list - 2 * COLUMN_MARGIN - CLOSE_MARGIN }
 }
 
 /**
@@ -1073,8 +1132,8 @@ function paneColumn(
   render: ReaderRender,
   width: number,
 ): string[] {
-  const { palette, tints, reveal } = render
-  const sections = turnLayout(group, blocks, width, { palette, tints, cursor })
+  const { palette, tints, reveal, highlight } = render
+  const sections = turnLayout(group, blocks, width, { palette, tints, highlight, cursor })
   return sections.flatMap((rows, index) => {
     const section = group.sections[index]
     const covered = reveal !== undefined
@@ -1100,16 +1159,9 @@ interface BodyColumn {
  * @returns the row, no wider than `width`.
  */
 function frameRow(columns: readonly BodyColumn[], row: number, palette: Palette, width: number): string {
-  let line = `${palette.accent(SIDE)} `
-  for (const [index, column] of columns.entries()) {
-    const text = column.rows[row] ?? ''
-    // The last column has no border after it, so it is not padded either; the
-    // border between the two panels is recessed, so the turn reads as one page.
-    line += index === columns.length - 1
-      ? truncateToWidth(text, Math.max(1, column.width), ELLIPSIS)
-      : `${cell(text, column.width)}${palette.dim(SIDE)} `
-  }
-  return truncateToWidth(line, Math.max(1, width), ELLIPSIS)
+  // The border between the two panels is recessed, so the turn reads as one page.
+  const inner = columns.map(column => cell(column.rows[row] ?? '', column.width)).join(`${palette.dim(SIDE)} `)
+  return truncateToWidth(`${palette.accent(SIDE)} ${inner} ${palette.accent(SIDE)}`, Math.max(1, width), ELLIPSIS)
 }
 
 /**
