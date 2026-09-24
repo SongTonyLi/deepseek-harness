@@ -1,6 +1,25 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-16-tui-list-then-details-navigation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-16-tui-list-then-details-navigation.md
-2026-09-16-tui-list-then-details-navigation.md: c82560b3e14c3e8fea7e86fc0b8a831f283f4e0d
-2026-09-16-tui-list-then-details-navigation.zh.md: 72156892b9c9943dc1e763d354269b52c370e6ee
+/agent-note-terminal-list-then-details-navigation:
+  en: 0b0d0571b29ec92f
+  zh: 65c9dad30d0bdd43
+/agent-note-terminal-list-then-details-navigation/problem:
+  en: a1021bbe1f214b5d
+  zh: 4c868867936e4b99
+/agent-note-terminal-list-then-details-navigation/decision:
+  en: d35bda4b36fdca08
+  zh: c6d2f9af9827d6cf
+/agent-note-terminal-list-then-details-navigation/todo-turn-facts-are-keyed-by-item-content:
+  en: ab7f8a8ebc5b1e9b
+  zh: 3a9c8a2beeb163a2
+/agent-note-terminal-list-then-details-navigation/alternatives-considered:
+  en: dfbe399459fd8092
+  zh: d8b9cc83b5948dfd
+/agent-note-terminal-list-then-details-navigation/consequences:
+  en: 486b7dcbd0f90c26
+  zh: a9a61af2d7eae4e9
+/agent-note-terminal-list-then-details-navigation/related-decisions:
+  en: ddd867436d8314a8
+  zh: a736297a073dfb5f

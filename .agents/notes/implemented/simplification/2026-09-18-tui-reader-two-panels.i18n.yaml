@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-18-tui-reader-two-panels.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/simplification/2026-09-18-tui-reader-two-panels.md
-2026-09-18-tui-reader-two-panels.md: 58d0b2e3b673b836cbe684cd4210c100e55de744
-2026-09-18-tui-reader-two-panels.zh.md: 376c1b55df526e806582be0555fd8ba8fc44ce24
+/agent-note-the-terminal-reader-is-two-panels:
+  en: 66ec3c2cd0acd228
+  zh: aaf76e8b24b831f4
+/agent-note-the-terminal-reader-is-two-panels/problem:
+  en: ddf2ed1fa7b18b35
+  zh: 2b0eeb85ef7d7143
+/agent-note-the-terminal-reader-is-two-panels/decision:
+  en: 32a01c3641236e8e
+  zh: a7a7ce2bca0bcfff
+/agent-note-the-terminal-reader-is-two-panels/alternatives-considered:
+  en: dbfcf21b4d110da6
+  zh: 99c99fbe49d4bc8d
+/agent-note-the-terminal-reader-is-two-panels/consequences:
+  en: e1618ebf05caef78
+  zh: d2cdef0b0c05349a
+/agent-note-the-terminal-reader-is-two-panels/related-decisions:
+  en: 28d59e646c147ca0
+  zh: 60255a6975d9d8ea

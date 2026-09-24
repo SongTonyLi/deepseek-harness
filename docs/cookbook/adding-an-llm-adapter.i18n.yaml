@@ -1,6 +1,19 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for adding-an-llm-adapter.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/cookbook/adding-an-llm-adapter.md
-adding-an-llm-adapter.md: e8ce6e9d64165a7f50191b7b22e773ea5d2ba0a1
-adding-an-llm-adapter.zh.md: 2edc35ee4be8ab727a97a56e7a7819107cb976e5
+/cookbook-adding-an-llm-adapter:
+  en: d2416b5ff7a286f4
+  zh: e60dacadc0c4860e
+/cookbook-adding-an-llm-adapter/the-shape:
+  en: 52a0bbb65eaadf28
+  zh: 106021dc36e12533
+/cookbook-adding-an-llm-adapter/protocol-obligations-the-contract-two-implementations-verified:
+  en: 2702a60f5670dd27
+  zh: 5ac992d0a8a61818
+/cookbook-adding-an-llm-adapter/implementation-structure:
+  en: 00c0560e1cef749b
+  zh: 86af574891125d83
+/cookbook-adding-an-llm-adapter/verification:
+  en: 104cc3ad431dc19d
+  zh: cfa5cb6ef7152912

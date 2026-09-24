@@ -1,6 +1,28 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-17-tui-continuous-fade.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-tui-continuous-fade.md
-2026-09-17-tui-continuous-fade.md: 65690da502a933170666f2b1fe4b019bff1e40a5
-2026-09-17-tui-continuous-fade.zh.md: cb6979531fa58976d952604cc7d9f96e9139a067
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards:
+  en: 551c9e1522f643fa
+  zh: b1848539237c22a7
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards/problem:
+  en: f89790a05fb2423e
+  zh: 7c9dbfa254d1d719
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards/decision:
+  en: 1a7fc8dbd02cecd5
+  zh: f7fec538611c83b2
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards/the-tail-is-bounded-by-wall-time-not-by-arrival-rate:
+  en: aa68e40cc6765935
+  zh: f6611b6f0f0d740e
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards/a-fade-stops-where-the-renderer-stops-repainting:
+  en: 9321a0ae6f86bcf2
+  zh: 3a4f04d87657c759
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards/alternatives-considered:
+  en: 499f29d3c1e39e99
+  zh: ab8d978d63920158
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards/consequences:
+  en: 5fe78b1aea208a2a
+  zh: 77c47cbdf5c5d471
+/agent-note-continuous-terminal-fade-for-streamed-text-and-tool-cards/related-decisions:
+  en: 86718453d160c2ff
+  zh: cc0db2b9f317cdef

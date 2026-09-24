@@ -1,6 +1,34 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-17-tui-live-subagent-panel.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-tui-live-subagent-panel.md
-2026-09-17-tui-live-subagent-panel.md: 03ec14aab7f93afe1912fe943a3b5c7ff9df5618
-2026-09-17-tui-live-subagent-panel.zh.md: 9eaf72d7a95ef37e000d76279f7ff37fbf400d4b
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters:
+  en: 7986fd7392b3fe98
+  zh: 9455af5b8c964e65
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/problem:
+  en: cd2ab3cb1b8ffd3a
+  zh: 6bb3bb9f7edb8efb
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/decision:
+  en: c99b4ed449daa9b4
+  zh: e927387688a81bc1
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/membership-is-residency-not-the-durable-tree:
+  en: 33ca864859bf127e
+  zh: 600817ab1a0cfcae
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/membership-is-reconciled-from-live-signals-not-polled:
+  en: 5d9248d44e8ce17e
+  zh: d8d4063280be5a92
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/one-tick-armed-only-while-something-moves:
+  en: a037565cdc1799ef
+  zh: 74f7ea5a69285314
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/deviation-the-tick-is-ctx-effect-setinterval-unref-not-ctx-interval:
+  en: 925d7f015703a363
+  zh: 99ab8bab9d4199b2
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/alternatives-considered:
+  en: b89fa73b5847d4c8
+  zh: 415fe009378df4fe
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/consequences:
+  en: 4041334a4ffde958
+  zh: c59d5fe0df63a1e0
+/agent-note-live-terminal-subagent-panel-and-elapsed-counters/related-decisions:
+  en: 19146edc69fe10d5
+  zh: 5dd039632ed65f9a

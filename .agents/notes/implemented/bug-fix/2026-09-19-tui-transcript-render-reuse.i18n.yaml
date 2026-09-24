@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-19-tui-transcript-render-reuse.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-19-tui-transcript-render-reuse.md
-2026-09-19-tui-transcript-render-reuse.md: 216dc027ab2db77848aa903c6c74adc153bbb18c
-2026-09-19-tui-transcript-render-reuse.zh.md: b8eb6b14e5be09ad35e262e7959e8a63be7916a9
+/agent-note-reuse-each-transcript-block-s-last-drawing-in-the-terminal:
+  en: 3446ba00053db4f2
+  zh: af2a16dee3236a07
+/agent-note-reuse-each-transcript-block-s-last-drawing-in-the-terminal/problem:
+  en: d47c282497d7975d
+  zh: fd0f2b971848354b
+/agent-note-reuse-each-transcript-block-s-last-drawing-in-the-terminal/decision:
+  en: 24be6b65adb725e6
+  zh: 25dea0a09b2c59c3
+/agent-note-reuse-each-transcript-block-s-last-drawing-in-the-terminal/alternatives-considered:
+  en: b5c3b092729be1ea
+  zh: 194852eede607263
+/agent-note-reuse-each-transcript-block-s-last-drawing-in-the-terminal/consequences:
+  en: c09c77522a6ddf96
+  zh: de9071c1757b7a24
+/agent-note-reuse-each-transcript-block-s-last-drawing-in-the-terminal/related-decisions:
+  en: 7ec77d31325e2f18
+  zh: 67502066f7750ce4

@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-15-terminal-surface-tui-app.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-15-terminal-surface-tui-app.md
-2026-09-15-terminal-surface-tui-app.md: 6c664ffaa7e7f41fe8d9872f1c64a3158480bffd
-2026-09-15-terminal-surface-tui-app.zh.md: e0ea4cb6888bac0fd72437725e93489cdb5160bd
+/agent-note-terminal-surface-as-the-shipped-tui-profile:
+  en: 059c9b5163f3c5cc
+  zh: b481f26aec7db224
+/agent-note-terminal-surface-as-the-shipped-tui-profile/problem:
+  en: 91e457bcedda1033
+  zh: 476c9f46c3450820
+/agent-note-terminal-surface-as-the-shipped-tui-profile/decision:
+  en: 5c7aa38a9311299c
+  zh: d210050eae97c521
+/agent-note-terminal-surface-as-the-shipped-tui-profile/verification:
+  en: 69cebcc1b90a8e66
+  zh: 29e4755b41943b59
+/agent-note-terminal-surface-as-the-shipped-tui-profile/alternatives-considered:
+  en: caaf3d25b5d828eb
+  zh: 4944b7fb7ffbb2cf
+/agent-note-terminal-surface-as-the-shipped-tui-profile/consequences:
+  en: c7a453c11f412404
+  zh: a7a99cefbbe1baea

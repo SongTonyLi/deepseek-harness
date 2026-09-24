@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-15-single-tarball-npm-cli-distribution.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-15-single-tarball-npm-cli-distribution.md
-2026-09-15-single-tarball-npm-cli-distribution.md: 8d0fe2c270490ac6bc01d0a12598496bb2ce90b0
-2026-09-15-single-tarball-npm-cli-distribution.zh.md: 5b12a16acdfb7645bd2ea09a9690092f0fc0b7b9
+/agent-note-one-npm-tarball-that-installs-the-whole-dsh-runtime:
+  en: eb1f74d5b59317f6
+  zh: ceee19ea735fa3a8
+/agent-note-one-npm-tarball-that-installs-the-whole-dsh-runtime/problem:
+  en: fe98a9649e694554
+  zh: b07751c4684e1e8f
+/agent-note-one-npm-tarball-that-installs-the-whole-dsh-runtime/decision:
+  en: f928214abed5da3e
+  zh: 5ebe6b3a10987cd4
+/agent-note-one-npm-tarball-that-installs-the-whole-dsh-runtime/verification:
+  en: 85baee8b33b6d8ec
+  zh: 799b08121212fe5e
+/agent-note-one-npm-tarball-that-installs-the-whole-dsh-runtime/alternatives-considered:
+  en: e584930456b0b27a
+  zh: d8aa45bbdf6e7631
+/agent-note-one-npm-tarball-that-installs-the-whole-dsh-runtime/consequences:
+  en: 35b49bab4428f25b
+  zh: e63a602c0f665175

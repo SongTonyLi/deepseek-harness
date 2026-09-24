@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-23-cursor-parked-runs-and-dynamic-tools.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-23-cursor-parked-runs-and-dynamic-tools.md
-2026-09-23-cursor-parked-runs-and-dynamic-tools.md: 82906cced8bc5e3a0d209c8d2349b77b77c67690
-2026-09-23-cursor-parked-runs-and-dynamic-tools.zh.md: 9e56dc9a325d6a903fb43faad5bd4e5f4e672961
+/agent-note-park-cursor-runs-across-tool-calls-and-route-harness-tools-through-calldynamictool:
+  en: 6ba30c644503ba3a
+  zh: 77665d417b00099c
+/agent-note-park-cursor-runs-across-tool-calls-and-route-harness-tools-through-calldynamictool/problem:
+  en: 074624b3efa12cec
+  zh: dcc227cdc31dd25b
+/agent-note-park-cursor-runs-across-tool-calls-and-route-harness-tools-through-calldynamictool/decision:
+  en: 17185fda0395d9ea
+  zh: 199bd348d9757a54
+/agent-note-park-cursor-runs-across-tool-calls-and-route-harness-tools-through-calldynamictool/alternatives-considered:
+  en: 0077e695e6739aac
+  zh: 2165461b359f3fc0
+/agent-note-park-cursor-runs-across-tool-calls-and-route-harness-tools-through-calldynamictool/consequences:
+  en: a5da0c49eb132cb6
+  zh: 5707fa431a5a2299
+/agent-note-park-cursor-runs-across-tool-calls-and-route-harness-tools-through-calldynamictool/related-decisions:
+  en: 8d45b9a7427cad8d
+  zh: 0ec99c9b8049a23b

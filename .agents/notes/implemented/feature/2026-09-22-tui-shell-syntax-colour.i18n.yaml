@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-22-tui-shell-syntax-colour.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-22-tui-shell-syntax-colour.md
-2026-09-22-tui-shell-syntax-colour.md: 32d1e3ca156fa3f92da261ce828e468ec5ed28b1
-2026-09-22-tui-shell-syntax-colour.zh.md: 5b8d44f25abaf0d3dc1a72d3743300f7ce7bc736
+/agent-note-syntax-colour-for-shell-mode-drafts-and-command-rows:
+  en: 7724be1d3735d672
+  zh: b0032058643f4ae8
+/agent-note-syntax-colour-for-shell-mode-drafts-and-command-rows/problem:
+  en: 00d1cf0ce3f93338
+  zh: d447c03143d5d6fd
+/agent-note-syntax-colour-for-shell-mode-drafts-and-command-rows/decision:
+  en: ce9f743d38e6e37c
+  zh: bfb5ce892f1332cc
+/agent-note-syntax-colour-for-shell-mode-drafts-and-command-rows/alternatives-considered:
+  en: 357d6bef31183aaa
+  zh: 71c1c8a611855d36
+/agent-note-syntax-colour-for-shell-mode-drafts-and-command-rows/consequences:
+  en: 13f1e268b9a59620
+  zh: 31712e4a8f8763f0
+/agent-note-syntax-colour-for-shell-mode-drafts-and-command-rows/related-decisions:
+  en: 0d381cf86642fb66
+  zh: cca15c4f30208342

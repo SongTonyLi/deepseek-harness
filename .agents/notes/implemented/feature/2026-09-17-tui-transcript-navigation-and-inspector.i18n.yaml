@@ -1,6 +1,28 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-17-tui-transcript-navigation-and-inspector.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-tui-transcript-navigation-and-inspector.md
-2026-09-17-tui-transcript-navigation-and-inspector.md: 1b1aedcef03edcb63dc95db970db554b8571fad4
-2026-09-17-tui-transcript-navigation-and-inspector.zh.md: 9362455714ff3113ef08d3f6771ccf63042caf73
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector:
+  en: 5718ffe0277ea246
+  zh: 5dd23d6d522a39bb
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector/problem:
+  en: cd9980bbfd9fa5fc
+  zh: 2ebbbd41ffb78d42
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector/decision:
+  en: 5b9463782f5c4fe0
+  zh: 541e4b6d39d7cd25
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector/what-a-block-exposes-as-sections:
+  en: fce633dc54a1c1c3
+  zh: 2f47a14d1d8ce7df
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector/highlighting-inside-the-repaint-window:
+  en: 26f4aa78a23fcb1b
+  zh: 76d0773559c38961
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector/alternatives-considered:
+  en: 2451a6295be8b1a0
+  zh: 0a99b6ae1e4fa159
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector/consequences:
+  en: 86d370696f0acc02
+  zh: ac3502dff428cc46
+/agent-note-terminal-transcript-navigation-and-the-focused-section-inspector/related-decisions:
+  en: 491646ad3b999418
+  zh: 192d41a297914d8d

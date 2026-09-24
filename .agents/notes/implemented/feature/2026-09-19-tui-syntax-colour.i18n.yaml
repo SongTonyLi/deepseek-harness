@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-19-tui-syntax-colour.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-19-tui-syntax-colour.md
-2026-09-19-tui-syntax-colour.md: 7eb3fc4c0d090f4d6e2088fba91fd8a7ef92aafa
-2026-09-19-tui-syntax-colour.zh.md: 626701a4fdced58cda6cc5d8ec70c25c1a15884d
+/agent-note-syntax-colour-for-fenced-code-in-the-terminal:
+  en: 3b77fbe8a3721418
+  zh: 96a61ee3cad1e693
+/agent-note-syntax-colour-for-fenced-code-in-the-terminal/problem:
+  en: 40d2a9f484039efa
+  zh: 642929e2f22edead
+/agent-note-syntax-colour-for-fenced-code-in-the-terminal/decision:
+  en: bd8c332962400717
+  zh: 28cbc13103e07d33
+/agent-note-syntax-colour-for-fenced-code-in-the-terminal/alternatives-considered:
+  en: 6ae4b9fd9e4b1471
+  zh: a86e33318d787790
+/agent-note-syntax-colour-for-fenced-code-in-the-terminal/consequences:
+  en: 67de4350b892ea32
+  zh: 9e5dc19ed3a96de8
+/agent-note-syntax-colour-for-fenced-code-in-the-terminal/related-decisions:
+  en: e5c0f2602e8b08ee
+  zh: 207cf5e1c7ff8bda

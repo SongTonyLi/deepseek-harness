@@ -1,6 +1,25 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-20-tui-reader-on-the-alternate-screen.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-20-tui-reader-on-the-alternate-screen.md
-2026-09-20-tui-reader-on-the-alternate-screen.md: 719c2a02b37a0de2dd14a8e2d842ad10450357b2
-2026-09-20-tui-reader-on-the-alternate-screen.zh.md: 8f2d923bac4fd26ab66b9947fa943be9c22ff9a4
+/agent-note-the-terminal-reader-runs-on-the-alternate-screen:
+  en: d596ad6ed7ce0a53
+  zh: 6cda02f9cf6bfb03
+/agent-note-the-terminal-reader-runs-on-the-alternate-screen/problem:
+  en: 6c3397e053f3bfc4
+  zh: 7a55d96c818a51c6
+/agent-note-the-terminal-reader-runs-on-the-alternate-screen/decision:
+  en: cb72b3f25f5686f1
+  zh: d478497ba54ff867
+/agent-note-the-terminal-reader-runs-on-the-alternate-screen/what-the-alternate-screen-guarantees:
+  en: 7e365b3e21722339
+  zh: 76454ae7c5c6682c
+/agent-note-the-terminal-reader-runs-on-the-alternate-screen/alternatives-considered:
+  en: 6494e67ae77efc9d
+  zh: 06644e938216ec6b
+/agent-note-the-terminal-reader-runs-on-the-alternate-screen/consequences:
+  en: eaa2c1c623b30ad0
+  zh: 4e547ce55ab97b88
+/agent-note-the-terminal-reader-runs-on-the-alternate-screen/related-decisions:
+  en: c920daab1eed06ae
+  zh: b7af04258465c6ee

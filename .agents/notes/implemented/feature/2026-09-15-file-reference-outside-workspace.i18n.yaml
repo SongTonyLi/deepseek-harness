@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-15-file-reference-outside-workspace.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-15-file-reference-outside-workspace.md
-2026-09-15-file-reference-outside-workspace.md: b6fcae80020c64cb7f85c98e33257c18137a0c7d
-2026-09-15-file-reference-outside-workspace.zh.md: 35b344817c889431a3ae0328dec8799eb4f0a3c6
+/agent-note-file-reference-completion-outside-the-session-cwd:
+  en: b2c827c2600fe695
+  zh: f784d106a2d19a65
+/agent-note-file-reference-completion-outside-the-session-cwd/problem:
+  en: e0d82cf0193aa692
+  zh: ae8133d49d9875ba
+/agent-note-file-reference-completion-outside-the-session-cwd/decision:
+  en: 47fff81dd8f6718c
+  zh: ce66418537a2c20f
+/agent-note-file-reference-completion-outside-the-session-cwd/alternatives-considered:
+  en: b42c2c8d88524e48
+  zh: d20f86a6e8f586a5
+/agent-note-file-reference-completion-outside-the-session-cwd/consequences:
+  en: 33f1cbc75cc8d363
+  zh: 389083a7045f4395
+/agent-note-file-reference-completion-outside-the-session-cwd/related-decisions:
+  en: 6e88208f0309db3e
+  zh: fe535386f776b0d3

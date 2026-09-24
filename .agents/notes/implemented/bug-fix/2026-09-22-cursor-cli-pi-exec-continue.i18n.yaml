@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-22-cursor-cli-pi-exec-continue.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-22-cursor-cli-pi-exec-continue.md
-2026-09-22-cursor-cli-pi-exec-continue.md: e8da731a3bcb01a5c1d952f5f37ae0a798b92997
-2026-09-22-cursor-cli-pi-exec-continue.zh.md: 030d16c3382edde26c324a6d07bc5714ea5467a3
+/agent-note-keep-unofficial-cursor-runs-alive-across-cli-pi-and-control-execs:
+  en: af8690dcc500728e
+  zh: 7e2f3a4a3b43be02
+/agent-note-keep-unofficial-cursor-runs-alive-across-cli-pi-and-control-execs/problem:
+  en: 17b4d73a93a187b0
+  zh: ab4bc6831f99f0b7
+/agent-note-keep-unofficial-cursor-runs-alive-across-cli-pi-and-control-execs/decision:
+  en: 2b369ff375484b1f
+  zh: 25a74ab9ccb3930e
+/agent-note-keep-unofficial-cursor-runs-alive-across-cli-pi-and-control-execs/alternatives-considered:
+  en: dfc06d78ef90f53b
+  zh: 747ba537835f4ec3
+/agent-note-keep-unofficial-cursor-runs-alive-across-cli-pi-and-control-execs/consequences:
+  en: 3f58029d1e1e0040
+  zh: f8c701d5c27d465d
+/agent-note-keep-unofficial-cursor-runs-alive-across-cli-pi-and-control-execs/related-decisions:
+  en: 09e013bf6734cd45
+  zh: f02864b126257400

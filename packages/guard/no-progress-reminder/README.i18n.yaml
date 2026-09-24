@@ -1,6 +1,70 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/guard/no-progress-reminder/README.md
-README.md: b3232c1ef1147891a8a04086461af6636b8b4d8f
-README.zh.md: f73119b47fde19554ff0326c282b88f4f97fab49
+/:
+  en: 8e4baeeb9f4d7b44
+  zh: 05239046d9aa2bd5
+/deepseek-ai-dsh-no-progress-reminder:
+  en: 4b70fab337ea0e80
+  zh: d31c712374997449
+/deepseek-ai-dsh-no-progress-reminder/summary:
+  en: 356f7d925bbb46ae
+  zh: 508806563c58a455
+/deepseek-ai-dsh-no-progress-reminder/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-no-progress-reminder/use-this-package:
+  en: 685175ba277b5ca2
+  zh: 582d003b5be9ae9b
+/deepseek-ai-dsh-no-progress-reminder/use-this-package/when-to-choose-it:
+  en: b7ddc3e9c1ccf2dd
+  zh: fbaa7a16e83e969f
+/deepseek-ai-dsh-no-progress-reminder/use-this-package/setting-the-idle-count-and-mutating-tools:
+  en: 8608d9b55f9b8213
+  zh: 6a351e4454e54ad0
+/deepseek-ai-dsh-no-progress-reminder/use-this-package/what-you-get:
+  en: 71ad77c527f9ce6c
+  zh: 56f446aa22cc8cba
+/deepseek-ai-dsh-no-progress-reminder/understand-the-implementation:
+  en: 9b87a948fd1d092b
+  zh: 7a5e3e0d3761f9de
+/deepseek-ai-dsh-no-progress-reminder/understand-the-implementation/design-philosophy:
+  en: 5a0dedb46c58fec8
+  zh: 0120ad5dd0794080
+/deepseek-ai-dsh-no-progress-reminder/understand-the-implementation/detection-the-idle-turn-counter:
+  en: 2d960e64016fc97e
+  zh: cb8e87be7185cc31
+/deepseek-ai-dsh-no-progress-reminder/understand-the-implementation/notice-delivery:
+  en: 2b3f70e747301ab0
+  zh: a31034ad0250e96d
+/deepseek-ai-dsh-no-progress-reminder/understand-the-implementation/source-map:
+  en: 9aad88fa51c5fe25
+  zh: afd376bc3c9e177c
+/deepseek-ai-dsh-no-progress-reminder/further-exploration:
+  en: 52036b1baae0dd2c
+  zh: f72a6d2571d91f73
+/deepseek-ai-dsh-no-progress-reminder/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-no-progress-reminder/model-experience/idle-progress-context-message:
+  en: e2920675e5478510
+  zh: 555586e095fdb00b
+/deepseek-ai-dsh-no-progress-reminder/model-experience/idle-progress-context-message/what-the-model-sees:
+  en: 22de4ec1c91fe9fe
+  zh: e3952df861bbff41
+/deepseek-ai-dsh-no-progress-reminder/model-experience/idle-progress-context-message/what-the-model-sees/idle-progress-notice:
+  en: 3dedfe185776e10b
+  zh: 152f14d4523052c2
+/deepseek-ai-dsh-no-progress-reminder/model-experience/idle-progress-context-message/token-effect:
+  en: f0068848b97927e5
+  zh: 71df33f25a4955f9
+/deepseek-ai-dsh-no-progress-reminder/model-experience/idle-progress-context-message/kv-cache-effect:
+  en: f5d5f97a153f7c70
+  zh: 51155536aab03002
+/deepseek-ai-dsh-no-progress-reminder/known-limitations-and-deferred-work:
+  en: e4305a3eec206d03
+  zh: 32657be34f6d0b13
+/deepseek-ai-dsh-no-progress-reminder/known-limitations-and-deferred-work/dev-note:
+  en: 52f324bb548aa69e
+  zh: 70e38a650844a9ba

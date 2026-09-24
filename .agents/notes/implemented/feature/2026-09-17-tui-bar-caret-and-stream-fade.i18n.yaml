@@ -1,6 +1,28 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-17-tui-bar-caret-and-stream-fade.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-tui-bar-caret-and-stream-fade.md
-2026-09-17-tui-bar-caret-and-stream-fade.md: f2c7ad97052ba5b6938c630b0c24c5baf64ea8c5
-2026-09-17-tui-bar-caret-and-stream-fade.zh.md: a4bd746cc134e0bb79c7f1e94a2c3591fb70aaba
+/agent-note-terminal-bar-caret-and-streamed-text-fade:
+  en: 8ae3f4d56060484f
+  zh: d4a50ccb42748df2
+/agent-note-terminal-bar-caret-and-streamed-text-fade/problem:
+  en: cdb505b5cde3bd05
+  zh: de90ce573937db6e
+/agent-note-terminal-bar-caret-and-streamed-text-fade/decision:
+  en: 1fef7bacc61a2863
+  zh: db386776b46dd6bf
+/agent-note-terminal-bar-caret-and-streamed-text-fade/the-fade-is-a-transform-over-rendered-lines-not-a-redraw:
+  en: df6a48bfa48c9427
+  zh: df22a645c3fd6315
+/agent-note-terminal-bar-caret-and-streamed-text-fade/the-oldest-tail-level-is-the-terminal-s-own-foreground:
+  en: 73485b5b8165fcf3
+  zh: 73b39147dc2f7f53
+/agent-note-terminal-bar-caret-and-streamed-text-fade/alternatives-considered:
+  en: b207e31a8fb758f3
+  zh: 728a39ee48b9595f
+/agent-note-terminal-bar-caret-and-streamed-text-fade/consequences:
+  en: 2891e1b54afac0e5
+  zh: 2c92ab9710bc1fcb
+/agent-note-terminal-bar-caret-and-streamed-text-fade/related-decisions:
+  en: 9001d462d4714481
+  zh: 7253f71ea615776a

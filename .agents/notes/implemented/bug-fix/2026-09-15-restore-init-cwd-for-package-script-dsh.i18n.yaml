@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-15-restore-init-cwd-for-package-script-dsh.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-15-restore-init-cwd-for-package-script-dsh.md
-2026-09-15-restore-init-cwd-for-package-script-dsh.md: 182cb747279ed38a92e670555790e819f618ba26
-2026-09-15-restore-init-cwd-for-package-script-dsh.zh.md: faddd544e8d036fee841c0a2a313e6798d44c46c
+/agent-note-restore-init-cwd-for-package-script-dsh-launches:
+  en: cf4e852680d3d46c
+  zh: 26c8c1dae5f3bc80
+/agent-note-restore-init-cwd-for-package-script-dsh-launches/problem:
+  en: 2e6c51de03a5a764
+  zh: 183674146a95b6f4
+/agent-note-restore-init-cwd-for-package-script-dsh-launches/decision:
+  en: cbea13501ab58993
+  zh: 8f6eddc4e8cde6e7
+/agent-note-restore-init-cwd-for-package-script-dsh-launches/alternatives-considered:
+  en: c773dd6e408482a2
+  zh: a67aaa3a74ffbae1
+/agent-note-restore-init-cwd-for-package-script-dsh-launches/consequences:
+  en: 6231cf16947b26c7
+  zh: 4f7fa09f3d65266c
+/agent-note-restore-init-cwd-for-package-script-dsh-launches/related-decisions:
+  en: 9cdd06bce77e26af
+  zh: 4079bc1e20e7959a
