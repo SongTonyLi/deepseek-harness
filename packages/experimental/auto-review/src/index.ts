@@ -174,7 +174,10 @@ function isAborted(signal: AbortSignal): boolean {
   return signal.aborted
 }
 
-/** Whether this visible message is a durable shipped-Web human instruction. */
+/**
+ * Whether this visible message is a person-admitted prompt.
+ * Web writes the browser request id; the terminal writes one id per submission.
+ */
 function isHumanInstruction(source: MessageSource): boolean {
   return source.kind === 'user'
     && typeof (source as { readonly rpcId?: unknown }).rpcId === 'string'

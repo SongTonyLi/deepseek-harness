@@ -18,6 +18,10 @@ describe('shortcuts', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'why?' }]])
+    const source = test.calls.followups[0]?.source
+    const record: { readonly rpcId?: unknown } = source ?? {}
+    expect(source?.kind).toBe('user')
+    expect(record.rpcId).toEqual(expect.any(String))
   })
 
   it('opens the todo list on Ctrl+T from any region', async () => {

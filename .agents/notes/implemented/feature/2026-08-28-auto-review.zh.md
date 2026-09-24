@@ -10,7 +10,7 @@ Full access 让有用的项目工作无需反复审批即可继续，但也允�
 
 ## 决策
 
-[`dsh-experimental-auto-review`](../../../../packages/experimental/auto-review/README.zh.md)是显式安装的实验性 Web 层，按[实验包发布决策](../process/2026-09-12-publish-all-experimental-packages.zh.md)参与发布。默认 Web 保持 Read Only、Workspace Write 与 Full access。此层贡献仅限当前会话的 `auto`，唯一持久身份为 `permission/preset:auto`；它使用 Full access 的 `danger-full-access` 沙箱与工具定义，审批策略由[用户审批兜底决策](2026-09-24-auto-review-user-approval-fallback.zh.md)决定。Headless、通用设置与新会话默认值都排除此 integration。
+[`dsh-experimental-auto-review`](../../../../packages/experimental/auto-review/README.zh.md)是显式安装的实验性 Web 层，按[实验包发布决策](../process/2026-09-12-publish-all-experimental-packages.zh.md)参与发布。默认 Web 保持 Read Only、Workspace Write 与 Full access。此层贡献仅限当前会话的 `auto`，唯一持久身份为 `permission/preset:auto`；它使用 Full access 的 `danger-full-access` 沙箱与工具定义，审批策略由[用户审批兜底决策](2026-09-24-auto-review-user-approval-fallback.zh.md)决定。Headless、通用设置与新会话默认值都排除此 integration。随附的 TUI profile 包含它（[TUI profile](2026-09-24-tui-auto-review.zh.md)）。
 
 每个原生调用与已开始的 PTC `tools.*` inner call 都在 body 前接受一次审查。外层 `run_code` transport 与 PTC 程序内直接 Node 效果不在保证范围内。不提供按工具名豁免、缓存 grant、重试、可配置策略或第二授权检查；拒绝之后的行为由[用户审批兜底决策](2026-09-24-auto-review-user-approval-fallback.zh.md)负责。重复调用也重新审查。
 
@@ -26,7 +26,7 @@ Full access 让有用的项目工作无需反复审批即可继续，但也允�
 
 实际效果不明确或超出已确立范围时按拒绝处理。后续指令只有明确撤销或替换旧指令才能消除冲突；直接父级指令不能覆盖 human 限制。历史可以证明对象由本会话创建，但不能授权 medium 操作或解除 high 禁令。
 
-Reviewer 从既有 Session 事实派生权威。Shipped Web human 指令具有 `source.kind === 'user'` 和浏览器 prompt admission 写入的 `rpcId`。Child 初始直接父级 prompt 在其自身既有创建 descriptor 之后识别；后续 `agent-message` 只有 `senderSessionId` 与 `SessionHeader.parentSession` 匹配时才属于直接父级指令。Human 文本定义或替换任务与限制。直接父级文本在这些限制内定义 child 任务。项目指令只施加约束；checkpoint 恢复有损语境；图片、附件元数据和历史调用提供事实。Compaction 不会把 checkpoint 提升为已经离开 surface 的原文本所拥有的 human 权威。
+Reviewer 从既有 Session 事实派生权威。人提交的指令具有 `source.kind === 'user'` 和一个字符串 `rpcId`：浏览器写入该 prompt 的 request id，终端为每次提交写入一个 id（[TUI profile](2026-09-24-tui-auto-review.zh.md)）。Child 初始直接父级 prompt 在其自身既有创建 descriptor 之后识别；后续 `agent-message` 只有 `senderSessionId` 与 `SessionHeader.parentSession` 匹配时才属于直接父级指令。Human 文本定义或替换任务与限制。直接父级文本在这些限制内定义 child 任务。项目指令只施加约束；checkpoint 恢复有损语境；图片、附件元数据和历史调用提供事实。Compaction 不会把 checkpoint 提升为已经离开 surface 的原文本所拥有的 human 权威。
 
 ### 一次完整 reviewer 请求
 

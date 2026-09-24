@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in your terminal, with no browser and no server. Replies stream, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, and `/`-commands share the Web registry. Arrow keys walk the conversation through a docked inspector; `Ctrl+G` reads it full screen, turns side by side. Persisted sessions reopen through `/resume`, `/sessions`, or startup `--resume`; `/new`, `/clear`, and `/fork` create them, and `/export` writes ZIPs. It runs `dsh web`'s model, tools, and safety defaults, one session at a time.
+`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in your terminal, with no browser and no server. Replies stream, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, and `/`-commands share the Web registry. Arrow keys walk the conversation through a docked inspector; `Ctrl+G` reads it full screen, turns side by side. Persisted sessions reopen through `/resume`, `/sessions`, or startup `--resume`; `/new`, `/clear`, and `/fork` create them, and `/export` writes ZIPs. It runs `dsh web`'s model, tools, and safety defaults, one session at a time. The shipped profile includes experimental Auto review; `/permission auto` selects it for the current session.
 
 ## Table of Contents
 

@@ -113,6 +113,11 @@ describe('default product isolation', () => {
       + `export const DEFAULT_PROFILE_BUNDLES = ['${base}']\n`
       + `export const OPTIONAL_BUNDLES = ['${layer}']\n`)
     expect(verifyDefaultProductIsolation(root).failures.join('\n')).toContain(`optional bundle ${layer} must not be a default bundle`)
+
+    write(root, profile, `export const PROFILE_TEMPLATES = { web: { bundles: ['${base}'] }, tui: { bundles: ['${base}', '${layer}'] } }\n`
+      + `export const DEFAULT_PROFILE_BUNDLES = ['${base}']\n`
+      + `export const OPTIONAL_BUNDLES = ['${layer}']\n`)
+    expect(verifyDefaultProductIsolation(root).failures).toEqual([])
   })
 
   it('requires each optional bundle to be a runtime dependency that declares a bundle patch, an icon, and locale metadata', () => {

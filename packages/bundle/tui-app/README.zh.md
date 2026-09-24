@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你的终端里启动一个多轮会话，没有浏览器、也没有服务器。回复流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/` 命令与 Web 共用注册表。方向键在停靠的检视面板中走遍对话记录；`Ctrl+G` 把它整屏读出、各轮次并排。持久化会话可通过 `/resume`、`/sessions` 或启动参数 `--resume` 恢复；`/new`、`/clear` 与 `/fork` 创建会话，`/export` 写出 ZIP。它运行 `dsh web` 的模型、工具与安全默认值，同一时间一个会话。
+`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你的终端里启动一个多轮会话，没有浏览器、也没有服务器。回复流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/` 命令与 Web 共用注册表。方向键在停靠的检视面板中走遍对话记录；`Ctrl+G` 把它整屏读出、各轮次并排。持久化会话可通过 `/resume`、`/sessions` 或启动参数 `--resume` 恢复；`/new`、`/clear` 与 `/fork` 创建会话，`/export` 写出 ZIP。它运行 `dsh web` 的模型、工具与安全默认值，同一时间一个会话。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它。
 
 ## 目录
 

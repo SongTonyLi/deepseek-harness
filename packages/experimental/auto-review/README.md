@@ -1,5 +1,5 @@
 ---
-description: "Add experimental per-call Auto review to a Web profile, using the current agent's model before tools execute with Full access."
+description: "Add experimental per-call Auto review, using the current agent's model before tools execute with Full access."
 kind: "package-bundle"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Add Auto review to the current-session permission pickers in a Web profile. Before each native or PTC inner tool call, the current agent's provider and model assess the pending action; an allowed call executes with Full access, and a denied call asks the user. The dsh installation ships this layer switched off; default Web keeps its three permission modes until it is switched on from the Web sidebar's Plugins page or installed explicitly. Auto review is experimental: it can allow unsafe actions, deny useful work, and spend additional tokens.
+Add Auto review to the current-session permission pickers. Before each native or PTC inner tool call, the current agent's provider and model assess the pending action; an allowed call executes with Full access, and a denied call asks the user. The shipped TUI profile includes this layer. Default Web keeps its three permission modes until it is switched on from the Web sidebar's Plugins page or installed explicitly. Auto review is experimental: it can allow unsafe actions, deny useful work, and spend additional tokens.
 
 ## Table of Contents
 
@@ -112,7 +112,7 @@ The denial appends an ordinary tool result; it does not rewrite earlier context 
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- Auto requires this Web layer switched on; it is absent from default Web, Headless, General settings, and new-session defaults.
+- The shipped TUI profile includes Auto review. Default Web, Headless, General settings, and new-session defaults omit it until this layer is switched on.
 - Auto provides no file sandbox. The outer `run_code` transport and direct Node effects inside a PTC program do not pass through inner-tool review.
 - Model classification can be wrong. There are no deterministic tool exemptions, persistent grants, configurable policy, or retry layer.
 - In-process Auto children review their own calls. Out-of-process children retain their native permission systems after the parent delegation call is allowed.

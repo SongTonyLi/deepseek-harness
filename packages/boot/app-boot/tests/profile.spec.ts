@@ -386,6 +386,30 @@ describe('loadProfile', () => {
     ])
   })
 
+  it('normalizes the stock TUI bundle tuple onto the template that includes Auto review', () => {
+    const anchor = stageInstallation({
+      '@deepseek-ai/dsh-base': { patch: '[]\n' },
+      '@deepseek-ai/dsh-tui-app': { patch: '[]\n' },
+      '@deepseek-ai/dsh-experimental-auto-review': { patch: '[]\n' },
+      'custom-bundle': { patch: '[]\n' },
+    })
+    const home = tmp()
+    const stock = resolveProfileDir('tui', home)
+    initProfile(stock, ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app'])
+    loadProfile('t', 'tui', anchor, home)
+    expect(readProfileManifest('t', stock).dsh?.profile?.bundles).toEqual([
+      ...PROFILE_TEMPLATES.tui?.bundles ?? [],
+    ])
+
+    const customHome = tmp()
+    const custom = resolveProfileDir('tui', customHome)
+    initProfile(custom, ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app', 'custom-bundle'])
+    loadProfile('t', 'tui', anchor, customHome)
+    expect(readProfileManifest('t', custom).dsh?.profile?.bundles).toEqual([
+      '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app', 'custom-bundle',
+    ])
+  })
+
   it.each(['missing package', 'invalid manifest', 'not a bundle', 'missing patch', 'invalid patch'])(
     'skips a bundle with %s, retains selections, and retries it on reread', async (failure) => {
       const anchor = stageInstallation({
