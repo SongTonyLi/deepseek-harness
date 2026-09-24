@@ -5169,10 +5169,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface FileBlock {\n    type: \'file\';\n    attachment: FileAttachmentRef;\n}',
   },
   {
-    name: 'FileDiff',
-    declaration: 'export interface FileDiff {\n    path: string;\n    oldText: string | null;\n    newText: string;\n}',
-  },
-  {
     name: 'FileLocation',
     declaration: 'export interface FileLocation {\n    path: string;\n    line?: number;\n}',
   },
@@ -7217,10 +7213,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SubagentProvider {\n    readonly name: string;\n    readonly capabilities: SubagentCapabilities;\n    readonly inheritsParentContext: boolean;\n    readonly agentRouteDefaults?: Readonly<{\n        provider: string;\n        model: string;\n    }>;\n    start(request: ResolvedSubagentStartRequest): Promise<SubagentRun>;\n    prepareContinuable?(request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>;\n}',
   },
   {
-    name: 'SubagentResult',
-    declaration: 'export interface SubagentResult {\n    readonly output: readonly ContentBlock[];\n    readonly structured?: unknown;\n    readonly diagnostic?: string;\n    readonly stopReason: SubagentStopReason;\n}',
-  },
-  {
     name: 'SubagentRun',
     declaration: 'export interface SubagentRun {\n    readonly id: SessionId;\n    readonly localAgent: Agent | undefined;\n    readonly result: Promise<SubagentResult>;\n    dispose(): Promise<void>;\n}',
   },
@@ -7247,14 +7239,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SubagentStartRequest',
     declaration: 'export interface SubagentStartRequest {\n    readonly label?: string;\n    readonly prompt: ContentBlock[];\n    readonly parent: Agent;\n    readonly signal: AbortSignal;\n    readonly agentOptions?: AgentOptions;\n    readonly outputSchema?: ObjectJsonSchema;\n    readonly maxDepth?: number;\n    readonly toolFilter?: ToolRestriction;\n    readonly persona?: string;\n}',
-  },
-  {
-    name: 'SubagentStopReason',
-    declaration: 'export type SubagentStopReason = SubagentStopReasonMap[keyof SubagentStopReasonMap];',
-  },
-  {
-    name: 'SubagentStopReasonMap',
-    declaration: 'export interface SubagentStopReasonMap {\n    completed: \'completed\';\n    aborted: \'aborted\';\n    error: \'error\';\n    \'max-tokens\': \'max-tokens\';\n    refusal: \'refusal\';\n}',
   },
   {
     name: 'SubprocessCollect',

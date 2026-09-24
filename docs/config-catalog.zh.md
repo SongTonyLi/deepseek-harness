@@ -1541,6 +1541,45 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-jobs-local -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-llm-cursor -->
+<a id="deepseek-aidsh-llm-cursor"></a>
+
+## `@deepseek-ai/dsh-llm-cursor`
+
+- `inject`: `llm`
+- `refs`: [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts)
+- `source`: [`packages/llm/llm-cursor/src/config.ts:21`](../packages/llm/llm-cursor/src/config.ts)
+
+```ts config-catalog
+/**
+ * Plugin config, validated by the same-named schemastery schema and doubling
+ * as the `llm-cursor` settings-section shape.
+ */
+export interface Config {
+  /** Credential reference resolved per request; defaults to `CURSOR_ACCESS_TOKEN`. */
+  apiKeyEnv?: string
+  /** Whether a request may reuse a Cursor IDE or CLI login (default true). */
+  reuseInstalledCursorLogin?: boolean
+  /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
+  streamIdleTimeoutMs?: number
+  /**
+   * How long a Run parked on MCP tool calls waits for the next request to bring
+   * their results before the adapter cancels it (default thirty minutes). A
+   * later request then rebuilds the conversation on a new Run.
+   */
+  parkedRunTimeoutMs?: number
+  /**
+   * How long the adapter waits after an MCP tool call for the model's other
+   * parallel calls when Cursor has not yet sent the checkpoint that ends the
+   * model message (default one second).
+   */
+  toolCallSettleMs?: number
+  /** Provider-owned model-request retry policy; omission uses normal mode with five retries. */
+  retryPolicy?: RetryPolicyConfig
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-llm-cursor -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-llm-deepseek-account -->
 <a id="deepseek-aidsh-llm-deepseek-account"></a>
 
@@ -2082,6 +2121,43 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-message-feedback -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-no-progress-reminder -->
+<a id="deepseek-aidsh-no-progress-reminder"></a>
+
+## `@deepseek-ai/dsh-no-progress-reminder`
+
+- `inject`: `tools` · `agents`
+- `source`: [`packages/guard/no-progress-reminder/src/index.ts:40`](../packages/guard/no-progress-reminder/src/index.ts)
+
+```ts config-catalog
+/**
+ * Plugin config, validated by the same-named schemastery schema plus the
+ * load-time check in `apply` (`idleTurns` must be an integer >= 1; a
+ * non-integer or a value below 1 throws at plugin load). `mutatingTools`
+ * entries are `*`-wildcard predicates over tool names at call time, not
+ * references to registry entries.
+ */
+export interface Config {
+  /** Consecutive counted turns that trigger a notice (default `5`). */
+  idleTurns?: number
+  /** Tool-name patterns whose successful calls reset the idle count. */
+  mutatingTools?: string[]
+  /**
+   * When true (default), only count and inject while `ctx.get('goals')` is
+   * present, the agent is live in that registry, and `goals.get(agent)` has
+   * phase `active`. A missing goals service or a non-live agent is a no-op,
+   * not a throw.
+   */
+  requireGoal?: boolean
+  /**
+   * Provider routes that participate. Default `['cursor']` — the Cursor
+   * subscription adapter. An empty list matches no route.
+   */
+  providers?: string[]
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-no-progress-reminder -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-office-to-pdf -->
 <a id="deepseek-aidsh-office-to-pdf"></a>
 
@@ -2372,17 +2448,18 @@ export type Config = LocalConfig
 
 ## `@deepseek-ai/dsh-repeat-tool-reminder`
 
-- `source`: [`packages/guard/repeat-tool-reminder/src/index.ts:35`](../packages/guard/repeat-tool-reminder/src/index.ts)
+- `source`: [`packages/guard/repeat-tool-reminder/src/index.ts:36`](../packages/guard/repeat-tool-reminder/src/index.ts)
 
 ```ts config-catalog
 /**
  * Plugin config, validated by the same-named schemastery schema plus the
  * load-time checks in `apply` (misconfiguration fails loud: an empty
- * `thresholds` list, a non-integer, a value below 2, or a duplicate throws at
- * plugin load, never a silent fall-back). `include`/`exclude` entries are
- * `*`-wildcard predicates over tool names at call time, not references to
- * registry entries — a pattern matching no currently registered tool is valid
- * (`exclude: [mcp_*]` must stay legal in a deployment that loads no MCP tools).
+ * `thresholds` list, a non-integer, a value below 2, a duplicate, or an
+ * invalid `blockThreshold` throws at plugin load, never a silent fall-back).
+ * `include`/`exclude` entries are `*`-wildcard predicates over tool names at
+ * call time, not references to registry entries — a pattern matching no
+ * currently registered tool is valid (`exclude: [mcp_*]` must stay legal in a
+ * deployment that loads no MCP tools).
  */
 export interface Config {
   /** Consecutive-repeat counts that trigger a reminder (default `[3, 5, 8]`). */
@@ -2399,6 +2476,17 @@ export interface Config {
    * always compares the FULL canonical string).
    */
   argumentsPreviewChars?: number
+  /**
+   * Consecutive-repeat count at which an identical tracked call is denied
+   * before execute. Omitted keeps advisory-only behavior.
+   */
+  blockThreshold?: number
+  /**
+   * Provider routes that honor `blockThreshold`. Default `['cursor']` — the
+   * Cursor subscription adapter. Reminders still run for every provider.
+   * An empty list denies no route. Unused while `blockThreshold` is omitted.
+   */
+  blockProviders?: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-repeat-tool-reminder -->
@@ -3731,13 +3819,19 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-skill`
 
 - `inject`: `agents` · `tools` · `skills`
-- `source`: [`packages/skill/tool-skill/src/index.ts:61`](../packages/skill/tool-skill/src/index.ts)
+- `source`: [`packages/skill/tool-skill/src/index.ts:86`](../packages/skill/tool-skill/src/index.ts)
 
 ```ts config-catalog
 /** Model-facing skill catalog configuration. */
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /**
+   * Provider routes whose live agents receive the per-turn unknown-skill
+   * hard-stop. Default `['cursor']` — the Cursor subscription adapter.
+   * Suggestions still run for every provider. An empty list disables the stop.
+   */
+  closedCatalogProviders?: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-skill -->
@@ -3857,7 +3951,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-todo`
 
 - `inject`: `tools` · `sessionProjections`
-- `source`: [`packages/todo/tool-todo/src/index.ts:29`](../packages/todo/tool-todo/src/index.ts)
+- `source`: [`packages/todo/tool-todo/src/index.ts:31`](../packages/todo/tool-todo/src/index.ts)
 
 ```ts config-catalog
 /** Model-facing todo tool configuration. */
@@ -3990,6 +4084,147 @@ export type ToolPresentationMode = 'native' | 'ptc' | 'both'
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tools -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tui-app -->
+<a id="deepseek-aidsh-tui-app"></a>
+
+## `@deepseek-ai/dsh-tui-app`
+
+- `inject`: `agentDefaultModel` · `agents` · `sessions`
+- `source`: [`packages/bundle/tui-app/src/index.ts:44`](../packages/bundle/tui-app/src/index.ts)
+
+```ts config-catalog
+/** Plugin config: the invocation resolved from this app's injected provider service, plus presentation tunables. */
+export interface Config {
+  /** A first prompt submitted as soon as the terminal is up. */
+  prompt?: string
+  /** A persisted session id to resume instead of starting a new session. */
+  resume?: string
+  /** Collapsed tool-card body rows before `Space` on the focused card, or `Ctrl+O`, expands them. */
+  toolPreviewLines: number
+  /**
+   * Rows a system prompt or an injected context block draws in the transcript
+   * before `Space` on the focused block, or `Ctrl+O`, expands it. One
+   * injection can carry more rows than the conversation around it, so the
+   * transcript shows this many and names the key that draws the rest. The
+   * model-facing text is never cut from what the keyboard reads: the docked
+   * inspector folds the focused section at `focusPreviewLines` and the walk
+   * itself addresses every row. A taller budget reads more of each injection
+   * at once and leaves less of the conversation on screen.
+   */
+  contextPreviewLines: number
+  /**
+   * Rows of the focused transcript section the docked inspector shows before
+   * its fold marker names what is left. `Shift+Up` puts the keyboard on the
+   * newest block and the inspector draws the section it holds, folded at this
+   * budget whatever kind of section it is - a system prompt and an injected
+   * context block included, so one injection cannot fill the screen above the
+   * editor. The model-facing text itself is never cut: the rest of the
+   * section is one key away. A taller budget reads more of a long reply or
+   * tool result at once and leaves less of the conversation on screen.
+   */
+  focusPreviewLines: number
+  /**
+   * Columns the full-screen reader needs before it draws the held turn beside
+   * the turn list. `Ctrl+G` reads the conversation full screen in two panels:
+   * every turn listed on the left, the turn the list holds scrolling on the
+   * right. Below this width one panel is drawn at a time — the list, or the
+   * turn `Right` opens from it — so a narrow terminal keeps readable text
+   * instead of two cramped columns. A lower value splits a narrower terminal.
+   */
+  readerMinColumns: number
+  /**
+   * Draw fenced code, `read` and diff file rows, and shell commands — a `!` /
+   * `!!` draft, a `$ command` user-shell row, and a terminal tool card — in
+   * syntax colours, from a theme picked by the terminal's own background. The
+   * grammars load on the first block that asks for one, so a session with no
+   * code in it loads none; a language with no grammar here, and a terminal that
+   * reports neither 24-bit nor 256 colours, draw the block plain. Turn it off
+   * to read every block in one colour.
+   */
+  codeHighlight: boolean
+  /**
+   * How long a transient key-feedback line - `press Esc again to stop turn
+   * <n>`, `press Ctrl+C again to quit` - holds at full strength before it
+   * fades out, in milliseconds. It is also the window in which a second `Esc`
+   * stops the running turn: the arm lasts exactly as long as any part of the
+   * line is on screen, so there is no invisible window in which the key means
+   * something else. The line floats over the conversation and is never
+   * written into it; facts worth keeping stay transcript notices.
+   */
+  toastMs: number
+  /**
+   * Period in milliseconds of the terminal's one repeating redraw: it
+   * advances the running-turn counter in the status bar and the per-child
+   * counters in the subagent panel, and re-reads the subagent listing a live
+   * signal marked stale. The terminal arms the interval only while a turn is
+   * running, a listed child is timing an open turn, or the listing is stale,
+   * and disarms it as soon as none of those hold, so an idle session runs no
+   * timer. A shorter period redraws more often; a longer one lets a counter
+   * lag behind by up to one period.
+   */
+  liveRefreshMs: number
+  /**
+   * How long one streamed fade lasts, in `streamFadeStepMs` ticks: reply text
+   * fades in from near the terminal background toward the terminal foreground,
+   * while reasoning and tool cards appear at a lifted color and recede to the
+   * colors they settle in, over `streamFadeSteps * streamFadeStepMs`. Each
+   * reply word carries the moment it appeared, so a fast stream leaves a
+   * longer trail of brightening words and never a darker one. Two is the
+   * shortest step count that still shows a ramp; more steps spread the same
+   * duration over a softer trailing edge. Text that has settled is never
+   * dimmed again.
+   */
+  streamFadeSteps: number
+  /**
+   * How long one frame lasts, in milliseconds: the fade tick, the repaint
+   * period while anything is still moving, and the period at which paced
+   * stream text is drawn. The default of 16 draws about 60 frames per
+   * second. Duration of each fade is `streamFadeSteps * streamFadeStepMs`,
+   * and the app's own chrome motions - the keyboard landing on a region and
+   * a step of a walk - run for their own step counts at this same tick. The
+   * terminal arms this repaint only while something still differs from its
+   * settled drawing and disarms it as soon as the last one settles, so an
+   * idle session runs no timer. A shorter period draws a smoother fade at the
+   * cost of more redraws.
+   */
+  streamFadeStepMs: number
+  /**
+   * How many `streamFadeStepMs` frames a backlog of streamed reply text or
+   * tool arguments takes to reach the screen. Thinking stays on that queue
+   * only while its block is open; a finished thinking block, or the first
+   * reply or tool-call delta after it, is drawn at once. The live stream is
+   * queued as it arrives and never waits on a redraw; each frame draws a
+   * share of the queue proportional to its length, so a network burst
+   * spreads over several frames instead of landing at once, and drawn text
+   * trails the stream by at most about this many frames. `0` draws every
+   * delta as it arrives, and so does `reducedMotion`.
+   */
+  streamPaceFrames: number
+  /**
+   * How many `streamFadeStepMs` frames the rows of a tool card take to
+   * unroll when the card appears or grows. Each frame draws a share of the
+   * rows still hidden proportional to their number, at least one, so a card
+   * slides in under the text that preceded it rather than landing whole. A
+   * card whose unrolling rows have scrolled above the part of the screen the
+   * renderer can repaint draws them at once, and unfolding a card draws its
+   * rows at once. `0` draws every row at once, and so does `reducedMotion`.
+   */
+  toolRevealFrames: number
+  /**
+   * Draw streamed assistant text, streamed reasoning, tool cards, and the
+   * app's own chrome at the colors they settle in, for users who do not want
+   * what is on screen to change after it is drawn: no brightness ramp on
+   * arriving text, no lift where the keyboard lands or steps, and no repeating
+   * repaint for any of them. A transient key-feedback line still holds for
+   * `toastMs` and then disappears, because the window it names has to end.
+   */
+  reducedMotion: boolean
+  /** Permit local default-browser handoff for authorization pages. */
+  openBrowser: boolean
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tui-app -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-typert-loader -->
 <a id="deepseek-aidsh-typert-loader"></a>
 
@@ -4069,7 +4304,7 @@ export interface WebRuntimeConfig {
 ## `@deepseek-ai/dsh-web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:44`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:43`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
@@ -4282,6 +4517,7 @@ export interface Config {
 | `@deepseek-ai/dsh-acp-app` | `cmdlineArgs` | [`packages/bundle/acp-app/src/index.ts`](../packages/bundle/acp-app/src/index.ts) |
 | `@deepseek-ai/dsh-agent` | — | [`packages/core/agent/src/index.ts`](../packages/core/agent/src/index.ts) |
 | `@deepseek-ai/dsh-api-account-controller` | `deepseekAccount` · `agents` | [`packages/api/account-controller/src/index.ts`](../packages/api/account-controller/src/index.ts) |
+| `@deepseek-ai/dsh-api-authorization-controller` | — | [`packages/api/authorization-controller/src/index.ts`](../packages/api/authorization-controller/src/index.ts) |
 | `@deepseek-ai/dsh-api-remotes` | `typertGateway` | [`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts) |
 | `@deepseek-ai/dsh-authorization` | `credentials` | [`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts) |
 | `@deepseek-ai/dsh-browser-use` | — | [`packages/browser-use/browser-use/src/index.ts`](../packages/browser-use/browser-use/src/index.ts) |
@@ -4319,6 +4555,7 @@ export interface Config {
 | `@deepseek-ai/dsh-client-ui-settings-plugin-inventory` | — | [`packages/client/ui-settings-plugin-inventory/src/index.ts`](../packages/client/ui-settings-plugin-inventory/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-plugins` | — | [`packages/client/ui-settings-plugins/src/index.ts`](../packages/client/ui-settings-plugins/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-shell` | — | [`packages/client/ui-settings-shell/src/index.ts`](../packages/client/ui-settings-shell/src/index.ts) |
+| `@deepseek-ai/dsh-client-ui-settings-signin` | — | [`packages/client/ui-settings-signin/src/index.ts`](../packages/client/ui-settings-signin/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-subagent` | — | [`packages/client/ui-settings-subagent/src/index.ts`](../packages/client/ui-settings-subagent/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-web-search` | — | [`packages/client/ui-settings-web-search/src/index.ts`](../packages/client/ui-settings-web-search/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-shortcuts` | — | [`packages/client/ui-shortcuts/src/index.ts`](../packages/client/ui-shortcuts/src/index.ts) |
