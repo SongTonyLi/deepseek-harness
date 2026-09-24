@@ -6,6 +6,7 @@ import { AssistantBlock, ContextBlock, NoticeBlock, SUBAGENT_RUNNING_GLYPH, TOOL
 import type { FadeStyle } from '../src/fade.ts'
 import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
 import type { CodeSpan } from '../src/transcript.ts'
+import { RowReveal } from '../src/pace.ts'
 
 const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 6 }
 
@@ -118,7 +119,6 @@ describe('blocks', () => {
       lines: ['a.ts', '- old', '+ fresh'],
       diff: [undefined, 'removed', 'added'],
     }, 1)
-    block.setResult(['a.ts', '+ one', '+ two', '+ three'], false, undefined, [undefined, 'added', 'added', 'added'])
     block.setExpanded(true)
     expect(block.render(20)).toEqual([
       '',
@@ -130,15 +130,21 @@ describe('blocks', () => {
       '  │ ╭──────────────╮',
       '  │ │ + fresh      │',
       '  │ ╰──────────────╯',
+      '  │ …',
+    ])
+    block.setResult(['a.ts', '  one', '+ two', '+ three'], false, undefined, [undefined, undefined, 'added', 'added'])
+    expect(block.render(20)).toEqual([
+      '',
+      '◆ edit Edit a.ts',
       '  │ a.ts',
+      '  │   one',
       '  │ ╭──────────────╮',
-      '  │ │ + one        │',
       '  │ │ + two        │',
       '  │ │ + three      │',
       '  │ ╰──────────────╯',
     ])
     block.setExpanded(false)
-    expect(block.render(60).at(-1)).toBe('  │ … 5 more rows · Ctrl+O expands')
+    expect(block.render(60).at(-1)).toBe('  │ … 2 more rows · Ctrl+O expands')
   })
 
   it('draws a folded subagent card as one row: the tool while it runs, then the outcome at the right edge', () => {
@@ -789,5 +795,80 @@ describe('render reuse', () => {
     expect(marked.at(-1)).toContain('┃')
     block.setHighlight(undefined)
     expect(block.render(40)).toEqual(first)
+  })
+})
+
+describe('unrolling a tool card', () => {
+  const ROWS = ['one', 'two', 'three']
+
+  it('draws only the revealed rows, and reports the rows still to unroll', () => {
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
+    expect(block.revealing()).toBe(false)
+    expect(block.revealFrame()).toBe(false)
+    block.setReveal(new RowReveal(1, 1))
+    // A reveal the card has not rendered under waits for the render to measure it.
+    expect(block.revealing()).toBe(true)
+    expect(block.revealFrame()).toBe(true)
+    expect(block.render(40)).toEqual(['', '◆ bash ls'])
+    expect(block.revealing()).toBe(true)
+    expect(block.revealFrame()).toBe(false)
+    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ …'])
+    expect(block.revealing()).toBe(false)
+
+    block.setResult(ROWS, false)
+    expect(block.revealing()).toBe(true)
+    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ one'])
+    expect(block.revealing()).toBe(true)
+    expect(block.revealFrame()).toBe(false)
+    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ one', '  │ two', '  │ three'])
+  })
+
+  it('draws every row once the card unfolds', () => {
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
+    block.setReveal(new RowReveal(8, 1))
+    block.setResult(ROWS, false)
+    expect(block.render(40)).toHaveLength(2)
+    block.setExpanded(false)
+    expect(block.render(40)).toHaveLength(2)
+    block.setExpanded(true)
+    expect(block.render(40)).toHaveLength(5)
+    expect(block.revealing()).toBe(false)
+  })
+
+  it('draws every row once the unrolling edge is above the repaintable lines', () => {
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
+    block.setReveal(new RowReveal(8, 1))
+    block.setResult(ROWS, false)
+    block.render(40)
+    // The edge sits right after the header, line 2 of the card, so a floor at it can still follow the rows.
+    expect(block.setRepaintFloor(2)).toBe(false)
+    expect(block.render(40)).toHaveLength(2)
+    expect(block.setRepaintFloor(3)).toBe(true)
+    expect(block.render(40)).toHaveLength(5)
+    expect(block.setRepaintFloor(3)).toBe(false)
+  })
+
+  it('unrolls a focused card with its gutter', () => {
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
+    block.setReveal(new RowReveal(8, 1))
+    block.setResult(ROWS, false)
+    block.setHighlight(1)
+    expect(block.render(40)).toEqual(['│ ', '│ ◆ bash ls'])
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['│ ', '│ ◆ bash ls', '┃   │ one'])
+  })
+})
+
+describe('a diff result', () => {
+  it('takes the place of the call-time diff rows', () => {
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'edit', { title: 'Edit a.ts', lines: ['- old', '+ new'], diff: ['removed', 'added'] }, 1)
+    block.setResult(['3 - old', '3 + new'], false, undefined, ['removed', 'added'])
+    expect(block.parts()).toEqual([{ kind: 'call', rows: ['Edit a.ts'] }, { kind: 'result', rows: ['3 - old', '3 + new'] }])
+  })
+
+  it('keeps a call-time diff when the result is not a diff', () => {
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'edit', { title: 'Edit a.ts', lines: ['- old', '+ new'], diff: ['removed', 'added'] }, 1)
+    block.setResult(['no match'], true)
+    expect(block.parts()[0]).toEqual({ kind: 'call', rows: ['Edit a.ts', '- old', '+ new'] })
   })
 })

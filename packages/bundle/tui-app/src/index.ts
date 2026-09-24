@@ -27,7 +27,7 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 import { TuiApp, type BoundSession, type SessionHost } from './app.ts'
 import { CONTEXT_PREVIEW_LINES } from './blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from './fade.ts'
-import { STREAM_PACE_FRAMES } from './pace.ts'
+import { STREAM_PACE_FRAMES, TOOL_REVEAL_FRAMES } from './pace.ts'
 import { FOCUS_PREVIEW_LINES } from './inspector.ts'
 import { READER_MIN_COLUMNS } from './reader.ts'
 import { colorEnabled, createPalette } from './style.ts'
@@ -148,6 +148,16 @@ export interface Config {
    */
   streamPaceFrames: number
   /**
+   * How many `streamFadeStepMs` frames the rows of a tool card take to
+   * unroll when the card appears or grows. Each frame draws a share of the
+   * rows still hidden proportional to their number, at least one, so a card
+   * slides in under the text that preceded it rather than landing whole. A
+   * card whose unrolling rows have scrolled above the part of the screen the
+   * renderer can repaint draws them at once, and unfolding a card draws its
+   * rows at once. `0` draws every row at once, and so does `reducedMotion`.
+   */
+  toolRevealFrames: number
+  /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
    * what is on screen to change after it is drawn: no brightness ramp on
@@ -173,6 +183,7 @@ export const Config: z<Config> = z.object({
   streamFadeSteps: z.natural().min(2).default(FADE_STEPS),
   streamFadeStepMs: z.natural().min(16).default(FADE_TICK_MS),
   streamPaceFrames: z.natural().default(STREAM_PACE_FRAMES),
+  toolRevealFrames: z.natural().default(TOOL_REVEAL_FRAMES),
   reducedMotion: z.boolean().default(false),
   openBrowser: z.boolean().default(true),
 })
@@ -375,6 +386,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     fadeSteps: config.streamFadeSteps,
     fadeStepMs: config.streamFadeStepMs,
     streamPaceFrames: config.streamPaceFrames,
+    toolRevealFrames: config.toolRevealFrames,
     reducedMotion: config.reducedMotion,
     env: process.env,
     now: () => Date.now(),

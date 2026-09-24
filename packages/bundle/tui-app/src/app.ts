@@ -97,7 +97,8 @@ import { parseUserShellLine, userShellContextText, userShellTranscriptRows } fro
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { matchPermission, permissionHint, permissionItems } from './permission.ts'
 import { exportSessionZip } from './export.ts'
-import { StreamPacer } from './pace.ts'
+import { RowReveal, StreamPacer } from './pace.ts'
+import { ViewBanner } from './view-banner.ts'
 import { BlockFadeClock, FadeRegistry, FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
 import { InspectorPane, type InspectorView } from './inspector.ts'
 import {
@@ -420,6 +421,11 @@ export interface TuiAppDeps {
    * each delta as it arrives. Reduced motion also draws deltas as they arrive.
    */
   streamPaceFrames: number
+  /**
+   * Frames the rows of a tool card take to unroll when the card appears or
+   * grows; `0` draws them at once. Reduced motion also draws them at once.
+   */
+  toolRevealFrames: number
   /** Draw streamed text and tool cards in their own colors, with no ramp and no fade tick. */
   reducedMotion: boolean
   /**
@@ -693,6 +699,8 @@ export class TuiApp {
   private readonly blockFades = new FadeRegistry()
   /** Streamed deltas waiting for a frame; absent when deltas are drawn as they arrive. */
   private readonly pacer: StreamPacer | undefined
+  /** Tool cards whose rows are still unrolling; each drops out once its reveal caught up. */
+  private readonly reveals = new Set<ToolBlock>()
   /**
    * The chrome motions running right now. It is consulted whatever the
    * terminal draws, because a transient line has to come down again even on a
@@ -736,6 +744,10 @@ export class TuiApp {
    * the root session is bound. `/parent` returns to the last one.
    */
   private readonly parents: BoundSession[] = []
+  /** The listing label of every open subagent view, outermost first, one per {@link parents} entry. */
+  private readonly viewLabels: string[] = []
+  /** Names the open subagent view above the editor; see {@link ViewBanner}. */
+  private readonly banner: ViewBanner
   private streaming: AssistantBlock | undefined
   /** Whether the fold keys left every foldable block open; one appended later follows it. */
   private toolsExpanded = false
@@ -810,6 +822,7 @@ export class TuiApp {
     this.queue = new Text('', 0, 0)
     this.activity = new Text('', 0, 0)
     this.panel = new Text('', 0, 0)
+    this.banner = new ViewBanner(palette)
     this.footer = new FooterBar(() => ({
       segments: this.segments,
       render: {
@@ -823,7 +836,7 @@ export class TuiApp {
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
     const tree = [
       this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.queueSlot,
-      this.activitySlot, this.editor, this.panelSlot, this.footer,
+      this.activitySlot, this.banner, this.editor, this.panelSlot, this.footer,
     ]
     for (const child of tree) this.tui.addChild(child)
   }
@@ -961,6 +974,7 @@ export class TuiApp {
       })
     }
     this.parents.length = 0
+    this.viewLabels.length = 0
     /* v8 ignore next -- the destructured list always holds the bound session */
     this.deps.onQuit(root ?? this.bound)
   }
@@ -999,6 +1013,7 @@ export class TuiApp {
     this.sawSystemPrompt = false
     this.turnStartedAt = undefined
     this.pacer?.clear()
+    this.reveals.clear()
     this.streaming = undefined
     this.endFade()
     this.blockFades.clear()
@@ -1020,6 +1035,7 @@ export class TuiApp {
     this.replaying = false
     if (reading) this.notice(READER_GONE)
     this.refreshHeader()
+    this.banner.setViews(this.viewLabels)
     this.refreshQueue()
     this.refreshFooter()
     this.refreshSubagentPanel()
@@ -1056,6 +1072,7 @@ export class TuiApp {
     }
     // Every subagent view goes with the session it was entered from, newest first.
     const released = [this.bound, ...this.parents.splice(0).reverse()]
+    this.viewLabels.length = 0
     const dropped = this.pending.length
     this.bind(next)
     this.notice(`${verb}: session ${next.agent.session.id}`, 'success')
@@ -1100,6 +1117,7 @@ export class TuiApp {
     const parent = this.bound
     const dropped = this.pending.length
     this.parents.push(parent)
+    this.viewLabels.push(row.item.label)
     this.bind(next)
     this.notice(`subagent ${row.item.label} · Ctrl+P or /parent returns to session ${parent.agent.session.id}`, 'success')
     if (dropped > 0) this.notice(`${String(dropped)} pending attachment(s) stayed with the parent session`)
@@ -1136,6 +1154,7 @@ export class TuiApp {
     if (this.stopped) return
     const view = this.bound
     this.parents.pop()
+    this.viewLabels.pop()
     this.bind({ ...parent, history })
     this.notice(`back in session ${parent.agent.session.id}`, 'success')
     try {
@@ -3795,6 +3814,29 @@ export class TuiApp {
   }
 
   /**
+   * Unroll a new card's rows on the frame tick from its header down. A card
+   * drawn from a replayed log, and every card on a terminal that paces
+   * nothing, draws whole.
+   * @param block - the card that was just mounted.
+   */
+  private revealBlock(block: ToolBlock): void {
+    if (this.replaying || this.deps.reducedMotion || this.deps.toolRevealFrames === 0) return
+    block.setReveal(new RowReveal(this.deps.toolRevealFrames, 1))
+    this.trackReveal(block)
+  }
+
+  /**
+   * Keep a card on the frame tick while it has rows to unroll, which a call
+   * or a result that makes it grow gives it again.
+   * @param block - the card that just changed.
+   */
+  private trackReveal(block: ToolBlock): void {
+    if (!block.revealing()) return
+    this.reveals.add(block)
+    this.updateFadeTicker()
+  }
+
+  /**
    * Settle what the current message has drawn and stop tracking it: both
    * tails go, so their text renders at the terminal's foreground from the next
    * render on. Card fades are left to expire on their own clock, because a
@@ -3909,6 +3951,7 @@ export class TuiApp {
    */
   private fadesMoving(): boolean {
     return this.pacer?.pending() === true
+      || this.reveals.size > 0
       || this.textTail?.needsRepaint() === true
       || this.reasoningTail?.needsRepaint() === true
       || this.blockFades.needsRepaint()
@@ -3976,6 +4019,9 @@ export class TuiApp {
    */
   private onFadeTick(): void {
     this.pacer?.frame()
+    for (const block of this.reveals) {
+      if (!block.revealFrame()) this.reveals.delete(block)
+    }
     this.textTail?.tick()
     this.reasoningTail?.tick()
     this.blockFades.tick()
@@ -4137,6 +4183,7 @@ export class TuiApp {
         const body = toolResultBody(view, result.content)
         block.setResult(body.lines, isError, body.code, body.diff)
         this.fadeBlock((fade) => { block.setResultFade(fade) })
+        this.trackReveal(block)
         this.pendingToolNames.delete(result.toolCallId)
         this.syncLoaderFromPendingTools()
         break
@@ -4400,6 +4447,7 @@ export class TuiApp {
       existing.setCall(name, call)
       if (isSubagentTool(name)) existing.setSubagent(subagentRowFacts(args))
       if (source === 'log') this.unconfirmedTools.delete(callId)
+      this.trackReveal(existing)
       return
     }
     const block = new ToolBlock(this.theme, name, call, this.turn)
@@ -4408,6 +4456,7 @@ export class TuiApp {
     this.toolBlocks.set(callId, block)
     this.chat.addChild(block)
     this.fadeBlock((fade) => { block.setFade(fade) })
+    this.revealBlock(block)
     if (source === 'stream') this.unconfirmedTools.set(callId, block)
   }
 
@@ -4419,12 +4468,14 @@ export class TuiApp {
     if (this.unconfirmedTools.size === 0) return false
     for (const [callId, block] of this.unconfirmedTools) {
       this.chat.removeChild(block)
+      this.reveals.delete(block)
       this.toolBlocks.delete(callId)
       this.toolArguments.delete(callId)
       this.toolStreamArgs.delete(callId)
       this.pendingToolNames.delete(callId)
     }
     this.unconfirmedTools.clear()
+    this.updateFadeTicker()
     this.syncLoaderFromPendingTools()
     return true
   }

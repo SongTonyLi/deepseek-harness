@@ -329,6 +329,8 @@ export async function bench(options: {
   fadeStepMs?: number
   /** Frames a streamed backlog drains over; `0`, the default, draws each delta as it arrives. */
   streamPaceFrames?: number
+  /** Frames a tool card's rows unroll over; `0`, the default, draws every row at once. */
+  toolRevealFrames?: number
   /** Ask for streamed text drawn with no ramp. */
   reducedMotion?: boolean
   /** The environment the fade capability is decided from; empty by default, which yields the two-level mode. */
@@ -492,6 +494,7 @@ export async function bench(options: {
     fadeSteps: options.fadeSteps ?? FADE_STEPS,
     fadeStepMs,
     streamPaceFrames: options.streamPaceFrames ?? 0,
+    toolRevealFrames: options.toolRevealFrames ?? 0,
     reducedMotion: options.reducedMotion ?? false,
     env: options.env ?? {},
     now: () => now,

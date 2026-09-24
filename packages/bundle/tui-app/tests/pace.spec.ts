@@ -1,7 +1,7 @@
 /** The queue between the live stream and the frames that draw it. */
 
 import { describe, expect, it } from 'vitest'
-import { STREAM_PACE_FRAMES, StreamPacer } from '../src/pace.ts'
+import { RowReveal, STREAM_PACE_FRAMES, StreamPacer, TOOL_REVEAL_FRAMES } from '../src/pace.ts'
 
 /**
  * A pacer whose released parts are recorded per channel.
@@ -127,5 +127,42 @@ describe('StreamPacer', () => {
     push('text', 'all')
     expect(pacer.frame()).toBe(false)
     expect(released).toEqual([['text', 'all']])
+  })
+})
+
+describe('RowReveal', () => {
+  it('draws a share of the hidden rows per frame, at least one, until it catches up', () => {
+    expect(TOOL_REVEAL_FRAMES).toBeGreaterThan(0)
+    const reveal = new RowReveal(4, 1)
+    const counts: number[] = []
+    while (reveal.frame(9)) counts.push(reveal.shown())
+    counts.push(reveal.shown())
+    // 8 hidden rows over 4 frames: two rows, then a single row a frame as the hidden run shrinks.
+    expect(counts).toEqual([3, 4, 5, 6, 7, 8, 9])
+    expect(reveal.frame(9)).toBe(false)
+  })
+
+  it('reveals rows a block gains after it caught up', () => {
+    const reveal = new RowReveal(1, 2)
+    expect(reveal.frame(2)).toBe(false)
+    expect(reveal.frame(5)).toBe(false)
+    expect(reveal.shown()).toBe(5)
+  })
+
+  it('treats a drain below one frame as one frame', () => {
+    const reveal = new RowReveal(0, 0)
+    expect(reveal.frame(3)).toBe(false)
+    expect(reveal.shown()).toBe(3)
+  })
+
+  it('settles to every row and clamps back to the rows a block has', () => {
+    const reveal = new RowReveal(8, 1)
+    reveal.settle()
+    expect(reveal.shown()).toBe(Number.POSITIVE_INFINITY)
+    reveal.clamp(4)
+    expect(reveal.shown()).toBe(4)
+    reveal.clamp(6)
+    expect(reveal.shown()).toBe(4)
+    expect(reveal.frame(6)).toBe(true)
   })
 })

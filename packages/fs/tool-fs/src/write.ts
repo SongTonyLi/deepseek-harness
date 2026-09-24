@@ -10,7 +10,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type { FsWriteOutcome } from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-fs'
-import { computeHunkDiffs, diffsFromMeta } from './diff.ts'
+import { computeHunkDiffs, diffJson, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
 import { sessionResolveOptions } from './session-cwd.ts'
 import type { FsSandboxController } from './sandbox.ts'
@@ -99,8 +99,7 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void
         operation: value.operation,
         diffs: value.before === null
           ? []
-          : computeHunkDiffs(args.file_path, value.before, value.after)
-            .map(({ path, oldText, newText }) => ({ path, oldText, newText })),
+          : computeHunkDiffs(args.file_path, value.before, value.after).map(diffJson),
       }),
     },
     async execute(args: WriteToolArgs, exec) {

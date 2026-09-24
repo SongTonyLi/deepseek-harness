@@ -78,13 +78,13 @@ export function diffLines(oldText: string | null, newText: string): DiffLine[] {
  * @param context - unchanged rows kept on each side of a change.
  * @returns the rows to display, with an `undefined` gap marker where rows were elided.
  */
-export function hunks(lines: readonly DiffLine[], context: number): (DiffLine | undefined)[] {
+export function hunks<T extends DiffLine>(lines: readonly T[], context: number): (T | undefined)[] {
   const keep = new Array<boolean>(lines.length).fill(false)
   lines.forEach((line, index) => {
     if (line.kind === 'context') return
     for (let k = Math.max(0, index - context); k <= Math.min(lines.length - 1, index + context); k++) keep[k] = true
   })
-  const out: (DiffLine | undefined)[] = []
+  const out: (T | undefined)[] = []
   let gap = false
   lines.forEach((line, index) => {
     if (keep[index] === true) {
