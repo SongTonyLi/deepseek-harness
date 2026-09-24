@@ -8,6 +8,9 @@ import {
   AfterAgentThoughtRequestQuerySchema,
   AgentClientMessageSchema,
   AgentServerMessageSchema,
+  AskQuestionArgsSchema,
+  AskQuestionArgs_QuestionSchema,
+  AskQuestionInteractionQuerySchema,
   BeforeSubmitPromptRequestQuerySchema,
   BackgroundShellSpawnArgsSchema,
   ComputerUseArgsSchema,
@@ -587,6 +590,73 @@ describe('streamCursorRun', () => {
         },
       }),
     ])))).rejects.toMatchObject({ code: 'EMPTY_RESPONSE' })
+  })
+
+  it('rejects a native Cursor question and keeps the Run alive for the harness question tool', async () => {
+    const { open, written } = capturing([
+      ...textThenEnd.slice(0, 1),
+      serverMessage({
+        message: {
+          case: 'interactionQuery',
+          value: create(InteractionQuerySchema, {
+            id: 12,
+            query: {
+              case: 'askQuestionInteractionQuery',
+              value: create(AskQuestionInteractionQuerySchema, {
+                args: create(AskQuestionArgsSchema, {
+                  questions: [create(AskQuestionArgs_QuestionSchema, { id: 'release', prompt: 'Publish this version?' })],
+                }),
+              }),
+            },
+          }),
+        },
+      }),
+      ...textThenEnd,
+    ])
+    const chunks = await collect(streamCursorRun({
+      ...request,
+      tools: [{ name: 'ask_user_question', description: 'Ask the user', parameters: { type: 'object' } }],
+    }, 'tok', TIMING, open))
+
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')).toBe(false)
+    expect(chunks.filter(chunk => chunk.type === 'block-end' && chunk.block.type === 'text')).toHaveLength(2)
+    const reply = written.find(message => message.message.case === 'interactionResponse')
+    if (reply?.message.case !== 'interactionResponse') throw new Error('expected an interaction response')
+    expect(reply.message.value.id).toBe(12)
+    const result = reply.message.value.result
+    if (result.case !== 'askQuestionInteractionResponse' || result.value.result?.result.case !== 'rejected') {
+      throw new Error('expected a rejected Cursor question')
+    }
+    expect(result.value.result.result.value.reason).toBe(
+      'Cursor\'s built-in AskQuestion is not available in DeepSeek Harness. '
+      + 'Call CallDynamicTool with namespace "dsh" and toolName "ask_user_question" instead.',
+    )
+  })
+
+  it('asks for a reply when the harness question tool is unavailable', async () => {
+    const { open, written } = capturing([
+      serverMessage({
+        message: {
+          case: 'interactionQuery',
+          value: create(InteractionQuerySchema, {
+            id: 13,
+            query: { case: 'askQuestionInteractionQuery', value: create(AskQuestionInteractionQuerySchema, {}) },
+          }),
+        },
+      }),
+      ...textThenEnd,
+    ])
+    await collect(streamCursorRun(request, 'tok', TIMING, open))
+    const reply = written.find(message => message.message.case === 'interactionResponse')
+    if (reply?.message.case !== 'interactionResponse') throw new Error('expected an interaction response')
+    const result = reply.message.value.result
+    if (result.case !== 'askQuestionInteractionResponse' || result.value.result?.result.case !== 'rejected') {
+      throw new Error('expected a rejected Cursor question')
+    }
+    expect(result.value.result.result.value.reason).toBe(
+      'Cursor\'s built-in AskQuestion is not available in DeepSeek Harness. Ask the user in a reply before continuing.',
+    )
   })
 
   it('fails STREAM_CLOSED when the transport ends early', async () => {
