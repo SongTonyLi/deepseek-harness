@@ -16,6 +16,9 @@ import {
   AfterAgentThoughtRequestResponseSchema,
   AgentClientMessageSchema,
   AgentServerMessageSchema,
+  AskQuestionInteractionResponseSchema,
+  AskQuestionRejectedSchema,
+  AskQuestionResultSchema,
   BackgroundShellSpawnResultSchema,
   BeforeSubmitPromptRequestResponseSchema,
   ComputerUseErrorSchema,
@@ -545,6 +548,31 @@ function approveWebSearch(stream: CursorConnectStream, query: InteractionQuery):
   })
 }
 
+/** A human answer must return through a logged harness tool result or later user message. */
+function rejectNativeQuestion(stream: CursorConnectStream, query: InteractionQuery, mcpTools: readonly McpToolDefinition[]): void {
+  const questionTool = mcpTools.some(tool => tool.name === 'ask_user_question')
+  const refusal = 'Cursor\'s built-in AskQuestion is not available in DeepSeek Harness.'
+  const reason = questionTool
+    ? `${refusal} Call ${DYNAMIC_TOOL_CALL} with namespace "${MCP_PROVIDER_IDENTIFIER}" and toolName "ask_user_question" instead.`
+    : `${refusal} Ask the user in a reply before continuing.`
+  sendClient(stream, {
+    message: {
+      case: 'interactionResponse',
+      value: create(InteractionResponseSchema, {
+        id: query.id,
+        result: {
+          case: 'askQuestionInteractionResponse',
+          value: create(AskQuestionInteractionResponseSchema, {
+            result: create(AskQuestionResultSchema, {
+              result: { case: 'rejected', value: create(AskQuestionRejectedSchema, { reason }) },
+            }),
+          }),
+        },
+      }),
+    },
+  })
+}
+
 function* closeOpen(open: OpenBlock | undefined): Generator<StreamChunk> {
   if (open === undefined) return
   if (open.type === 'text') {
@@ -825,6 +853,12 @@ function handleServerMessage(
     if (query.query.case === 'webSearchRequestQuery') {
       approveWebSearch(stream, query)
       return {}
+    }
+    if (query.query.case === 'askQuestionInteractionQuery') {
+      chunks.push(...closeOpen(state.open))
+      state.open = undefined
+      rejectNativeQuestion(stream, query, payload.mcpTools)
+      return { chunks }
     }
     throw new LlmError(
       `llm-cursor: unsupported Cursor interaction query ${query.query.case ?? 'unknown'}`,
