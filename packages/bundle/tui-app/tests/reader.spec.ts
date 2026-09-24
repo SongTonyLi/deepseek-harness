@@ -611,7 +611,7 @@ describe('the turn panel\'s styling', () => {
       ...withHighlight ? { highlight } : {},
     })
     const lines = render(COLOR, true).join('\n')
-    expect(lines).toMatch(/\u001b\[38;5;117m\S*Plan/)
+    expect(lines).toMatch(/\u001b\[38;5;215m\S*Plan/)
     expect(lines).toContain(COLOR.bold('bold'))
     expect(lines).toContain(COLOR.link('code'))
     expect(lines).toContain('\u001b[35mconst a = 1\u001b[39m')

@@ -7,8 +7,8 @@ describe('palette', () => {
   it('wraps text in SGR pairs when enabled and returns it verbatim otherwise', () => {
     const on = createPalette(true)
     expect(on.accent('x')).toBe('\u001b[36mx\u001b[39m')
-    expect(on.heading('x')).toBe('\u001b[38;5;117mx\u001b[39m')
-    expect(on.link('x')).toBe('\u001b[38;5;75mx\u001b[39m')
+    expect(on.heading('x')).toBe('\u001b[38;5;215mx\u001b[39m')
+    expect(on.link('x')).toBe('\u001b[38;5;141mx\u001b[39m')
     expect(on.bold('x')).toBe('\u001b[1mx\u001b[22m')
     expect(on.underline('x')).toBe('\u001b[4mx\u001b[24m')
     expect(on.strikethrough('x')).toBe('\u001b[9mx\u001b[29m')
