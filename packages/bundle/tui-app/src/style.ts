@@ -22,9 +22,9 @@ export interface Palette {
   strikethrough: Style
   /** Brand and focus color. */
   accent: Style
-  /** Pale cyan on the dark-mode cool scale; Markdown headings and list markers. */
+  /** Warm heading and list-marker color. */
   heading: Style
-  /** Deeper blue on the same scale; Markdown links and inline code. */
+  /** Violet links, inline code, and secondary status facts. */
   link: Style
   success: Style
   warning: Style
@@ -50,8 +50,8 @@ const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, clo
   underline: ['4', '24'],
   strikethrough: ['9', '29'],
   accent: ['36', '39'],
-  heading: ['38;5;117', '39'],
-  link: ['38;5;75', '39'],
+  heading: ['38;5;215', '39'],
+  link: ['38;5;141', '39'],
   success: ['32', '39'],
   warning: ['33', '39'],
   error: ['31', '39'],

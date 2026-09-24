@@ -101,10 +101,10 @@ describe('renderActivityBoard', () => {
 
   it('scratches out completed content and leaves the glyph', () => {
     const shown = renderActivityBoard(activityBoardView({ todos: mixed }), { palette: color })
-    expect(shown).toContain('✓ ')
+    expect(shown).toContain('\u001b[32m✓\u001b[39m ')
     expect(shown).toContain('\u001b[9mread the spec\u001b[29m')
-    expect(shown).toContain('▸ write the data layer')
-    expect(shown).toContain('○ wire the picker')
+    expect(shown).toContain('\u001b[33m▸\u001b[39m write the data layer')
+    expect(shown).toContain('\u001b[36m○\u001b[39m wire the picker')
     expect(shown.indexOf('✓')).toBeLessThan(shown.indexOf('▸'))
   })
 

@@ -277,6 +277,15 @@ describe('renderFooter', () => {
     expect(styled[0]).not.toContain('\n')
   })
 
+  it('distinguishes the model, live turn, context, and entry keys by color', () => {
+    const [line = ''] = renderFooter(buildFooterSegments(crowded()), { palette: createPalette(true), width: WIDE })
+    expect(line).toContain('\u001b[36mdeepseek-chat\u001b[39m')
+    expect(line).toContain('\u001b[33mturn 1m12s\u001b[39m')
+    expect(line).toContain('\u001b[38;5;141mctx 42%\u001b[39m')
+    expect(line).toContain('\u001b[38;5;141mShift+↑ read · Shift+↓ status\u001b[39m')
+    expect(visibleWidth(line)).toBe(WIDE)
+  })
+
   it('reserves both entry keys while the width can spare them, then degrades, then drops them', () => {
     const built = buildFooterSegments(crowded())
     const at = (width: number): string => renderFooter(built, { palette, width })[0] ?? ''

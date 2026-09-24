@@ -462,22 +462,28 @@ function middleFacts(facts: readonly string[], hidden: number, room: number): st
  * the entry keys reserved at the right edge, and the key facts filling
  * whatever middle is left, every segment they cannot hold folded into `+N`.
  * @param segments - the segments in bar order.
- * @param palette - the palette the line is dimmed with.
+ * @param palette - the palette that distinguishes the model, live facts, and entry keys.
  * @param width - terminal columns the line must fit.
  * @param queue - whether follow-ups are drawn, which rewrites Shift+↑.
- * @returns one dim line.
+ * @returns one line with colored key facts and dim secondary facts.
  */
 function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, width: number, queue: boolean): string {
   const [anchor, ...rest] = segments
   const model = anchorLabel(anchor)
   const hint = entryHint(width, queue)
   const reserved = hint === '' ? 0 : visibleWidth(hint) + HINT_GAP
-  const facts = rest.filter(segment => KEY_SEGMENT_IDS.has(segment.id)).map(segment => segment.label)
+  const facts = rest.filter(segment => KEY_SEGMENT_IDS.has(segment.id)).map((segment) => {
+    if (segment.id === 'turn') return palette.warning(segment.label)
+    if (segment.id === 'context') return palette.link(segment.label)
+    if (segment.id === 'todo') return palette.success(segment.label)
+    return palette.dim(segment.label)
+  })
   const drawn = middleFacts(facts, rest.length - facts.length, width - visibleWidth(model) - reserved)
-  const left = palette.dim([model, ...drawn].filter(token => token !== '').join(SEPARATOR))
+  const left = [model === '' ? '' : palette.accent(model), ...drawn]
+    .filter(token => token !== '').join(palette.dim(SEPARATOR))
   if (hint === '') return fitLine(left, width)
   const padding = ' '.repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(hint)))
-  return fitLine(`${left}${padding}${palette.dim(hint)}`, width)
+  return fitLine(`${left}${padding}${palette.link(hint)}`, width)
 }
 
 /**
