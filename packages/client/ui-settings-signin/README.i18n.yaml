@@ -1,6 +1,58 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/client/ui-settings-signin/README.md
-README.md: 1ba5acf5dd01e6c33be66a81b99b758e0b3cfa27
-README.zh.md: 810991ad33c5f21337b0b3ba27099dce2ad3d76e
+/:
+  en: ee51bb627ea2df94
+  zh: 19f0aa1395a35b87
+/deepseek-ai-dsh-client-ui-settings-signin:
+  en: 4f1b6d26cbb270c5
+  zh: 96e08ddb6fae1fac
+/deepseek-ai-dsh-client-ui-settings-signin/summary:
+  en: e9d356f00425002f
+  zh: 2e22748e4ef996e3
+/deepseek-ai-dsh-client-ui-settings-signin/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-client-ui-settings-signin/use-this-package:
+  en: 77b509582551c89c
+  zh: e2874ae832e36755
+/deepseek-ai-dsh-client-ui-settings-signin/use-this-package/signing-in:
+  en: b1be957aa0b3c3b9
+  zh: f0cbafdf1f6d5896
+/deepseek-ai-dsh-client-ui-settings-signin/use-this-package/signing-out:
+  en: f2d92240011a49d8
+  zh: aa34a2be6872d4e2
+/deepseek-ai-dsh-client-ui-settings-signin/use-this-package/what-each-state-means:
+  en: a8ee68c1e0e97401
+  zh: dca13a4d18c56abf
+/deepseek-ai-dsh-client-ui-settings-signin/understand-the-implementation:
+  en: fcb51e9002d358a7
+  zh: 8d261ce2f2c226cd
+/deepseek-ai-dsh-client-ui-settings-signin/understand-the-implementation/two-seats-one-snapshot:
+  en: 921738ee1b236612
+  zh: 288f70d77d665e7d
+/deepseek-ai-dsh-client-ui-settings-signin/understand-the-implementation/the-flow-directory:
+  en: ef803477428cb51c
+  zh: 3dee085879e85730
+/deepseek-ai-dsh-client-ui-settings-signin/understand-the-implementation/one-attempt:
+  en: 11c08d0200b12fe6
+  zh: 9fa04d52eeacd64d
+/deepseek-ai-dsh-client-ui-settings-signin/understand-the-implementation/source-map:
+  en: e66c4066dfeb2b51
+  zh: 07354b706395b205
+/deepseek-ai-dsh-client-ui-settings-signin/further-exploration:
+  en: 967a9bf7cd5ee060
+  zh: c4edffebd5f42013
+/deepseek-ai-dsh-client-ui-settings-signin/model-experience:
+  en: 27cc8f1328942963
+  zh: 8acad22456342e6f
+/deepseek-ai-dsh-client-ui-settings-signin/model-experience/kv-cache-effect:
+  en: ca75c51c89c2c9b0
+  zh: f57cc48a1b5cbfa9
+/deepseek-ai-dsh-client-ui-settings-signin/known-limitations-and-deferred-work:
+  en: 3f27e889dc18cb93
+  zh: 58453ca95b53d687
+/deepseek-ai-dsh-client-ui-settings-signin/known-limitations-and-deferred-work/dev-note:
+  en: ca13f6e093b87509
+  zh: bf32590bee2efaf5

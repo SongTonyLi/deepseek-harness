@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-16-tui-subscription-sign-in-browser-handoff.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-16-tui-subscription-sign-in-browser-handoff.md
-2026-09-16-tui-subscription-sign-in-browser-handoff.md: cc2c18804e1004e729c78bd8e83d6052cee1795c
-2026-09-16-tui-subscription-sign-in-browser-handoff.zh.md: a9ca7de3b19ffa50c6a7f48a13feb4360f000f4b
+/agent-note-tui-subscription-sign-in-browser-handoff:
+  en: e390f736370dfcb7
+  zh: 226cb198005a7e10
+/agent-note-tui-subscription-sign-in-browser-handoff/problem:
+  en: 844e3e6289e77d81
+  zh: a864d44a3d65e89f
+/agent-note-tui-subscription-sign-in-browser-handoff/decision:
+  en: c1d46a7961d5110e
+  zh: 4bd4682489d99be7
+/agent-note-tui-subscription-sign-in-browser-handoff/alternatives-considered:
+  en: 74714dd5dbe3f874
+  zh: b1ec151e4966da6b
+/agent-note-tui-subscription-sign-in-browser-handoff/consequences:
+  en: 92191277ba1ccd9b
+  zh: a3594ac2043e4422
+/agent-note-tui-subscription-sign-in-browser-handoff/related-decisions:
+  en: 2fed4cbba9eaf19e
+  zh: d5148c1401c335ff

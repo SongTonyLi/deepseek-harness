@@ -1,6 +1,43 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-20-tui-performance-vs-web.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-20-tui-performance-vs-web.md
-2026-09-20-tui-performance-vs-web.md: f5acdadea27587c7bf24ecd59f7296c54ddbe26b
-2026-09-20-tui-performance-vs-web.zh.md: 354a0c65a3f1393286a4eccb9eda545a2ee48117
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations:
+  en: c861fbe6aeb21bcf
+  zh: e513ee55627f8a5e
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/problem:
+  en: 1244de1f09fe7fba
+  zh: 2cdaaaa7e9cc04db
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/proposal:
+  en: d82a70d4e754b258
+  zh: 6fc78e2aae447719
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/proposal/shipped-capabilities-stay:
+  en: 47ea422cc70183ed
+  zh: 492dd5150d851e2a
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/proposal/endpoints-the-complaint-mixes:
+  en: 6fd6e8b304d48e40
+  zh: fb1b7bcfda44aa5a
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/proposal/what-source-already-shows:
+  en: 452da822de195088
+  zh: 7cf47920938e1905
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/proposal/measurement-cards:
+  en: 11f872e15bfd2dfd
+  zh: ea3d22c3ec04bf74
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/proposal/ranked-interventions:
+  en: 0920dece9bffe455
+  zh: 1c8c310f43def253
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/proposal/implementation-layers:
+  en: 6aafca402fc6ca7e
+  zh: e4563d87de10e776
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/alternatives-considered:
+  en: 856a662dc099658c
+  zh: c067874c9cdf4135
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/acceptance-criteria:
+  en: 54434753852bf5ac
+  zh: a7555710d541394f
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/risks:
+  en: fd9f7b3daac17fff
+  zh: 434a0e4b7d9b2bb1
+/agent-note-measure-tui-endpoints-separately-before-copying-web-optimizations/related-decisions:
+  en: 9f1e91f398752e45
+  zh: 1339588c0b8900dd

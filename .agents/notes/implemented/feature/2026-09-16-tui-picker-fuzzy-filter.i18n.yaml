@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-16-tui-picker-fuzzy-filter.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-16-tui-picker-fuzzy-filter.md
-2026-09-16-tui-picker-fuzzy-filter.md: dbc75f5c8d37f56a3e71a0ba298404a8ff281d8c
-2026-09-16-tui-picker-fuzzy-filter.zh.md: 229c7cf9e7a4f799f3091408465b55e570712ccf
+/agent-note-searchable-terminal-pickers:
+  en: 87f60810850bc016
+  zh: 00ef7a43dc55fc51
+/agent-note-searchable-terminal-pickers/problem:
+  en: 06d49e6102f27cad
+  zh: f9d77ef32c7ba791
+/agent-note-searchable-terminal-pickers/decision:
+  en: 5625d302e6299177
+  zh: 35830498cf414b71
+/agent-note-searchable-terminal-pickers/alternatives-considered:
+  en: 8060df3354f3aaf9
+  zh: e4d71f434a9f576a
+/agent-note-searchable-terminal-pickers/consequences:
+  en: 9938e19e7a8f8cd9
+  zh: 8a9185ffd8b093c7
+/agent-note-searchable-terminal-pickers/related-decisions:
+  en: 44d6a828237f0160
+  zh: 58196499759bec25

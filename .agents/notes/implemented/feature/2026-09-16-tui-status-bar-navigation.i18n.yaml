@@ -1,6 +1,25 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-16-tui-status-bar-navigation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-16-tui-status-bar-navigation.md
-2026-09-16-tui-status-bar-navigation.md: 266901735044d8026ec1ef66919693ca83a6238e
-2026-09-16-tui-status-bar-navigation.zh.md: ef2c71f67991fd63a6673ccf09550da8fa1df677
+/agent-note-navigable-terminal-status-bar:
+  en: ce8381dc79ec109b
+  zh: df866712f3be5f16
+/agent-note-navigable-terminal-status-bar/problem:
+  en: 73d0c3d758e7ca23
+  zh: d286e976bf1713b9
+/agent-note-navigable-terminal-status-bar/decision:
+  en: a7c8b83c651b5e1f
+  zh: b2f67a7d46bfacc2
+/agent-note-navigable-terminal-status-bar/key-bindings-over-the-pi-tui-editor:
+  en: 9d7ef650f0f245d6
+  zh: a9aea1737a6a4507
+/agent-note-navigable-terminal-status-bar/alternatives-considered:
+  en: b956f203f6d75729
+  zh: 244f7e441a456d4c
+/agent-note-navigable-terminal-status-bar/consequences:
+  en: d096815e3a0cdca7
+  zh: dd618f34e96ee147
+/agent-note-navigable-terminal-status-bar/related-decisions:
+  en: 436017309d6e842f
+  zh: c5949a7c184a54c4

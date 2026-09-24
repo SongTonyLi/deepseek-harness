@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-14-browser-provider-sign-in.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-14-browser-provider-sign-in.md
-2026-09-14-browser-provider-sign-in.md: 6adcd23f48ec3fcbd49a142e952b5882dfe5d7ea
-2026-09-14-browser-provider-sign-in.zh.md: ab280c7124bea8e1a1a25fb85a6168346eba90e5
+/agent-note-browser-provider-sign-in:
+  en: dbe2990cd9520fbc
+  zh: 26512e3680ac6290
+/agent-note-browser-provider-sign-in/problem:
+  en: 6f6dbc55f8952cf9
+  zh: 9b84705776a740e7
+/agent-note-browser-provider-sign-in/decision:
+  en: 3112999ab6a1976b
+  zh: c6c32e1b7df74022
+/agent-note-browser-provider-sign-in/alternatives-considered:
+  en: e553a6668c6c66a3
+  zh: 83ee3682dfea359f
+/agent-note-browser-provider-sign-in/consequences:
+  en: e1bdc3bf019860e6
+  zh: 7fcd7c0da6c1ae0f
+/agent-note-browser-provider-sign-in/testing:
+  en: a2a76e4835c6815d
+  zh: eca506d89944ae02

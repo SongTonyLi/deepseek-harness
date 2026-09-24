@@ -1,6 +1,34 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-18-cursor-subscription-signin-and-adapter.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-18-cursor-subscription-signin-and-adapter.md
-2026-09-18-cursor-subscription-signin-and-adapter.md: 4e815b4d3ef3d3a95fdb59f63e5be6c6c487e54f
-2026-09-18-cursor-subscription-signin-and-adapter.zh.md: 69bf35da14a07d674ce0556f6af24d2b11e3023f
+/agent-note-cursor-subscription-sign-in-and-native-adapter:
+  en: d4cbc58e4632c509
+  zh: c06822017d2222e1
+/agent-note-cursor-subscription-sign-in-and-native-adapter/problem:
+  en: 705d8964f41e2e22
+  zh: c0ca51b37c0a465d
+/agent-note-cursor-subscription-sign-in-and-native-adapter/decision:
+  en: ad7ef57060f6ddc0
+  zh: e1f7e2aaea68df64
+/agent-note-cursor-subscription-sign-in-and-native-adapter/decision/package-and-composition:
+  en: e0e201f7aaa0686d
+  zh: d3478f5ba939cd63
+/agent-note-cursor-subscription-sign-in-and-native-adapter/decision/authentication:
+  en: a44db508db2eff0f
+  zh: 3dbfec0ba4238a4f
+/agent-note-cursor-subscription-sign-in-and-native-adapter/decision/streaming:
+  en: fee7fcc14f6ec94a
+  zh: 799faddd21802627
+/agent-note-cursor-subscription-sign-in-and-native-adapter/decision/web-and-tui-surfaces:
+  en: 87d9e8995ac8c3f0
+  zh: 9bd782457eb9ee70
+/agent-note-cursor-subscription-sign-in-and-native-adapter/alternatives-considered:
+  en: 99626cd3e65d801b
+  zh: 5321c761909900b7
+/agent-note-cursor-subscription-sign-in-and-native-adapter/consequences:
+  en: 546d302b0b3f556a
+  zh: 9dc58d43a80ef76c
+/agent-note-cursor-subscription-sign-in-and-native-adapter/testing:
+  en: 583b9c9dcc585775
+  zh: b1c77e9543cecbe5

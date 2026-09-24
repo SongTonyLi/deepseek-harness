@@ -1,6 +1,85 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/bundle/tui-app/README.md
-README.md: 43fe458849dbafab87e261e836c8f2c517180939
-README.zh.md: be7f1011249aa0d9dfbb853644f8d23ebf79fc8e
+/:
+  en: 704e0d187eae4dfa
+  zh: 7290e4800a3e1989
+/deepseek-ai-dsh-tui-app:
+  en: 6a23ca8f9a47405e
+  zh: b64330cf6abe3c84
+/deepseek-ai-dsh-tui-app/summary:
+  en: 03d924c8005c8e2f
+  zh: 5000399d77594673
+/deepseek-ai-dsh-tui-app/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-tui-app/use-this-package:
+  en: 192bbbb187278f91
+  zh: 1f7e5632c15bdcf7
+/deepseek-ai-dsh-tui-app/use-this-package/starting-and-resuming:
+  en: 847fde63152cd543
+  zh: bcabc58850804e14
+/deepseek-ai-dsh-tui-app/use-this-package/the-screen:
+  en: cb7406bf1aaf5cb0
+  zh: c4f3ca2e96b0b2df
+/deepseek-ai-dsh-tui-app/use-this-package/keys-and-commands:
+  en: ca106ed5833cf760
+  zh: 0b22e15b3ee1d40a
+/deepseek-ai-dsh-tui-app/use-this-package/subscription-sign-in:
+  en: 7c1b0e685a3a9415
+  zh: 49f3bdc3e99d6259
+/deepseek-ai-dsh-tui-app/use-this-package/prompts-from-the-agent:
+  en: 2b7c7e8eb2b0281b
+  zh: 1037fc8908901ccc
+/deepseek-ai-dsh-tui-app/use-this-package/references-and-attachments:
+  en: 23ba736da2686f52
+  zh: d30ce253dd934750
+/deepseek-ai-dsh-tui-app/use-this-package/configuration:
+  en: fd5fdfa656307026
+  zh: f9ef829fb17fcd3a
+/deepseek-ai-dsh-tui-app/understand-the-implementation:
+  en: f124d406565fef39
+  zh: 90344b5eec319cad
+/deepseek-ai-dsh-tui-app/understand-the-implementation/run-flow:
+  en: 62a36804976ea19a
+  zh: 4feac1647d3ffe39
+/deepseek-ai-dsh-tui-app/understand-the-implementation/rendering-model:
+  en: 4fca4aa5d993ccbc
+  zh: 8740f83134db5207
+/deepseek-ai-dsh-tui-app/understand-the-implementation/patch-surface-over-base:
+  en: 142f04bf29e981dd
+  zh: a1689297b06c9ca6
+/deepseek-ai-dsh-tui-app/understand-the-implementation/source-map:
+  en: d2950e2997273b53
+  zh: dae4d13ea8760105
+/deepseek-ai-dsh-tui-app/understand-the-implementation/invariant-ownership:
+  en: 0ddf6de8928026d5
+  zh: 24feedcbb9e9d676
+/deepseek-ai-dsh-tui-app/further-exploration:
+  en: 7ce9570c2baed306
+  zh: 2a497e65595de06f
+/deepseek-ai-dsh-tui-app/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-tui-app/model-experience/user-typed-shell-command:
+  en: 8ed1c6a4cde8c048
+  zh: 14e8f2e040371d5c
+/deepseek-ai-dsh-tui-app/model-experience/user-typed-shell-command/what-the-model-sees:
+  en: 41201dc3953042ae
+  zh: d4f4a30e29af4b76
+/deepseek-ai-dsh-tui-app/model-experience/user-typed-shell-command/what-the-model-sees/user-shell-notice-prefix:
+  en: 4959ff6e19a7e118
+  zh: 4dcd29640b5ce92c
+/deepseek-ai-dsh-tui-app/model-experience/user-typed-shell-command/token-effect:
+  en: 39046ecd02066b95
+  zh: 0bb6f584ac7950bd
+/deepseek-ai-dsh-tui-app/model-experience/user-typed-shell-command/kv-cache-effect:
+  en: 5b83189b640899dd
+  zh: 232c1ef2f192bd4c
+/deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work:
+  en: 3cd90cc557ebd7f6
+  zh: a54bb26156f80a7c
+/deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work/dev-note:
+  en: 5629c6159cec997f
+  zh: 17f2d7e1f96da7f1

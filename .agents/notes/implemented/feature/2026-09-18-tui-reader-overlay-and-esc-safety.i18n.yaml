@@ -1,6 +1,25 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-18-tui-reader-overlay-and-esc-safety.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-18-tui-reader-overlay-and-esc-safety.md
-2026-09-18-tui-reader-overlay-and-esc-safety.md: 29783681d65ac71cf6bb6da6f0a1b73e5bd16f75
-2026-09-18-tui-reader-overlay-and-esc-safety.zh.md: 65a688d608d0f79ff94e9b30fb99e962f4d0ef80
+/agent-note-terminal-reader-overlay-esc-safety-and-the-editor-as-the-hub:
+  en: 97e6c43abbef9b87
+  zh: fa73251ca427bf29
+/agent-note-terminal-reader-overlay-esc-safety-and-the-editor-as-the-hub/problem:
+  en: a0f4071d73ff1b04
+  zh: fad0936a04b72fcc
+/agent-note-terminal-reader-overlay-esc-safety-and-the-editor-as-the-hub/decision:
+  en: f0e512bb0abaec9a
+  zh: 6dde43d3cb39ab99
+/agent-note-terminal-reader-overlay-esc-safety-and-the-editor-as-the-hub/why-a-surface-composited-into-the-viewport-is-anchored-at-its-bottom:
+  en: 92eef226a5251636
+  zh: 4257471d1cecd696
+/agent-note-terminal-reader-overlay-esc-safety-and-the-editor-as-the-hub/alternatives-considered:
+  en: 978b99baea528ca5
+  zh: 86d9ff0c4e7e10df
+/agent-note-terminal-reader-overlay-esc-safety-and-the-editor-as-the-hub/consequences:
+  en: 11e75eb051238ac8
+  zh: 23557e6a19b47bad
+/agent-note-terminal-reader-overlay-esc-safety-and-the-editor-as-the-hub/related-decisions:
+  en: 76dc7fb629b8b1f0
+  zh: d2b1e4700511faff

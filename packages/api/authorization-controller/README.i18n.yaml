@@ -1,6 +1,64 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/api/authorization-controller/README.md
-README.md: 6020b15cee27504168035a1c35876fe41be09771
-README.zh.md: 54ef3a48613ca189e6809f83303fdc946dfd7fd1
+/:
+  en: 5d0c0a83f694cdcd
+  zh: a291388c3ad4073a
+/deepseek-ai-dsh-api-authorization-controller:
+  en: 061b23e2e1f61212
+  zh: 117f67c622ba0488
+/deepseek-ai-dsh-api-authorization-controller/summary:
+  en: 37e4d7e5a3cf7d0a
+  zh: 93ec21d83f917bed
+/deepseek-ai-dsh-api-authorization-controller/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-api-authorization-controller/use-this-package:
+  en: 5dba86f07bf39ea8
+  zh: ac8340dea063972c
+/deepseek-ai-dsh-api-authorization-controller/use-this-package/when-to-choose-it:
+  en: 41bf23855218e3eb
+  zh: 4a9fb4f02c174c67
+/deepseek-ai-dsh-api-authorization-controller/use-this-package/minimal-mount:
+  en: d9f285d8076a1a64
+  zh: d6a62d4da93bcc77
+/deepseek-ai-dsh-api-authorization-controller/use-this-package/listing-what-can-be-signed-into:
+  en: e1abaa9c5084aac3
+  zh: 46b9508dcf1afec7
+/deepseek-ai-dsh-api-authorization-controller/use-this-package/running-one-attempt:
+  en: c39be368e5f3e00c
+  zh: 2b29760512f871c0
+/deepseek-ai-dsh-api-authorization-controller/use-this-package/signing-out:
+  en: 1713b2898b39dc68
+  zh: 21053a0e01aedb34
+/deepseek-ai-dsh-api-authorization-controller/use-this-package/failures-and-recovery:
+  en: 796cb93120593547
+  zh: 95850122e705a706
+/deepseek-ai-dsh-api-authorization-controller/understand-the-implementation:
+  en: ee203619207a0af1
+  zh: 760ee968413dbc5b
+/deepseek-ai-dsh-api-authorization-controller/understand-the-implementation/the-stream-is-the-attempt:
+  en: ef404cb49f968754
+  zh: 624134e7efdd19c7
+/deepseek-ai-dsh-api-authorization-controller/understand-the-implementation/two-kinds-of-withdrawal:
+  en: 73ab437c2de391ee
+  zh: 2352083df0d05834
+/deepseek-ai-dsh-api-authorization-controller/understand-the-implementation/source-map:
+  en: 61c8d859245ed4cf
+  zh: 8b5930a726006c24
+/deepseek-ai-dsh-api-authorization-controller/further-exploration:
+  en: 1e8606d81cfe24e1
+  zh: 8b4faef02cbf30a9
+/deepseek-ai-dsh-api-authorization-controller/model-experience:
+  en: 1ae29a62f0d7726e
+  zh: 2b45753d474c86db
+/deepseek-ai-dsh-api-authorization-controller/model-experience/kv-cache-effect:
+  en: 32f8c509a4e78e22
+  zh: d298c71f772ebeab
+/deepseek-ai-dsh-api-authorization-controller/known-limitations-and-deferred-work:
+  en: d43c989e16f0b41e
+  zh: a7f833530d1cff47
+/deepseek-ai-dsh-api-authorization-controller/known-limitations-and-deferred-work/dev-note:
+  en: 8e2c886bcc437504
+  zh: 7338bba67f162ef9

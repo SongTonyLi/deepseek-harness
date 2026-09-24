@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-15-tui-login-and-effort-cycle.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-15-tui-login-and-effort-cycle.md
-2026-09-15-tui-login-and-effort-cycle.md: da93090236a546ff747f7f6b21c03d2780bc6477
-2026-09-15-tui-login-and-effort-cycle.zh.md: f2e554ac26aea10b05fc0e2da1835425d01f1922
+/agent-note-tui-login-and-shift-tab-effort-cycling:
+  en: 8a8071b3b784a60f
+  zh: a40734d75d44b70a
+/agent-note-tui-login-and-shift-tab-effort-cycling/problem:
+  en: 20c43a1c05ac22ee
+  zh: ca89e67a706f7f6f
+/agent-note-tui-login-and-shift-tab-effort-cycling/decision:
+  en: 008c173e005aefd7
+  zh: c49cf53e6b0e4aca
+/agent-note-tui-login-and-shift-tab-effort-cycling/alternatives-considered:
+  en: 71d768edbc8d74fc
+  zh: b33077adcf3408dd
+/agent-note-tui-login-and-shift-tab-effort-cycling/consequences:
+  en: 1e40243bbbe79fbe
+  zh: db70f61b1295bf11
+/agent-note-tui-login-and-shift-tab-effort-cycling/related-decisions:
+  en: 8ce9fd75fe4c1a37
+  zh: f4eea1d9ecf8c879
