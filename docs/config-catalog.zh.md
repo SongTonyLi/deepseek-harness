@@ -4008,8 +4008,10 @@ export interface Config {
    */
   streamFadeStepMs: number
   /**
-   * How many `streamFadeStepMs` frames a backlog of streamed reasoning, reply
-   * text, or tool arguments takes to reach the screen. The live stream is
+   * How many `streamFadeStepMs` frames a backlog of streamed reply text or
+   * tool arguments takes to reach the screen. Thinking stays on that queue
+   * only while its block is open; a finished thinking block, or the first
+   * reply or tool-call delta after it, is drawn at once. The live stream is
    * queued as it arrives and never waits on a redraw; each frame draws a
    * share of the queue proportional to its length, so a network burst
    * spreads over several frames instead of landing at once, and drawn text

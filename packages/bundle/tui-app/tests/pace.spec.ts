@@ -91,6 +91,28 @@ describe('StreamPacer', () => {
     expect(pacer.frame()).toBe(false)
   })
 
+  it('releases one channel immediately and keeps the others queued', () => {
+    const { pacer, released, push } = paced(8)
+    push('reasoning', 'why this')
+    push('text', 'because')
+    expect(pacer.flushChannel('reasoning')).toBe(true)
+    expect(released).toEqual([['reasoning', 'why this']])
+    expect(pacer.pending()).toBe(true)
+    expect(pacer.flushChannel('missing')).toBe(false)
+    pacer.flush()
+    expect(released).toEqual([['reasoning', 'why this'], ['text', 'because']])
+    expect(pacer.pending()).toBe(false)
+  })
+
+  it('clears the queue when the flushed channel is all that was queued', () => {
+    const { pacer, released, push } = paced(8)
+    push('reasoning', 'done')
+    expect(pacer.flushChannel('reasoning')).toBe(true)
+    expect(released).toEqual([['reasoning', 'done']])
+    expect(pacer.pending()).toBe(false)
+    expect(pacer.frame()).toBe(false)
+  })
+
   it('drops everything on clear without releasing it', () => {
     const { pacer, released, push } = paced(8)
     push('text', 'gone')

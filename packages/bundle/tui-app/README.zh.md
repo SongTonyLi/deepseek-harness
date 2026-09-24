@@ -228,7 +228,7 @@ follow-ups 面板持有键盘时：
 | `liveRefreshMs` | `1000` | 重绘周期：推进 `turn` 分段与面板中的已用时间，并重新读取已过期的子 agent 列表 |
 | `streamFadeSteps` | `24` | 一次淡入或浮出持续多少拍：回复文字淡入，推理与工具卡片浮出，时长为 `streamFadeSteps × streamFadeStepMs` |
 | `streamFadeStepMs` | `16` | 一帧的时长：淡入或浮出的一拍、仍在变化时的重绘周期，也是逐帧绘制流式文字的周期；总时长为 `streamFadeSteps × streamFadeStepMs` |
-| `streamPaceFrames` | `8` | 积压的流式推理、回复文字或工具参数要经过多少帧才全部上屏；`0` 与 `reducedMotion` 一样，收到即绘制 |
+| `streamPaceFrames` | `8` | 积压的流式回复文字或工具参数要经过多少帧才全部上屏。思考块结束时，或回复文字或工具调用开始时，仍在队列中的思考立即画出；`0` 与 `reducedMotion` 一样，收到即绘制 |
 | `reducedMotion` | `false` | 以稳定颜色绘制流式文本、流式推理、工具卡片与应用自身的边框装饰，不做淡入、不做抬亮，也不重复重绘 |
 | `openBrowser` | `true` | 把被标记的授权页面交给本地默认浏览器 |
 
@@ -305,8 +305,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/editor.spec.ts`](tests/editor.spec.ts) | 对照 pi-tui 编辑器行为验证终端光标、`Shift+Left` / `Shift+Right` 词导航，以及 `!` / `!!` 草稿着色 |
 | [`tests/frame.spec.ts`](tests/frame.spec.ts) | 边框线、徽标、正文行，以及某个宽度容纳得下的按键提示 |
 | [`tests/motion.spec.ts`](tests/motion.spec.ts) | 动效时钟的各个级别、它对重绘的要求，以及每一级所绘的抬亮 |
-| [`tests/pace.spec.ts`](tests/pace.spec.ts) | 节拍器的每帧份额、按字素切分、到达顺序、flush 与 clear |
-| [`tests/stream-pace.spec.ts`](tests/stream-pace.spec.ts) | 按流顺序分批绘制的推理、回复文字与工具参数，流结束时与已记录事件前的 flush，以及 reducedMotion |
+| [`tests/pace.spec.ts`](tests/pace.spec.ts) | 节拍器的每帧份额、按字素切分、到达顺序、flush、按通道 flush 与 clear |
+| [`tests/stream-pace.spec.ts`](tests/stream-pace.spec.ts) | 按流顺序分批绘制的回复文字与工具参数，思考块结束时画出思考，流结束时与已记录事件前的 flush，以及 reducedMotion |
 | [`tests/toast.spec.ts`](tests/toast.spec.ts) | 临时提示行的方框、其保持、其淡出与其提前结算 |
 | [`tests/reader.spec.ts`](tests/reader.spec.ts) | 阅读器的几何布局、其状态机、其过滤，以及它返回的各行 |
 | [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | 阅读器面板：其按键映射、它铺满的屏幕、其重新锚定与其退出 |

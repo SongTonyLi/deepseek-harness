@@ -3705,6 +3705,14 @@ export class TuiApp {
   }
 
   /**
+   * Draw thinking that is still queued. The pacer would otherwise keep
+   * releasing it after the model has moved on to reply text or a tool call.
+   */
+  private finishReasoningPace(): void {
+    if (this.pacer?.flushChannel('reasoning') === true) this.tui.requestRender()
+  }
+
+  /**
    * Take one visible text delta: the block draws it and the tail of that same
    * block ages it. The tail is created with the first delta of a message, so
    * a block rebuilt from history or committed from the log never carries one.
@@ -3996,23 +4004,26 @@ export class TuiApp {
         switch (chunk.type) {
           case 'text-delta':
             if (chunk.text !== '') {
+              this.finishReasoningPace()
+              this.setStreamActivity('writing')
               this.pace('text', chunk.text, (text) => {
                 this.appendStreamedText(text)
-                this.setStreamActivity('writing')
               })
               this.noteStreamedChars(chunk.text.length)
             }
             break
           case 'reasoning-delta':
             if (chunk.text !== '') {
+              this.setStreamActivity('thinking')
               this.pace('reasoning', chunk.text, (text) => {
                 this.appendStreamedReasoning(text)
-                this.setStreamActivity('thinking')
               })
               this.noteStreamedChars(chunk.text.length)
             }
             break
           case 'tool-call-delta':
+            this.finishReasoningPace()
+            this.noteStreamedToolCall(chunk)
             this.pace(`tool:${chunk.id}:${chunk.name ?? ''}`, chunk.argumentsDelta, (text) => {
               this.onToolCallDelta({ ...chunk, argumentsDelta: text })
             })
@@ -4022,7 +4033,19 @@ export class TuiApp {
             this.applyLiveUsage(chunk.usage)
             break
           case 'block-start':
+            if (chunk.blockType === 'text') {
+              this.finishReasoningPace()
+              this.setStreamActivity('writing')
+            } else if (chunk.blockType === 'tool-call') {
+              this.finishReasoningPace()
+              if (!isCallingActivity(this.loaderActivity)) this.setLoaderActivity(callingActivity(undefined))
+            } else if (chunk.blockType !== 'reasoning') {
+              this.finishReasoningPace()
+            }
+            break
           case 'block-end':
+            if (chunk.block.type === 'reasoning') this.finishReasoningPace()
+            break
           case 'finish':
             break
           /* v8 ignore next -- closed-union exhaustiveness guard */
@@ -4315,21 +4338,41 @@ export class TuiApp {
   }
 
   /**
-   * Mount or refresh a tool card from a stream delta: the name as soon as
-   * the model sends one, then the presenter headline once the arguments
-   * parse as JSON.
+   * Label the spinner for a tool-call delta before its card is paced.
+   * A known name becomes `calling <name>` and is remembered until the call
+   * settles; a delta that has not named a tool yet says `calling`, and does
+   * not replace a label that already names one.
    * @param chunk - one `tool-call-delta` of the live assistant stream.
    */
-  private onToolCallDelta(chunk: Extract<StreamChunk, { type: 'tool-call-delta' }>): void {
-    const name = chunk.name === ''
-      ? undefined
-      : (chunk.name ?? this.toolBlocks.get(chunk.id)?.name)
+  private noteStreamedToolCall(chunk: Extract<StreamChunk, { type: 'tool-call-delta' }>): void {
+    const name = this.streamedToolName(chunk)
     if (name !== undefined) {
       if (chunk.id !== '') this.pendingToolNames.set(chunk.id, name)
       this.setLoaderActivity(callingActivity(name))
     } else if (!isCallingActivity(this.loaderActivity)) {
       this.setLoaderActivity(callingActivity(undefined))
     }
+  }
+
+  /**
+   * The tool name a live delta carries, or the name already drawn for that call.
+   * @param chunk - one `tool-call-delta` of the live assistant stream.
+   * @returns the name, or undefined while the model has not sent one.
+   */
+  private streamedToolName(chunk: Extract<StreamChunk, { type: 'tool-call-delta' }>): string | undefined {
+    return chunk.name === ''
+      ? undefined
+      : (chunk.name ?? this.toolBlocks.get(chunk.id)?.name)
+  }
+
+  /**
+   * Mount or refresh a tool card from a stream delta: the name as soon as
+   * the model sends one, then the presenter headline once the arguments
+   * parse as JSON.
+   * @param chunk - one `tool-call-delta` of the live assistant stream.
+   */
+  private onToolCallDelta(chunk: Extract<StreamChunk, { type: 'tool-call-delta' }>): void {
+    const name = this.streamedToolName(chunk)
     if (chunk.id === '') return
     const argumentsJson = (this.toolStreamArgs.get(chunk.id) ?? '') + chunk.argumentsDelta
     this.toolStreamArgs.set(chunk.id, argumentsJson)
