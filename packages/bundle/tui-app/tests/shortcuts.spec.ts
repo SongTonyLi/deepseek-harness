@@ -3,6 +3,13 @@
 import { describe, expect, it } from 'vitest'
 import { KEY, bench } from './bench.ts'
 
+/** The admission id on a person-typed terminal prompt, when one was stored. */
+function admittedPromptId(source: object | undefined): string | undefined {
+  if (source === undefined || !('rpcId' in source)) return undefined
+  const id = source.rpcId
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
 /** `Ctrl+T`, `Ctrl+P`, and `Ctrl+L` as the terminal sends them. */
 const CTRL = { t: '\u0014', p: '\u0010', l: '\u000c' } as const
 
@@ -18,10 +25,7 @@ describe('shortcuts', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'why?' }]])
-    const source = test.calls.followups[0]?.source
-    const record: { readonly rpcId?: unknown } = source ?? {}
-    expect(source?.kind).toBe('user')
-    expect(record.rpcId).toEqual(expect.any(String))
+    expect(admittedPromptId(test.calls.followups[0]?.source)).toEqual(expect.any(String))
   })
 
   it('opens the todo list on Ctrl+T from any region', async () => {

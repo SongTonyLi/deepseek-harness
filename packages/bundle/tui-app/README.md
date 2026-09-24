@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in your terminal, with no browser and no server. Replies stream, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, and `/`-commands share the Web registry. Arrow keys walk the conversation through a docked inspector; `Ctrl+G` reads it full screen, turns side by side. Persisted sessions reopen through `/resume`, `/sessions`, or startup `--resume`; `/new`, `/clear`, and `/fork` create them, and `/export` writes ZIPs. It runs `dsh web`'s model, tools, and safety defaults, one session at a time. The shipped profile includes experimental Auto review; `/permission auto` selects it for the current session.
+`dsh-tui-app` is the terminal surface of dsh: `dsh tui` starts a multi-turn session in your terminal, with no browser and no server. Replies stream, tool calls become foldable cards, approvals and `ask_user_question` questions appear above the input, `@` completes paths and sessions, and `/`-commands share the Web registry. Arrow keys walk the conversation through a docked inspector; `Ctrl+G` reads it full screen, turns side by side. Persisted sessions reopen through `/resume`, `/sessions`, or startup `--resume`; `/new`, `/clear`, and `/fork` create them, and `/export` writes ZIPs. It runs `dsh web`'s model, tools, and safety defaults, one session at a time.
 
 ## Table of Contents
 
@@ -169,7 +169,7 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/help` | List the commands, and the keys each focus state answers; `?` on an empty input does the same |
 | `/model` | Pick the model (type to filter the rows), then its reasoning effort when the model declares more than one, for the next request; `/model <provider>/<model>` selects directly, `/model save` stores the current selection as the default, and `Ctrl+S` in the model list stores the highlighted model as the default for the next launch without closing the list |
 | `/effort [id]` | With no argument, open the current model's reasoning-effort picker for the next request, the same picker as editor `Shift+Tab`; an id selects directly and `/effort default` restores the provider default |
-| `/permission [preset]` | With no argument, open the permission-preset picker; a preset selects directly |
+| `/permission [preset]` | With no argument, open the permission-preset picker; a preset selects directly. The shipped profile includes experimental Auto review; `/permission auto` selects it for the current session |
 | `/resume` | Open the same persisted-session picker as `/sessions` and resume the selected previous session |
 | `/sessions` | Open the persisted-session picker and switch to the selected session |
 | `/new` | Start a new session |

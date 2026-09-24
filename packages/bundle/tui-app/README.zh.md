@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你的终端里启动一个多轮会话，没有浏览器、也没有服务器。回复流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/` 命令与 Web 共用注册表。方向键在停靠的检视面板中走遍对话记录；`Ctrl+G` 把它整屏读出、各轮次并排。持久化会话可通过 `/resume`、`/sessions` 或启动参数 `--resume` 恢复；`/new`、`/clear` 与 `/fork` 创建会话，`/export` 写出 ZIP。它运行 `dsh web` 的模型、工具与安全默认值，同一时间一个会话。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它。
+`dsh-tui-app` 是 dsh 的终端表层：`dsh tui` 在你的终端里启动一个多轮会话，没有浏览器、也没有服务器。回复流式显示，工具调用变成可折叠的卡片，审批与 `ask_user_question` 的问题出现在输入框上方，`@` 补全路径与会话，`/` 命令与 Web 共用注册表。方向键在停靠的检视面板中走遍对话记录；`Ctrl+G` 把它整屏读出、各轮次并排。持久化会话可通过 `/resume`、`/sessions` 或启动参数 `--resume` 恢复；`/new`、`/clear` 与 `/fork` 创建会话，`/export` 写出 ZIP。它运行 `dsh web` 的模型、工具与安全默认值，同一时间一个会话。
 
 ## 目录
 
@@ -169,7 +169,7 @@ follow-ups 面板持有键盘时：
 | `/help` | 列出命令，以及每个焦点状态所应答的按键；输入为空时按 `?` 效果相同 |
 | `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认，在模型列表中按 `Ctrl+S` 则把高亮的模型存为下次启动的默认而不关闭列表 |
 | `/effort [id]` | 不带参数时为下一次请求打开当前模型的推理强度选择器，与编辑器中的 `Shift+Tab` 打开的是同一个；id 直接选择，`/effort default` 恢复提供方默认值 |
-| `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择 |
+| `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它 |
 | `/resume` | 打开与 `/sessions` 相同的持久化会话选择器，并恢复选中的先前会话 |
 | `/sessions` | 打开持久化会话选择器，并切换到选中的会话 |
 | `/new` | 开始新会话 |
