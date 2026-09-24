@@ -169,7 +169,7 @@ follow-ups 面板持有键盘时：
 | `/help` | 列出命令，以及每个焦点状态所应答的按键；输入为空时按 `?` 效果相同 |
 | `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认，在模型列表中按 `Ctrl+S` 则把高亮的模型存为下次启动的默认而不关闭列表 |
 | `/effort [id]` | 不带参数时为下一次请求打开当前模型的推理强度选择器，与编辑器中的 `Shift+Tab` 打开的是同一个；id 直接选择，`/effort default` 恢复提供方默认值 |
-| `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择 |
+| `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它 |
 | `/resume` | 打开与 `/sessions` 相同的持久化会话选择器，并恢复选中的先前会话 |
 | `/sessions` | 打开持久化会话选择器，并切换到选中的会话 |
 | `/new` | 开始新会话 |

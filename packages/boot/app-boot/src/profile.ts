@@ -193,13 +193,14 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
     bundles: ['@deepseek-ai/dsh-sdk-minimal'],
   },
   tui: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app'],
+    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app', '@deepseek-ai/dsh-experimental-auto-review'],
   },
 }
 
 /** Installation-owned bundle tuples normalized to the shipped template. */
 const INSTALLATION_OWNED_PROFILE_TUPLES: Record<string, readonly string[]> = {
   headless: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless'],
+  tui: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app'],
 }
 
 /** The bundle list a `dsh plugin` init uses for a name with no shipped template. */
@@ -208,8 +209,9 @@ export const DEFAULT_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-bas
 /**
  * The bundles the dsh installation ships for a person to switch on: each a
  * runtime dependency of the installation that declares `dsh.bundle.patch`,
- * an `icon`, and `./locale/*.json` display metadata, selected by no shipped
- * template, and offered switched off by the plugin manager
+ * an `icon`, and `./locale/*.json` display metadata, and offered switched off
+ * by the plugin manager. The shipped TUI template selects Auto review; no
+ * other template does
  * ([rationale](../../../../.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md),
  * [admission](../../../../.agents/notes/implemented/architecture/2026-09-21-experimental-capabilities-as-optional-bundles.md)).
  */

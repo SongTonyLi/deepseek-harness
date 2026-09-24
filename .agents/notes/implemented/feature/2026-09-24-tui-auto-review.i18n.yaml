@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-24-tui-auto-review.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-24-tui-auto-review.md
+/agent-note-ship-auto-review-on-the-tui-profile:
+  en: 0ebc13dffdce820b
+  zh: 548695d7f738a4aa
+/agent-note-ship-auto-review-on-the-tui-profile/problem:
+  en: 621603771f3691da
+  zh: 18de5bd28d068ea8
+/agent-note-ship-auto-review-on-the-tui-profile/decision:
+  en: 5caa9834b68cddda
+  zh: 1b80f66145cfaec5
+/agent-note-ship-auto-review-on-the-tui-profile/alternatives-considered:
+  en: 1de41b08460981f3
+  zh: 0a0fc6552fa8a39c
+/agent-note-ship-auto-review-on-the-tui-profile/consequences:
+  en: b084d3e978c195fe
+  zh: 0afee64e029b5b3c
+/agent-note-ship-auto-review-on-the-tui-profile/related-decisions:
+  en: 2aedca3e2a02feac
+  zh: b6423b3c7e6af508

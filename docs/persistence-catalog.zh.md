@@ -7331,7 +7331,7 @@ SHA-256: `8fcb0b44a575e998665c053643d1ab04c82f39253ebd190ac0c975b78e40b543`
 
 SHA-256: `a41636c87362f664550b08d346b231cf57622c324bb272224c1829925cf9d880`
 
-来源：[`packages/bundle/tui-app/src/app.ts:42`](../packages/bundle/tui-app/src/app.ts)
+来源：[`packages/bundle/tui-app/src/app.ts:43`](../packages/bundle/tui-app/src/app.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|

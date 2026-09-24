@@ -14,6 +14,7 @@
  * @module @deepseek-ai/dsh-tui-app/app
  */
 
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import {
   Container,
@@ -585,6 +586,20 @@ function callingActivity(name: string | undefined): string {
  */
 function isCallingActivity(activity: string): boolean {
   return activity === 'calling' || activity.startsWith('calling ')
+}
+
+/**
+ * Source for a prompt the person typed in this terminal.
+ * A string `rpcId` is the admission mark Auto review treats as a human instruction.
+ * An edited draft keeps a non-user source; a user draft is admitted again.
+ * @param draft - the queue draft being revised, when this submission replaces one.
+ * @returns the source stored on the submitted user message.
+ */
+function terminalPromptSource(draft: UserMessage | undefined): UserMessage['source'] {
+  const preserved = draft?.source
+  if (preserved !== undefined && preserved.kind !== 'user') return preserved
+  const admitted = { kind: 'user' as const, rpcId: randomUUID() }
+  return admitted
 }
 
 /** The interactive terminal application; one instance per process. */
@@ -2952,7 +2967,7 @@ export class TuiApp {
     const retained = draft?.content.filter(block => block.type !== 'text') ?? []
     const message: UserMessage = createUserMessage({
       content: [...retained, ...attachments.map(attachment => attachment.block), { type: 'text', text }],
-      source: draft?.source ?? { kind: 'user' },
+      source: terminalPromptSource(draft),
     })
     if (agent.status !== 'running') {
       // An idle Agent takes the prompt at once, so it is drawn here and the

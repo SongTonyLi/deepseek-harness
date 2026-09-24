@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/experimental/auto-review/README.md
 /:
-  en: 4f245200f5345e3c
-  zh: 221e9996e8ce2963
+  en: 4ba7553052e868d6
+  zh: 84ef71a398b68599
 /deepseek-ai-dsh-experimental-auto-review:
   en: 566562e610f1b52b
   zh: 88796a19ab0b98b8
 /deepseek-ai-dsh-experimental-auto-review/summary:
-  en: 1012423ee9084823
-  zh: 7021aa4e0cd3adfc
+  en: a9deacccf0e79927
+  zh: 089704e9f48555f3
 /deepseek-ai-dsh-experimental-auto-review/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -57,8 +57,8 @@
   en: 8da1089dee147f94
   zh: 87361347bfd10c6c
 /deepseek-ai-dsh-experimental-auto-review/known-limitations-and-deferred-work:
-  en: 5682fe41fcc459ab
-  zh: fa15b23a21d18ff4
+  en: cf0c266006daf9a0
+  zh: a29542f770947bfd
 /deepseek-ai-dsh-experimental-auto-review/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98
