@@ -33,6 +33,8 @@ import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
 import type { DiffMark } from './diff.ts'
+import type { RowReveal } from './pace.ts'
+import { TailWrappedText } from './tail-wrap.ts'
 import { bandRow, boxDiffRows, markdownTheme, paintDiffRows, type CodeHighlighter, type Palette } from './style.ts'
 import { foldMarker, foldRows, paintCodeRows, SHELL_COMMAND_PREFIX, shellCommandBody, type CodeSpan, type SubagentRowFacts, type ToolCallText } from './transcript.ts'
 
@@ -644,7 +646,8 @@ export class AssistantBlock implements Component, AssistantSection {
   private appliedTail: string | undefined
   /** Last text handed to {@link AssistantBlock.prefixMarkdown}. */
   private appliedPrefix: string | undefined
-  private readonly reasoningText: Text
+  /** The reasoning rows; a growing block rewraps only its last paragraph. */
+  private readonly reasoningText: TailWrappedText
   private fade: FadeRender | undefined
   /** Width of the last render that drew a text tail; absent before the first one. */
   private fadeWidth: number | undefined
@@ -670,7 +673,7 @@ export class AssistantBlock implements Component, AssistantSection {
     const themeForMarkdown = markdownTheme(palette, this.fences)
     this.markdown = new Markdown('', 0, 0, themeForMarkdown)
     this.prefixMarkdown = new Markdown('', 0, 0, themeForMarkdown)
-    this.reasoningText = new Text('', 0, 0)
+    this.reasoningText = new TailWrappedText()
   }
 
   /**
@@ -954,6 +957,12 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private readonly drawn = new LastDrawn<ToolLayout>()
   /** Counts every call or result the card was given. */
   private revision = 0
+  /** How many of the card's rows are drawn while it unrolls; absent draws every row. */
+  private reveal: RowReveal | undefined
+  /** The card's full row count, the leading blank line excluded, at its last render. */
+  private rows = 0
+  /** Whether {@link rows} was measured after the last call, result, or fold change. */
+  private measured = false
   private toolName: string
   private call: ToolCallText
 
@@ -1015,6 +1024,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     this.toolName = name
     this.call = call
     this.revision += 1
+    this.measured = false
   }
 
   /**
@@ -1026,6 +1036,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   setSubagent(facts: SubagentRowFacts): void {
     this.subagent = facts
     this.revision += 1
+    this.measured = false
   }
 
   /**
@@ -1053,24 +1064,70 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    * right now, and so whether the frame differs from the one just built.
    */
   setRepaintFloor(floor: number): boolean {
+    // Rows unrolling below a line the renderer can no longer repaint would
+    // force a full redraw on every frame, so such a card draws them at once.
+    const reveal = this.reveal
+    if (reveal !== undefined && reveal.shown() < this.rows && floor > 1 + reveal.shown()) {
+      reveal.settle()
+      this.repaintFloor = Math.max(this.repaintFloor, floor)
+      return true
+    }
     if (floor <= this.repaintFloor) return false
     this.repaintFloor = floor
     return this.fade?.age() !== undefined || this.resultFade?.age() !== undefined
   }
 
   /**
-   * Attach the result rows and settle the status.
+   * Attach the result rows and settle the status. A diff result replaces the
+   * rows of a diff call.
    * @param lines - the result rows before preview truncation.
    * @param isError - whether the tool reported failure.
    * @param code - the span behind each row, for a result the card colours as code.
    * @param diff - which rows are diff additions or removals, for a result the card boxes as a diff.
    */
   setResult(lines: string[], isError: boolean, code?: (CodeSpan | undefined)[], diff?: (DiffMark | undefined)[]): void {
+    // The applied hunks say everything the call-time diff did, with file
+    // lines and context, so they take its place in the card.
+    if (diff !== undefined && this.call.diff !== undefined) this.call = { title: this.call.title, lines: [] }
     this.resultLines = lines
     this.resultCode = code
     this.resultDiff = diff
     this.status = isError ? 'error' : 'done'
     this.revision += 1
+    this.measured = false
+  }
+
+  /**
+   * Unroll the card's rows on the application's frame tick instead of drawing
+   * them all in one frame: now, and again whenever a call or a result makes
+   * the card grow.
+   * @param reveal - how many rows are drawn; the card draws that many of its
+   * rows after the leading blank line.
+   */
+  setReveal(reveal: RowReveal): void {
+    this.reveal = reveal
+    this.measured = false
+  }
+
+  /**
+   * Whether rows of this card are still hidden, or the card changed since its
+   * last render and may have gained rows.
+   * @returns true while the reveal still has a frame to draw.
+   */
+  revealing(): boolean {
+    return this.reveal !== undefined && (!this.measured || this.reveal.shown() < this.rows)
+  }
+
+  /**
+   * Draw one frame's share of the rows still hidden.
+   * @returns whether the reveal still has a frame to draw after this one.
+   */
+  revealFrame(): boolean {
+    if (this.reveal === undefined) return false
+    // A change the card has not rendered yet has no row count to reveal
+    // towards; the render that follows this frame measures it.
+    if (!this.measured) return true
+    return this.reveal.frame(this.rows)
   }
 
   /**
@@ -1086,6 +1143,8 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    * @param expanded - whether the full body is shown.
    */
   setExpanded(expanded: boolean): void {
+    // Unfolding answers a key, so the rows it adds are drawn at once.
+    if (expanded !== this.expanded) this.reveal?.settle()
     this.expanded = expanded
   }
 
@@ -1105,22 +1164,27 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     // settled, or was never attached, hands the group back as it is.
     const call = faded(layout.call, this.fade, this.repaintFloor - 1)
     const result = faded(layout.result, this.resultFade, this.repaintFloor - 1 - layout.call.length)
-    const lines = call === layout.call && result === layout.result ? layout.lines : ['', ...call, ...result]
-    if (this.highlight === undefined) return lines
+    const full = call === layout.call && result === layout.result ? layout.lines : ['', ...call, ...result]
+    this.rows = full.length - 1
+    this.measured = true
+    this.reveal?.clamp(this.rows)
+    const shown = this.reveal === undefined ? this.rows : this.reveal.shown()
+    const visible = (lines: string[]): string[] => shown < this.rows ? lines.slice(0, 1 + shown) : lines
+    if (this.highlight === undefined) return visible(full)
     // The truncation marker belongs to the card rather than to either section:
     // it stands for the rows both of them left out, so it keeps the block's own
     // gutter while the held section still has a row of its own. It is the last
     // row the fold produced.
-    const sections = lines.length - layout.marker
+    const sections = full.length - layout.marker
     const focused = this.parts()[this.highlight]
     const section = focused?.kind === 'result'
-      ? { from: 1 + layout.call.length, to: lines.length }
+      ? { from: 1 + layout.call.length, to: full.length }
       : { from: 1, to: 1 + layout.call.length }
     const held = markedRange(
       { from: section.from, to: Math.min(section.to, sections) },
-      { from: sections, to: lines.length },
+      { from: sections, to: full.length },
     )
-    return withGutter(palette, lines, index => index >= held.from && index < held.to, this.highlightLevel)
+    return visible(withGutter(palette, full, index => index >= held.from && index < held.to, this.highlightLevel))
   }
 
   /**

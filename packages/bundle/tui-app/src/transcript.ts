@@ -9,7 +9,7 @@ import type { ContentBlock, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { diffLines, hunks, type DiffMark } from './diff.ts'
+import { diffLines, hunks, type DiffLine, type DiffMark } from './diff.ts'
 
 /** Unchanged rows shown around each diff hunk. */
 const DIFF_CONTEXT_LINES = 2
@@ -350,29 +350,57 @@ export function diffRows(diff: FileDiff): string[] {
 
 /**
  * Render a diff for a card body, with the code span behind each changed or
- * context row so the card can colour the file's own language.
+ * context row so the card can colour the file's own language. A diff that
+ * names where its sides start in the file leads each row with its file line:
+ * the new side's for an added or context row, the old side's for a removed one.
  * @param diff - one file's old and new text.
  * @returns the rows and their spans; the `…` gap markers carry no span.
  */
 export function diffBody(diff: FileDiff): Required<ToolBody> {
   const lang = extensionOf(diff.path)
-  const rows = hunks(diffLines(diff.oldText, diff.newText), DIFF_CONTEXT_LINES)
+  const rows = hunks(numberDiffLines(diffLines(diff.oldText, diff.newText), diff.oldStart, diff.newStart), DIFF_CONTEXT_LINES)
+  const digits = rows.reduce((widest, row) => Math.max(widest, row?.number === undefined ? 0 : String(row.number).length), 0)
   const lines: string[] = []
   const code: (CodeSpan | undefined)[] = []
   const marks: (DiffMark | undefined)[] = []
   for (const row of rows) {
     if (row === undefined) {
-      lines.push('  …')
+      lines.push(`${' '.repeat(digits === 0 ? 0 : digits + 1)}  …`)
       code.push(undefined)
       marks.push(undefined)
       continue
     }
-    const prefix = row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '- ' : '  '
+    const sign = row.kind === 'added' ? '+ ' : row.kind === 'removed' ? '- ' : '  '
+    const gutter = digits === 0 ? '' : `${(row.number === undefined ? '' : String(row.number)).padStart(digits)} `
+    const prefix = gutter + sign
     lines.push(prefix + row.text)
     code.push(lang === undefined ? undefined : { lang, prefix, source: row.text })
     marks.push(row.kind === 'context' ? undefined : row.kind)
   }
   return { lines, code, diff: marks }
+}
+
+/** One aligned diff row with the file line it sits on, when the diff names one. */
+interface NumberedDiffLine extends DiffLine {
+  number?: number
+}
+
+/**
+ * Number aligned diff rows from where each side starts in the file.
+ * @param lines - the aligned rows, in order.
+ * @param oldStart - the old side's first file line; absent leaves removed rows unnumbered.
+ * @param newStart - the new side's first file line; absent leaves added and context rows unnumbered.
+ * @returns the rows, each carrying its file line when its side has a start.
+ */
+function numberDiffLines(lines: readonly DiffLine[], oldStart: number | undefined, newStart: number | undefined): NumberedDiffLine[] {
+  let previous = oldStart
+  let next = newStart
+  return lines.map((line) => {
+    const number = line.kind === 'removed' ? previous : next
+    if (line.kind !== 'added' && previous !== undefined) previous += 1
+    if (line.kind !== 'removed' && next !== undefined) next += 1
+    return number === undefined ? line : { ...line, number }
+  })
 }
 
 /**

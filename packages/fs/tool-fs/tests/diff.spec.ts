@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { computeHunkDiffs, diffsFromMeta, DIFF_CONTEXT } from '../src/diff.ts'
+import { computeHunkDiffs, diffJson, diffsFromMeta, DIFF_CONTEXT } from '../src/diff.ts'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 
 const lines = (n: number): string => Array.from({ length: n }, (_, i) => `line${i + 1}`).join('\n') + '\n'
@@ -20,6 +20,8 @@ describe('computeHunkDiffs', () => {
       path: 'f.txt',
       oldText: 'line1\nline2\nline3\nline4\nline5\nline6\nline7',
       newText: 'line1\nline2\nline3\nCHANGED\nline5\nline6\nline7',
+      oldStart: 1,
+      newStart: 1,
     }])
   })
 
@@ -36,6 +38,8 @@ describe('computeHunkDiffs', () => {
     // The two hunks are distinct sites, not one merged block.
     expect(diffs[0]?.newText).not.toContain('B')
     expect(diffs[1]?.newText).not.toContain('A')
+    // Each hunk starts three context lines above its change.
+    expect([diffs[1]?.oldStart, diffs[1]?.newStart]).toEqual([13, 13])
   })
 
   it('identical before/after (a no-op) yields no hunks', () => {
@@ -44,18 +48,18 @@ describe('computeHunkDiffs', () => {
 
   it('a pure insertion into empty content reports oldText null (nothing to diff against)', () => {
     const diffs = computeHunkDiffs('f.txt', '', 'brand new\n')
-    expect(diffs).toEqual([{ path: 'f.txt', oldText: null, newText: 'brand new' }])
+    expect(diffs).toEqual([{ path: 'f.txt', oldText: null, newText: 'brand new', newStart: 1 }])
   })
 
   it('a pure deletion of the whole file reports newText empty', () => {
     const diffs = computeHunkDiffs('f.txt', 'gone\n', '')
-    expect(diffs).toEqual([{ path: 'f.txt', oldText: 'gone', newText: '' }])
+    expect(diffs).toEqual([{ path: 'f.txt', oldText: 'gone', newText: '', oldStart: 1 }])
   })
 
   it('drops the "\\ No newline at end of file" marker from a no-trailing-newline change', () => {
     const diffs = computeHunkDiffs('f.txt', 'x', 'y')
     // The marker line (starting with "\\") must never leak into a diff block.
-    expect(diffs).toEqual([{ path: 'f.txt', oldText: 'x', newText: 'y' }])
+    expect(diffs).toEqual([{ path: 'f.txt', oldText: 'x', newText: 'y', oldStart: 1, newStart: 1 }])
     expect(diffs[0]?.oldText).not.toContain('\\')
     expect(diffs[0]?.newText).not.toContain('\\')
   })
@@ -69,6 +73,14 @@ describe('computeHunkDiffs', () => {
     expect(diff?.oldText?.split('\n')).toHaveLength(7)
     expect(diff?.newText.split('\n')).toHaveLength(7)
     expect(diff?.oldText?.split('\n')[0]).toBe('line7')
+    expect(diff?.oldStart).toBe(7)
+  })
+})
+
+describe('diffJson', () => {
+  it('writes a key only for the starts a hunk has', () => {
+    expect(diffJson({ path: 'f', oldText: null, newText: 'x', newStart: 1 })).toEqual({ path: 'f', oldText: null, newText: 'x', newStart: 1 })
+    expect(Object.keys(diffJson({ path: 'f', oldText: 'a', newText: '', oldStart: 2 }))).toEqual(['path', 'oldText', 'newText', 'oldStart'])
   })
 })
 
@@ -86,6 +98,14 @@ describe('diffsFromMeta (defensive narrowing)', () => {
   it('accepts a diff whose oldText is null (a create-style hunk)', () => {
     const meta = { diffs: [{ path: 'f.txt', oldText: null, newText: 'x' }] }
     expect(diffsFromMeta(m(meta))).toEqual(meta.diffs)
+  })
+
+  it('accepts 1-based start lines and rejects any other start value', () => {
+    const meta = { diffs: [{ path: 'f.txt', oldText: 'a', newText: 'b', oldStart: 4, newStart: 5 }] }
+    expect(diffsFromMeta(m(meta))).toEqual(meta.diffs)
+    expect(diffsFromMeta(m({ diffs: [{ path: 'f', oldText: 'a', newText: 'b', oldStart: 0 }] }))).toBeUndefined()
+    expect(diffsFromMeta(m({ diffs: [{ path: 'f', oldText: 'a', newText: 'b', newStart: 1.5 }] }))).toBeUndefined()
+    expect(diffsFromMeta(m({ diffs: [{ path: 'f', oldText: 'a', newText: 'b', newStart: '2' }] }))).toBeUndefined()
   })
 
   it('rejects undefined / non-object / array meta', () => {

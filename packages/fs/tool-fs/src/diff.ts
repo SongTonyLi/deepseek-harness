@@ -25,6 +25,7 @@ export type FsDiffMeta = { diffs: FileDiff[]; operation?: 'create' | 'update' }
  * Compute one {@link FileDiff} per hunk between `before` and `after`, each carrying the
  * applied change plus {@link DIFF_CONTEXT} context lines. Pure insertions use `oldText: null`,
  * patch-only no-newline markers are omitted, and scattered replacements remain separate hunks.
+ * Each side that holds lines carries the 1-based file line it starts at.
  *
  * @param path - the path stamped on every produced diff (the model-facing `file_path`; the
  *   bridge relativizes it).
@@ -53,18 +54,51 @@ export function computeHunkDiffs(path: string, before: string, after: string): F
         newLines.push(text)
       }
     }
-    diffs.push({ path, oldText: oldLines.length > 0 ? oldLines.join('\n') : null, newText: newLines.join('\n') })
+    diffs.push({
+      path,
+      oldText: oldLines.length > 0 ? oldLines.join('\n') : null,
+      newText: newLines.join('\n'),
+      ...oldLines.length > 0 ? { oldStart: hunk.oldStart } : {},
+      ...newLines.length > 0 ? { newStart: hunk.newStart } : {},
+    })
   }
   return diffs
+}
+
+/** A {@link FileDiff} with no key for an absent start, which JSON metadata requires. */
+type FileDiffJson = Omit<FileDiff, 'oldStart' | 'newStart'> & ({ oldStart: number } | { oldStart?: never }) & ({ newStart: number } | { newStart?: never })
+
+/**
+ * One {@link FileDiff} as `tool/result` metadata carries it: JSON with no key
+ * for a start the hunk has no line for.
+ * @param diff - one computed hunk.
+ * @returns the same hunk as a JSON object.
+ */
+export function diffJson(diff: FileDiff): FileDiffJson {
+  const { path, oldText, newText, oldStart, newStart } = diff
+  return {
+    path,
+    oldText,
+    newText,
+    ...oldStart === undefined ? {} : { oldStart },
+    ...newStart === undefined ? {} : { newStart },
+  }
 }
 
 /** Whether `value` is a valid {@link FileDiff} (defensive narrowing from opaque `meta`). */
 function isFileDiff(value: unknown): value is FileDiff {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  const { path, oldText, newText } = value as Record<string, unknown>
+  const { path, oldText, newText, oldStart, newStart } = value as Record<string, unknown>
   return typeof path === 'string'
     && (oldText === null || typeof oldText === 'string')
     && typeof newText === 'string'
+    && (oldStart === undefined || isLineNumber(oldStart))
+    && (newStart === undefined || isLineNumber(newStart))
+}
+
+/** Whether `value` is a 1-based integer file line. */
+function isLineNumber(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1
 }
 
 /**

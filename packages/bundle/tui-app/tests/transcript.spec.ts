@@ -230,6 +230,22 @@ describe('transcript', () => {
       .toEqual(['  …', '  5', '  6', '- 7', '+ X'])
   })
 
+  it('leads diff rows with their file lines when the diff names where each side starts', () => {
+    // Old lines 8-10 become new lines 8-10 with the middle one replaced; the
+    // removed row keeps its old line and the added row takes the new one.
+    expect(diffRows({ path: 'p', oldText: 'a\nb\nc', newText: 'a\nB\nB2\nc', oldStart: 8, newStart: 8 }))
+      .toEqual([' 8   a', ' 9 - b', ' 9 + B', '10 + B2', '11   c'])
+    // An insertion into an empty file only numbers the new side.
+    expect(diffRows({ path: 'p', oldText: null, newText: 'x', newStart: 1 })).toEqual(['1 + x'])
+    // The gap marker lines up under the signs.
+    expect(diffRows({ path: 'p', oldText: '1\n2\n3\n4\n5\n6\n7', newText: '1\n2\n3\n4\n5\n6\nX', oldStart: 1, newStart: 1 }))
+      .toEqual(['    …', '5   5', '6   6', '7 - 7', '7 + X'])
+    // A deletion of a whole file only numbers the old side.
+    expect(diffRows({ path: 'p', oldText: 'gone', newText: '', oldStart: 3 })).toEqual(['3 - gone'])
+    // A side with no start leaves its rows' numbers blank.
+    expect(diffRows({ path: 'p', oldText: 'a\nb', newText: 'a', oldStart: 5 })).toEqual(['    a', '6 - b'])
+  })
+
   it('carries the code span behind read and diff rows, and none behind the rest', () => {
     const text = [{ type: 'text' as const, text: 'raw' }]
     expect(toolResultBody({ card: 'read', path: 'f', offset: 0, totalLines: 2, lang: 'py', lines: [{ number: 7, text: 'x = 1' }, { number: 8, text: '' }] }, text))

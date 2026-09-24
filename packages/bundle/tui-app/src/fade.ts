@@ -39,7 +39,8 @@
  * @module @deepseek-ai/dsh-tui-app/fade
  */
 
-import { sliceByColumn, stripTerminalSequences, visibleWidth, type RgbColor } from '@earendil-works/pi-tui'
+import { stripTerminalSequences, visibleWidth, type RgbColor } from '@earendil-works/pi-tui'
+import { sliceColumns } from './columns.ts'
 
 /**
  * Brightness levels a chunk passes through. A chunk of age `a` draws between
@@ -1090,12 +1091,10 @@ function collectRuns(runs: LineRun[], covered: readonly Cell[], sgr: string): vo
  * runs untouched, and the line's own trailing sequences kept ahead of `restore`.
  */
 function paintLine(text: string, runs: readonly LineRun[], restore: string): string {
-  let out = ''
-  let cursor = 0
-  for (const run of runs) {
-    out += sliceByColumn(text, cursor, run.start - cursor)
-    out += run.sgr + sliceByColumn(text, run.start, run.end - run.start)
-    cursor = run.end
-  }
-  return `${out}${sliceByColumn(text, cursor, text.length + 1)}${restore}`
+  const pieces = sliceColumns(text, runs.flatMap(run => [run.start, run.end]))
+  let out = pieces[0] as string
+  runs.forEach((run, index) => {
+    out += `${run.sgr}${pieces[2 * index + 1] as string}${pieces[2 * index + 2] as string}`
+  })
+  return `${out}${restore}`
 }

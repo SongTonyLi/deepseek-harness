@@ -1,6 +1,7 @@
 /** Streamed reasoning, reply text, and tool arguments reaching the screen on the frame tick. */
 
 import { describe, expect, it } from 'vitest'
+import { createToolResultMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { bench, type Bench } from './bench.ts'
 
@@ -147,6 +148,62 @@ describe('stream pacing', () => {
     test.stream.chunk({ type: 'text-delta', index: 0, text: REPLY })
     await test.settle()
     expect(await test.screen()).toContain(REPLY)
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+})
+
+describe('tool card reveal', () => {
+  const OUTPUT = [{ type: 'text' as const, text: 'row-a\nrow-b\nrow-c\nrow-d' }]
+
+  it('unrolls a card and its result over the following frames', async () => {
+    const test = await bench({ toolRevealFrames: 2, toolPreviewLines: 8 })
+    await test.settle()
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    await test.settle()
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
+    await frame(test)
+    expect(await test.screen()).toContain('◆ bash')
+
+    test.appendToolResult('call-1', OUTPUT)
+    await test.settle()
+    const landed = await test.screen()
+    expect(landed).not.toContain('row-d')
+    for (let index = 0; index < 10 && test.tickArmed(FADE_TICK_MS); index += 1) await frame(test)
+    expect(await test.screen()).toContain('row-d')
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+
+  it('draws a replayed card whole', async () => {
+    const history = [
+      { type: 'tool/call', seq: 1, time: 1, data: { turn: 1, step: 1, callId: 'c', name: 'bash', arguments: '{"command":"ls"}' } },
+      { type: 'tool/result', seq: 2, time: 1, data: { turn: 1, step: 1, message: createToolResultMessage({ callId: 'c' as ToolCallId, content: OUTPUT, isError: false }) } },
+    ] as never[]
+    const test = await bench({ history, toolRevealFrames: 2, toolPreviewLines: 8 })
+    await test.settle()
+    expect(await test.screen()).toContain('row-d')
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+
+  it('draws a card whole under reduced motion', async () => {
+    const test = await bench({ toolRevealFrames: 2, toolPreviewLines: 8, reducedMotion: true })
+    await test.settle()
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    test.appendToolResult('call-1', OUTPUT)
+    await test.settle()
+    expect(await test.screen()).toContain('row-d')
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+
+  it('stops unrolling a streamed card the stream abandoned', async () => {
+    const test = await bench({ toolRevealFrames: 8 })
+    await test.settle()
+    test.stream.start()
+    test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'bash', argumentsDelta: '{"command":"ls"}' })
+    await test.settle()
+    expect(await test.screen()).toContain('◆ bash')
+    test.stream.end({ kind: 'abandoned' })
+    await test.settle()
+    expect(await test.screen()).not.toContain('◆ bash')
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 })

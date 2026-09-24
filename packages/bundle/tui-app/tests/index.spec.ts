@@ -140,6 +140,7 @@ function config(overrides: Partial<Config> = {}): Config {
     streamFadeSteps: 24,
     streamFadeStepMs: 16,
     streamPaceFrames: 8,
+    toolRevealFrames: 6,
     reducedMotion: false,
     openBrowser: true,
     ...overrides,
@@ -444,6 +445,7 @@ describe('the presentation tunables', () => {
       streamFadeSteps: 24,
       streamFadeStepMs: 16,
       streamPaceFrames: 8,
+      toolRevealFrames: 6,
       reducedMotion: false,
       openBrowser: true,
     })
@@ -488,5 +490,7 @@ describe('the presentation tunables', () => {
     expect(() => validate({ streamPaceFrames: -1 })).toThrow()
     expect(() => validate({ streamPaceFrames: 1.5 })).toThrow()
     expect(validate({ streamPaceFrames: 0 })).toMatchObject({ streamPaceFrames: 0 })
+    expect(() => validate({ toolRevealFrames: -1 })).toThrow()
+    expect(validate({ toolRevealFrames: 0 })).toMatchObject({ toolRevealFrames: 0 })
   })
 })

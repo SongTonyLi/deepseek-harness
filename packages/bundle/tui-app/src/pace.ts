@@ -17,6 +17,10 @@
  * block is released through {@link StreamPacer.flushChannel} instead of
  * staying ahead of the reply.
  *
+ * {@link RowReveal} applies the same release rule to the rows of a tool card,
+ * which would otherwise appear in one frame after the text above it arrived
+ * a few graphemes at a time.
+ *
  * Nothing here arms a timer or reads a clock: the application calls
  * {@link StreamPacer.frame} from its frame tick and {@link StreamPacer.flush}
  * wherever the stream's full text must be on screen.
@@ -156,6 +160,77 @@ export class StreamPacer {
   clear(): void {
     this.entries.length = 0
     this.backlog = 0
+    this.credit = 0
+  }
+}
+
+/**
+ * Frames the rows a tool card has not drawn yet take to unroll by default.
+ * Six frames at the 16 ms frame tick unroll an eight-row card preview in about
+ * 100 ms, close to how far paced text trails the stream.
+ */
+export const TOOL_REVEAL_FRAMES = 6
+
+/**
+ * How many rows of a growing block are drawn, advanced on the application's
+ * frame tick the same way {@link StreamPacer} releases text: each frame draws
+ * `hidden / drainFrames` more rows, at least one, with the fractional part
+ * carried to the next frame. The
+ * block reports its full row count after every render and draws only the
+ * first {@link RowReveal.shown} rows until the reveal catches up.
+ */
+export class RowReveal {
+  private readonly drainFrames: number
+  private count: number
+  /** Rows the next frame may draw beyond its own share. */
+  private credit = 0
+
+  /**
+   * @param drainFrames - frames a hidden run takes to unroll; at least 1.
+   * @param shown - rows drawn before the first frame.
+   */
+  constructor(drainFrames: number, shown: number) {
+    this.drainFrames = Math.max(1, drainFrames)
+    this.count = shown
+  }
+
+  /**
+   * Rows drawn right now.
+   * @returns the count, which may exceed the block's rows after {@link RowReveal.settle}.
+   */
+  shown(): number {
+    return this.count
+  }
+
+  /**
+   * Draw one frame's share of the rows still hidden.
+   * @param total - the block's full row count at its last render.
+   * @returns whether rows are still hidden after this frame.
+   */
+  frame(total: number): boolean {
+    if (this.count >= total) {
+      this.credit = 0
+      return false
+    }
+    this.credit += (total - this.count) / this.drainFrames
+    const rows = Math.max(1, Math.floor(this.credit))
+    this.credit = Math.max(0, this.credit - rows)
+    this.count = Math.min(total, this.count + rows)
+    return this.count < total
+  }
+
+  /**
+   * Hold the count at the block's full row count, so rows the block loses
+   * later are not owed again when it grows back.
+   * @param total - the block's full row count at this render.
+   */
+  clamp(total: number): void {
+    if (this.count > total) this.count = total
+  }
+
+  /** Draw every row the block has at its next render. */
+  settle(): void {
+    this.count = Number.POSITIVE_INFINITY
     this.credit = 0
   }
 }

@@ -4018,6 +4018,16 @@ export interface Config {
    */
   streamPaceFrames: number
   /**
+   * How many `streamFadeStepMs` frames the rows of a tool card take to
+   * unroll when the card appears or grows. Each frame draws a share of the
+   * rows still hidden proportional to their number, at least one, so a card
+   * slides in under the text that preceded it rather than landing whole. A
+   * card whose unrolling rows have scrolled above the part of the screen the
+   * renderer can repaint draws them at once, and unfolding a card draws its
+   * rows at once. `0` draws every row at once, and so does `reducedMotion`.
+   */
+  toolRevealFrames: number
+  /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
    * what is on screen to change after it is drawn: no brightness ramp on

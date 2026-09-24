@@ -338,10 +338,17 @@ describe('the live subagent panel', () => {
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.right)
     await test.settle()
-    expect(await test.screen()).toContain('◆ subagent view ›')
+    const inside = await test.screen()
+    expect(inside).toContain('◆ subagent view ›')
+    // The line above the editor names the view and the way back whatever the transcript scrolled to.
+    const banner = inside.split('\n').find(line => line.includes('back to main'))
+    expect(banner).toContain('main › explorer')
+    expect(inside.indexOf('back to main')).toBeGreaterThan(inside.indexOf('subagent explorer'))
     test.terminal.type('\u0010')
     await test.settle()
-    expect(await test.screen()).toContain('back in session session-tui-test')
+    const back = await test.screen()
+    expect(back).toContain('back in session session-tui-test')
+    expect(back).not.toContain('back to main')
   })
 
   it('enters a subagent from /subagents, releases every view on a session switch, and quits the root', async () => {
