@@ -13,9 +13,9 @@
  * `backlog / drainFrames` graphemes, at least one, with the fractional part
  * carried to the next frame. A burst therefore drains within about
  * `drainFrames` frames however large it is, and a slow stream is drawn at
- * the rate it arrives. Entries leave in arrival order, so the interleaving
- * of reasoning, visible text, and tool arguments on screen is the stream's
- * own.
+ * the rate it arrives. Entries leave in arrival order. A finished thinking
+ * block is released through {@link StreamPacer.flushChannel} instead of
+ * staying ahead of the reply.
  *
  * Nothing here arms a timer or reads a clock: the application calls
  * {@link StreamPacer.frame} from its frame tick and {@link StreamPacer.flush}
@@ -124,6 +124,32 @@ export class StreamPacer {
     this.backlog = 0
     this.credit = 0
     for (const entry of entries) entry.release(entry.text)
+  }
+
+  /**
+   * Release every queued entry of one channel now, and keep every other
+   * entry in arrival order. A finished thinking block uses this so its
+   * remainder is drawn before later reply text is paced.
+   * @param channel - the channel to release.
+   * @returns whether any entry of that channel was queued.
+   */
+  flushChannel(channel: string): boolean {
+    const pending = this.entries.splice(0)
+    const kept: PacedEntry[] = []
+    const release: PacedEntry[] = []
+    let backlog = 0
+    for (const entry of pending) {
+      if (entry.channel === channel) release.push(entry)
+      else {
+        kept.push(entry)
+        backlog += entry.text.length
+      }
+    }
+    this.entries.push(...kept)
+    this.backlog = backlog
+    if (this.entries.length === 0) this.credit = 0
+    for (const entry of release) entry.release(entry.text)
+    return release.length > 0
   }
 
   /** Drop everything queued without releasing it. */

@@ -228,7 +228,7 @@ An approval request draws `Allow <tool>?` with the asker's reason, the logged ca
 | `liveRefreshMs` | `1000` | Period of the redraw that advances the `turn` segment and the panel's elapsed values and re-reads a stale subagent listing |
 | `streamFadeSteps` | `24` | How many ticks a fade lasts: reply text fades in, reasoning and tool cards float out, over `streamFadeSteps × streamFadeStepMs` |
 | `streamFadeStepMs` | `16` | One frame: the fade tick, the repaint period while anything is still moving, and the period paced stream text is drawn at; duration is `streamFadeSteps × streamFadeStepMs` |
-| `streamPaceFrames` | `8` | Frames a backlog of streamed reasoning, reply text, or tool arguments takes to reach the screen; `0`, like `reducedMotion`, draws each delta as it arrives |
+| `streamPaceFrames` | `8` | Frames a backlog of streamed reply text or tool arguments takes to reach the screen. Thinking still queued when its block ends, or when reply text or a tool call starts, is drawn at once; `0`, like `reducedMotion`, draws each delta as it arrives |
 | `reducedMotion` | `false` | Draw streamed text, streamed reasoning, tool cards, and the chrome in their settled colors, with no fade, no lift, and no repeating repaint |
 | `openBrowser` | `true` | Hand marked authorization pages to the local default browser |
 
@@ -305,8 +305,8 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`tests/editor.spec.ts`](tests/editor.spec.ts) | The terminal caret, `Shift+Left` / `Shift+Right` word navigation, and `!` / `!!` draft colour against pi-tui's editor behavior |
 | [`tests/frame.spec.ts`](tests/frame.spec.ts) | The rules, the chip, the body rows, and the legend a width holds |
 | [`tests/motion.spec.ts`](tests/motion.spec.ts) | The motion clock's levels, its repaint demand, and the lift each level draws |
-| [`tests/pace.spec.ts`](tests/pace.spec.ts) | The pacer's per-frame share, grapheme cuts, arrival order, flush, and clear |
-| [`tests/stream-pace.spec.ts`](tests/stream-pace.spec.ts) | Paced reasoning, reply text, and tool arguments in stream order, the flush at stream end and before a logged event, and reduced motion |
+| [`tests/pace.spec.ts`](tests/pace.spec.ts) | The pacer's per-frame share, grapheme cuts, arrival order, flush, per-channel flush, and clear |
+| [`tests/stream-pace.spec.ts`](tests/stream-pace.spec.ts) | Paced reply text and tool arguments in stream order, thinking drawn when its block ends, the flush at stream end and before a logged event, and reduced motion |
 | [`tests/toast.spec.ts`](tests/toast.spec.ts) | The transient line's box, its hold, its fade, and its early settlement |
 | [`tests/reader.spec.ts`](tests/reader.spec.ts) | The reader's geometry, its state machine, its filter, and the rows it returns |
 | [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | The reader pane: its key map, the screen it fills, its re-anchoring, and its exit |
