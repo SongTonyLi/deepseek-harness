@@ -220,7 +220,10 @@ describe('tui profile keyless smoke', () => {
       expect(viaPicker.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
 
       const explicitResume = await runScript(cwd, ['--resume', sessionId], [
-        { marker: 'CLI tool round trip complete', keys: '' },
+        { marker: 'CLI tool round trip complete', keys: `again${ENTER}` },
+        { marker: '❯ again', keys: '' },
+        // The follow-up turn must assemble under the restored model.
+        { marker: 'CLI tool round trip complete: CLI_TOOL_ROUND_TRIP', keys: '' },
       ])
       expect(explicitResume.exitCode, `stderr:\n${explicitResume.stderr}\nstdout:\n${explicitResume.stdout}`).toBe(0)
       // The resumed header carries the generated title with the id; the
@@ -228,6 +231,8 @@ describe('tui profile keyless smoke', () => {
       expect(explicitResume.stdout).toContain(`I want to quickly do! (${sessionId})`)
       expect(explicitResume.stdout).toContain('cli-mock/cli-mock')
       expect(explicitResume.stdout).toContain('❯ I want to quickly do!')
+      expect(explicitResume.stdout).toContain('❯ again')
+      expect(explicitResume.stdout).not.toContain('{{model}}')
       expect(explicitResume.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(explicitResume.stderr).toContain(`--resume ${sessionId}`)
     } finally {

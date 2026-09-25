@@ -2,15 +2,21 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, {
+  assembleContextFor,
+  type Agent,
+  type AgentHandle,
+  type CreateAgentOptions,
+  type ResumeAgentOptions,
+} from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
-import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset, type EpochHeader, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { Config, apply, internals } from '../src/index.ts'
 import { FakeTerminal, KEY } from './bench.ts'
 
@@ -32,23 +38,45 @@ interface Observed {
 
 /** Mount the real registries around a scripted Agent factory and capture the process effects. */
 async function bench(
-  options: { history?: SessionEvent[]; failCreate?: boolean; noPersistence?: boolean; observed?: SessionEvent[] } = {},
+  options: {
+    history?: SessionEvent[]
+    failCreate?: boolean
+    noPersistence?: boolean
+    observed?: SessionEvent[]
+    resumeHeader?: EpochHeader
+  } = {},
 ): Promise<{ ctx: Context; observed: Observed }> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
+  await ctx.plugin(SystemPrompt)
+  ctx.systemPrompt.variable('provider', context => context.agent?.options.provider)
+  ctx.systemPrompt.variable('model', context => context.agent?.options.model)
   const terminal = new FakeTerminal()
   const observed: Observed = { terminal, err: '', exits: [], order: [], created: [], resumed: [], cancels: 0 }
-  const makeAgent = async (ownerCtx: Context, id: SessionId, setup: CreateAgentOptions['setup'], meta?: CreateAgentOptions['meta'], seed?: readonly SessionEvent[]): Promise<AgentHandle> => {
+  const makeAgent = async (
+    ownerCtx: Context,
+    id: SessionId,
+    setup: CreateAgentOptions['setup'],
+    meta?: CreateAgentOptions['meta'],
+    seed?: readonly SessionEvent[],
+    agentOptions?: CreateAgentOptions['agentOptions'],
+  ): Promise<AgentHandle> => {
     const session = ctx.sessions.create(id, {
       ...meta === undefined ? {} : { meta },
       ...seed === undefined ? {} : { seed, inheritedEventCount: SessionLogOffset(seed.length) },
     })
+    if (options.resumeHeader !== undefined && String(id) === 'session-old') {
+      session.append('request/header', { header: options.resumeHeader, reason: 'initial' })
+    }
     const agent: Agent = {
       id: session.id,
-      options: { provider: 'test-provider', model: 'test-model' },
+      options: {
+        provider: agentOptions?.provider ?? 'test-provider',
+        model: agentOptions?.model ?? 'test-model',
+      },
       session,
       inbox: createInboxStub(),
       status: 'idle',
@@ -69,12 +97,26 @@ async function bench(
     createAgent(ownerCtx, createOptions) {
       observed.created.push(createOptions)
       if (options.failCreate === true) return Promise.reject(new Error('factory refused'))
-      return makeAgent(ownerCtx, createOptions.sessionId, createOptions.setup, createOptions.meta, createOptions.seed)
+      return makeAgent(
+        ownerCtx,
+        createOptions.sessionId,
+        createOptions.setup,
+        createOptions.meta,
+        createOptions.seed,
+        createOptions.agentOptions,
+      )
     },
     resume(ownerCtx, resumeOptions) {
       observed.resumed.push(resumeOptions)
       observed.order.push(`resume:${resumeOptions.resumeSessionId}`)
-      return makeAgent(ownerCtx, resumeOptions.resumeSessionId, resumeOptions.setup)
+      return makeAgent(
+        ownerCtx,
+        resumeOptions.resumeSessionId,
+        resumeOptions.setup,
+        undefined,
+        undefined,
+        resumeOptions.agentOptions,
+      )
     },
   })
   if (options.noPersistence !== true) {
@@ -99,7 +141,6 @@ async function bench(
         return Promise.resolve({ events, [Symbol.dispose]: () => { observed.order.push('release-observation') } })
       },
       listSessions: () => Promise.resolve([{ header: { id: 'session-old', createdAt: 1 } }]),
-      readTitleSnapshots: () => Promise.resolve([{ status: 'fulfilled', value: {} }]),
     } as never)
   }
   ctx.on('session/flush', () => { observed.order.push('flush') })
@@ -223,6 +264,35 @@ describe('tui runner', () => {
     expect(observed.order[0]).toBe('resume:session-old')
     expect(observed.terminal.text()).toContain('❯ hello')
     expect(observed.terminal.text()).toContain('turn was interrupted by an earlier process exit')
+  })
+
+  it('resumes with the default route and overlays the logged model for prompt assembly', async () => {
+    const { ctx, observed } = await bench({
+      history: [],
+      resumeHeader: { config: { provider: 'logged', model: 'logged-model' } },
+    })
+    apply(ctx, config({ resume: 'session-old' }))
+    await settled()
+    expect(observed.resumed[0]?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
+    const agent = ctx.agents.get('session-old' as SessionId)
+    if (agent === undefined) throw new Error('resume published no agent')
+    agent.ctx.systemPrompt.section({ name: 'resume-model-check', order: 0, text: 'You run {{model}}' })
+    const assembly = await agent.ctx.systemPrompt.assemble(assembleContextFor(agent))
+    expect(assembly.variables).toMatchObject({ provider: 'logged', model: 'logged-model' })
+    expect(renderPrompt(assembly)).toContain('You run logged-model')
+  })
+
+  it('resumes with the launch default when the log has no request header', async () => {
+    const { ctx, observed } = await bench({ history: [] })
+    apply(ctx, config({ resume: 'session-old' }))
+    await settled()
+    expect(observed.resumed[0]?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
+    const agent = ctx.agents.get('session-old' as SessionId)
+    if (agent === undefined) throw new Error('resume published no agent')
+    agent.ctx.systemPrompt.section({ name: 'resume-model-check', order: 0, text: 'You run {{model}}' })
+    const assembly = await agent.ctx.systemPrompt.assemble(assembleContextFor(agent))
+    expect(assembly.variables).toMatchObject({ provider: 'test-provider', model: 'test-model' })
+    expect(renderPrompt(assembly)).toContain('You run test-model')
   })
 
   it('fails loud when --resume has no query engine', async () => {

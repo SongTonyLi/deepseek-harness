@@ -36,7 +36,7 @@ dsh tui --resume <session-id>             # continue an earlier session
 dsh tui --no-open                         # print sign-in URLs without opening a browser
 ```
 
-退出时应用在 stderr 为当时绑定的会话打印 `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>`。恢复的会话会在接受输入前先重绘其持久化历史；在终端内，`/resume` 与 `/sessions` 打开覆盖所有持久化根会话的同一个选择器，并恢复选中的先前会话，`/new` 与 `/clear` 都会开始一个空的新会话且先前会话仍留在磁盘上可用 `/resume` 恢复，`/fork` 把当前会话复制到其最后一个完成轮次并作为新会话，切割点与浏览器的 fork 相同。切换会释放先前的 Agent 并重绘下一个会话的对话记录。
+退出时应用在 stderr 为当时绑定的会话打印 `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>`。恢复的会话会在接受输入前先重绘其持久化历史，并沿用该会话上次使用的模型；日志里还没有请求头时则使用启动默认模型。在终端内，`/resume` 与 `/sessions` 打开覆盖所有持久化根会话的同一个选择器，并恢复选中的先前会话，`/new` 与 `/clear` 都会开始一个空的新会话且先前会话仍留在磁盘上可用 `/resume` 恢复，`/fork` 把当前会话复制到其最后一个完成轮次并作为新会话，切割点与浏览器的 fork 相同。切换会释放先前的 Agent 并重绘下一个会话的对话记录。
 
 ### 屏幕布局
 
@@ -248,11 +248,11 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含四个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 先拿到 Agent 写句柄，再经 `ctx.sessionQuery` 观察实时 Session，使 bind 画出每条持久化事件（包括恢复时的闭合事件），`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent，`observe` 打开子 agent 会话而不释放已绑定的会话——常驻的子 agent Agent 被实时读取、释放它什么也不做，其他会话则被恢复。除常驻会话的 `observe` 外，每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。编辑器里提交的非空 `!` 或 `!!` 行经本进程的 `ctx.shell` 运行；`!` 注入一条下一步通知，`!!` 只留在本地。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含四个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 先拿到 Agent 写句柄，再经 `ctx.sessionQuery` 观察实时 Session，使 bind 画出每条持久化事件（包括恢复时的闭合事件），`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent，`observe` 打开子 agent 会话而不释放已绑定的会话——常驻的子 agent Agent 被实时读取、释放它什么也不做，其他会话则被恢复。除常驻会话的 `observe` 外，每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求；`resume` 把启动默认作为 AgentOptions 传入，使组装时 `{{model}}` 有值，再在有请求头时把它覆盖到该选择上，否则保留该默认。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。编辑器里提交的非空 `!` 或 `!!` 行经本进程的 `ctx.shell` 运行；`!` 注入一条下一步通知，`!!` 只留在本地。
 
 ### 渲染模型
 
-持久事实来自会话日志：`system/message`（非空提示词完整画出；空的绘制则省略）、`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——以暗色 `⬡` 行完整画出，快照按具名贡献各成一部分；压缩替换以及工具或模型来源则省略）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`workspace/changes`（在 Host 仍保存摘要时，以一行通知给出该轮的文件数与行数）、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（某条 todo 的详情页所报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目；同一次写入还从 `todos` 投影刷新 activity board）。后代会话的 `tool/call`、`tool/result` 或 `turn/end`，以及绑定父会话的 `subagent/start` / `subagent/end`，会替换该板上的一行摘要——工具标题或结果首行，从不使用子会话的 assistant 正文；绑定会话的 `turn/end` 与 bind 会清空该板。实时增量来自 `agent/assistant-stream` 的文本、推理、工具调用与用量增量：模型一报出工具名就挂上卡片，工作时的旋转指示跟随该流以及持久的 `tool/call` / `tool/result`，从而标出 `thinking`、`writing` 或 `calling <tool>`，并带着该次调用的实时 `↑` 发送与 `↓` 接收。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供页脚、`/status`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
+持久事实来自会话日志：`system/message`（非空提示词完整画出；空的绘制则省略）、`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——以暗色 `⬡` 行完整画出，快照按具名贡献各成一部分；压缩替换以及工具或模型来源则省略）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`workspace/changes`（在 Host 仍保存摘要时，以一行通知给出该轮的文件数与行数）、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（某条 todo 的详情页所报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目；同一次写入还从 `todos` 投影刷新 activity board）。后代会话的 `tool/call`、`tool/result` 或 `turn/end`，以及绑定父会话的 `subagent/start` / `subagent/end`，会替换该板上的一行摘要——工具标题或结果首行，从不使用子会话的 assistant 正文；绑定会话的 `turn/end` 与 bind 会清空该板。实时增量来自 `agent/assistant-stream` 的文本、推理、工具调用与用量增量：模型一报出工具名就挂上卡片，工作时的旋转指示跟随该流以及持久的 `tool/call` / `tool/result`，从而标出 `thinking`、`writing` 或 `calling <tool>`，并带着该次调用的实时 `↑` 发送与 `↓` 接收。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器身份、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供选择器标题使用的实时或缓存 `title` 投影、供页脚、`/status`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
 
 ### 基于 base 的 patch 面
 
@@ -263,10 +263,12 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | `tui-app` 插件：会话宿主（创建、恢复、fork、观察）、恢复观察、退出流程、退出码映射 |
+| [`src/resume-model.ts`](src/resume-model.ts) | 恢复时的模型选择：来自最后一条请求头，否则为启动默认 |
+| [`tests/resume-model.spec.ts`](tests/resume-model.spec.ts) | 恢复沿用上次记录的路由，没有请求头时则用启动默认 |
 | [`src/startup.ts`](src/startup.ts) | `tui-app-startup` 提供方：提示位置参数、`--resume`、`--no-open` 与 `--help` |
 | [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、编辑器上方的 activity board、停止装填、它挂载的临时提示行、阅读器所依托的终端交接，以及提交时解析的 `!` / `!!` |
 | [`src/keys.ts`](src/keys.ts) | 按键模型：各焦点区域、一次按键在每个区域中的含义、它们逐级收缩的按键提示、进入用的按键、`/help` 的各行，以及交接窗口 |
-| [`src/sessions.ts`](src/sessions.ts) | `/resume` 与 `/sessions` 共用的持久化会话列表及选择器行 |
+| [`src/sessions.ts`](src/sessions.ts) | `/resume` 与 `/sessions` 共用的持久化会话列表及选择器行；标题来自实时或缓存的 title 投影 |
 | [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行 |
 | [`src/permission.ts`](src/permission.ts) | `/permission` 的权限预设名称及选择器行 |
 | [`src/attach.ts`](src/attach.ts) | `/attach`：本地文件经附件存储成为图片或文件块 |
@@ -324,7 +326,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、可导航的子 agent 与 todo 列表、目录命令、命令提示与审批详情 |
 | [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | 走遍对话记录、区域序列、检视面板、实时会话上的阅读器连同它接管与交还的终端，以及重绘窗口内的原地标记条 |
 | [`tests/context.spec.ts`](tests/context.spec.ts) | 把系统提示词与注入上下文投影为对话记录小节 |
-| [`tests/index.spec.ts`](tests/index.spec.ts) | 创建、恢复分页、fork 切割、会话切换、退出流程与失败报告 |
+| [`tests/sessions.spec.ts`](tests/sessions.spec.ts) | 会话选择器列表：最新在前、实时或缓存标题、隐藏子 agent |
+| [`tests/index.spec.ts`](tests/index.spec.ts) | 创建、恢复分页、恢复时的模型组装、fork 切割、会话切换、退出流程与失败报告 |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 基于真实 Loader 配置树的命令行解析 |
 | [`tests/shortcuts.spec.ts`](tests/shortcuts.spec.ts) | 空输入与草稿中的 `?`、任一区域的 `Ctrl+T`、根会话上的 `Ctrl+P`，以及 `Ctrl+L` 重绘 |
 | [`tests/subagents.spec.ts`](tests/subagents.spec.ts) | 实时子 agent 面板的各行、走查与列表刷新，以及它与 `/subagents` 打开的子 agent 视图：经 `/parent` 与 `Ctrl+P` 离开，并在会话切换与退出时释放 |
