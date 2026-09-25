@@ -154,7 +154,7 @@ import { queuePanelRows, renderQueuePanel, type QueuePanelRow } from './queue-pa
 import { READER_HINTS } from './reader.ts'
 import { ReaderPane, type ReaderExit } from './reader-screen.ts'
 import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
-import { GuardedMainScreen, repaintFloor } from './screen.ts'
+import { GuardedMainScreen, pageContentWidth, repaintFloor } from './screen.ts'
 import { describeSession, listSessionChoices, type SessionChoice } from './sessions.ts'
 import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
 import {
@@ -178,6 +178,7 @@ import { editorTheme, paintDiffRows, type Palette } from './style.ts'
 import {
   EMPTY_USAGE,
   addUsage,
+  cardHeadline,
   contentText,
   describeFailure,
   estimateTokens,
@@ -861,6 +862,17 @@ export class TuiApp {
   }
 
   /**
+   * The columns every surface of the main screen is laid out in, which the
+   * page margins {@link GuardedMainScreen} holds are already taken from. A
+   * surface that builds its own text ahead of a frame - the follow-ups list,
+   * the subagent panel - measures against this rather than the terminal.
+   * @returns the layout width at the terminal's current width.
+   */
+  private contentWidth(): number {
+    return pageContentWidth(this.deps.terminal.columns)
+  }
+
+  /**
    * Take over the terminal, subscribe to the Agent, and optionally submit a
    * first prompt.
    * @param initialPrompt - a prompt submitted as soon as the terminal is up.
@@ -1304,7 +1316,7 @@ export class TuiApp {
       this.queueSelection = rows[selected]?.message.id
       this.queue.setText(renderQueuePanel(rows, {
         palette: this.deps.palette,
-        width: this.deps.terminal.columns,
+        width: this.contentWidth(),
         ...this.focus === 'queue' ? { selected } : {},
       }))
     }
@@ -1432,7 +1444,9 @@ export class TuiApp {
         const { name, arguments: argumentsJson } = event.data
         const args = parseArguments(argumentsJson)
         this.activityChildCall = { name, args }
-        const title = args === undefined ? undefined : this.presentCall(name, args)?.title
+        const view = args === undefined ? undefined : this.presentCall(name, args)
+        // The line already names the tool in its status word.
+        const title = view === undefined ? undefined : cardHeadline(name, view.title)
         this.setActivitySubagent({
           label: this.activityLabelFor(session.id),
           status: callingActivity(name),
@@ -1508,7 +1522,7 @@ export class TuiApp {
       this.panelLift = this.panelLiftNow()
       this.panel.setText(renderSubagentPanel(view, {
         palette: this.deps.palette,
-        width: this.deps.terminal.columns,
+        width: this.contentWidth(),
         ...this.focus === 'panel' ? { selected, level: this.panelLift } : {},
         ...this.listingFailure === undefined ? {} : { failure: this.listingFailure },
       }))
@@ -3691,7 +3705,7 @@ export class TuiApp {
   ): Promise<ApprovalOutcome> {
     // The logged call, when the request names one, shows what the tool is about to do.
     const args = callId === undefined ? undefined : this.toolArguments.get(callId)
-    const detail = args === undefined ? [] : toolCallText(JSON.stringify(args), this.presentCall(toolName, args)).lines
+    const detail = args === undefined ? [] : toolCallText(JSON.stringify(args), this.presentCall(toolName, args), toolName).lines
     const outcome = await this.showModal(new ApprovalPrompt(this.deps.palette, toolName, reason, detail), signal)
     const tone: Tone = outcome === 'allowed-once' ? 'success' : 'dim'
     this.notice(`${toolName}: ${outcome === 'allowed-once' ? 'allowed once' : outcome}`, tone)
@@ -4456,7 +4470,7 @@ export class TuiApp {
     if (args !== undefined) this.toolArguments.set(callId, args)
     const call = source === 'stream' && args === undefined
       ? { title: '', lines: [] }
-      : toolCallText(argumentsJson, args === undefined ? undefined : this.presentCall(name, args))
+      : toolCallText(argumentsJson, args === undefined ? undefined : this.presentCall(name, args), name)
     const existing = this.toolBlocks.get(callId)
     if (existing !== undefined) {
       existing.setCall(name, call)

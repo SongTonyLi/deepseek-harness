@@ -3,6 +3,7 @@
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it } from 'vitest'
 import {
+  BODY_MARGIN,
   RULE_MARGIN,
   bodyLine,
   bottomRule,
@@ -137,20 +138,28 @@ describe('fitLegend', () => {
 })
 
 describe('bodyLine', () => {
-  it('draws the left border and leaves the row unpadded', () => {
-    expect(bodyLine('clean tree', 40, plain, 'focus')).toBe('│ clean tree')
-    expect(bodyLine('clean tree', 40, styled, 'muted')).toBe('\u001b[2m│\u001b[22m clean tree')
+  it('closes the row on both sides and pads the content between them', () => {
+    const line = bodyLine('clean tree', 20, plain, 'focus')
+    expect(line).toBe(`│ clean tree${' '.repeat(20 - BODY_MARGIN - 'clean tree'.length)} │`)
+    expect(visibleWidth(line)).toBe(20)
+    expect(bodyLine('clean tree', 20, styled, 'muted')).toContain('\u001b[2m│\u001b[22m clean tree')
   })
 
-  it('lifts the border with the rest of the frame', () => {
+  it('lifts both borders with the rest of the frame', () => {
     expect(bodyLine('clean tree', 40, styled, 'focus', 2)).toContain('\u001b[1m\u001b[36m\u001b[36m│')
-    expect(bodyLine('clean tree', 40, styled, 'muted', 2)).toBe('\u001b[2m│\u001b[22m clean tree')
-    expect(bodyLine('clean tree', 40, plain, 'focus', 2)).toBe('│ clean tree')
+    expect(bodyLine('clean tree', 40, styled, 'muted', 2)).toBe(bodyLine('clean tree', 40, styled, 'muted'))
+    expect(bodyLine('clean tree', 40, plain, 'focus', 2)).toBe(bodyLine('clean tree', 40, plain, 'focus'))
   })
 
   it('cuts a row the width cannot hold', () => {
     const line = bodyLine('x'.repeat(40), 12, plain, 'focus')
     expect(visibleWidth(bare(line))).toBe(12)
-    expect(bare(line).endsWith('…')).toBe(true)
+    expect(bare(line)).toBe(`│ ${'x'.repeat(12 - BODY_MARGIN - 1)}… │`)
+  })
+
+  it('keeps the opening border and the text at a width too narrow to close the row', () => {
+    const line = bodyLine('x'.repeat(40), 4, plain, 'focus')
+    expect(visibleWidth(bare(line))).toBe(4)
+    expect(bare(line).startsWith('│ ')).toBe(true)
   })
 })

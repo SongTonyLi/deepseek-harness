@@ -618,7 +618,7 @@ describe('syntax colour', () => {
     await test.settle()
     // The grammar is a real import, so the rows draw plain first and are
     // painted once the highlighter asks for the frame again; the line number
-    // and the diff sign stay outside the colour.
+    // and the diff sign stay outside the language's colour.
     let read: string | undefined
     let removed: string | undefined
     let added: string | undefined
@@ -634,8 +634,9 @@ describe('syntax colour', () => {
     expect(removed, 'the removed diff rows were never painted').toBeDefined()
     expect(added, 'the added diff rows were never painted').toBeDefined()
     expect(read).toMatch(/1│ \u001b\[/u)
-    expect(removed).toMatch(/- \u001b\[/u)
-    expect(added).toMatch(/\+ \u001b\[/u)
+    // The sign carries its own colour, and the file's language starts after it.
+    expect(removed).toMatch(/-\u001b\[39m \u001b\[/u)
+    expect(added).toMatch(/\+\u001b\[39m \u001b\[/u)
   }, 20_000)
 
   it('repaints a ! draft, a $ command row, and a terminal card once the shell grammar has landed', async () => {

@@ -1,19 +1,22 @@
-/** The guarded main screen: the repaint window it hands its guard, its settle passes, and its suspension. */
+/** The guarded main screen: its page margins, the repaint window it hands its guard, its settle passes, and its suspension. */
 
 import { describe, expect, it } from 'vitest'
 import type { Component } from '@earendil-works/pi-tui'
-import { GuardedMainScreen, repaintFloor } from '../src/screen.ts'
+import { GuardedMainScreen, PAGE_MARGIN_COLUMNS, pageContentWidth, repaintFloor } from '../src/screen.ts'
 import { FakeTerminal } from './bench.ts'
 
 /** A child that counts its renders and draws whatever it was last given. */
 class Counted implements Component {
   renders = 0
+  /** The widths it was laid out at, in render order. */
+  readonly widths: number[] = []
   lines = ['first', 'tail']
 
   invalidate(): void {}
 
-  render(): string[] {
+  render(width: number): string[] {
     this.renders += 1
+    this.widths.push(width)
     return [...this.lines]
   }
 }
@@ -49,11 +52,39 @@ describe('repaintFloor', () => {
   })
 })
 
+/** The left margin every drawn line is moved right by. */
+const MARGIN = ' '.repeat(PAGE_MARGIN_COLUMNS)
+
+describe('pageContentWidth', () => {
+  it('takes one margin off each side of the terminal', () => {
+    expect(pageContentWidth(80)).toBe(80 - PAGE_MARGIN_COLUMNS * 2)
+  })
+
+  it('gives the margins up rather than the text on a terminal too narrow for both', () => {
+    expect(pageContentWidth(6)).toBe(6)
+  })
+})
+
 describe('GuardedMainScreen', () => {
   it('builds the frame once and writes it when the guard changed nothing', () => {
     const { screen, child } = screenWith(40, () => false)
-    expect(screen.render(20)).toEqual(['first', 'tail'])
+    expect(screen.render(20)).toEqual([`${MARGIN}first`, `${MARGIN}tail`])
     expect(child.renders).toBe(1)
+  })
+
+  it('lays the tree out inside the margins and moves every drawn line right by the left one', () => {
+    const { screen, child } = screenWith(40, () => false)
+    child.lines = ['drawn', '']
+    // A line with nothing on it gains no trailing spaces.
+    expect(screen.render(20)).toEqual([`${MARGIN}drawn`, ''])
+    expect(child.widths).toEqual([pageContentWidth(20)])
+  })
+
+  it('draws a terminal too narrow for the margins without them', () => {
+    const { screen, child } = screenWith(40, () => false)
+    child.lines = ['drawn']
+    expect(screen.render(6)).toEqual(['drawn'])
+    expect(child.widths).toEqual([6])
   })
 
   it('builds the frame again and writes the second one when the guard changed a line', () => {
@@ -63,7 +94,8 @@ describe('GuardedMainScreen', () => {
       child.lines = [`${String(viewportTop)} at ${String(width)}`, 'tail']
       return passes === 1
     })
-    expect(screen.render(20)).toEqual(['0 at 20', 'tail'])
+    // The guard is handed the width the tree was laid out in, not the terminal's.
+    expect(screen.render(20)).toEqual([`${MARGIN}0 at ${String(pageContentWidth(20))}`, `${MARGIN}tail`])
     expect(child.renders).toBe(2)
   })
 
@@ -74,7 +106,7 @@ describe('GuardedMainScreen', () => {
       child.lines = [`pass ${String(passes)}`]
       return true
     })
-    expect(screen.render(20)).toEqual(['pass 2'])
+    expect(screen.render(20)).toEqual([`${MARGIN}pass 2`])
     expect(child.renders).toBe(3)
   })
 

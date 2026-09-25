@@ -7,7 +7,7 @@
 import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { InboxTarget } from '@deepseek-ai/dsh-agent'
-import { bodyLine, bottomRule, fitLegend, topRule, type FrameTone } from './frame.ts'
+import { BODY_MARGIN, bodyLine, bottomRule, fitLegend, topRule, type FrameTone } from './frame.ts'
 import { HINTS, QUEUE_ENTRY_HINT } from './keys.ts'
 import type { Palette } from './style.ts'
 import { contentText } from './transcript.ts'
@@ -101,7 +101,7 @@ export function renderQueuePanel(rows: readonly QueuePanelRow[], render: QueuePa
   const tone: FrameTone = selected === undefined ? 'muted' : 'focus'
   const heading = tone === 'focus' ? palette.accent('follow-ups') : palette.dim('follow-ups')
   const lines = [heading, topRule({ width, palette, tone })]
-  const room = Math.max(1, width - 2)
+  const room = Math.max(1, width - BODY_MARGIN)
   for (const [index, row] of rows.entries()) {
     const glyph = selected === index ? palette.accent(FOLLOW_UP_GLYPH) : FOLLOW_UP_GLYPH
     for (const content of followUpLines(row.text, room, glyph)) {
