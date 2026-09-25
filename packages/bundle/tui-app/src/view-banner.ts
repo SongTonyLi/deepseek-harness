@@ -14,6 +14,9 @@ import { bandRow, type Palette } from './style.ts'
 /** What the trail calls the session the first subagent view was opened from. */
 export const MAIN_SESSION_LABEL = 'main'
 
+/** What the line calls a subagent view unless the app names the view otherwise. */
+const SUBAGENT_VIEW_TITLE = 'subagent view'
+
 /** Glyph the banner opens with; the header marks a subagent view with the same one. */
 const VIEW_GLYPH = '◆'
 
@@ -25,13 +28,18 @@ export class ViewBanner implements Component {
   /** @param palette - the palette the line is styled with. */
   constructor(private readonly palette: Palette) {}
 
+  /** What the line calls the view on screen. */
+  private title = SUBAGENT_VIEW_TITLE
+
   /**
    * Replace the views the line names.
    * @param views - the label of every open subagent view, outermost first;
    * empty draws nothing.
+   * @param title - what the line calls the view on screen; `subagent view` when omitted.
    */
-  setViews(views: readonly string[]): void {
+  setViews(views: readonly string[], title: string = SUBAGENT_VIEW_TITLE): void {
     this.views = [...views]
+    this.title = title
   }
 
   invalidate(): void {}
@@ -48,7 +56,7 @@ export class ViewBanner implements Component {
     const back = this.views.at(-2) ?? MAIN_SESSION_LABEL
     const trail = [MAIN_SESSION_LABEL, ...this.views.slice(0, -1)].map(label => palette.dim(label))
     const row = [
-      `${palette.warning(VIEW_GLYPH)} ${palette.bold(palette.warning('subagent view'))}`,
+      `${palette.warning(VIEW_GLYPH)} ${palette.bold(palette.warning(this.title))}`,
       [...trail, palette.bold(current)].join(palette.dim(' › ')),
       `${palette.accent('Ctrl+P')} ${palette.dim(`back to ${back}`)}`,
     ].join(palette.dim('  ·  '))

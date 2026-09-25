@@ -16,6 +16,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { resumeModelSelection } from './resume-model.ts'
+import { BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwSeed, restrictBtwAgent } from './btw.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { canOpenNativePath, openNativeUrl } from '@deepseek-ai/dsh-native-command'
@@ -169,6 +170,21 @@ export interface Config {
   reducedMotion: boolean
   /** Permit local default-browser handoff for authorization pages. */
   openBrowser: boolean
+  /**
+   * Global tools a `/btw` side agent may call. Every other global tool is
+   * hidden from it and refused if called. Name only tools that read: the side
+   * agent shares the workspace with the working agent it was opened beside.
+   * Names this composition does not register are skipped.
+   */
+  btwTools: string[]
+  /**
+   * Command tools a `/btw` side agent may call only when the composed command
+   * executor confines commands to a sandbox. The side agent's session runs in
+   * the `read-only` sandbox mode with the `never` approval policy, so writes
+   * are refused and cannot be approved. Without a confining executor these
+   * tools stay hidden.
+   */
+  btwSandboxedTools: string[]
 }
 
 export const Config: z<Config> = z.object({
@@ -187,6 +203,8 @@ export const Config: z<Config> = z.object({
   toolRevealFrames: z.natural().default(TOOL_REVEAL_FRAMES),
   reducedMotion: z.boolean().default(false),
   openBrowser: z.boolean().default(true),
+  btwTools: z.array(z.string()).default([...BTW_TOOLS]),
+  btwSandboxedTools: z.array(z.string()).default([...BTW_SANDBOXED_TOOLS]),
 })
 
 /** Process-facing effects of one run: the terminal, the error stream, and the launcher's bounded exit request. */
@@ -286,9 +304,10 @@ async function forkSeed(ctx: Context, id: SessionId, turn: number | undefined): 
  * @param ctx - plugin context.
  * @param core - the injected services.
  * @param cwd - the workspace root recorded on new sessions.
+ * @param btw - the tools a `/btw` side agent may call.
  * @returns the host.
  */
-function sessionHost(ctx: Context, core: CoreServices, cwd: string): SessionHost {
+function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Config, 'btwTools' | 'btwSandboxedTools'>): SessionHost {
   const { agents, defaultModel } = core
   const bind = async (
     open: (selection: ModelSelectionRef, setup: AgentSetup) => ReturnType<typeof agents.create>,
@@ -333,6 +352,40 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string): SessionHost
     create: () => create(undefined, undefined),
     resume,
     fork: async (id, turn) => create(await forkSeed(ctx, id, turn), id),
+    aside: async (parent) => {
+      const session = parent.agent.session
+      const query = ctx.get('sessionQuery')
+      if (query === undefined) throw new Error('btw needs a composed session query engine')
+      let events: readonly SessionEvent[]
+      {
+        using observed = await query.observeSession(session.id, { projectionMode: 'none' })
+        events = observed.events
+      }
+      const { seed, inheritedEventCount } = btwSeed(events)
+      const model = resumeModelSelection(session.requestHeader(), parent.selection.current ?? defaultModel.currentSelection())
+      return bind((selection, installSelection) => {
+        selection.current = model
+        // No parent Agent and no subagent catalog entry: the working Agent
+        // neither owns nor lists the side agent, and the side agent is not
+        // its continuable child, so it cannot message it.
+        /* v8 ignore next -- TUI sessions record cwd on create; process cwd is the fallback when a header omitted it */
+        const workdir = session.header.cwd ?? cwd
+        return agents.create({
+          sessionId: brandString<SessionId>(`session-${randomUUID()}`),
+          ...seed.length === 0 ? {} : { seed, inheritedEventCount },
+          meta: { cwd: workdir, parentSession: session.id, isSeeded: true, origin: 'subagent' },
+          agentOptions: {
+            provider: model.provider,
+            model: model.model,
+            ...model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort },
+          },
+          setup: async (agentCtx, agent) => {
+            await installSelection(agentCtx, agent)
+            restrictBtwAgent(agentCtx, agent, btw)
+          },
+        })
+      }, [])
+    },
     observe: async (id) => {
       const resident = agents.get(id)
       if (resident === undefined) return resume(id)
@@ -369,7 +422,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
   // Early process shutdown can dispose the tree while settlement is pending.
   if (core === undefined) return
   const cwd = process.cwd()
-  const sessions = sessionHost(ctx, core, cwd)
+  const sessions = sessionHost(ctx, core, cwd, config)
   const initial = config.resume === undefined
     ? await sessions.create()
     : await sessions.resume(brandString<SessionId>(config.resume))

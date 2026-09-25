@@ -26,6 +26,7 @@ const configPath = fileURLToPath(new URL('./fixtures/cli.patch.yml', import.meta
 const ENTER = '\r'
 const CTRL_D = '\u0004'
 const CTRL_G = '\u0007'
+const CTRL_P = '\u0010'
 const DOWN = '\u001b[B'
 const SHIFT_TAB = '\u001b[Z'
 const SHIFT_UP = '\u001b[1;2A'
@@ -235,6 +236,38 @@ describe('tui profile keyless smoke', () => {
       expect(explicitResume.stdout).not.toContain('{{model}}')
       expect(explicitResume.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(explicitResume.stderr).toContain(`--resume ${sessionId}`)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  }, TEST_TIMEOUT_MS)
+
+  it('runs the shell call of a read-only /btw side agent beside the session and leaves the session log alone', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-btw-'))
+    try {
+      const run = await runScript(cwd, [], [
+        { marker: 'cli-mock/cli-mock', keys: `first${ENTER}` },
+        { marker: 'CLI tool round trip complete', keys: `/btw why${ENTER}` },
+        { marker: 'btw side agent', keys: '' },
+        // The side agent runs the mock's shell call in the read-only sandbox and answers in its own turn.
+        { marker: 'CLI tool round trip complete', keys: CTRL_P },
+        { marker: 'btw ended · back in session', keys: '' },
+      ])
+      expect(run.exitCode, `stderr:\n${run.stderr}\nstdout:\n${run.stdout}`).toBe(0)
+      const opened = run.stdout.indexOf('btw side agent')
+      expect(opened).toBeGreaterThan(-1)
+      expect(run.stdout.indexOf('❯ why', opened)).toBeGreaterThan(opened)
+      expect(run.stdout.indexOf('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP', opened)).toBeGreaterThan(opened)
+      const saved = /--resume (session-[\w-]+)/u.exec(run.stderr)
+      expect(saved, run.stderr).not.toBeNull()
+      const sessionId = saved![1]!
+
+      const resumed = await runScript(cwd, ['--resume', sessionId], [
+        { marker: 'CLI tool round trip complete', keys: '' },
+      ])
+      expect(resumed.exitCode, `stderr:\n${resumed.stderr}\nstdout:\n${resumed.stdout}`).toBe(0)
+      expect(resumed.stdout).toContain('❯ first')
+      expect(resumed.stdout).not.toContain('❯ why')
+      expect(resumed.stdout).not.toContain('btw · side agent')
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }

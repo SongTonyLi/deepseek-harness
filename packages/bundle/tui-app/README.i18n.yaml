@@ -21,11 +21,11 @@
   en: be0e9f07314547a5
   zh: e55e8e668b3f703f
 /deepseek-ai-dsh-tui-app/use-this-package/the-screen:
-  en: f46aab5ea9d40e5d
-  zh: c2b21f7d6faa40a4
+  en: 28704cd17ca6b37d
+  zh: c091d14b798acccd
 /deepseek-ai-dsh-tui-app/use-this-package/keys-and-commands:
-  en: 99188e75ab3d7d84
-  zh: 4c1575148f12c16f
+  en: 86ee3c54b190bcb4
+  zh: c6f3fcc741afaca4
 /deepseek-ai-dsh-tui-app/use-this-package/subscription-sign-in:
   en: 7c1b0e685a3a9415
   zh: 49f3bdc3e99d6259
@@ -36,14 +36,14 @@
   en: 23ba736da2686f52
   zh: d30ce253dd934750
 /deepseek-ai-dsh-tui-app/use-this-package/configuration:
-  en: fd5fdfa656307026
-  zh: f9ef829fb17fcd3a
+  en: de84f025363b07e4
+  zh: 5004b1a0758c58ed
 /deepseek-ai-dsh-tui-app/understand-the-implementation:
   en: f124d406565fef39
   zh: 90344b5eec319cad
 /deepseek-ai-dsh-tui-app/understand-the-implementation/run-flow:
-  en: 244caa693b65b28f
-  zh: 20bd432745c5a9b1
+  en: 665ddb28f3987f02
+  zh: e8f89d93d7bc0fe9
 /deepseek-ai-dsh-tui-app/understand-the-implementation/rendering-model:
   en: 192d3daab8c51a4e
   zh: 7960dc941f40ccc5
@@ -51,8 +51,8 @@
   en: 142f04bf29e981dd
   zh: a1689297b06c9ca6
 /deepseek-ai-dsh-tui-app/understand-the-implementation/source-map:
-  en: 6910be5a539fb133
-  zh: b004b911c5757e6a
+  en: f6bd9e5b67b3652f
+  zh: cef041b9a91b245b
 /deepseek-ai-dsh-tui-app/understand-the-implementation/invariant-ownership:
   en: 0ddf6de8928026d5
   zh: 24feedcbb9e9d676
@@ -77,21 +77,21 @@
 /deepseek-ai-dsh-tui-app/model-experience/user-typed-shell-command/kv-cache-effect:
   en: 5b83189b640899dd
   zh: 232c1ef2f192bd4c
-/deepseek-ai-dsh-tui-app/model-experience/side-question:
-  en: ac6516adff6e6ea3
-  zh: 6ecac977743e7bee
-/deepseek-ai-dsh-tui-app/model-experience/side-question/what-the-model-sees:
-  en: 87691f2e4225a1ba
-  zh: 3b838561c2ac5fe2
-/deepseek-ai-dsh-tui-app/model-experience/side-question/token-effect:
-  en: 5c6d016f2f7f1608
-  zh: 3eb76252a08d51e9
-/deepseek-ai-dsh-tui-app/model-experience/side-question/kv-cache-effect:
-  en: c3792aed799617f8
-  zh: 4efaf1d8ae59ff5b
+/deepseek-ai-dsh-tui-app/model-experience/side-agent:
+  en: 1c67a481715ccab3
+  zh: cb1ee722aa3b9201
+/deepseek-ai-dsh-tui-app/model-experience/side-agent/what-the-model-sees:
+  en: be1f14f1a63ca2a8
+  zh: f5ee2a28d5f9443e
+/deepseek-ai-dsh-tui-app/model-experience/side-agent/token-effect:
+  en: 71d22c1a8c9f5c95
+  zh: 53b5f823c817e09f
+/deepseek-ai-dsh-tui-app/model-experience/side-agent/kv-cache-effect:
+  en: 1dadc4a2f1560eaa
+  zh: dc4697c269bc16b9
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work:
-  en: 6f34cd31df3d1797
-  zh: c7019e2aa9ed3dde
+  en: 6c5c2264668d24f7
+  zh: 025b0085b347b04d
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work/dev-note:
   en: 5629c6159cec997f
   zh: 17f2d7e1f96da7f1

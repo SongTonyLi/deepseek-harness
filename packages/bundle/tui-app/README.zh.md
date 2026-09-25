@@ -56,6 +56,8 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 子 agent 面板在绑定会话之下有常驻的子 agent 会话、或列表中带有无法读取的候选者时绘制。未聚焦时它是一行摘要，含列出的数量与第一个子会话的关键标签；聚焦时其标题统计所列出的条目，并以它所应答的按键 `↑↓ children · Enter opens · Tab regions · Esc input` 结尾，在容纳不下时收缩为 `↑↓ children · Esc input`，再收缩为 `Esc input`；每一行给出该子会话的层级缩进、其标签或 id、其模式（`one-shot` 或 `continuable`）、`resident`、其 agent 处于 `running` 还是 `idle`、其已用时间——进行中轮次的用时，否则是已结束轮次的合计——以及其 token 用量，以本进程对该子会话的可见程度与已组合的投影所能提供的为限。最多绘制六行，其下是 `+<n> more · /subagents lists them all`；列表无法解读的候选者绘制为 `unreadable: <reason>` 且打不开任何页面，读取失败的列表则保留上一次成功读取产生的各行，并在其下写出 `listing failed: <reason>`。面板随其最后一行一同消失。在可读的行上按 `Enter` 或 `Right`，与在可读的 `/subagents` 行上按 `Enter` 一样，会把该子会话作为子 agent 视图打开：终端在已绑定会话的位置绘制子会话——其对话记录、实时流、对话记录走查、检查器、阅读器以及它自己的子 agent 面板——而进入它之前的会话保持打开。常驻的子会话被实时读取，其他子会话则被恢复。条目的详情行作为通知打印在 `subagent <label> · Ctrl+P or /parent returns to session <id>` 之下，页眉以 `◆ subagent view ›`（每进入一层一个 `›`）与 `· Ctrl+P returns` 结尾，只要视图打开，输入框正上方就有一条着色行写着 `◆ subagent view · main › <label> · Ctrl+P back to <parent>`，无论对话记录滚动到哪里，`Ctrl+P` 或 `/parent` 返回上一层，并按父会话此刻的日志重绘它。只要这条链中任一会话正在运行轮次，`/new`、`/clear`、`/resume`、`/sessions` 与 `/fork` 都会拒绝，否则它们会随所离开的会话释放每一个视图；退出会释放每一个视图并保存根会话。
 
+`/btw` 在屏幕上的会话之上打开一个临时的旁路 agent 视图，让用户在该会话的 agent 继续工作时提问。旁路 agent 是一个新的 Agent，以该会话迄今记录的全部事件为种子，包括尚未结束的轮次：仍在等待结果的工具调用会得到分叉产生的错误结果，仍在流式输出的回复文本不包含在内。它使用该会话最后记录的模型（否则使用其当前选择），并且只能读取：它的会话运行在 `read-only` 沙箱模式与 `never` 审批策略下，因此写入会失败且无法获批；它只看得到 `btwTools` 中列出的工具，以及在命令执行器会约束命令时 `btwSandboxedTools` 中的命令工具。其他工具对它隐藏，被调用时也会被拒绝。它运行自己的轮次：`/btw` 之后的问题是它的第一条提示，它在屏幕上时输入的每一行都交给它，`/btw <question>` 也一样。该视图的绘制方式与子 agent 视图相同：页眉以 `◆ btw side agent · Ctrl+P ends it and returns` 结尾，输入框上方的着色行写着 `◆ btw side agent · main › btw · Ctrl+P back to main`，对话记录从空开始，而不是重复继承来的对话。`Ctrl+P` 或 `/parent` 结束旁路 agent（取消它正在运行的轮次），并在 `btw ended · back in session <id>` 之下重绘打开它之前的会话。工作中的会话只被读取：不向其日志追加任何内容，不触碰其收件箱，其子 agent 面板、`/subagents` 与面向模型的子 agent 列表都不显示旁路 agent，旁路 agent 也不能给它发消息。被任一视图挡在后面的会话发起的审批或提问，会在 `session <id>, behind this view, asks:` 之后显示在屏幕上，而不是被拒绝。
+
 ### 按键与命令
 
 对话记录、编辑器、子 agent 面板与状态栏构成垂直方向键走查：在最新小节上按 `Down`、在子 agent 面板第一行上按 `Up`、在没有绘制子 agent 面板时于状态栏上按 `Up`，都会落到光标处。follow-ups 列表位于输入框上方；绘制该列表时，`Shift+Up` 会进入它，它也加入 `Tab` 走查。activity board 位于 follow-ups 与输入之间，不是焦点区域。编辑器以外的区域持有键盘时，`Tab` 与 `Shift+Tab` 走遍已绘制的各区域，并在两端环绕；在编辑器中，`Tab` 采用给出的补全，`Shift+Tab` 打开推理强度选择器。在其中任何一个区域按下可打印键都会回到编辑器并在那里输入，因此在阅读时开始写的句子会落在它所指向的地方；对话记录中的 `Space` 是唯一的例外，它折叠被标记的工具卡片或上下文块。`Ctrl+G`、`Ctrl+O`、`Ctrl+T`、`Ctrl+P` 与 `Ctrl+L` 在这些区域中含义完全相同，而 `Ctrl+C` 与 `Ctrl+D` 会先把键盘交还编辑器再行动。提示与阅读器则各自持有整条按键流，并以交还键盘的方式应答 `Ctrl+C`。
@@ -77,7 +79,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `Ctrl+G` | 整屏读出对话记录，停在其最新小节 |
 | `Ctrl+O` | 展开或折叠所有工具卡片与上下文行 |
 | `Ctrl+T` | 浏览 agent 的 todo 列表，与 `/todos` 打开的是同一个列表 |
-| `Ctrl+P` | 从子 agent 视图返回进入它之前的会话，与 `/parent` 相同 |
+| `Ctrl+P` | 从子 agent 视图返回进入它之前的会话，或结束 `/btw` 旁路 agent，与 `/parent` 相同 |
 | `Ctrl+L` | 从头重绘整个屏幕 |
 | `?` | 输入为空时列出命令与按键，与 `/help` 相同；在草稿中则作为文字输入 |
 | `Esc` | 取消正在运行的 `!`；在没有轮次进行且草稿以 `!` 开头时清空编辑器；否则装填停止，该提示仍在屏幕上时再按一次会停止正在进行的轮次 |
@@ -188,12 +190,12 @@ follow-ups 面板持有键盘时：
 | `/deliverables` | agent 交付的文件，按轮次分组 |
 | `/changes [turn]` | 浏览最近一轮（或第 `turn` 轮）改动的文件及其行数；`Enter` 打开某个文件从轮次开始到结束的对比 |
 | `/subagents` | 浏览本会话之下的子 agent 会话；`Enter` 把可读的会话作为子 agent 视图打开，对无法读取的会话则打开其详情 |
-| `/parent` | 从子 agent 视图返回进入它之前的会话，与 `Ctrl+P` 相同 |
+| `/parent` | 从子 agent 视图返回进入它之前的会话，或结束 `/btw` 旁路 agent，与 `Ctrl+P` 相同 |
 | `/settings [ns [path value]]` | 列出命名空间、显示某一个或设置某个字段；`/settings reset <ns>` 恢复默认 |
 | `/plugins` | 已组合的插件及其启用状态与生命周期阶段；`/plugins bundles` 列出 profile 的组合包，`/plugins enable <id>` 与 `/plugins disable <id>` 切换某个插件条目或组合包，`/plugins add <spec>` 安装组合包，`/plugins remove <name>` 移除组合包 |
 | `/tools` | 像 `Ctrl+O` 一样展开或折叠所有工具卡片与上下文行 |
 | `/turns` | 像 `Ctrl+G` 一样整屏读出对话记录，各轮次并排 |
-| `/btw <question>` | 就本会话提一个旁边问题。答案打开在自己的页面上，不进入对话记录；正在进行的轮次继续，该问题也不能使用工具 |
+| `/btw <question>` | 打开一个带有本会话上下文的临时旁路 agent 并向它提问；它可以使用只读工具，本会话继续工作且看不到它，`Ctrl+P` 结束它。在旁路 agent 中，`/btw <question>` 向它再提一个问题 |
 | `/quit`、`/exit` | 保存会话并退出 |
 
 其他每条 `/name` 行都交给共享命令注册表，因此 `/compact`、`/goal` 与插件命令的行为和浏览器中一致。
@@ -233,6 +235,8 @@ follow-ups 面板持有键盘时：
 | `toolRevealFrames` | `6` | 工具卡片出现或其结果落下时，其各行展开所用的帧数，每帧展开隐藏行的一份。展开卡片，以及正在展开的行已位于渲染器可重绘范围之上的卡片，都会一次画出所有行；`0` 与 `reducedMotion` 一样，一次画出所有行 |
 | `reducedMotion` | `false` | 以稳定颜色绘制流式文本、流式推理、工具卡片与应用自身的边框装饰，不做淡入、不做抬亮，也不重复重绘 |
 | `openBrowser` | `true` | 把被标记的授权页面交给本地默认浏览器 |
+| `btwTools` | `read`、`read_image`、`glob`、`grep`、`web_search`、`web_fetch`、`session_*` 查询工具、`skill`、MCP 资源读取工具、`ask_user_question` | `/btw` 旁路 agent 可以调用的全局工具；本组合未注册的名称会被跳过 |
+| `btwSandboxedTools` | `bash`、`pwsh` | 仅当命令执行器会约束命令时 `/btw` 旁路 agent 才可调用的命令工具；它们在 `read-only` 沙箱模式下运行 |
 
 `prompt`、`resume` 与 `openBrowser` 经启动提供方来自命令行；生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)是所有可接受字段的完整来源。
 
@@ -248,7 +252,7 @@ runner 与 `dsh-headless` 一样是核心 API 载体之上的直接驱动器，�
 
 ### 运行流程
 
-runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含四个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 先拿到 Agent 写句柄，再经 `ctx.sessionQuery` 观察实时 Session，使 bind 画出每条持久化事件（包括恢复时的闭合事件），`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent，`observe` 打开子 agent 会话而不释放已绑定的会话——常驻的子 agent Agent 被实时读取、释放它什么也不做，其他会话则被恢复。除常驻会话的 `observe` 外，每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求；`resume` 把启动默认作为 AgentOptions 传入，使组装时 `{{model}}` 有值，再在有请求头时把它覆盖到该选择上，否则保留该默认。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，只为绑定的 Agent 应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。编辑器里提交的非空 `!` 或 `!!` 行经本进程的 `ctx.shell` 运行；`!` 注入一条下一步通知，`!!` 只留在本地。
+runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心注册表之上构建含五个操作的会话宿主：`create` 用共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择创建一个全新的持久化 Agent，`resume` 先拿到 Agent 写句柄，再经 `ctx.sessionQuery` 观察实时 Session，使 bind 画出每条持久化事件（包括恢复时的闭合事件），`fork` 通过 `ctx.sessionQuery` 观察源会话、在所选（默认最后一个）`turn/end` 之后直到下一个 `turn/start` 处切割，并创建带 `parentSession` 与 `isSeeded` 元数据的种子 Agent，`observe` 打开子 agent 会话而不释放已绑定的会话——常驻的子 agent Agent 被实时读取、释放它什么也不做，其他会话则被恢复，`aside` 创建 `/btw` 旁路 agent：它以 `buildForkSeed` 用 `ctx.sessionQuery` 观察到的已绑定会话完整日志作种子，记录 `parentSession`、`isSeeded` 与 `origin: 'subagent'`，但不传入父 Agent，也不向父会话追加目录事件，随后在其 setup 中追加 `read-only` 沙箱模式与 `never` 审批策略，并把它的全局工具限制为配置的名称。除常驻会话的 `observe` 外，每个操作都在 Agent 的作用域 setup 中安装 `ModelSelectionRef`，因此 `/model` 会改变下一次请求；`resume` 把启动默认作为 AgentOptions 传入，使组装时 `{{model}}` 有值，再在有请求头时把它覆盖到该选择上，否则保留该默认。终端应用从 `--resume` 或一次新的 `create` 产生的会话开始，订阅 `session/event`、`agent/assistant-stream` 与 `agent/status`，为绑定的 Agent 以及每个被视图挡在后面的会话应答 `approval/request` 与 `user-questions/request` waterfall，并通过绑定下一个会话、dispose 先前句柄来切换会话；宿主打开下一个会话期间编辑器拒绝输入，等待期间退出会释放随后到达的会话。退出时取消任何进行中的轮次、等待完全停稳、flush 绑定的会话、dispose 其句柄并请求以 0 退出；驱动器失败会向 stderr 写入 `dsh: <message>` 并请求以 1 退出。`/resume` 与 `/sessions` 共用持久化会话选择器。编辑器中的 `Shift+Tab` 会派发空参数 `/effort` 以打开当前模型的推理强度选择器，而编辑器中的 `Shift+Left` / `Shift+Right` 使用 pi-tui 的词导航。`/login` 只带着订阅方法（除收集密钥的 `api-key` 登录外的每一种方法）启动 `authorization.begin`。flow 用 `openInBrowser` 标记的 notice 会经 `dsh-native-command` 的凭据擦除辅助进程交给默认浏览器，URL 同时保持打印；当 `openBrowser` 为 false、启动经过 SSH 或宿主没有桌面时抑制该交接，打开器失败则成为 URL 旁的一条通知，而非登录失败。编辑器里提交的非空 `!` 或 `!!` 行经本进程的 `ctx.shell` 运行；`!` 注入一条下一步通知，`!!` 只留在本地。
 
 ### 渲染模型
 
@@ -280,8 +284,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/frame.ts`](src/frame.ts) | 纯粹的画框：圆角边框线、反白的模式徽标、正文行，以及某个宽度容纳得下的按键提示级别 |
 | [`src/reader.ts`](src/reader.ts) | 作为纯数据的阅读器：其状态、按键变成的各个意图、其几何布局，以及它画出的各行 |
 | [`src/reader-screen.ts`](src/reader-screen.ts) | 画在备用屏幕上的阅读器面板：其按键映射，以及它把键盘留在何处 |
-| [`src/btw.ts`](src/btw.ts) | `/btw`：用已绑定会话的派生历史构造一次不带工具的请求，且不写入日志 |
-| [`src/btw-screen.ts`](src/btw-screen.ts) | 画在备用屏幕上的 `/btw` 答案页 |
+| [`src/btw.ts`](src/btw.ts) | `/btw`：以工作会话的完整日志构造旁路 agent 的种子、其只读工具与沙箱限制，以及开场通知 |
 | [`src/screen.ts`](src/screen.ts) | 每一帧据以排版与绘制的页边距、在构建一帧与写出该帧之间带若干次结算的主屏幕、每次结算所依据的重绘窗口、每个块的重绘下界，以及把对话记录挡在终端之外的挂起 |
 | [`src/alt-screen.ts`](src/alt-screen.ts) | 终端的备用屏幕：接管它、在其上按绝对行址绘制，以及把对话记录自己的屏幕交还 |
 | [`src/fade.ts`](src/fade.ts) | 流式文本淡入与浮出：基于挂钟的尾部追踪器、块时钟与注册表、淡入亮度级别、浮出混合，以及对已渲染行的重新着色 |
@@ -302,7 +305,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/queue-panel.ts`](src/queue-panel.ts) | follow-ups 列表：待处理行符号、悬挂换行与 enter-steer 图例 |
 | [`src/activity-board.ts`](src/activity-board.ts) | activity board：todo 状态符号、已完成内容划掉、行数上限，以及一行后代摘要 |
 | [`src/catalog.ts`](src/catalog.ts) | `/settings`、`/plugins`、`/subagents`、`/deliverables`、`/changes` 与 `/outline` 的行，以及 `/plugins` 的管理动作 |
-| [`src/view-banner.ts`](src/view-banner.ts) | 输入框上方标明已打开的子 agent 视图及返回按键的一行 |
+| [`src/view-banner.ts`](src/view-banner.ts) | 输入框上方标明已打开的子 agent 视图或 `/btw` 旁路 agent 及返回按键的一行 |
 | [`src/todos.ts`](src/todos.ts) | todo 列表：状态符号、已完成内容划掉的选择器行与单个条目的详情行 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |
 | — | 不发布运行时不变量伴随模块；应用只在一个 Agent 上注册监听器，不持有其他观察者可能与之矛盾的可变关系。 |
@@ -381,19 +384,19 @@ The user ran `<command>` in the terminal.
 
 在可复用的请求前缀之后只做追加式增长。该通知不改变系统提示或工具目录。`/model` 切换像在浏览器中一样开始新的请求序列。
 
-### 旁边问题
+### 旁路 agent
 
 #### 模型看到什么
 
-`/btw <question>` 经 `ctx.llm.stream` 多发一次请求，且不写入会话。系统文本是固定的：模型回答一个旁边问题，不是对话里的那个 agent，也不能调用工具或继续该 agent 的任务。消息是已绑定会话的派生历史、仍在流式输出的可见回复（若有），以及作为最后一条用户消息的问题。不声明工具。正在进行的轮次不会被导向、入队或取消。答案画在备用屏幕上。主 agent 下一步看到的文本不变。
+`/btw` 不改变工作中 agent 的请求。旁路 agent 的请求只声明它被允许的工具，并以工作会话继承来的历史开头，包括分叉为没有已记录结果的工具调用产生的错误结果，以及未结束轮次的收尾事件。随后是一条摘要为 `btw · side agent` 的 `tui-app` 通知，文本固定：上面的对话属于一个仍在运行的工作 agent；回答用户的问题；它的工具是只读的，命令在只读沙箱中运行，每次写入都会被拒绝且无法获批，因此它描述改动而不是尝试改动；不继续工作 agent 的任务，也不给它发消息；以分叉错误结束的继承工具调用可能已在工作会话中完成。用户的问题随后作为普通提示出现，之后的各行都是旁路 agent 会话的普通提示。
 
 #### Token 影响
 
-每次 `/btw` 多一次模型请求。该请求及其答案都不会留在之后的 agent 请求中。
+旁路 agent 的每次请求都携带继承的历史、该通知以及旁路 agent 自己的轮次。旁路 agent 的任何内容都不会进入工作 agent 的请求。
 
 #### KV Cache 影响
 
-旁边请求不改变 agent 循环的系统提示、工具目录或对话前缀。
+旁路 agent 使用工作会话最后记录的 provider 与模型，但它的工具目录是只读子集，因此把工具声明缓存在历史之前的 provider 会在第一次旁路请求时重新计算继承的历史；之后的旁路请求追加在该前缀之后。工作 agent 的请求前缀不变。
 
 ## 已知限制与延期工作
 
@@ -418,7 +421,7 @@ The user ran `<command>` in the terminal.
 - **淡入需要终端的应答**——其亮度级别由终端对启动时发出的查询所报告的背景色构建，因此保持沉默、或既不编码真彩色也不编码 256 色的终端只会得到两级的暗淡模式；`NO_COLOR`、被禁用的调色板、`TERM=dumb` 与 `reducedMotion` 会完全关闭每一种淡入与每一种边框抬亮，临时提示行届时在保持结束时直接消失，而不是淡出。
 - **终端自身的光标可能闪烁**——编辑器不绘制自己的光标，应用打开终端光标，而 pi-tui 会在其重绘的各行之间移动它；不支持 pi-tui 为一帧包裹的同步输出序列的终端可能显示出这种移动。
 - **通过 `dsh` 启动器运行**——以其他方式启动该 profile 会在启动时失败，因为只有启动器能请求进程退出。
-- **`/btw` 是终端页面，不是一轮**——答案不写入会话，Web 没有 `/btw`，请求看到的是派生历史加上仍在流式输出的可见回复。尚未写入日志的工具参数不在其中。该页面不能运行工具。
+- **`/btw` 旁路 agent 靠工具名称与沙箱保持只读**——`btwTools` 只能列出读取类工具，因为旁路 agent 与工作 agent 共享工作区；命令工具可以读取 `read-only` 沙箱模式允许的任何内容，而没有会约束命令的执行器时命令工具会被隐藏。它只继承工作会话已记录的内容：仍在流式输出的回复文本不在其中。它的日志像子 agent 会话一样被存储，并在 `/resume` 与 `/sessions` 中隐藏，Web 没有 `/btw`。
 - **`!` 是一次性的，也不是 TTY**——每一行都是一次新的 `ctx.shell.run`；没有持久 shell，也不能跑交互式程序。Web 编辑器不拦截 `!`。命令行上的可选首条提示始终是用户消息。
 
 <a id="dev-note"></a>
