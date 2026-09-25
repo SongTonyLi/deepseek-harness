@@ -211,7 +211,7 @@ export interface Bench {
   app: TuiApp
   /** The sessions handed to `onQuit`. */
   quits: BoundSession[]
-  /** What the scripted host was asked for, e.g. `create`, `resume:session-x`, `fork:session-x`. */
+  /** What the scripted host was asked for, e.g. `create`, `resume:session-x`, `fork:session-x`, `aside:session-x`. */
   hostCalls: string[]
   /** Sessions the host bound after the initial one, with their disposal counts. */
   opened: { bound: BoundSession; disposed: number }[]
@@ -444,6 +444,7 @@ export async function bench(options: {
     create: () => open('create', `session-opened-${String(++openedCount)}` as SessionId),
     resume: id => open(`resume:${id}`, id),
     fork: (id, turn) => open(`fork:${id}${turn === undefined ? '' : `@${String(turn)}`}`, `session-fork-of-${id}` as SessionId),
+    aside: parent => open(`aside:${parent.agent.session.id}`, `session-btw-${String(++openedCount)}` as SessionId),
     observe: async (id) => {
       const resident = ctx.agents.get(id)
       if (resident === undefined) return open(`observe:${id}`, id)

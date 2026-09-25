@@ -4088,7 +4088,7 @@ export type ToolPresentationMode = 'native' | 'ptc' | 'both'
 ## `@deepseek-ai/dsh-tui-app`
 
 - `inject`: `agentDefaultModel` · `agents` · `sessions`
-- `source`: [`packages/bundle/tui-app/src/index.ts:44`](../packages/bundle/tui-app/src/index.ts)
+- `source`: [`packages/bundle/tui-app/src/index.ts:46`](../packages/bundle/tui-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the invocation resolved from this app's injected provider service, plus presentation tunables. */
@@ -4219,6 +4219,21 @@ export interface Config {
   reducedMotion: boolean
   /** Permit local default-browser handoff for authorization pages. */
   openBrowser: boolean
+  /**
+   * Global tools a `/btw` side agent may call. Every other global tool is
+   * hidden from it and refused if called. Name only tools that read: the side
+   * agent shares the workspace with the working agent it was opened beside.
+   * Names this composition does not register are skipped.
+   */
+  btwTools: string[]
+  /**
+   * Command tools a `/btw` side agent may call only when the composed command
+   * executor confines commands to a sandbox. The side agent's session runs in
+   * the `read-only` sandbox mode with the `never` approval policy, so writes
+   * are refused and cannot be approved. Without a confining executor these
+   * tools stay hidden.
+   */
+  btwSandboxedTools: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tui-app -->

@@ -17,6 +17,7 @@ import SessionStore from '@deepseek-ai/dsh-session'
 import { SessionLogOffset, type EpochHeader, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { BTW_SANDBOXED_TOOLS, BTW_TOOLS } from '../src/btw.ts'
 import { Config, apply, internals } from '../src/index.ts'
 import { FakeTerminal, KEY } from './bench.ts'
 
@@ -63,10 +64,11 @@ async function bench(
     meta?: CreateAgentOptions['meta'],
     seed?: readonly SessionEvent[],
     agentOptions?: CreateAgentOptions['agentOptions'],
+    inheritedEventCount?: SessionLogOffset,
   ): Promise<AgentHandle> => {
     const session = ctx.sessions.create(id, {
       ...meta === undefined ? {} : { meta },
-      ...seed === undefined ? {} : { seed, inheritedEventCount: SessionLogOffset(seed.length) },
+      ...seed === undefined ? {} : { seed, inheritedEventCount: inheritedEventCount ?? SessionLogOffset(seed.length) },
     })
     if (options.resumeHeader !== undefined && String(id) === 'session-old') {
       session.append('request/header', { header: options.resumeHeader, reason: 'initial' })
@@ -104,6 +106,7 @@ async function bench(
         createOptions.meta,
         createOptions.seed,
         createOptions.agentOptions,
+        createOptions.inheritedEventCount,
       )
     },
     resume(ownerCtx, resumeOptions) {
@@ -184,6 +187,8 @@ function config(overrides: Partial<Config> = {}): Config {
     toolRevealFrames: 6,
     reducedMotion: false,
     openBrowser: true,
+    btwTools: [...BTW_TOOLS],
+    btwSandboxedTools: [...BTW_SANDBOXED_TOOLS],
     ...overrides,
   }
 }
@@ -372,6 +377,80 @@ describe('tui runner', () => {
     expect(observed.order.at(-1)).toBe('dispose')
   })
 
+  it('opens a /btw side agent from the whole live log on the logged model, and ends it on return', async () => {
+    const logged: SessionEvent[] = []
+    const { ctx, observed } = await bench({ observed: logged })
+    apply(ctx, config())
+    await settled()
+    const root = observed.created[0]?.sessionId
+    const agent = root === undefined ? undefined : ctx.agents.get(root)
+    if (agent === undefined) throw new Error('the runner published no agent')
+    agent.session.append('turn/start', { turn: 1 })
+    agent.session.append('request/header', { header: { config: { provider: 'logged', model: 'logged-model', reasoningEffort: 'high' } }, reason: 'initial' } as never)
+    agent.session.append('step/start', { turn: 1, step: 1 })
+    logged.push(...agent.session.ownEvents())
+    typeLine(observed.terminal, '/btw what now')
+    await settled()
+    const side = observed.created[1]
+    expect(side?.seed?.slice(0, 3).map(event => event.type)).toEqual(['turn/start', 'request/header', 'step/start'])
+    expect(side?.seed?.slice(3).map(event => event.type)).toEqual(['session/end-seed', 'step/end', 'turn/end'])
+    expect(side?.inheritedEventCount).toBe(3)
+    expect(side?.parentAgent).toBeUndefined()
+    expect(side?.meta).toEqual({ cwd: process.cwd(), parentSession: root, isSeeded: true, origin: 'subagent' })
+    expect(side?.agentOptions).toEqual({ provider: 'logged', model: 'logged-model', reasoningEffort: 'high' })
+    const sideAgent = side === undefined ? undefined : ctx.agents.get(side.sessionId)
+    expect(sideAgent?.session.ownEvents().slice(-2).map(event => [event.type, event.data])).toEqual([
+      ['sandbox/mode', { mode: 'read-only', source: 'delegation' }],
+      ['approval/policy', { policy: 'never', source: 'delegation' }],
+    ])
+    expect(observed.terminal.text()).toContain('btw side agent')
+    const start = observed.order.length
+    typeLine(observed.terminal, '/parent')
+    await settled()
+    expect(observed.order.slice(start)).toEqual([`observe:${String(root)}`, 'release-observation', 'dispose'])
+  })
+
+  it('reports a /btw side agent that has no query engine to read the session from', async () => {
+    const { ctx, observed } = await bench()
+    apply(ctx, config())
+    await settled()
+    typeLine(observed.terminal, '/btw why')
+    await settled()
+    expect(observed.created).toHaveLength(1)
+    expect(observed.terminal.text()).toContain('opening btw failed: btw needs a composed session query engine')
+  })
+
+  it('opens a /btw side agent over an empty session on the selected model', async () => {
+    const { ctx, observed } = await bench({ observed: [] })
+    apply(ctx, config())
+    await settled()
+    typeLine(observed.terminal, '/btw')
+    await settled()
+    const side = observed.created[1]
+    expect(side?.seed).toBeUndefined()
+    expect(side?.inheritedEventCount).toBeUndefined()
+    expect(side?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
+  })
+
+  it('opens a /btw side agent over a subagent view on the default model', async () => {
+    const { ctx, observed } = await bench({ observed: [] })
+    ctx.provide('subagents', {
+      listDescendants: () => Promise.resolve([{ kind: 'child', id: 'session-kid', activity: 'running', mode: 'one-shot', hasChildren: false, parentId: 'root', depth: 1 }]),
+    } as never)
+    apply(ctx, config())
+    await settled()
+    await ctx.agents.create({ sessionId: 'session-kid' as SessionId, meta: { cwd: '/kid' } })
+    typeLine(observed.terminal, '/subagents')
+    await settled()
+    observed.terminal.type(KEY.enter)
+    await settled()
+    typeLine(observed.terminal, '/btw why')
+    await settled()
+    const side = observed.created.at(-1)
+    expect(side?.meta).toEqual({ cwd: '/kid', parentSession: 'session-kid', isSeeded: true, origin: 'subagent' })
+    expect(side?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
+  })
+
   it('refuses to fork without a query engine or a completed turn', async () => {
     const bare = await bench()
     apply(bare.ctx, config())
@@ -518,6 +597,8 @@ describe('the presentation tunables', () => {
       toolRevealFrames: 6,
       reducedMotion: false,
       openBrowser: true,
+      btwTools: [...BTW_TOOLS],
+      btwSandboxedTools: [...BTW_SANDBOXED_TOOLS],
     })
   })
 

@@ -1,195 +1,107 @@
-/** Side-question route, history, request options, and visible text. */
+/** The `/btw` side agent's seed and opening notice. */
 
 import { describe, expect, it } from 'vitest'
-import {
-  ReasoningEffortId,
-  ToolCallId,
-  createAssistantMessage,
-  createDeveloperMessage,
-  createSystemMessage,
-  createToolResultMessage,
-  createUserMessage,
-  type ContentBlock,
-} from '@deepseek-ai/dsh-llm'
-import { BTW_POLICY, asideHistory, asideRoute, asideVisibleText, buildAsideOptions } from '../src/btw.ts'
+import { createAssistantMessage, createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { BTW_BRIEF, BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwBriefMessage, btwSeed, restrictBtwAgent } from '../src/btw.ts'
 
-const header = { provider: 'header-provider', model: 'header-model', reasoningEffort: ReasoningEffortId('high') }
-const fallback = { provider: 'fallback-provider', model: 'fallback-model', reasoningEffort: ReasoningEffortId('low') }
-
-function user(text: string) {
-  return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
+/** A log whose second turn is still waiting on one tool call. */
+function openTurnLog(): SessionEvent[] {
+  const events = [
+    { type: 'turn/start', data: { turn: 1 } },
+    { type: 'user/message', data: { turn: 1, message: createUserMessage({ content: [{ type: 'text', text: 'first' }], source: { kind: 'user' } }) }, surfaceOp: 'append' },
+    { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+    { type: 'turn/start', data: { turn: 2 } },
+    { type: 'step/start', data: { turn: 2, step: 1 } },
+    {
+      type: 'assistant/message',
+      data: {
+        turn: 2,
+        step: 1,
+        stream: [],
+        message: createAssistantMessage({
+          content: [{ type: 'tool-call', id: 'call-1' as ToolCallId, name: 'read', arguments: '{}' }],
+          source: { provider: 'p', model: 'm' },
+        }),
+      },
+      surfaceOp: 'append',
+    },
+  ]
+  return events.map((event, seq) => ({ ...event, seq, time: 1 }) as SessionEvent)
 }
 
-function assistant(content: ContentBlock[]) {
-  return createAssistantMessage({ content, source: { provider: 'p', model: 'm' } })
-}
-
-function call(id: string): ContentBlock {
-  return { type: 'tool-call', id: ToolCallId(id), name: 'read', arguments: '{}' }
-}
-
-function result(id: string) {
-  return createToolResultMessage({
-    callId: ToolCallId(id),
-    content: [{ type: 'text', text: id }],
-    isError: false,
-  })
-}
-
-describe('side question route', () => {
-  it('prefers the header and copies its reasoning effort', () => {
-    expect(asideRoute(header, fallback)).toEqual({
-      provider: 'header-provider',
-      model: 'header-model',
-      reasoningEffort: 'high',
-    })
+describe('btwSeed', () => {
+  it('copies the whole log and closes the unfinished turn after the fork marker', () => {
+    const events = openTurnLog()
+    const { seed, inheritedEventCount } = btwSeed(events)
+    expect(inheritedEventCount).toBe(events.length)
+    expect(seed.slice(0, events.length)).toEqual(events)
+    expect(seed.slice(events.length).map(event => event.type)).toEqual(['session/end-seed', 'tool/result', 'step/end', 'turn/end'])
+    expect(seed.at(-1)).toMatchObject({ data: { turn: 2, reason: { kind: 'forked' } } })
+    expect(seed.map(event => event.seq)).toEqual(seed.map((_, index) => index))
   })
 
-  it('uses the fallback when the header is missing', () => {
-    expect(asideRoute(undefined, fallback)).toEqual({
-      provider: 'fallback-provider',
-      model: 'fallback-model',
-      reasoningEffort: 'low',
-    })
-  })
-
-  it('omits reasoning effort when the chosen route has none', () => {
-    expect(asideRoute({ provider: 'header-provider', model: 'header-model' }, fallback))
-      .toEqual({ provider: 'header-provider', model: 'header-model' })
-    expect(asideRoute(undefined, { provider: 'fallback-provider', model: 'fallback-model' }))
-      .toEqual({ provider: 'fallback-provider', model: 'fallback-model' })
-  })
-
-  it('throws when no model is selected', () => {
-    expect(() => asideRoute(undefined, undefined)).toThrow('btw: no model is selected')
-    expect(() => asideRoute({ provider: '', model: 'header-model' }, fallback)).toThrow('btw: no model is selected')
-    expect(() => asideRoute({ provider: 'header-provider', model: '' }, fallback)).toThrow('btw: no model is selected')
-    expect(() => asideRoute(undefined, { provider: '', model: 'fallback-model' })).toThrow('btw: no model is selected')
-    expect(() => asideRoute(undefined, { provider: 'fallback-provider', model: '' })).toThrow('btw: no model is selected')
+  it('seeds nothing from an empty log', () => {
+    expect(btwSeed([])).toEqual({ seed: [], inheritedEventCount: 0 })
   })
 })
 
-describe('side question history', () => {
-  it('drops unresolved tool calls on the last assistant message and leaves the rest', () => {
-    const earlier = assistant([call('old-open')])
-    const prompt = user('go')
-    const tail = assistant([{ type: 'text', text: 'working' }, call('done'), call('open')])
-    const done = result('done')
-    const history = [earlier, prompt, tail, done]
-    const copy = asideHistory(history)
-
-    expect(copy).toHaveLength(4)
-    expect(copy[0]).toBe(earlier)
-    expect(copy[1]).toBe(prompt)
-    expect(copy[3]).toBe(done)
-    expect(copy[2]).not.toBe(tail)
-    expect(copy[2]?.content).toEqual([{ type: 'text', text: 'working' }, call('done')])
-    expect(tail.content).toEqual([{ type: 'text', text: 'working' }, call('done'), call('open')])
-    expect(history).toEqual([earlier, prompt, tail, done])
-  })
-
-  it('omits a last assistant message that is only unresolved tool calls', () => {
-    const prompt = user('go')
-    const tail = assistant([call('open')])
-    const history = [prompt, tail]
-    expect(asideHistory(history)).toEqual([prompt])
-    expect(history[1]).toBe(tail)
-    expect(tail.content).toEqual([call('open')])
-  })
-
-  it('returns a new array and keeps resolved history as the same messages', () => {
-    const prompt = user('go')
-    const tail = assistant([{ type: 'text', text: 'done' }, call('done')])
-    const done = result('done')
-    const history = [prompt, tail, done]
-    const copy = asideHistory(history)
-    expect(copy).not.toBe(history)
-    expect(copy).toEqual(history)
-    expect(copy[1]).toBe(tail)
-    expect(asideHistory([prompt])).toEqual([prompt])
-  })
-
-  it('keeps system and developer messages that are not the trailing assistant', () => {
-    const rule = createSystemMessage('rule')
-    const note = createDeveloperMessage({
-      content: [{ type: 'text', text: 'note' }],
-      source: { kind: 'user' },
-    })
-    const prompt = user('go')
-    const history = [rule, note, prompt]
-    const copy = asideHistory(history)
-    expect(copy).not.toBe(history)
-    expect(copy).toEqual([rule, note, prompt])
-    expect(copy[0]).toBe(rule)
-    expect(copy[1]).toBe(note)
+describe('btwBriefMessage', () => {
+  it('is a terminal notice carrying the brief', () => {
+    const message = btwBriefMessage()
+    expect(message.source).toEqual({ kind: 'tui-app', form: 'notice', summary: 'btw · side agent' })
+    expect(message.content).toEqual([{ type: 'text', text: BTW_BRIEF }])
   })
 })
 
-describe('side question options', () => {
-  const route = { provider: 'header-provider', model: 'header-model', reasoningEffort: ReasoningEffortId('max') }
-  const signal = new AbortController().signal
+describe('restrictBtwAgent', () => {
+  /**
+   * A side agent's creation context over scripted services.
+   * @param services - the composed tools, by name, and whether the command executor confines.
+   * @returns the context, the agent, and what they recorded.
+   */
+  function world(services: { tools?: readonly string[]; confined?: boolean }) {
+    const appended: { type: string; data: unknown }[] = []
+    const restrictions: unknown[] = []
+    const registered = new Set(services.tools)
+    const tools = {
+      get: (name: string) => registered.has(name) ? {} : undefined,
+      restrict: (filter: unknown) => { restrictions.push(filter) },
+    }
+    const services_: Record<string, unknown> = {
+      ...services.tools === undefined ? {} : { tools },
+      ...services.confined === undefined ? {} : { shell: { sandboxMode: services.confined ? 'workspace-write' : undefined } },
+    }
+    const agentCtx = { get: (name: string) => services_[name], tools }
+    const agent = { session: { append: (type: string, data: unknown) => { appended.push({ type, data }) } } }
+    return { agentCtx: agentCtx as never, agent: agent as never, appended, restrictions }
+  }
 
-  it('sends the policy, stripped history, a trimmed partial, and the question', () => {
-    const prompt = user('go')
-    const tail = assistant([call('open')])
-    const options = buildAsideOptions({
-      route,
-      history: [prompt, tail],
-      partial: '  still going  ',
-      question: 'what is left?',
-      signal,
-    })
-    const partial = options.messages[1]
-    expect(options.provider).toBe('header-provider')
-    expect(options.model).toBe('header-model')
-    expect(options.reasoningEffort).toBe('max')
-    expect(options.system).toBe(BTW_POLICY)
-    expect(options.temperature).toBe(0)
-    expect(options.signal).toBe(signal)
-    expect(options.messages[0]).toBe(prompt)
-    expect(partial).toMatchObject({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'still going' }],
-      source: { kind: 'model', provider: 'header-provider', model: 'header-model' },
-    })
-    expect(partial && 'source' in partial && partial.source).not.toHaveProperty('replayState')
-    expect(options.messages[2]).toEqual({ role: 'user', content: [{ type: 'text', text: 'what is left?' }] })
-    expect(options.messages[2]).not.toHaveProperty('id')
-    expect(options.messages[2]).not.toHaveProperty('source')
-    expect(options).not.toHaveProperty('tools')
-    expect(options).not.toHaveProperty('toolHistory')
-    expect(options).not.toHaveProperty('sessionId')
-    expect(options).not.toHaveProperty('purpose')
-    expect(options).not.toHaveProperty('maxTokens')
-    expect(tail.content).toEqual([call('open')])
-  })
+  const policy = { btwTools: BTW_TOOLS, btwSandboxedTools: BTW_SANDBOXED_TOOLS }
 
-  it('leaves out a blank partial and an absent reasoning effort', () => {
-    const prompt = user('go')
-    const options = buildAsideOptions({
-      route: { provider: 'fallback-provider', model: 'fallback-model' },
-      history: [prompt],
-      partial: '   ',
-      question: 'why?',
-      signal,
-    })
-    expect(options.messages).toEqual([
-      prompt,
-      { role: 'user', content: [{ type: 'text', text: 'why?' }] },
+  it('pins the read-only sandbox and the never approval policy and keeps only composed read tools and confined commands', () => {
+    const { agentCtx, agent, appended, restrictions } = world({ tools: ['read', 'grep', 'write', 'edit', 'bash', 'subagent'], confined: true })
+    restrictBtwAgent(agentCtx, agent, policy)
+    expect(appended).toEqual([
+      { type: 'sandbox/mode', data: { mode: 'read-only', source: 'delegation' } },
+      { type: 'approval/policy', data: { policy: 'never', source: 'delegation' } },
     ])
-    expect(options).not.toHaveProperty('reasoningEffort')
+    expect(restrictions).toEqual([{ allow: ['read', 'grep', 'bash'] }])
   })
-})
 
-describe('side question text', () => {
-  it('joins non-empty text blocks and ignores everything else', () => {
-    expect(asideVisibleText([
-      { type: 'reasoning', text: 'hidden' },
-      { type: 'text', text: 'first' },
-      { type: 'text', text: '' },
-      { type: 'tool-call', id: ToolCallId('call'), name: 'read', arguments: '{}' },
-      { type: 'text', text: 'second' },
-    ])).toBe('first\n\nsecond')
-    expect(asideVisibleText([{ type: 'reasoning', text: 'only' }])).toBe('')
+  it('hides command tools when the command executor does not confine', () => {
+    const { agentCtx, agent, restrictions } = world({ tools: ['read', 'bash'], confined: false })
+    restrictBtwAgent(agentCtx, agent, policy)
+    expect(restrictions).toEqual([{ allow: ['read'] }])
+  })
+
+  it('hides command tools without a command executor and restricts nothing without a tool registry', () => {
+    const bare = world({ tools: ['bash'] })
+    restrictBtwAgent(bare.agentCtx, bare.agent, policy)
+    expect(bare.restrictions).toEqual([{ allow: [] }])
+    const none = world({})
+    restrictBtwAgent(none.agentCtx, none.agent, policy)
+    expect(none.restrictions).toEqual([])
+    expect(none.appended).toHaveLength(2)
   })
 })
