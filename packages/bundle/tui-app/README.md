@@ -193,6 +193,7 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/plugins` | The composed plugins with enablement and lifecycle phase; `/plugins bundles` lists the profile's bundles, `/plugins enable <id>` and `/plugins disable <id>` switch a plugin entry or a bundle, `/plugins add <spec>` installs a bundle, `/plugins remove <name>` removes one |
 | `/tools` | Expand or collapse every tool card and context row, like `Ctrl+O` |
 | `/turns` | Read the conversation full screen, turns side by side, like `Ctrl+G` |
+| `/btw <question>` | Ask one side question about this session. The answer opens on its own page and is not added to the conversation; the running turn keeps going, and the question cannot use tools |
 | `/quit`, `/exit` | Save the session and exit |
 
 Every other `/name` line goes to the shared command registry, so `/compact`, `/goal`, and plugin commands work as they do in the browser.
@@ -277,6 +278,8 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/frame.ts`](src/frame.ts) | Pure box drawing: the rounded rules, the inverse mode chip, body rows, and the legend step a width holds |
 | [`src/reader.ts`](src/reader.ts) | The reader as plain data: its state, the intents keys become, its geometry, and the lines it draws |
 | [`src/reader-screen.ts`](src/reader-screen.ts) | The reader pane drawn on the alternate screen: its key map, and where it leaves the keyboard |
+| [`src/btw.ts`](src/btw.ts) | `/btw`: one tool-free request built from the bound session's derived history, never logged |
+| [`src/btw-screen.ts`](src/btw-screen.ts) | The `/btw` answer page drawn on the alternate screen |
 | [`src/screen.ts`](src/screen.ts) | The main screen with the page margins every frame is laid out and drawn inside, the settle passes between building a frame and writing it, the repaint window each pass is judged against, the per-block repaint floor, and the suspension that holds the conversation off the terminal |
 | [`src/alt-screen.ts`](src/alt-screen.ts) | The terminal's alternate screen: taking it, drawing absolutely addressed rows on it, and giving the conversation's own screen back |
 | [`src/fade.ts`](src/fade.ts) | The streamed-text fade: the wall-clock tail tracker, the block-fade clock and registry, the fade-in ramp, the float-out mix, and the recolor of rendered lines |
@@ -375,6 +378,20 @@ Conditional and retained: each `!` notice stays in conversation history for late
 
 Append-only conversation growth after the reusable request prefix. The notice does not change the system prompt or tool catalog. A `/model` switch starts a new request series exactly as it does from the browser.
 
+### Side question
+
+#### What the model sees
+
+`/btw <question>` sends one extra request through `ctx.llm.stream` and does not append it to the session. The system text is fixed: the model answers one side question, is not the agent in the conversation, and cannot call tools or continue that agent's task. The messages are the bound session's derived history, the visible reply still streaming when there is one, and the question as the last user message. No tools are declared. The running turn is not steered, queued, or cancelled. The answer is drawn on the alternate screen. Text the main agent sees on its next step is unchanged.
+
+#### Token effect
+
+One additional model request per `/btw`. Nothing from that request or its answer is retained in later agent requests.
+
+#### KV Cache effect
+
+The side request does not change the agent loop's system prompt, tool catalog, or conversation prefix.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -398,6 +415,7 @@ These limits describe the terminal surface as shipped; they are not a general CL
 - **The fade needs an answer from the terminal** — its ramp is built from the background color the terminal reports to the query sent at startup, so a terminal that stays silent, or that encodes neither truecolor nor 256 colors, gets the two-level faint mode instead; `NO_COLOR`, a disabled palette, `TERM=dumb`, and `reducedMotion` turn every fade and every chrome lift off entirely, and a transient line then disappears at the end of its hold instead of fading out.
 - **The terminal's own caret can flicker** — the editor draws no caret of its own and the app turns the terminal cursor on, which pi-tui then moves across the lines it repaints; a terminal that does not honor the synchronized-output sequences pi-tui wraps a frame in can show that movement.
 - **Runs through the `dsh` launcher** — starting the profile another way fails at startup, because only the launcher can request the process exit.
+- **`/btw` is a terminal page, not a turn** — the answer is not stored in the session, Web has no `/btw`, and the request sees derived history plus the visible reply still streaming. Tool arguments that are not logged yet are absent. The page cannot run tools.
 - **`!` is one-shot and not a TTY** — each line is a fresh `ctx.shell.run`; there is no persistent shell or interactive program. The Web composer does not intercept `!`. An optional first prompt on the command line is always a user message.
 
 <a id="dev-note"></a>

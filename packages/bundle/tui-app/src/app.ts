@@ -32,7 +32,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
-import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type ToolResultMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { BlockAssembler, ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type ToolResultMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -69,6 +69,8 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import { AlternateScreen } from './alt-screen.ts'
+import { asideRoute, asideVisibleText, buildAsideOptions } from './btw.ts'
+import { AsidePane } from './btw-screen.ts'
 import { attachLocalFile, type PendingAttachment } from './attach.ts'
 import {
   changeDiffRows,
@@ -216,6 +218,12 @@ function splitModelValue(value: string): ModelSelection {
 
 /** What the transcript is told when a session switch took the conversation the reader was showing. */
 const READER_GONE = 'the transcript changed · reader closed'
+
+/** What the transcript is told when a session switch closed an open side question. */
+const ASIDE_GONE = 'the transcript changed · aside closed'
+
+/** Shown when a side answer contains no prose, including a tool call that was not run. */
+const ASIDE_NO_TOOLS = 'This aside only answers; it does not run tools.'
 
 /** What the transcript is told when a fold key named a block the renderer can no longer rewrite. */
 const ABOVE_WINDOW_NOTICE = 'above the repaint window · opened in the reader'
@@ -472,6 +480,7 @@ export interface TuiAppDeps {
 /** The terminal's own commands, handled before the shared command registry. */
 const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'help', description: 'Show commands and keys' },
+  { name: 'btw', description: 'Ask a side question about this session; the answer stays off the conversation (/btw <question>)' },
   { name: 'model', description: 'Pick the model and reasoning effort for the next request (/model provider/model, /model save)' },
   { name: 'effort', description: 'Pick the current model\'s reasoning effort for the next request (/effort <id>, /effort default)' },
   { name: 'permission', description: 'Pick the permission preset (/permission <preset>)', hint: '<preset>' },
@@ -733,6 +742,10 @@ export class TuiApp {
   private reader: { pane: ReaderPane } | undefined
   /** Set while a paint of the open reader is already queued for this turn of the loop. */
   private readerPaintQueued = false
+  /** The side-question page on the alternate screen, and the call it can cancel. */
+  private aside: { pane: AsidePane; controller: AbortController } | undefined
+  /** Set while a paint of the open side question is already queued for this turn of the loop. */
+  private asidePaintQueued = false
   /** Prompts shown or waiting on the modal queue, which the reader steps aside for. */
   private queuedModals = 0
   /** Until when an `Escape` that reaches the editor does nothing at all. */
@@ -987,6 +1000,7 @@ export class TuiApp {
     for (const dispose of this.disposers.splice(0)) dispose()
     this.modals.withdrawActive()
     this.dropReader()
+    this.dropAside()
     this.hideToast()
     this.loader.stop()
     // The shell that regains the terminal keeps whatever caret shape it was
@@ -1025,6 +1039,7 @@ export class TuiApp {
     // reader off a conversation it was never opened on, and it would keep the
     // key stream. The new transcript says so once it is drawn.
     const reading = this.dropReader()
+    const aside = this.dropAside()
     this.focusEditor()
     this.highlighted = undefined
     this.cursor = undefined
@@ -1061,6 +1076,7 @@ export class TuiApp {
     for (const event of next.history) this.onSessionEvent(next.agent.session, event)
     this.replaying = false
     if (reading) this.notice(READER_GONE)
+    if (aside) this.notice(ASIDE_GONE)
     this.refreshHeader()
     this.banner.setViews(this.viewLabels)
     this.refreshQueue()
@@ -2006,6 +2022,13 @@ export class TuiApp {
       this.queueReaderPaint()
       return { consume: true }
     }
+    const aside = this.aside
+    if (aside !== undefined && this.readerScreen.active) {
+      if (matchesKey(data, 'ctrl+c')) aside.pane.withdraw()
+      else aside.pane.handleInput(data)
+      this.queueAsidePaint()
+      return { consume: true }
+    }
     // An armed stop lasts exactly as long as its own line is on screen, so
     // any other key the editor takes - Ctrl+C and Ctrl+D included, which put
     // a line of their own up - takes that line down and disarms with it. Only
@@ -2380,6 +2403,165 @@ export class TuiApp {
     const open = this.reader
     if (open === undefined) return false
     this.reader = undefined
+    this.hideReaderScreen()
+    open.pane.withdraw()
+    return true
+  }
+
+  /**
+   * Visible reply text of the message still streaming, when it has any.
+   * Logged history does not include that text until the message is committed.
+   * @returns the reply, or undefined when nothing is streaming or the reply is blank.
+   */
+  private streamingPartial(): string | undefined {
+    const reply = this.streaming?.parts().find(part => part.kind === 'reply')
+    const text = reply?.rows.join('\n').trim() ?? ''
+    return text === '' ? undefined : text
+  }
+
+  /**
+   * Ask one side question on the alternate screen. The request uses the bound
+   * session's derived history and is not logged, and the running turn is not
+   * steered, queued, or cancelled.
+   * @param question - the text after `/btw`.
+   */
+  private async askAside(question: string): Promise<void> {
+    if (question === '') {
+      this.notice('usage: /btw <question>', 'error')
+      return
+    }
+    const llm = this.deps.ctx.get('llm')
+    if (llm === undefined) {
+      this.notice('/btw needs a model service', 'error')
+      return
+    }
+    const bound = this.bound
+    const config = bound.agent.session.requestHeader()?.config
+    const header = config !== undefined && config.provider.length > 0 && config.model.length > 0 ? config : undefined
+    let route: ReturnType<typeof asideRoute>
+    try {
+      route = asideRoute(header, this.currentSelection(bound))
+    } catch (error: unknown) {
+      this.notice(describeFailure(error), 'error')
+      return
+    }
+    const controller = new AbortController()
+    const pane = new AsidePane({
+      palette: this.deps.palette,
+      question,
+      rows: () => Math.max(1, this.deps.terminal.rows),
+      effects: {
+        style: () => this.fadeStyle,
+        startReveal: () => this.startReaderReveal(),
+      },
+      onExit: () => { this.closeAside() },
+    })
+    this.aside = { pane, controller }
+    this.showAside()
+    const assembler = new BlockAssembler()
+    let streamed = ''
+    try {
+      const partial = this.streamingPartial()
+      const options = buildAsideOptions({
+        route,
+        history: bound.agent.session.deriveMessages(),
+        ...partial === undefined ? {} : { partial },
+        question,
+        signal: controller.signal,
+      })
+      for await (const chunk of llm.stream(options)) {
+        if (this.aside?.controller !== controller) return
+        assembler.push(chunk)
+        if (chunk.type === 'text-delta') {
+          streamed += chunk.text
+          pane.show({ status: 'answering', text: streamed })
+          this.queueAsidePaint()
+        } else if (chunk.type === 'finish') {
+          this.settleAside(pane, controller, assembler, streamed, chunk)
+        }
+      }
+    } catch (error: unknown) {
+      if (this.aside?.controller !== controller || controller.signal.aborted) return
+      pane.show({ status: 'failed', text: describeFailure(error) })
+      this.queueAsidePaint()
+    }
+  }
+
+  /**
+   * Draw the finished side answer. A tool call in the response is not run.
+   * @param pane - the open page.
+   * @param controller - the call this finish belongs to.
+   * @param assembler - blocks accumulated from the stream.
+   * @param streamed - text deltas already shown.
+   * @param chunk - the terminal finish chunk.
+   */
+  private settleAside(
+    pane: AsidePane,
+    controller: AbortController,
+    assembler: BlockAssembler,
+    streamed: string,
+    chunk: Extract<StreamChunk, { type: 'finish' }>,
+  ): void {
+    if (this.aside?.controller !== controller) return
+    const reason = chunk.reason
+    if (reason.kind === 'aborted') {
+      pane.show({ status: 'cancelled', text: streamed.length > 0 ? streamed : 'cancelled' })
+    } else if (reason.kind === 'error') {
+      pane.show({ status: 'failed', text: reason.failure.message })
+    } else {
+      const visible = asideVisibleText(assembler.blocks())
+      pane.show({ status: 'ready', text: visible.length > 0 ? visible : ASIDE_NO_TOOLS })
+    }
+    this.queueAsidePaint()
+  }
+
+  /** Put the open side question on the alternate screen, holding the conversation off the terminal. */
+  private showAside(): void {
+    this.tui.renderNow()
+    this.tui.suspend(() => { this.queueAsidePaint() })
+    this.readerScreen.enter()
+    this.paintAside()
+  }
+
+  /** Draw the open side question, at most once per turn of the loop. */
+  private queueAsidePaint(): void {
+    if (this.asidePaintQueued) return
+    this.asidePaintQueued = true
+    queueMicrotask(() => {
+      this.asidePaintQueued = false
+      this.paintAside()
+    })
+  }
+
+  /** Draw the open side question now, if one holds the terminal. */
+  private paintAside(): void {
+    const open = this.aside
+    if (open === undefined || !this.readerScreen.active) return
+    this.readerScreen.paint(open.pane.render(Math.max(1, this.deps.terminal.columns)))
+  }
+
+  /** Close the side question from its own keys and return to the editor. */
+  private closeAside(): void {
+    const open = this.aside
+    if (open === undefined) return
+    this.aside = undefined
+    open.controller.abort()
+    this.hideReaderScreen()
+    this.focusEditor()
+    this.armEscapeHandoff()
+    this.tui.requestRender()
+  }
+
+  /**
+   * Take the side question down from outside. The record is cleared first, so
+   * the pane's settlement does not move focus.
+   * @returns whether a side question was open.
+   */
+  private dropAside(): boolean {
+    const open = this.aside
+    if (open === undefined) return false
+    this.aside = undefined
+    open.controller.abort()
     this.hideReaderScreen()
     open.pane.withdraw()
     return true
@@ -3012,6 +3194,9 @@ export class TuiApp {
     switch (name) {
       case 'help':
         this.showHelp()
+        return
+      case 'btw':
+        await this.askAside(argument)
         return
       case 'quit':
       case 'exit':
