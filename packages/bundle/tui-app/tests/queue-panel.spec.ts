@@ -45,7 +45,7 @@ describe('follow-up panel', () => {
     const text = 'also implement similar scratch out, listing effect exactly like in the image'
     const shown = renderQueuePanel(queuePanelRows([], [message(text)]), {
       palette: createPalette(false),
-      width: 42,
+      width: 44,
       selected: 0,
     })
     expect(shown).toContain('○ also implement')

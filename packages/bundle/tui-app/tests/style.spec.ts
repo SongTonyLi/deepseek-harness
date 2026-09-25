@@ -1,7 +1,7 @@
 /** Palette roles, color detection, and the derived pi-tui themes. */
 
 import { describe, expect, it } from 'vitest'
-import { bandRow, boxDiffRows, colorEnabled, createPalette, editorTheme, markdownTheme, paintDiffRows, selectListTheme } from '../src/style.ts'
+import { bandDiffRows, bandRow, colorEnabled, createPalette, editorTheme, markdownTheme, paintDiffRows, selectListTheme } from '../src/style.ts'
 
 describe('palette', () => {
   it('wraps text in SGR pairs when enabled and returns it verbatim otherwise', () => {
@@ -41,35 +41,35 @@ describe('palette', () => {
     expect(paintDiffRows(source, source, createPalette(false))).toEqual(source)
   })
 
-  it('frames each run of removals and each run of additions in its own box', () => {
-    const rows = ['  keep', '- old', '+ new', '+ newer', '  tail']
-    expect(boxDiffRows(rows, [undefined, 'removed', 'added', 'added', undefined], 12, createPalette(false))).toEqual([
+  it('fills each changed row edge to edge and leaves the rows around it bare', () => {
+    const on = createPalette(true)
+    const rows = ['  keep', '- old', '+ new', '  tail']
+    const marks = [undefined, 'removed' as const, 'added' as const, undefined]
+    expect(bandDiffRows(rows, rows, marks, 10, on)).toEqual([
       '  keep',
-      '╭──────────╮',
-      '│ - old    │',
-      '╰──────────╯',
-      '╭──────────╮',
-      '│ + new    │',
-      '│ + newer  │',
-      '╰──────────╯',
+      on.removedBand(`${on.removedSign('-')} old     `),
+      on.addedBand(`${on.addedSign('+')} new     `),
       '  tail',
     ])
   })
 
-  it('colors a box by its kind and wraps a long row inside it', () => {
+  it('paints the sign after the file line the diff numbers its rows with', () => {
     const on = createPalette(true)
-    const boxed = boxDiffRows(['+ abc defghi'], ['added'], 10, on)
-    expect(boxed).toEqual([
-      on.success('╭────────╮'),
-      `${on.success('│')} + abc  ${on.success('│')}`,
-      `${on.success('│')} defghi ${on.success('│')}`,
-      on.success('╰────────╯'),
-    ])
-    expect(boxDiffRows(['- x'], ['removed'], 7, on)[0]).toBe(on.error('╭─────╮'))
+    const row = ' 12 + const x = 1'
+    expect(bandDiffRows([row], [row], ['added'], 20, on))
+      .toEqual([on.addedBand(` 12 ${on.addedSign('+')} const x = 1   `)])
   })
 
-  it('draws no box where the width cannot hold one', () => {
-    expect(boxDiffRows(['+ ab'], ['added'], 4, createPalette(false))).toEqual(['+ ab'])
+  it('carries the fill onto a wrapped continuation, which draws no sign of its own', () => {
+    const on = createPalette(true)
+    expect(bandDiffRows(['+ abc defghi'], ['+ abc defghi'], ['added'], 8, on)).toEqual([
+      on.addedBand(`${on.addedSign('+')} abc   `),
+      on.addedBand('defghi  '),
+    ])
+  })
+
+  it('pads nothing and fills nothing without color', () => {
+    expect(bandDiffRows(['+ ab'], ['+ ab'], ['added'], 12, createPalette(false))).toEqual(['+ ab'])
   })
 
   it('decides color from NO_COLOR, FORCE_COLOR, then the TTY', () => {

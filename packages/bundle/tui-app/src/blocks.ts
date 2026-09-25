@@ -35,7 +35,7 @@ import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSe
 import type { DiffMark } from './diff.ts'
 import type { RowReveal } from './pace.ts'
 import { TailWrappedText } from './tail-wrap.ts'
-import { bandRow, boxDiffRows, markdownTheme, paintDiffRows, type CodeHighlighter, type Palette } from './style.ts'
+import { bandDiffRows, bandRow, markdownTheme, type CodeHighlighter, type Palette } from './style.ts'
 import { foldMarker, foldRows, paintCodeRows, SHELL_COMMAND_PREFIX, shellCommandBody, type CodeSpan, type SubagentRowFacts, type ToolCallText } from './transcript.ts'
 
 /** Columns the focus gutter takes from the width a block's content wraps at. */
@@ -1220,11 +1220,13 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const kept = this.expanded
       ? body
       : foldRows(body, this.theme.toolPreviewLines, hidden => foldMarker(hidden, marked ? 'marked' : 'transcript'))
-    const shown = paintDiffRows(paintCodeRows(kept, code, this.theme.codeHighlight), kept, palette)
+    // A changed row keeps its own syntax colour and takes the tint filling it
+    // from the mark instead, so nothing paints it twice.
+    const shown = paintCodeRows(kept, code, this.theme.codeHighlight)
     const callCount = Math.min(this.call.lines.length + loading.length, shown.length)
     const cut = !this.expanded && body.length > this.theme.toolPreviewLines
     // Marks align with the body like the spans; the fold marker, the last
-    // kept row of a cut body, is never boxed.
+    // kept row of a cut body, is never filled.
     const marks = [
       ...this.call.diff ?? new Array<undefined>(this.call.lines.length).fill(undefined),
       ...new Array<undefined>(loading.length).fill(undefined),
@@ -1232,7 +1234,8 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     ].slice(0, cut ? kept.length - 1 : kept.length)
     const inner = Math.max(1, outer - 4)
     const rows = (from: number, to: number): string[] =>
-      boxDiffRows(shown.slice(from, to), marks.slice(from, to), inner, palette).map(part => `  ${palette.dim('│')} ${part}`)
+      bandDiffRows(shown.slice(from, to), kept.slice(from, to), marks.slice(from, to), inner, palette)
+        .map(part => `  ${palette.dim('│')} ${part}`)
     const call = [...wrapTextWithAnsi(header, outer), ...rows(0, callCount)]
     const result = rows(callCount, shown.length)
     return { call, result, lines: ['', ...call, ...result], marker: cut ? rows(shown.length - 1, shown.length).length : 0 }

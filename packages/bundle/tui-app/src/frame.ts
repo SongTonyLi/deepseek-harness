@@ -1,6 +1,6 @@
 /**
  * Pure box drawing for the surfaces that own a mode: the rounded rules that
- * frame one, the inverse chip that names it, the left edge of a body row, and
+ * frame one, the inverse chip that names it, the two edges of a body row, and
  * the legend step a width can hold.
  *
  * A frame is drawn exactly while a mode is active, so new geometry at a fixed
@@ -52,8 +52,14 @@ const LEGEND_RIGHT = '┤'
 /** What a rule fills the width between its texts with. */
 const FILL = '─'
 
-/** The left border of a body row; the frame has no right border. */
+/** The border drawn on each side of a body row. */
 const SIDE = '│'
+
+/**
+ * Columns a body row spends on itself: the two borders and the space inside
+ * each. A caller wrapping text for a body row subtracts this.
+ */
+export const BODY_MARGIN = 4
 
 /** What separates the chip from the title on a top rule. */
 const CHIP_JOIN = ` ${FILL} `
@@ -188,17 +194,25 @@ export function legendRule(parts: FrameRule): string {
 }
 
 /**
- * One row inside a frame. There is no right border, so a row is not padded to
- * the width and a wrapped line keeps the width it was wrapped at.
+ * One row inside a frame, closed on both sides: the content is padded to the
+ * room between the borders, so a frame reads as one box however short its
+ * rows are. Content wrapped at {@link BODY_MARGIN} columns less than the width
+ * is drawn whole; anything wider is cut.
  * @param content - the row, already styled and already wrapped.
  * @param width - the columns the line must fit.
- * @param palette - the palette the border is styled with.
- * @param tone - which role that border takes.
- * @param level - how far above its settled drawing the border is lifted, so
- * the whole outline of a frame moves as one; `0` draws the settled border.
- * @returns the line, no wider than `width`.
+ * @param palette - the palette the borders are styled with.
+ * @param tone - which role those borders take.
+ * @param level - how far above its settled drawing the borders are lifted, so
+ * the whole outline of a frame moves as one; `0` draws the settled borders.
+ * @returns the line, exactly `width` columns while both borders fit.
  */
 export function bodyLine(content: string, width: number, palette: Palette, tone: FrameTone, level: MotionLevel = 0): string {
   const border = tone === 'focus' ? pulse(palette, palette.accent(SIDE), level) : palette.dim(SIDE)
-  return truncateToWidth(`${border} ${content}`, Math.max(1, width), ELLIPSIS)
+  const columns = Math.max(1, width)
+  const room = columns - BODY_MARGIN
+  // A width too narrow to close the row keeps the opening border and the text.
+  if (room < 1) return truncateToWidth(`${border} ${content}`, columns, ELLIPSIS)
+  const cut = truncateToWidth(content, room, ELLIPSIS)
+  const padding = ' '.repeat(Math.max(0, room - visibleWidth(cut)))
+  return `${border} ${cut}${padding} ${border}`
 }

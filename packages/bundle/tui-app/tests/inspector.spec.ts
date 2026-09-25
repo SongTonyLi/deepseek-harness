@@ -11,6 +11,9 @@ const plain = { palette: createPalette(false), previewLines: 3, width: 60 }
 /** A line without the resets truncation wraps around its ellipsis. */
 const bare = (line: string | undefined): string => (line ?? '').replaceAll('\u001b[0m', '')
 
+/** The content of one framed body row, without its two borders and the padding between them. */
+const rowText = (line: string | undefined): string => bare(line).replace(/^│ /u, '').replace(/│$/u, '').trimEnd()
+
 /** The peak of a lift: the one moment a piece of chrome is drawn bold. */
 const PEAK = '\u001b[1m\u001b[36m'
 
@@ -37,8 +40,9 @@ describe('renderInspector', () => {
     expect(lines[0]).toContain('2/3 · turn 2 · reply')
     expect(lines[0]?.startsWith('╭')).toBe(true)
     expect(lines[0]?.endsWith('╮')).toBe(true)
-    expect(lines[1]).toBe('│ ← 1 reasoning · [2 reply] →')
-    expect(lines[2]).toBe('│ done')
+    // Every body row is closed on both sides, so the frame reads as one box.
+    expect(lines[1]).toBe(`│ ← 1 reasoning · [2 reply] →${' '.repeat(plain.width - 4 - '← 1 reasoning · [2 reply] →'.length)} │`)
+    expect(rowText(lines[2])).toBe('done')
     expect(lines[3]).toContain('↑↓ ←→ · Space folds · Esc input')
     expect(lines[3]?.startsWith('╰')).toBe(true)
     expect(lines[3]?.endsWith('╯')).toBe(true)
@@ -52,7 +56,7 @@ describe('renderInspector', () => {
     expect(strip).toHaveLength(2 + 1 + plain.previewLines + 1)
     const single = renderInspector(view({ parts: [{ label: 'you', focused: true }], rows: ['a'] }), plain)
     expect(single).toHaveLength(3)
-    expect(single[1]).toBe('│ a')
+    expect(rowText(single[1])).toBe('a')
   })
 
   it('takes the widest legend step the width holds', () => {
@@ -97,7 +101,7 @@ describe('renderInspector', () => {
 
   it('brackets the held label and dims the rest of the strip', () => {
     const styled = renderInspector(view(), { ...plain, palette: createPalette(true) })
-    expect(styled[1]).toBe(
+    expect(styled[1]).toContain(
       '\u001b[36m│\u001b[39m \u001b[2m← \u001b[22m\u001b[2m1 reasoning\u001b[22m\u001b[2m · \u001b[22m\u001b[36m[2 reply]\u001b[39m\u001b[2m →\u001b[22m',
     )
     // The brackets carry the selection where no color is drawn at all.
@@ -106,7 +110,7 @@ describe('renderInspector', () => {
 
   it('omits the strip for a block that has one part', () => {
     const single = renderInspector(view({ parts: [{ label: 'you', focused: true }] }), plain)
-    expect(single[1]).toBe('│ done')
+    expect(rowText(single[1])).toBe('done')
     expect(single).toHaveLength(3)
   })
 
@@ -127,17 +131,17 @@ describe('renderInspector', () => {
     const shown = narrow.map(bare).join('\n')
     expect(shown.replaceAll(/\s+/gu, ' ')).toContain('1 reasoning')
     expect(shown.replaceAll(/\s+/gu, ' ')).toContain('[2 reply]')
-    expect(shown).toContain('… 2 more ro')
+    expect(shown).toContain('… 2 more')
     for (const line of narrow) expect(visibleWidth(bare(line))).toBeLessThanOrEqual(20)
   })
 
   it('wraps the rows inside the frame and names how many the reader still has', () => {
-    const long = renderInspector(view({ rows: ['one two three four five six seven', 'tail'] }), { ...plain, width: 20 })
-    expect(long.map(bare).join('\n')).toContain('│ one two three four\n│ five six seven\n│ tail')
+    const long = renderInspector(view({ rows: ['one two three four five six seven', 'tail'] }), { ...plain, width: 22 })
+    expect(long.map(rowText).join('\n')).toContain('one two three four\nfive six seven\ntail')
     const cut = renderInspector(view({ rows: ['a', 'b', 'c', 'd', 'e'] }), plain)
-    expect(cut.slice(2, -1)).toEqual(['│ a', '│ b', '│ c', '│ … 2 more rows · Ctrl+G reads it'])
+    expect(cut.slice(2, -1).map(rowText)).toEqual(['a', 'b', 'c', '… 2 more rows · Ctrl+G reads it'])
     const one = renderInspector(view({ rows: ['a', 'b', 'c', 'd'] }), plain)
-    expect(one.at(-2)).toBe('│ … 1 more row · Ctrl+G reads it')
+    expect(rowText(one.at(-2))).toBe('… 1 more row · Ctrl+G reads it')
   })
 
   it('folds a context section too, instead of drawing every model-facing row', () => {
@@ -146,7 +150,7 @@ describe('renderInspector', () => {
       parts: [{ label: 'system', focused: true }],
       rows: ['a', 'b', 'c', 'd'],
     }), plain)
-    expect(context.slice(1, -1)).toEqual(['│ a', '│ b', '│ c', '│ … 1 more row · Ctrl+G reads it'])
+    expect(context.slice(1, -1).map(rowText)).toEqual(['a', 'b', 'c', '… 1 more row · Ctrl+G reads it'])
   })
 
   it('wraps a long part label across lines instead of cutting it', () => {
@@ -185,9 +189,9 @@ describe('InspectorPane', () => {
     let rows = ['first']
     const pane = new InspectorPane(() => view({ rows }), { palette: plain.palette, previewLines: plain.previewLines })
     pane.invalidate()
-    expect(pane.render(30).at(-2)).toBe('│ first')
+    expect(rowText(pane.render(30).at(-2))).toBe('first')
     rows = ['first', 'second']
-    expect(pane.render(30).at(-2)).toBe('│ second')
+    expect(rowText(pane.render(30).at(-2))).toBe('second')
   })
 
   it('draws nothing while no section is focused', () => {

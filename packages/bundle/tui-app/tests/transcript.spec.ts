@@ -5,6 +5,7 @@ import { diffLines, hunks } from '../src/diff.ts'
 import {
   EMPTY_USAGE,
   addUsage,
+  cardHeadline,
   contentText,
   describeFailure,
   diffRows,
@@ -168,28 +169,31 @@ describe('transcript', () => {
   })
 
   it('renders call text from each view and from raw arguments', () => {
-    expect(toolCallText('{}', undefined)).toEqual({ title: '', lines: [] })
-    expect(toolCallText('', undefined)).toEqual({ title: '', lines: [] })
-    expect(toolCallText('{"a": 1}', undefined)).toEqual({ title: '', lines: ['{"a":1}'] })
-    expect(toolCallText('{bad', undefined)).toEqual({ title: '', lines: ['{bad'] })
-    expect(toolCallText('{}', { card: 'generic', title: 'Read x', content: [{ type: 'text', text: 'a\nb' }] }))
-      .toEqual({ title: 'Read x', lines: ['a', 'b'] })
-    expect(toolCallText('{}', { card: 'generic', title: 'Read x' })).toEqual({ title: 'Read x', lines: [] })
-    expect(toolCallText('{}', { card: 'terminal', title: 'ls', description: 'list', cwd: '/w' }))
+    expect(toolCallText('{}', undefined, 'read')).toEqual({ title: '', lines: [] })
+    expect(toolCallText('', undefined, 'read')).toEqual({ title: '', lines: [] })
+    expect(toolCallText('{"a": 1}', undefined, 'read')).toEqual({ title: '', lines: ['{"a":1}'] })
+    expect(toolCallText('{bad', undefined, 'read')).toEqual({ title: '', lines: ['{bad'] })
+    // The headline drops the tool name the card's header already draws.
+    expect(toolCallText('{}', { card: 'generic', title: 'Read x', content: [{ type: 'text', text: 'a\nb' }] }, 'read'))
+      .toEqual({ title: 'x', lines: ['a', 'b'] })
+    expect(toolCallText('{}', { card: 'generic', title: 'Read x' }, 'grep')).toEqual({ title: 'Read x', lines: [] })
+    // The command is the card's `$` row alone: the headline carries the
+    // call's summary, so the header never repeats the command.
+    expect(toolCallText('{}', { card: 'terminal', title: 'ls', description: 'list', cwd: '/w' }, 'bash'))
       .toEqual({
-        title: 'ls',
-        lines: ['$ ls', 'list', 'cwd: /w'],
-        code: [{ lang: 'shellscript', prefix: '$ ', source: 'ls' }, undefined, undefined],
+        title: 'list',
+        lines: ['$ ls', 'cwd: /w'],
+        code: [{ lang: 'shellscript', prefix: '$ ', source: 'ls' }, undefined],
       })
-    expect(toolCallText('{}', { card: 'terminal', title: 'ls' })).toEqual({
-      title: 'ls',
+    expect(toolCallText('{}', { card: 'terminal', title: 'ls' }, 'bash')).toEqual({
+      title: '',
       lines: ['$ ls'],
       code: [{ lang: 'shellscript', prefix: '$ ', source: 'ls' }],
     })
-    expect(toolCallText('{}', { card: 'terminal', title: '' })).toEqual({ title: '', lines: [] })
-    expect(toolCallText('{}', { card: 'diff', title: 'Edit', diffs: [{ path: 'f.ts', oldText: 'a\n', newText: 'b\n' }] }))
+    expect(toolCallText('{}', { card: 'terminal', title: '' }, 'bash')).toEqual({ title: '', lines: [] })
+    expect(toolCallText('{}', { card: 'diff', title: 'Edit', diffs: [{ path: 'f.ts', oldText: 'a\n', newText: 'b\n' }] }, 'edit'))
       .toEqual({
-        title: 'Edit',
+        title: '',
         lines: ['f.ts', '- a', '+ b'],
         // The path row is not code; the changed rows carry the file's own
         // language from its extension, behind the sign the card draws.
@@ -197,7 +201,19 @@ describe('transcript', () => {
         // Only the changed rows are marked, which is what the card boxes.
         diff: [undefined, 'removed', 'added'],
       })
-    expect(() => toolCallText('{}', { card: 'other' } as never)).toThrow()
+    expect(() => toolCallText('{}', { card: 'other' } as never, 'read')).toThrow()
+  })
+
+  it('drops a tool name the headline repeats, and only a whole one', () => {
+    expect(cardHeadline('read', 'Read src/app.ts (1 - 20)')).toBe('src/app.ts (1 - 20)')
+    expect(cardHeadline('grep', 'Grep needle in /repo')).toBe('needle in /repo')
+    // An underscored name matches the words a presenter writes it as.
+    expect(cardHeadline('web_search', 'Web search for margins')).toBe('for margins')
+    expect(cardHeadline('read', 'Read')).toBe('')
+    // A headline that merely starts with the same letters keeps them.
+    expect(cardHeadline('read', 'Reader notes')).toBe('Reader notes')
+    expect(cardHeadline('read', 'Open src/app.ts')).toBe('Open src/app.ts')
+    expect(cardHeadline('', 'Read x')).toBe('Read x')
   })
 
   it('renders result rows from each view and from raw content', () => {

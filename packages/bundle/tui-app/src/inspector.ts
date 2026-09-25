@@ -21,7 +21,7 @@
  */
 
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
-import { bodyLine, bottomRule, chip, fitLegend, ruleRoom, topRule, type FrameTone } from './frame.ts'
+import { BODY_MARGIN, bodyLine, bottomRule, chip, fitLegend, ruleRoom, topRule, type FrameTone } from './frame.ts'
 import { HINTS } from './keys.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { PartLabel } from './navigation.ts'
@@ -33,9 +33,6 @@ export const FOCUS_PREVIEW_LINES = 12
 
 /** What the chip names this mode. */
 const READ_CHIP = 'READ'
-
-/** Columns a body row spends on the frame's left border and the space after it. */
-const BODY_MARGIN = 2
 
 /** What separates two labels of the parts strip. */
 const SEPARATOR = ' · '

@@ -36,6 +36,14 @@ export interface Palette {
    * background changes, so every foreground role nests inside it.
    */
   band: Style
+  /** The background tint filling a row a diff adds; foreground roles nest inside it. */
+  addedBand: Style
+  /** The background tint filling a row a diff removes; foreground roles nest inside it. */
+  removedBand: Style
+  /** The `+` of an added row, light enough to read against {@link Palette.addedBand}. */
+  addedSign: Style
+  /** The `-` of a removed row, light enough to read against {@link Palette.removedBand}. */
+  removedSign: Style
   /** Whether styling is active; false yields verbatim text from every role. */
   readonly enabled: boolean
 }
@@ -57,6 +65,10 @@ const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, clo
   error: ['31', '39'],
   inverse: ['7', '27'],
   band: ['48;5;236', '49'],
+  addedBand: ['48;5;22', '49'],
+  removedBand: ['48;5;52', '49'],
+  addedSign: ['38;5;120', '39'],
+  removedSign: ['38;5;210', '39'],
 }
 
 /**
@@ -83,6 +95,10 @@ export function createPalette(enabled: boolean): Palette {
     error: role('error'),
     inverse: role('inverse'),
     band: role('band'),
+    addedBand: role('addedBand'),
+    removedBand: role('removedBand'),
+    addedSign: role('addedSign'),
+    removedSign: role('removedSign'),
     enabled,
   }
 }
@@ -116,48 +132,63 @@ export function bandRow(palette: Palette, row: string, width: number): string {
   return palette.enabled ? palette.band(`${row}${' '.repeat(Math.max(0, width - visibleWidth(row)))}`) : row
 }
 
-/** Narrowest width a diff box is drawn at: two borders, two spaces, and one column of text. */
-const DIFF_BOX_MIN_WIDTH = 5
+/**
+ * The `+` or `-` of a changed row, painted apart from the tint the row is
+ * filled with. The sign sits in the plain row's own prefix - the file line
+ * number, when the diff carries one, then the sign and a space - and syntax
+ * colour starts after it, so the styled row opens with the same characters.
+ * @param row - the styled row.
+ * @param plain - the same row before any syntax colour.
+ * @param mark - whether the row is an addition or a removal.
+ * @param palette - the active palette.
+ * @returns the row with its sign painted, or unchanged when the styled row
+ * does not open with the plain prefix.
+ */
+function paintDiffSign(row: string, plain: string, mark: DiffMark, palette: Palette): string {
+  const sign = mark === 'added' ? '+' : '-'
+  const at = plain.indexOf(`${sign} `)
+  if (at === -1 || !row.startsWith(plain.slice(0, at + 1))) return row
+  const paint = mark === 'added' ? palette.addedSign : palette.removedSign
+  return `${row.slice(0, at)}${paint(sign)}${row.slice(at + 1)}`
+}
 
 /**
- * Wrap rows to `width`, framing each run of consecutive additions in a green
- * rounded box and each run of consecutive removals in a red one, so a change
- * reads as one region. A removal run directly followed by an addition run
- * draws as two stacked boxes, the old text above the new. Every returned line
- * is at most `width` columns, and every box line is exactly `width`.
+ * Wrap rows to `width` and fill each changed row edge to edge with its own
+ * background tint - green for an addition, red for a removal - so a run of
+ * changes reads as one region without spending a column on a border. The `+`
+ * and `-` are painted in their own lighter colour, apart from the fill, and a
+ * wrapped continuation carries the tint with no sign of its own. Every
+ * returned line is at most `width` columns, and every filled line is exactly
+ * `width`; a disabled palette pads nothing and returns the rows as they are.
  * @param rows - the styled rows.
+ * @param plain - the same rows before any syntax colour, which carry the signs.
  * @param marks - per row, whether it is an addition or a removal; undefined
- * for a row outside every box.
+ * for a row no tint fills.
  * @param width - the columns the rows fit.
- * @param palette - the active palette; a disabled one draws the boxes uncolored.
- * @returns the wrapped rows with the boxes drawn around the changes; rows
- * wrapped without boxes when the width cannot hold a box.
+ * @param palette - the active palette.
+ * @returns the wrapped rows, the changed ones filled.
  */
-export function boxDiffRows(rows: readonly string[], marks: readonly (DiffMark | undefined)[], width: number, palette: Palette): string[] {
+export function bandDiffRows(
+  rows: readonly string[],
+  plain: readonly string[],
+  marks: readonly (DiffMark | undefined)[],
+  width: number,
+  palette: Palette,
+): string[] {
+  const columns = Math.max(1, width)
   const out: string[] = []
-  const inner = width - 4
-  let open: DiffMark | undefined
-  const close = (): void => {
-    if (open === undefined) return
-    const paint = open === 'added' ? palette.success : palette.error
-    out.push(paint(`╰${'─'.repeat(width - 2)}╯`))
-    open = undefined
-  }
   for (const [index, row] of rows.entries()) {
-    const mark = width < DIFF_BOX_MIN_WIDTH ? undefined : marks[index]
-    if (mark !== open) close()
+    const mark = marks[index]
     if (mark === undefined) {
-      out.push(...wrapTextWithAnsi(row, Math.max(1, width)))
+      out.push(...wrapTextWithAnsi(row, columns))
       continue
     }
-    const paint = mark === 'added' ? palette.success : palette.error
-    if (open === undefined) out.push(paint(`╭${'─'.repeat(width - 2)}╮`))
-    open = mark
-    for (const part of wrapTextWithAnsi(row, inner)) {
-      out.push(`${paint('│')} ${part}${' '.repeat(Math.max(0, inner - visibleWidth(part)))} ${paint('│')}`)
+    const fill = mark === 'added' ? palette.addedBand : palette.removedBand
+    const signed = paintDiffSign(row, plain[index] ?? '', mark, palette)
+    for (const part of wrapTextWithAnsi(signed, columns)) {
+      out.push(palette.enabled ? fill(`${part}${' '.repeat(Math.max(0, columns - visibleWidth(part)))}`) : part)
     }
   }
-  close()
   return out
 }
 

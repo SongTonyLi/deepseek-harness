@@ -482,7 +482,9 @@ describe('TuiApp', () => {
     })
     test.appendToolCall('call-1', 'bash', { command: 'ls -la' })
     await test.settle()
-    expect(test.terminal.text()).toContain('bash ls -la')
+    // The command is drawn once, as the card's own `$` row under the header.
+    expect(test.terminal.text()).toContain('$ ls -la')
+    expect(test.terminal.text()).not.toContain('bash ls -la')
     expect(test.terminal.text()).toContain('cwd: /work')
     expect(test.terminal.text()).toContain(TOOL_RUNNING_ROW)
     test.appendToolResult('call-1', [{ type: 'text', text: 'a\nb\nc\nd\n' }], true, { extra: 1 })
@@ -993,8 +995,9 @@ describe('TuiApp', () => {
     const rowOf = (line: string): string | undefined => lines.find(printed => printed.endsWith(line))
     for (const region of FOCUS_REGIONS) {
       const [first, ...rest] = KEY_LINES[region]
-      // The state names itself once, on the row carrying its first line.
-      expect(rowOf(first as string)?.startsWith(REGION_LABELS[region]), region).toBe(true)
+      // The state names itself once, on the row carrying its first line, which
+      // starts at the page margin every frame is drawn inside.
+      expect(rowOf(first as string)?.trimStart().startsWith(REGION_LABELS[region]), region).toBe(true)
       // Its further lines are listed under a blank name column.
       for (const line of rest) expect(rowOf(line)?.trimStart(), region).toBe(line)
     }
@@ -1003,7 +1006,7 @@ describe('TuiApp', () => {
       expect(rowOf(widestHint(region)), region).toBeDefined()
     }
     // The reader is a focus state of its own, with both its columns named.
-    expect(rowOf(READER_HINTS.list[0])?.startsWith('reader')).toBe(true)
+    expect(rowOf(READER_HINTS.list[0])?.trimStart().startsWith('reader')).toBe(true)
     expect(rowOf(READER_HINTS.pane[0])).toBeDefined()
     const shown = lines.join('\n')
     for (const key of ['Space folds', 'Ctrl+G reader', 'Tab regions', 'PgUp PgDn turns', 'Home End ends']) {

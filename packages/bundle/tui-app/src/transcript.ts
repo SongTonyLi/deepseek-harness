@@ -422,13 +422,41 @@ function diffsBody(diffs: readonly FileDiff[]): ToolBody {
 }
 
 /**
+ * One tool name as a headline opens with it: lowercase, with `_` and `-` read
+ * as spaces, so `web_search` matches a `Web search …` headline.
+ * @param text - the tool name or the headline's opening run.
+ * @returns the comparable form.
+ */
+function headlineWord(text: string): string {
+  return text.toLowerCase().replaceAll(/[_-]+/gu, ' ')
+}
+
+/**
+ * The headline drawn after a tool's own name, without the name a presenter
+ * repeated. A view titled `Read src/app.ts` under the `read` tool draws
+ * `src/app.ts`, so the name is read once wherever the two are drawn together.
+ * @param toolName - the tool the call names.
+ * @param title - the presenter's title.
+ * @returns the title, or what follows the repeated name; empty when the title
+ * is the name alone.
+ */
+export function cardHeadline(toolName: string, title: string): string {
+  const name = headlineWord(toolName)
+  if (name === '' || headlineWord(title.slice(0, name.length)) !== name) return title
+  const rest = title.slice(name.length)
+  if (rest === '') return ''
+  return rest.startsWith(' ') ? rest.trimStart() : title
+}
+
+/**
  * Text for a tool call from its presentation view, falling back to the raw
  * arguments when the tool declares no presenter.
  * @param argumentsJson - the verbatim argument JSON.
  * @param view - the tool's `presentCall` view, when it has one.
+ * @param toolName - the tool the call names, whose repeat the headline drops.
  * @returns the card's call text.
  */
-export function toolCallText(argumentsJson: string, view: ToolCallView | undefined): ToolCallText {
+export function toolCallText(argumentsJson: string, view: ToolCallView | undefined, toolName: string): ToolCallText {
   if (view === undefined) {
     const parsed = parseArguments(argumentsJson)
     const summary = parsed === undefined ? argumentsJson : JSON.stringify(parsed)
@@ -438,17 +466,18 @@ export function toolCallText(argumentsJson: string, view: ToolCallView | undefin
     case 'generic': {
       const lines: string[] = []
       if (view.content !== undefined) lines.push(...contentText(view.content).split('\n'))
-      return { title: view.title, lines }
+      return { title: cardHeadline(toolName, view.title), lines }
     }
     case 'terminal': {
-      const extra: string[] = []
-      if (view.description !== undefined) extra.push(view.description)
-      if (view.cwd !== undefined) extra.push(`cwd: ${view.cwd}`)
-      if (view.title === '') return { title: view.title, lines: extra }
-      return { title: view.title, ...shellCommandBody(view.title, extra) }
+      // The command is the card's own `$` row, so the headline carries the
+      // call's summary instead and no card draws the command twice.
+      const title = cardHeadline(toolName, view.description ?? '')
+      const extra = view.cwd === undefined ? [] : [`cwd: ${view.cwd}`]
+      if (view.title === '') return { title, lines: extra }
+      return { title, ...shellCommandBody(view.title, extra) }
     }
     case 'diff':
-      return { title: view.title, ...diffsBody(view.diffs) }
+      return { title: cardHeadline(toolName, view.title), ...diffsBody(view.diffs) }
     default:
       return assertNever(view, 'tui tool call view')
   }

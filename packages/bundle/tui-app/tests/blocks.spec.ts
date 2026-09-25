@@ -104,32 +104,40 @@ describe('blocks', () => {
     failed.invalidate()
   })
 
-  it('draws added tool rows green and removed rows red', () => {
-    const colored = { ...theme, palette: createPalette(true) }
-    const block = new ToolBlock(colored, 'edit', { title: 'Edit a.ts', lines: ['a.ts', '- old', '+ fresh'] }, 1)
+  it('fills a changed row with its own tint and paints the sign apart from it', () => {
+    const palette = createPalette(true)
+    const colored = { ...theme, palette }
+    const block = new ToolBlock(colored, 'edit', {
+      title: 'Edit a.ts',
+      lines: ['a.ts', '- old', '+ fresh'],
+      diff: [undefined, 'removed', 'added'],
+    }, 1)
     block.setExpanded(true)
     const shown = block.render(40).join('\n')
-    expect(shown).toContain('\u001b[31m- old\u001b[39m')
-    expect(shown).toContain('\u001b[32m+ fresh\u001b[39m')
+    // The card's rows lay out four columns in from its own width.
+    expect(shown).toContain(palette.removedBand(`${palette.removedSign('-')} old${' '.repeat(36 - '- old'.length)}`))
+    expect(shown).toContain(palette.addedBand(`${palette.addedSign('+')} fresh${' '.repeat(36 - '+ fresh'.length)}`))
+    // A row the card's own presentation did not mark is filled by nothing.
+    const unmarked = new ToolBlock(colored, 'bash', { title: '', lines: ['- not a diff'] }, 1)
+    unmarked.setExpanded(true)
+    expect(unmarked.render(40).join('\n')).toContain('- not a diff')
+    expect(unmarked.render(40).join('\n')).not.toContain(palette.removedBand(''))
   })
 
-  it('boxes the changed rows of a diff card and leaves a fold marker outside every box', () => {
+  it('fills the changed rows of a diff card and leaves a fold marker outside every fill', () => {
     const block = new ToolBlock(theme, 'edit', {
       title: 'Edit a.ts',
       lines: ['a.ts', '- old', '+ fresh'],
       diff: [undefined, 'removed', 'added'],
     }, 1)
     block.setExpanded(true)
+    // The palette draws no colour here, so the fill costs the rows nothing.
     expect(block.render(20)).toEqual([
       '',
       '◆ edit Edit a.ts',
       '  │ a.ts',
-      '  │ ╭──────────────╮',
-      '  │ │ - old        │',
-      '  │ ╰──────────────╯',
-      '  │ ╭──────────────╮',
-      '  │ │ + fresh      │',
-      '  │ ╰──────────────╯',
+      '  │ - old',
+      '  │ + fresh',
       '  │ …',
     ])
     block.setResult(['a.ts', '  one', '+ two', '+ three'], false, undefined, [undefined, undefined, 'added', 'added'])
@@ -138,10 +146,8 @@ describe('blocks', () => {
       '◆ edit Edit a.ts',
       '  │ a.ts',
       '  │   one',
-      '  │ ╭──────────────╮',
-      '  │ │ + two        │',
-      '  │ │ + three      │',
-      '  │ ╰──────────────╯',
+      '  │ + two',
+      '  │ + three',
     ])
     block.setExpanded(false)
     expect(block.render(60).at(-1)).toBe('  │ … 2 more rows · Ctrl+O expands')
