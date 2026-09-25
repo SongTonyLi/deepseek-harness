@@ -21,6 +21,17 @@ let dir: string
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'dsh-tui-commands-')) })
 afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
 
+/** Cached titles the picker reads without loading session logs. */
+function sessionTitles(ctx: Context, titles: Record<string, string> = { 'session-older': 'Older chat' }): void {
+  ctx.provide('sessionProjectionCache', {
+    cachedSnapshot: (header: { id: string }) => {
+      const title = titles[header.id]
+      return title === undefined ? undefined : { values: { title } }
+    },
+    cachedPredecessorTitle: () => undefined,
+  } as never)
+}
+
 /** Two persisted sessions, the current one and an older titled one. */
 function sessionList(ctx: Context): void {
   ctx.provide('sessionQuery', {
@@ -28,11 +39,8 @@ function sessionList(ctx: Context): void {
       { header: { id: 'session-tui-test', createdAt: 20, cwd: '/work' } },
       { header: { id: 'session-older', createdAt: 10, cwd: '/elsewhere' } },
     ]),
-    readTitleSnapshots: () => Promise.resolve([
-      { status: 'fulfilled', value: {} },
-      { status: 'fulfilled', value: { title: { title: 'Older chat' } } },
-    ]),
   } as never)
+  sessionTitles(ctx)
 }
 
 describe('session commands', () => {
@@ -70,11 +78,8 @@ describe('session commands', () => {
       before: (ctx) => {
         ctx.provide('sessionQuery', {
           listSessions: () => new Promise<unknown[]>((resolve) => { releaseSessions = resolve }),
-          readTitleSnapshots: () => Promise.resolve([
-            { status: 'fulfilled', value: {} },
-            { status: 'fulfilled', value: { title: { title: 'Older chat' } } },
-          ]),
         } as never)
+        sessionTitles(ctx)
         ctx.provide('llm', {
           listProviders: () => [],
           listModels: () => Promise.resolve([]),
@@ -126,11 +131,8 @@ describe('session commands', () => {
             listings += 1
             return new Promise<unknown[]>((resolve) => { releaseSessions = resolve })
           },
-          readTitleSnapshots: () => Promise.resolve([
-            { status: 'fulfilled', value: {} },
-            { status: 'fulfilled', value: { title: { title: 'Older chat' } } },
-          ]),
         } as never)
+        sessionTitles(ctx)
       },
     })
     typeLine(test.terminal, '/resume')
@@ -154,7 +156,6 @@ describe('session commands', () => {
           listSessions: (signal: AbortSignal) => new Promise((_resolve, reject) => {
             signal.addEventListener('abort', () => { reject(new Error('listing aborted')) }, { once: true })
           }),
-          readTitleSnapshots: () => Promise.resolve([]),
         } as never)
       },
     })
@@ -174,7 +175,6 @@ describe('session commands', () => {
       before: (ctx) => {
         ctx.provide('sessionQuery', {
           listSessions: () => new Promise<unknown[]>((resolve) => { releaseSessions = resolve }),
-          readTitleSnapshots: () => Promise.resolve([]),
         } as never)
         ctx.provide('llm', {
           listProviders: () => [],

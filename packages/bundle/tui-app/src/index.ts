@@ -15,6 +15,7 @@ import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import { resumeModelSelection } from './resume-model.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { canOpenNativePath, openNativeUrl } from '@deepseek-ai/dsh-native-command'
@@ -279,6 +280,9 @@ async function forkSeed(ctx: Context, id: SessionId, turn: number | undefined): 
 /**
  * The terminal's session host over the core Agent registry. Every Agent gets
  * the model selection installed so `/model` applies from the next request.
+ * Resume passes the launch default as AgentOptions so assemble has a
+ * `{{model}}` value, then overlays the log's last request header onto the
+ * selection when one exists, else keeps that default.
  * @param ctx - plugin context.
  * @param core - the injected services.
  * @param cwd - the workspace root recorded on new sessions.
@@ -307,10 +311,15 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string): SessionHost
     })
   }, seed ?? [])
   const resume = async (id: SessionId): Promise<BoundSession> => {
-    const selection: ModelSelectionRef = { current: undefined, assembled: undefined }
+    const fallback = defaultModel.currentSelection()
+    const selection: ModelSelectionRef = { current: fallback, assembled: undefined }
     const handle = await agents.resume({
       resumeSessionId: id,
-      setup: (agentCtx) => { installModelSelection(agentCtx, selection) },
+      agentOptions: { provider: fallback.provider, model: fallback.model },
+      setup: (agentCtx, agent) => {
+        selection.current = resumeModelSelection(agent.session.requestHeader(), fallback)
+        installModelSelection(agentCtx, selection)
+      },
     })
     await handle.agent.whenIdle()
     return {
