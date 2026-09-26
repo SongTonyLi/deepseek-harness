@@ -48,14 +48,15 @@ describe('the editor', () => {
     expect(key('editor', KEY.shiftDown)).toEqual({ kind: 'leave', direction: 'down' })
   })
 
-  it('claims steering and the effort picker', () => {
+  it('claims steering, the newest follow-up, and the effort picker', () => {
     expect(key('editor', KEY.ctrlS)).toEqual({ kind: 'steer' })
+    expect(key('editor', KEY.up)).toEqual({ kind: 'edit-latest' })
     expect(key('editor', KEY.shiftTab)).toEqual({ kind: 'effort' })
     expect(key('editor', '\u001b[9;2u')).toEqual({ kind: 'effort' })
   })
 
   it('claims nothing pi-tui\'s own editor answers', () => {
-    for (const data of [KEY.up, KEY.down, KEY.left, KEY.right, KEY.shiftLeft, KEY.shiftRight, KEY.enter, KEY.tab, KEY.space, KEY.home, KEY.end, 'a']) {
+    for (const data of [KEY.down, KEY.left, KEY.right, KEY.shiftLeft, KEY.shiftRight, KEY.enter, KEY.tab, KEY.space, KEY.home, KEY.end, 'a']) {
       expect(key('editor', data)).toBeUndefined()
     }
   })
@@ -193,12 +194,11 @@ describe('the legends', () => {
 
   it('ends every docked legend on the way back to the input, and gives the editor none', () => {
     expect(widestHint('transcript')).toBe('↑↓ sections · ←→ parts · Space folds · Ctrl+G reader · Esc input')
-    expect(widestHint('queue')).toBe('enter steer · ↑ select/edit · esc cancel')
+    expect(widestHint('queue')).toBe('↑↓ select · Enter steer · E edit · I inject · Esc input')
     expect(widestHint('panel')).toBe('↑↓ children · Enter opens · Tab regions · Esc input')
     expect(widestHint('bar')).toBe('←→ segments · Enter details · Tab regions · Esc input')
     expect(widestHint('editor')).toBe('')
-    expect(HINTS.queue.at(-1)).toBe('esc cancel')
-    for (const region of ['transcript', 'panel', 'bar'] as const) {
+    for (const region of ['transcript', 'queue', 'panel', 'bar'] as const) {
       expect(HINTS[region].at(-1)).toBe('Esc input')
     }
   })
@@ -218,13 +218,13 @@ describe('the legends', () => {
     // The editor draws none, so its keys are listed only here, the entry keys
     // included exactly as the unfocused bar reserves them.
     expect(KEY_LINES.editor.some(line => line.startsWith(ENTRY_HINTS[0] as string))).toBe(true)
-    expect(KEY_LINES.editor).toContain('Shift+↑ selects follow-ups while they wait')
+    expect(KEY_LINES.editor).toContain('While follow-ups wait: ↑ on an empty input edits the newest · Shift+↑ selects one')
   })
 
   it('rewrites Shift+↑ on the unfocused bar while follow-ups wait', () => {
     expect(ENTRY_HINTS[0]).toBe('Shift+↑ read · Shift+↓ status')
     expect(entryHints({ queue: true })[0]).toBe('Shift+↑ select · Shift+↓ status')
-    expect(QUEUE_ENTRY_HINT).toBe('shift+↑ select')
+    expect(QUEUE_ENTRY_HINT).toBe('↑ edit · Shift+↑ select')
     expect(entryHints()).toEqual(ENTRY_HINTS)
   })
 })

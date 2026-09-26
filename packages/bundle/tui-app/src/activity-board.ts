@@ -76,6 +76,8 @@ export interface ActivityBoardRender {
   todoFades?: ReadonlyMap<string, BlockFade>
   /** Live fade of the descendant line; omitted draws it settled. */
   subagentFade?: BlockFade
+  /** The spinner frame an in-progress todo draws in place of its glyph; omitted draws the glyph. */
+  spinner?: string
 }
 
 /**
@@ -143,8 +145,18 @@ export function activityTurnEndStatus(reason: TurnEndReason): string {
 }
 
 /**
- * Render the board. Todo rows lead with status-colored glyphs; completed
- * content is dim and scratched out. A list past the cap ends on `+<n> more`.
+ * Whether one board draw holds a row the spinner animates.
+ * @param view - the rows one draw produced.
+ * @returns true while an in-progress todo is drawn.
+ */
+export function activityBoardSpins(view: ActivityBoardView): boolean {
+  return view.todos.some(row => row.status === 'in_progress')
+}
+
+/**
+ * Render the board. Todo rows lead with status-colored glyphs, an in-progress
+ * one with the spinner frame when one is given; completed content is dim and
+ * scratched out. A list past the cap ends on `+<n> more`.
  * The descendant line is last. An empty view returns the empty string so the
  * slot can unmount.
  * @param view - the rows one draw produced.
@@ -157,7 +169,8 @@ export function renderActivityBoard(view: ActivityBoardView, render: ActivityBoa
   for (const row of view.todos) {
     const content = paintTodoContent(row.content, row.status, text => palette.dim(palette.strikethrough(text)))
     const paint = row.status === 'completed' ? palette.success : row.status === 'in_progress' ? palette.warning : palette.accent
-    lines.push(fadedLine(`${paint(TODO_GLYPH[row.status])} ${content}`, render.todoFades?.get(row.content)))
+    const glyph = row.status === 'in_progress' && render.spinner !== undefined ? render.spinner : TODO_GLYPH[row.status]
+    lines.push(fadedLine(`${paint(glyph)} ${content}`, render.todoFades?.get(row.content)))
   }
   if (view.hidden > 0) lines.push(palette.dim(`+${String(view.hidden)} more`))
   if (view.subagent !== undefined) lines.push(fadedLine(palette.dim(view.subagent), render.subagentFade))

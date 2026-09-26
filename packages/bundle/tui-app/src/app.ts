@@ -92,6 +92,7 @@ import {
   type SubagentChoice,
 } from './catalog.ts'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
+import { SPINNER_MS, shimmer, spinnerFrame } from './spinner.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
@@ -144,6 +145,7 @@ import {
 } from './footer.ts'
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
 import {
+  activityBoardSpins,
   activityBoardView,
   activityResultParts,
   activityTurnEndStatus,
@@ -730,6 +732,18 @@ export class TuiApp {
   private readonly pacer: StreamPacer | undefined
   /** Tool cards whose rows are still unrolling; each drops out once its reveal caught up. */
   private readonly reveals = new Set<ToolBlock>()
+  /** Running tool cards whose glyph spins; each drops out once it stops spinning. */
+  private readonly spinners = new Set<ToolBlock>()
+  /** Whether the activity board last drew an in-progress todo on the spinner. */
+  private boardSpins = false
+  /**
+   * Whether the open turn has committed an assistant message, after which a
+   * user prompt reaching the log was steered or injected rather than opening
+   * the turn.
+   */
+  private turnStepped = false
+  /** Disposer of the spinner tick while it is armed. */
+  private spinTicker: (() => void) | undefined
   /**
    * The chrome motions running right now. It is consulted whatever the
    * terminal draws, because a transient line has to come down again even on a
@@ -839,7 +853,7 @@ export class TuiApp {
     this.readerScreen = new AlternateScreen(deps.terminal)
     this.header = new Text('', 0, 0)
     this.inspector = new InspectorPane(() => this.inspectorView(), { palette, previewLines: deps.focusPreviewLines })
-    this.loader = new Loader(this.tui, palette.accent, palette.dim, 'thinking')
+    this.loader = new Loader(this.tui, palette.accent, message => this.paintLoaderMessage(message), 'thinking')
     // pi-tui starts the spinner interval in the constructor; it runs only while mounted.
     this.loader.stop()
     this.editor = new BarCursorEditor(this.tui, editorTheme(palette), { paddingX: 1 })
@@ -998,6 +1012,7 @@ export class TuiApp {
     this.stopped = true
     this.updateTicker()
     this.updateFadeTicker()
+    this.updateSpinTicker()
     this.cancelPickers()
     for (const dispose of this.disposers.splice(0)) dispose()
     this.modals.withdrawActive()
@@ -1053,10 +1068,13 @@ export class TuiApp {
     this.submittedIds.clear()
     this.todoTurns.clear()
     this.turn = 0
+    this.turnStepped = false
     this.sawSystemPrompt = false
     this.turnStartedAt = undefined
     this.pacer?.clear()
     this.reveals.clear()
+    this.spinners.clear()
+    this.updateSpinTicker()
     this.streaming = undefined
     this.endFade()
     this.blockFades.clear()
@@ -1410,11 +1428,14 @@ export class TuiApp {
       todos: this.activityTodos,
       ...this.activitySubagent === undefined ? {} : { subagent: this.activitySubagent },
     })
+    this.boardSpins = !this.deps.reducedMotion && activityBoardSpins(view)
     const text = renderActivityBoard(view, {
       palette: this.deps.palette,
       todoFades: this.activityTodoFades,
       ...this.activitySubagentFade === undefined ? {} : { subagentFade: this.activitySubagentFade },
+      ...this.boardSpins ? { spinner: spinnerFrame(this.deps.now()) } : {},
     })
+    this.updateSpinTicker()
     const mounted = this.activitySlot.children.length > 0
     if (text === '') {
       if (mounted) this.activitySlot.removeChild(this.activity)
@@ -2172,6 +2193,14 @@ export class TuiApp {
       case 'queue':
         this.actOnQueuedPrompt(action.action)
         return { consume: true }
+      case 'edit-latest': {
+        // A draft, or a revision already in the editor, keeps `Up` for the editor.
+        const latest = this.queueView.at(-1)
+        if (latest === undefined || this.queueDraft !== undefined || this.editor.getText() !== '') return undefined
+        this.queueSelection = latest.message.id
+        this.actOnQueuedPrompt('edit')
+        return { consume: true }
+      }
       case 'effort':
         if (this.switching) {
           this.notice(SESSION_SWITCH_WAIT, 'error')
@@ -3934,6 +3963,48 @@ export class TuiApp {
   }
 
   /**
+   * Spin a new card's glyph until its result lands. A card drawn from a
+   * replayed log, and every card under reduced motion, draws the static glyph.
+   * @param block - the card that was just mounted.
+   */
+  private spinBlock(block: ToolBlock): void {
+    if (this.replaying || this.deps.reducedMotion) return
+    block.setSpinner(() => spinnerFrame(this.deps.now()))
+    this.spinners.add(block)
+    this.updateSpinTicker()
+  }
+
+  /**
+   * Arm the spinner tick while a card or an in-progress todo spins and disarm
+   * it otherwise, so a session with nothing running runs no spinner timer.
+   * Exactly one runs at a time, and a stopped app runs none.
+   */
+  private updateSpinTicker(): void {
+    if (!this.stopped && (this.spinners.size > 0 || this.boardSpins)) {
+      this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, SPINNER_MS)
+      return
+    }
+    const ticker = this.spinTicker
+    if (ticker === undefined) return
+    this.spinTicker = undefined
+    ticker()
+  }
+
+  /**
+   * One spinner period: drop the cards that stopped spinning, then redraw the
+   * rest. The board's text is built when something changes it, so it is
+   * built again here on its next frame.
+   */
+  private onSpinTick(): void {
+    for (const block of this.spinners) {
+      if (!block.spinning()) this.spinners.delete(block)
+    }
+    if (this.boardSpins) this.refreshActivityBoard()
+    else if (this.spinners.size > 0) this.tui.requestRender()
+    this.updateSpinTicker()
+  }
+
+  /**
    * Keep a card on the frame tick while it has rows to unroll, which a call
    * or a result that makes it grow gives it again.
    * @param block - the card that just changed.
@@ -4091,7 +4162,7 @@ export class TuiApp {
     const wanted: HeldSection | undefined = section !== undefined && this.focus === 'transcript'
       ? { block: section.block, part: section.cursor.part, level: this.markLift() }
       : undefined
-    const fades = this.fadesMoving()
+    const fades = this.fadesMoving() || this.spinners.size > 0
     if (!fades && wanted === undefined && this.highlighted === undefined) return false
     // The walk reads the frame that was just built, so applying one change
     // cannot move the line another change is judged against.
@@ -4248,6 +4319,7 @@ export class TuiApp {
         // todo writes, which carry no turn of their own.
         this.turn = event.data.turn
         this.turnStartedAt = event.time
+        this.turnStepped = false
         this.clearActivityBoard()
         this.updateTicker()
         this.refreshFooter()
@@ -4267,6 +4339,7 @@ export class TuiApp {
         const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('')
         const reasoning = message.content.filter(block => block.type === 'reasoning').map(block => block.text).join('')
         this.streamingBlock().commit(text, reasoning, interrupted === true)
+        this.turnStepped = true
         this.streaming = undefined
         this.endFade()
         this.clearLiveUsage()
@@ -4290,6 +4363,8 @@ export class TuiApp {
         const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
         const body = toolResultBody(view, result.content)
         block.setResult(body.lines, isError, body.code, body.diff)
+        this.spinners.delete(block)
+        this.updateSpinTicker()
         this.fadeBlock((fade) => { block.setResultFade(fade) })
         this.trackReveal(block)
         this.pendingToolNames.delete(result.toolCallId)
@@ -4363,7 +4438,8 @@ export class TuiApp {
     const source = message.source
     if (source.kind === 'user') {
       const attachments = message.content.filter(block => block.type !== 'text').map(block => `[${block.type}]`)
-      this.chat.addChild(new UserBlock(this.theme, [contentText(message.content), ...attachments].filter(part => part !== '').join('\n'), this.turn))
+      const text = [contentText(message.content), ...attachments].filter(part => part !== '').join('\n')
+      this.chat.addChild(new UserBlock(this.theme, text, this.turn, this.turnStepped ? 'injected' : 'prompt'))
       return
     }
     const view = injectedContextView(source, message.content)
@@ -4486,6 +4562,21 @@ export class TuiApp {
     this.refreshFooter()
   }
 
+  /**
+   * Paint the working spinner's message on each of its frames: the activity
+   * word carries the shimmer, and the live ↑↓ suffix stays dim. Under reduced
+   * motion the whole message is dim.
+   * @param message - the loader's message, the activity word first.
+   * @returns the styled message.
+   */
+  private paintLoaderMessage(message: string): string {
+    const palette = this.deps.palette
+    const activity = this.loaderActivity
+    if (this.deps.reducedMotion || !message.startsWith(activity)) return palette.dim(message)
+    const rest = message.slice(activity.length)
+    return `${shimmer(palette, activity, this.deps.now())}${rest === '' ? '' : palette.dim(rest)}`
+  }
+
   /** Draw the spinner label plus the current call's ↑send ↓receive suffix. */
   private refreshLoader(): void {
     const suffix = formatLiveUsage(this.liveUsage)
@@ -4565,6 +4656,7 @@ export class TuiApp {
     this.chat.addChild(block)
     this.fadeBlock((fade) => { block.setFade(fade) })
     this.revealBlock(block)
+    this.spinBlock(block)
     if (source === 'stream') this.unconfirmedTools.set(callId, block)
   }
 
@@ -4577,6 +4669,7 @@ export class TuiApp {
     for (const [callId, block] of this.unconfirmedTools) {
       this.chat.removeChild(block)
       this.reveals.delete(block)
+      this.spinners.delete(block)
       this.toolBlocks.delete(callId)
       this.toolArguments.delete(callId)
       this.toolStreamArgs.delete(callId)
@@ -4584,6 +4677,7 @@ export class TuiApp {
     }
     this.unconfirmedTools.clear()
     this.updateFadeTicker()
+    this.updateSpinTicker()
     this.syncLoaderFromPendingTools()
     return true
   }

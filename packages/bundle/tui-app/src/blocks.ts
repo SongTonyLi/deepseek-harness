@@ -65,6 +65,7 @@ const TOOL_GLYPH = '◆'
 /** Glyph a subagent row opens with, coloured by status like {@link TOOL_GLYPH}. */
 export const SUBAGENT_RUNNING_GLYPH = TOOL_GLYPH
 
+
 /** Glyph a user prompt opens with. */
 const USER_GLYPH = '❯'
 
@@ -308,8 +309,17 @@ export class UserShellBlock implements Component {
 }
 
 /**
- * A prompt the user submitted, drawn with a leading {@link USER_GLYPH} on the
- * palette's background band, which spans every row of the prompt.
+ * How a user prompt entered the conversation: `prompt` opened its turn, and
+ * `injected` was steered or injected into a turn that had already stepped.
+ */
+export type UserPromptKind = 'prompt' | 'injected'
+
+/**
+ * A prompt the user submitted, drawn with a leading {@link USER_GLYPH} on a
+ * background band that spans every row of the prompt: the palette's band and
+ * bold text for a prompt that opened its turn, and the darker
+ * {@link Palette.injectedBand} with dim text for one steered or injected into
+ * a running turn, so it recedes behind the turn it joined.
  */
 export class UserBlock implements Component, UserSection {
   readonly navigable = true as const
@@ -321,7 +331,12 @@ export class UserBlock implements Component, UserSection {
   /** The wrapped prompt, by width and whether the gutter narrowed it. */
   private readonly drawn = new LastDrawn<string[]>()
 
-  constructor(private readonly theme: BlockTheme, private readonly text: string, readonly turn: number) {}
+  constructor(
+    private readonly theme: BlockTheme,
+    private readonly text: string,
+    readonly turn: number,
+    private readonly kind: UserPromptKind = 'prompt',
+  ) {}
 
   /**
    * The prompt as one navigable section.
@@ -349,6 +364,9 @@ export class UserBlock implements Component, UserSection {
     const { marked, content: inner } = focusFrame(width, this.highlight)
     const lines = this.drawn.get(`${String(width)}:${String(marked)}`, () => {
       const body = wrapTextWithAnsi(this.text, Math.max(1, inner - 2))
+      if (this.kind === 'injected') {
+        return ['', ...body.map((line, index) => bandRow(palette, palette.dim(`${index === 0 ? USER_GLYPH : ' '} ${line}`), inner, palette.injectedBand))]
+      }
       return ['', ...body.map((line, index) => bandRow(palette, `${palette.accent(index === 0 ? USER_GLYPH : ' ')} ${palette.bold(line)}`, inner))]
     })
     // The prompt is one section, so every line of a focused prompt is its own.
@@ -929,8 +947,11 @@ export type ToolCardStatus = 'running' | 'done' | 'error'
  * The card arrives in two pieces, and each floats out on its own: the header
  * and the call rows when the model starts the call (a stream delta, or the
  * logged `tool/call`), the result rows when the tool answers. While it runs
- * the body carries {@link TOOL_RUNNING_ROW} in place of a result. A card
- * rebuilt from history carries neither fade.
+ * the body carries {@link TOOL_RUNNING_ROW} in place of a result, and a card
+ * given a spinner ({@link ToolBlock.setSpinner}) cycles its glyph until the
+ * result lands or its header leaves the renderer's repaint window, then draws
+ * the static glyph. A card rebuilt from history carries neither fade nor
+ * spinner.
  */
 export class ToolBlock implements Component, ToolSection, Foldable {
   readonly navigable = true as const
@@ -947,6 +968,8 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private expanded = false
   private fade: BlockFade | undefined
   private resultFade: BlockFade | undefined
+  /** The glyph a running card draws right now; absent draws {@link TOOL_GLYPH}. */
+  private spinner: (() => string) | undefined
   /** First line of this card either fade may still recolor. */
   private repaintFloor = 0
   /** The section drawn as focused; absent while the keyboard is elsewhere. */
@@ -1056,14 +1079,38 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   }
 
   /**
+   * Cycle the header glyph while the card runs.
+   * @param frame - the glyph to draw at the moment of a render.
+   */
+  setSpinner(frame: () => string): void {
+    this.spinner = frame
+  }
+
+  /**
+   * Whether a render right now may draw a different glyph than the last one.
+   * @returns true while the card runs with a spinner its header can still show.
+   */
+  spinning(): boolean {
+    return this.spinner !== undefined && this.status === 'running'
+  }
+
+  /**
    * Hand the rows the renderer can no longer repaint back to the colors this
    * card drew them in, so a fade that is still moving never rewrites them.
    * @param floor - this card's own first repaintable line; the application
    * raises it as the frame grows and never lowers it.
-   * @returns whether the floor took rows away from a fade that is drawing
-   * right now, and so whether the frame differs from the one just built.
+   * @returns whether the floor took rows away from a fade or a spinner that
+   * is drawing right now, and so whether the frame differs from the one just
+   * built.
    */
   setRepaintFloor(floor: number): boolean {
+    // The header is line 1, under the leading blank line; a spinner redrawing
+    // it above the floor would force a full redraw on every frame.
+    if (this.spinning() && floor > 1) {
+      this.spinner = undefined
+      this.repaintFloor = Math.max(this.repaintFloor, floor)
+      return true
+    }
     // Rows unrolling below a line the renderer can no longer repaint would
     // force a full redraw on every frame, so such a card draws them at once.
     const reveal = this.reveal
@@ -1162,7 +1209,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     // The leading blank line is index 0 of the card, so the call group starts
     // at 1 and the result group where the call group ended. A fade that has
     // settled, or was never attached, hands the group back as it is.
-    const call = faded(layout.call, this.fade, this.repaintFloor - 1)
+    const call = faded(this.spun(layout.call), this.fade, this.repaintFloor - 1)
     const result = faded(layout.result, this.resultFade, this.repaintFloor - 1 - layout.call.length)
     const full = call === layout.call && result === layout.result ? layout.lines : ['', ...call, ...result]
     this.rows = full.length - 1
@@ -1239,6 +1286,23 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const call = [...wrapTextWithAnsi(header, outer), ...rows(0, callCount)]
     const result = rows(callCount, shown.length)
     return { call, result, lines: ['', ...call, ...result], marker: cut ? rows(shown.length - 1, shown.length).length : 0 }
+  }
+
+  /**
+   * The call rows with the header's running glyph replaced by the spinner's
+   * current frame. The kept layout draws the static glyph, so a spinner frame
+   * rewrites one prefix instead of laying the card out again.
+   * @param call - the header and call rows as the kept layout draws them.
+   * @returns `call` itself when nothing spins, or a copy with the frame drawn.
+   */
+  private spun(call: string[]): string[] {
+    if (this.spinner === undefined || !this.spinning()) return call
+    const palette = this.theme.palette
+    const settled = palette.warning(TOOL_GLYPH)
+    const [header, ...rows] = call
+    /* v8 ignore next -- a running card's header and subagent row both open on the warning glyph */
+    if (header?.startsWith(settled) !== true) return call
+    return [`${palette.warning(this.spinner())}${header.slice(settled.length)}`, ...rows]
   }
 
   /**

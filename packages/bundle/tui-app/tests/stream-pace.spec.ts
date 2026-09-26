@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { createToolResultMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import { FADE_TICK_MS } from '../src/fade.ts'
-import { bench, type Bench } from './bench.ts'
+import { bench, spinning, type Bench } from './bench.ts'
 
 /** A reply long enough that one frame of a four-frame drain cannot draw all of it. */
 const REPLY = 'The quick brown fox jumps over the lazy dog.'
@@ -162,7 +162,7 @@ describe('tool card reveal', () => {
     await test.settle()
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
     await frame(test)
-    expect(await test.screen()).toContain('◆ bash')
+    expect(await test.screen()).toMatch(spinning('bash'))
 
     test.appendToolResult('call-1', OUTPUT)
     await test.settle()
@@ -200,10 +200,10 @@ describe('tool card reveal', () => {
     test.stream.start()
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'bash', argumentsDelta: '{"command":"ls"}' })
     await test.settle()
-    expect(await test.screen()).toContain('◆ bash')
+    expect(await test.screen()).toMatch(spinning('bash'))
     test.stream.end({ kind: 'abandoned' })
     await test.settle()
-    expect(await test.screen()).not.toContain('◆ bash')
+    expect(await test.screen()).not.toMatch(spinning('bash'))
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 })

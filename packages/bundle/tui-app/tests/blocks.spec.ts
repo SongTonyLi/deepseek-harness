@@ -71,6 +71,51 @@ describe('blocks', () => {
     expect(block.render(40)[1]?.startsWith(on.error('◆'))).toBe(true)
   })
 
+  it('draws a steered or injected prompt dim on a darker band', () => {
+    const on = createPalette(true)
+    const block = new UserBlock({ ...theme, palette: on }, 'change course', 1, 'injected')
+    const lines = block.render(20)
+    expect(lines[0]).toBe('')
+    expect(lines[1]).toBe(on.injectedBand(`${on.dim('❯ change course')}     `))
+    expect(block.render(10).slice(1)).toEqual([
+      on.injectedBand(`${on.dim('❯ change')}  `),
+      on.injectedBand(`${on.dim('  course')}  `),
+    ])
+    expect(new UserBlock({ ...theme, palette: on }, 'change course', 1).render(20)[1]?.startsWith('\u001b[48;5;236m')).toBe(true)
+  })
+
+  it('spins a running card glyph until the result lands', () => {
+    const on = createPalette(true)
+    const block = new ToolBlock({ ...theme, palette: on }, 'bash', { title: 'ls', lines: [] }, 1)
+    let frame = '⠋'
+    block.setSpinner(() => frame)
+    expect(block.spinning()).toBe(true)
+    expect(block.render(40)[1]).toBe(`${on.warning('⠋')} ${on.bold('bash')} ${on.link('ls')}`)
+    frame = '⠙'
+    expect(block.render(40)[1]?.startsWith(on.warning('⠙'))).toBe(true)
+    block.setResult(['ok'], false)
+    expect(block.spinning()).toBe(false)
+    expect(block.render(40)[1]?.startsWith(on.success('◆'))).toBe(true)
+  })
+
+  it('spins a folded subagent row glyph like a card header', () => {
+    const on = createPalette(true)
+    const block = new ToolBlock({ ...theme, palette: on }, 'subagent', { title: '', lines: [] }, 1)
+    block.setSubagent({ description: 'Rank', meta: [] })
+    block.setSpinner(() => '⠹')
+    expect(block.render(40)[1]?.startsWith(on.warning('⠹'))).toBe(true)
+  })
+
+  it('stops spinning once the header leaves the repaint window, and says the frame changed', () => {
+    const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: [] }, 1)
+    block.setSpinner(() => '⠋')
+    expect(block.setRepaintFloor(1)).toBe(false)
+    expect(block.render(40)[1]).toBe('⠋ bash ls')
+    expect(block.setRepaintFloor(2)).toBe(true)
+    expect(block.spinning()).toBe(false)
+    expect(block.render(40)[1]).toBe('◆ bash ls')
+  })
+
   it('draws notices in their tone', () => {
     const block = new NoticeBlock({ ...theme, palette: createPalette(true) }, 'saved', 'success')
     expect(block.render(20)[0]).toContain('· saved')
