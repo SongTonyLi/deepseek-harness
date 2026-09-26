@@ -20,6 +20,7 @@ import { CONTEXT_PREVIEW_LINES } from '../src/blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
 import { FOCUS_PREVIEW_LINES } from '../src/inspector.ts'
 import { READER_MIN_COLUMNS } from '../src/reader.ts'
+import { SPINNER_FRAMES, type SpinnerKind } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
 import { TOAST_MS } from '../src/toast.ts'
 
@@ -146,13 +147,17 @@ export class FakeTerminal implements Terminal {
 }
 
 /**
- * Match `label` led by any spinner frame, as a running tool card or an
+ * Match `label` led by a frame of `kind`, as a running tool card or an
  * in-progress todo draws it whatever frame the clock is on.
  * @param label - the text after the glyph and its space.
+ * @param kind - the animation the card or row draws.
  * @returns the pattern.
  */
-export function spinning(label: string): RegExp {
-  return new RegExp(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ${label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u')
+export function spinning(label: string, kind: SpinnerKind): RegExp {
+  const frames = [...SPINNER_FRAMES[kind]]
+    .map(frame => frame.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
+    .join('')
+  return new RegExp(`[${frames}] ${label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u')
 }
 
 /** Keys as the raw bytes a terminal sends. */
