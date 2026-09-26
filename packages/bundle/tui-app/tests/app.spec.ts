@@ -18,9 +18,11 @@ import { TOOL_RUNNING_ROW } from '../src/blocks.ts'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, QUEUE_ENTRY_HINT, REGION_LABELS, entryHints, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
+import { SPINNER_MS, shimmer } from '../src/spinner.ts'
+import { createPalette } from '../src/style.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
-import { BENCH_NOW, KEY, bench, type Bench } from './bench.ts'
+import { BENCH_NOW, KEY, bench, spinning, type Bench } from './bench.ts'
 import { testContextSource } from './message-sources.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
@@ -99,7 +101,7 @@ describe('TuiApp', () => {
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: inject })
     test.terminal.type(KEY.shiftUp)
     await test.settle()
-    expect(await test.screen()).toContain('enter steer · ↑ select/edit · esc cancel')
+    expect(await test.screen()).toContain('↑↓ select · Enter steer · E edit · I inject · Esc input')
     test.terminal.type('i')
     expect(test.calls.injections).toEqual([inject])
     expect(test.calls.steers).toHaveLength(0)
@@ -136,6 +138,25 @@ describe('TuiApp', () => {
     expect(await test.screen()).toContain('○ keep this')
   })
 
+  it('opens the newest queued prompt for editing on Up from an empty input, and leaves Up to a draft', async () => {
+    const test = await bench({ running: true })
+    const first = createUserMessage({ content: [{ type: 'text', text: 'first follow-up' }], source: { kind: 'user' } })
+    const newest = createUserMessage({ content: [{ type: 'text', text: 'newest follow-up' }], source: { kind: 'user' } })
+    test.agent.inbox.append('next-turn', first)
+    test.agent.inbox.append('next-turn', newest)
+    test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: newest })
+    for (const char of 'draft') test.terminal.type(char)
+    test.terminal.type(KEY.up)
+    expect(test.agent.inbox.nextTurn).toEqual([first, newest])
+    test.terminal.type(KEY.ctrlC)
+
+    test.terminal.type(KEY.up)
+    expect(test.agent.inbox.nextTurn).toEqual([first])
+    test.terminal.type(' revised')
+    test.terminal.type(KEY.enter)
+    expect(test.calls.followups.at(-1)?.content).toEqual([{ type: 'text', text: 'newest follow-up revised' }])
+  })
+
   it('enters follow-ups on Shift+Up and the status bar on Shift+Down while prompts wait', async () => {
     const test = await bench({ running: true })
     const later = createUserMessage({ content: [{ type: 'text', text: 'what\'s the current progress' }], source: { kind: 'user' } })
@@ -156,7 +177,7 @@ describe('TuiApp', () => {
 
     test.terminal.type(KEY.shiftUp)
     await test.settle()
-    expect(await test.screen()).toContain('enter steer · ↑ select/edit · esc cancel')
+    expect(await test.screen()).toContain('↑↓ select · Enter steer · E edit · I inject · Esc input')
   })
 
   it('holds a queued prompt above the editor until the loop claims it, and draws it in the conversation then', async () => {
@@ -401,18 +422,18 @@ describe('TuiApp', () => {
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'read', argumentsDelta: '' })
     await test.settle()
     let screen = test.terminal.text()
-    expect(screen).toContain('◆ read')
+    expect(screen).toMatch(spinning('read'))
     expect(screen).toContain(TOOL_RUNNING_ROW)
     expect(screen).not.toContain('a.ts')
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, argumentsDelta: '{"path":"a.ts"}' })
     await test.settle()
     screen = test.terminal.text()
-    expect(screen).toContain('◆ read a.ts')
+    expect(screen).toMatch(spinning('read a.ts'))
     expect(screen).toContain(TOOL_RUNNING_ROW)
     test.stream.end({ kind: 'committed', eventType: 'assistant/message', seq: 1 as never })
     test.appendToolCall('call-1', 'read', { path: 'a.ts' })
     await test.settle()
-    expect(test.terminal.text().split('◆ read a.ts')).toHaveLength(2)
+    expect(test.terminal.text().split(spinning('read a.ts'))).toHaveLength(2)
     test.appendToolResult('call-1', [{ type: 'text', text: 'export const a = 1' }])
     screen = await test.screen()
     expect(screen).toContain('read a.ts')
@@ -425,11 +446,11 @@ describe('TuiApp', () => {
     test.stream.start()
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'write', argumentsDelta: '' })
     await test.settle()
-    expect(test.terminal.text()).toContain('◆ write')
+    expect(test.terminal.text()).toMatch(spinning('write'))
     expect(test.terminal.text()).toContain(TOOL_RUNNING_ROW)
     test.stream.end({ kind: 'abandoned' })
     const screen = await test.screen()
-    expect(screen).not.toContain('◆ write')
+    expect(screen).not.toMatch(spinning('write'))
     expect(screen.split('\n').some(line => line.trim() === `│ ${TOOL_RUNNING_ROW}`)).toBe(false)
   })
 
@@ -441,16 +462,16 @@ describe('TuiApp', () => {
     test.stream.chunk({ type: 'tool-call-delta', index: 2, id: 'call-y' as never, name: '', argumentsDelta: '' })
     await test.settle()
     expect(test.terminal.text()).toContain('calling read')
-    expect(test.terminal.text()).not.toContain('◆ read')
+    expect(test.terminal.text()).not.toMatch(spinning('read'))
     test.stream.chunk({ type: 'tool-call-delta', index: 3, id: 'call-2' as never, name: 'edit', argumentsDelta: '' })
     await test.settle()
-    expect(test.terminal.text()).toContain('◆ edit')
+    expect(test.terminal.text()).toMatch(spinning('edit'))
     test.stream.end({ kind: 'committed', eventType: 'assistant/attempt', seq: 1 as never })
     const dropped = await test.screen()
-    expect(dropped).not.toContain('◆ edit')
+    expect(dropped).not.toMatch(spinning('edit'))
     test.session.append('tool/call', { turn: 1, step: 1, callId: 'call-bad' as never, name: 'mystery', arguments: '{bad' })
     await test.settle()
-    expect(test.terminal.text()).toContain('◆ mystery')
+    expect(test.terminal.text()).toMatch(spinning('mystery'))
     expect(test.terminal.text()).toContain('{bad')
   })
 
@@ -1688,7 +1709,7 @@ describe('the activity board', () => {
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: later })
     let screen = await test.screen()
     expect(screen).toContain('○ read the spec')
-    expect(screen).toContain('▸ write the layer')
+    expect(screen).toMatch(spinning('write the layer'))
     expect(screen.indexOf('follow-ups')).toBeLessThan(screen.indexOf('○ read the spec'))
     expect(screen.indexOf('○ read the spec')).toBeLessThan(screen.indexOf('test-model'))
 
@@ -1887,5 +1908,88 @@ describe('the activity board', () => {
     test.session.append('turn/start', { turn: 1 })
     test.session.append('todo/write', { todos: [{ content: 'hidden until projected', status: 'pending' }] })
     expect(await test.screen()).not.toContain('hidden until projected')
+  })
+
+  it('spins an in-progress todo on the spinner tick and stops once none is in progress', async () => {
+    let todos: TodoItem[] = [{ content: 'write the layer', status: 'in_progress' }]
+    const test = await bench({ projections: projectionsStub(() => ({ todos })) })
+    writeTodos(test, todos)
+    await test.settle()
+    expect(test.tickArmed(SPINNER_MS)).toBe(true)
+    const first = (await test.screen()).match(spinning('write the layer'))?.[0]
+    test.runTick(SPINNER_MS)
+    const next = (await test.screen()).match(spinning('write the layer'))?.[0]
+    expect(next).toBeDefined()
+    expect(next).not.toBe(first)
+    todos = [{ content: 'write the layer', status: 'completed' }]
+    test.session.append('todo/write', { todos })
+    await test.settle()
+    expect(test.tickArmed(SPINNER_MS)).toBe(false)
+  })
+})
+
+describe('working indicators', () => {
+  it('spins a running tool card on its own tick and disarms it when the result lands', async () => {
+    const test = await bench()
+    await test.settle()
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    await test.settle()
+    expect(test.tickArmed(SPINNER_MS)).toBe(true)
+    const first = (await test.screen()).match(spinning('bash'))?.[0]
+    expect(first).toBeDefined()
+    test.runTick(SPINNER_MS)
+    const next = (await test.screen()).match(spinning('bash'))?.[0]
+    expect(next).toBeDefined()
+    expect(next).not.toBe(first)
+    test.appendToolResult('call-1', [{ type: 'text', text: 'ok' }])
+    test.runTick(SPINNER_MS)
+    const settled = await test.screen()
+    expect(settled).toContain('◆ bash')
+    expect(settled).not.toMatch(spinning('bash'))
+    expect(test.tickArmed(SPINNER_MS)).toBe(false)
+  })
+
+  it('draws a static glyph and arms no spinner tick under reduced motion or for a replayed card', async () => {
+    const reduced = await bench({ reducedMotion: true })
+    reduced.appendToolCall('call-1', 'bash', { command: 'ls' })
+    expect(await reduced.screen()).toContain('◆ bash')
+    expect(reduced.tickArmed(SPINNER_MS)).toBe(false)
+
+    const history = [
+      { type: 'tool/call', seq: 1, time: 1, data: { turn: 1, step: 1, callId: 'c', name: 'bash', arguments: '{"command":"ls"}' } },
+    ] as never[]
+    const replayed = await bench({ history })
+    expect(await replayed.screen()).toContain('◆ bash')
+    expect(replayed.tickArmed(SPINNER_MS)).toBe(false)
+  })
+
+  it('shimmers the working spinner word, and leaves it dim under reduced motion', async () => {
+    const test = await bench({ running: true, color: true })
+    await test.settle()
+    expect(test.terminal.output).toContain(shimmer(createPalette(true), 'thinking', BENCH_NOW))
+    expect(test.terminal.output).not.toContain('\u001b[2mthinking\u001b[22m')
+    const reduced = await bench({ running: true, color: true, reducedMotion: true })
+    await reduced.settle()
+    expect(reduced.terminal.output).toContain('\u001b[2mthinking\u001b[22m')
+  })
+
+  it('draws a prompt steered into a stepped turn on the darker band, and the turn-opening prompt on the ordinary one', async () => {
+    const test = await bench({ color: true })
+    const opening = createUserMessage({ content: [{ type: 'text', text: 'open the turn' }], source: { kind: 'user' } })
+    const steered = createUserMessage({ content: [{ type: 'text', text: 'change course' }], source: { kind: 'user' } })
+    test.session.append('turn/start', { turn: 1 })
+    test.session.append('user/message', opening, { surfaceOp: 'append' })
+    test.session.append('assistant/message', {
+      stream: [],
+      turn: 1,
+      step: 1,
+      message: createAssistantMessage({ content: [{ type: 'text', text: 'working' }], source: { provider: 'test-provider', model: 'test-model' } }),
+    }, { surfaceOp: 'append' })
+    test.session.append('user/message', steered, { surfaceOp: 'append' })
+    await test.settle()
+    const output = test.terminal.output
+    expect(output).toMatch(/\u001b\[48;5;236m[^\n]*open the turn/u)
+    expect(output).toMatch(/\u001b\[48;5;234m[^\n]*change course/u)
+    expect(output).not.toMatch(/\u001b\[48;5;234m[^\n]*open the turn/u)
   })
 })

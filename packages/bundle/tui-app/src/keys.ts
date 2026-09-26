@@ -76,6 +76,11 @@ export type KeyAction =
   | { kind: 'steer' }
   /** Act on the pending prompt held by the queue panel. */
   | { kind: 'queue'; action: 'steer' | 'inject' | 'edit' }
+  /**
+   * Revise the newest pending prompt in the editor; answered only on an empty
+   * input while a prompt waits, and otherwise left to the editor's history.
+   */
+  | { kind: 'edit-latest' }
   /** Open the current model's reasoning-effort picker. */
   | { kind: 'effort' }
   /** Browse the agent's todo list, as `/todos` does. */
@@ -118,7 +123,11 @@ export const HINTS: Record<FocusRegion, readonly string[]> = {
     '↑↓ ←→ · Space folds · Esc input',
     'Esc input',
   ],
-  queue: ['enter steer · ↑ select/edit · esc cancel', 'enter steer · esc cancel', 'esc cancel'],
+  queue: [
+    '↑↓ select · Enter steer · E edit · I inject · Esc input',
+    '↑↓ · Enter steer · E edit · Esc input',
+    'Esc input',
+  ],
   panel: ['↑↓ children · Enter opens · Tab regions · Esc input', '↑↓ children · Esc input', 'Esc input'],
   bar: ['←→ segments · Enter details · Tab regions · Esc input', '←→ segments · Esc input', 'Esc input'],
 }
@@ -147,10 +156,11 @@ const ENTRY_KEYS = 'Shift+↑ read · Shift+↓ status'
 const QUEUE_ENTRY_KEYS = 'Shift+↑ select · Shift+↓ status'
 
 /**
- * The key the unfocused follow-ups list names. Shift+↑ is the direction out
- * of the input toward whatever sits above it.
+ * The keys the unfocused follow-ups list names: ↑ on an empty input revises
+ * the newest follow-up, and Shift+↑ is the direction out of the input toward
+ * whatever sits above it.
  */
-export const QUEUE_ENTRY_HINT = 'shift+↑ select'
+export const QUEUE_ENTRY_HINT = '↑ edit · Shift+↑ select'
 
 /** Whether the follow-ups list is drawn above the editor right now. */
 export interface EntryDrawn {
@@ -201,7 +211,7 @@ export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
     '@ completes paths and sessions · / completes commands · Tab takes one',
     '!cmd runs here · the next prompt can read it · !!cmd stays local',
     `${ENTRY_KEYS} · Ctrl+G reader`,
-    'Shift+↑ selects follow-ups while they wait',
+    'While follow-ups wait: ↑ on an empty input edits the newest · Shift+↑ selects one',
     'Ctrl+O folds every tool card and context row',
     'Ctrl+T todos · Ctrl+P parent session · Ctrl+L redraw · ? keys',
     'Esc arms the stop · Esc again stops the turn',
@@ -267,11 +277,13 @@ export function resolveKey(region: FocusRegion, data: string): KeyAction | undef
  * What one key means while the editor holds the keyboard. Shift+Up and
  * Shift+Down leave along the stack: the application lands on the first
  * drawn region in that direction — follow-ups or the conversation above,
- * the subagent panel or the status bar below.
+ * the subagent panel or the status bar below. `Up` is offered to the newest
+ * follow-up first, and reaches the editor's history when none is taken.
  * @param data - the raw key bytes.
  * @returns the action, or undefined for every key pi-tui's editor owns.
  */
 function editorKey(data: string): KeyAction | undefined {
+  if (matchesKey(data, 'up')) return { kind: 'edit-latest' }
   if (matchesKey(data, 'shift+up')) return { kind: 'leave', direction: 'up' }
   if (matchesKey(data, 'shift+down')) return { kind: 'leave', direction: 'down' }
   if (matchesKey(data, 'ctrl+s')) return { kind: 'steer' }

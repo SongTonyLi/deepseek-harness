@@ -25,19 +25,19 @@ describe('follow-up panel', () => {
     expect(shown).toContain('○ later')
     expect(shown).not.toContain('next step ·')
     expect(shown).not.toContain('next turn ·')
-    expect(shown).toContain('shift+↑ select')
+    expect(shown).toContain('↑ edit · Shift+↑ select')
     expect(shown).not.toContain('shift+↓ select')
     expect(shown.indexOf('○ steer now')).toBeLessThan(shown.indexOf('○ later'))
   })
 
-  it('marks the selected row and names enter, select/edit, and cancel', () => {
+  it('marks the selected row and names select, steer, edit, inject, and the way back', () => {
     const shown = renderQueuePanel(queuePanelRows([], [message('revise this')]), {
       palette: createPalette(false),
       width: 72,
       selected: 0,
     })
     expect(shown).toContain('○ revise this')
-    expect(shown).toContain('enter steer · ↑ select/edit · esc cancel')
+    expect(shown).toContain('↑↓ select · Enter steer · E edit · I inject · Esc input')
     expect(shown).not.toContain('S steer · I inject · E edit')
   })
 
@@ -50,7 +50,7 @@ describe('follow-up panel', () => {
     })
     expect(shown).toContain('○ also implement')
     expect(shown).toMatch(/│ {3}\S/u)
-    expect(shown).toContain('enter steer · ↑ select/edit · esc cancel')
+    expect(shown).toContain('↑↓ · Enter steer · E edit · Esc input')
   })
 
   it('draws nothing for an empty inbox', () => {

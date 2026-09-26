@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import {
   ACTIVITY_BOARD_MAX_TODOS,
+  activityBoardSpins,
   activityBoardView,
   activityResultParts,
   activityTurnEndStatus,
@@ -106,6 +107,15 @@ describe('renderActivityBoard', () => {
     expect(shown).toContain('\u001b[33m▸\u001b[39m write the data layer')
     expect(shown).toContain('\u001b[36m○\u001b[39m wire the picker')
     expect(shown.indexOf('✓')).toBeLessThan(shown.indexOf('▸'))
+  })
+
+  it('draws an in-progress todo on the given spinner frame and reports that it spins', () => {
+    const view = activityBoardView({ todos: mixed })
+    expect(activityBoardSpins(view)).toBe(true)
+    const shown = renderActivityBoard(view, { palette: color, spinner: '⠹' })
+    expect(shown).toContain('\u001b[33m⠹\u001b[39m write the data layer')
+    expect(shown).toContain('\u001b[36m○\u001b[39m wire the picker')
+    expect(activityBoardSpins(activityBoardView({ todos: [{ content: 'wire the picker', status: 'pending' }] }))).toBe(false)
   })
 
   it('appends +N more under a list past the cap and the descendant line last', () => {

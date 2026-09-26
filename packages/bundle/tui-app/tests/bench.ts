@@ -145,6 +145,16 @@ export class FakeTerminal implements Terminal {
   }
 }
 
+/**
+ * Match `label` led by any spinner frame, as a running tool card or an
+ * in-progress todo draws it whatever frame the clock is on.
+ * @param label - the text after the glyph and its space.
+ * @returns the pattern.
+ */
+export function spinning(label: string): RegExp {
+  return new RegExp(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ${label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u')
+}
+
 /** Keys as the raw bytes a terminal sends. */
 export const KEY = {
   enter: '\r',

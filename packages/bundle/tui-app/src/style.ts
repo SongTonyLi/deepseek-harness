@@ -36,6 +36,11 @@ export interface Palette {
    * background changes, so every foreground role nests inside it.
    */
   band: Style
+  /**
+   * A darker tint than {@link Palette.band}, closer to the terminal
+   * background, behind a prompt steered or injected into a running turn.
+   */
+  injectedBand: Style
   /** The background tint filling a row a diff adds; foreground roles nest inside it. */
   addedBand: Style
   /** The background tint filling a row a diff removes; foreground roles nest inside it. */
@@ -65,6 +70,7 @@ const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, clo
   error: ['31', '39'],
   inverse: ['7', '27'],
   band: ['48;5;236', '49'],
+  injectedBand: ['48;5;234', '49'],
   addedBand: ['48;5;22', '49'],
   removedBand: ['48;5;52', '49'],
   addedSign: ['38;5;120', '39'],
@@ -95,6 +101,7 @@ export function createPalette(enabled: boolean): Palette {
     error: role('error'),
     inverse: role('inverse'),
     band: role('band'),
+    injectedBand: role('injectedBand'),
     addedBand: role('addedBand'),
     removedBand: role('removedBand'),
     addedSign: role('addedSign'),
@@ -121,15 +128,16 @@ export function paintDiffRows(rows: readonly string[], source: readonly string[]
 }
 
 /**
- * Lay one row on the {@link Palette.band} tint across the full width.
+ * Lay one row on a background tint across the full width.
  * @param palette - the active palette.
  * @param row - the styled row, at most `width` columns.
  * @param width - the columns the band spans.
+ * @param band - the tint; {@link Palette.band} by default.
  * @returns the row padded to `width` under the tint; the row unchanged, with
  * no padding, when the palette is disabled.
  */
-export function bandRow(palette: Palette, row: string, width: number): string {
-  return palette.enabled ? palette.band(`${row}${' '.repeat(Math.max(0, width - visibleWidth(row)))}`) : row
+export function bandRow(palette: Palette, row: string, width: number, band: Style = palette.band): string {
+  return palette.enabled ? band(`${row}${' '.repeat(Math.max(0, width - visibleWidth(row)))}`) : row
 }
 
 /**
