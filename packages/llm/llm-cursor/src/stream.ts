@@ -81,6 +81,8 @@ import {
   StopRequestResponseSchema,
   SubagentStartRequestResponseSchema,
   SubagentStopRequestResponseSchema,
+  WebFetchRequestResponse_RejectedSchema,
+  WebFetchRequestResponseSchema,
   WebSearchRequestResponse_ApprovedSchema,
   WebSearchRequestResponseSchema,
   WriteRejectedSchema,
@@ -531,6 +533,7 @@ function rejectUnknownExec(stream: CursorConnectStream, exec: ExecServerMessage)
   })
 }
 
+/** Cursor runs an approved web search on its own side, so this adapter has nothing to execute. */
 function approveWebSearch(stream: CursorConnectStream, query: InteractionQuery): void {
   sendClient(stream, {
     message: {
@@ -541,6 +544,31 @@ function approveWebSearch(stream: CursorConnectStream, query: InteractionQuery):
           case: 'webSearchRequestResponse',
           value: create(WebSearchRequestResponseSchema, {
             result: { case: 'approved', value: create(WebSearchRequestResponse_ApprovedSchema, {}) },
+          }),
+        },
+      }),
+    },
+  })
+}
+
+/**
+ * Cursor performs an approved web fetch in the client through a `fetchArgs` exec this adapter
+ * refuses, so approval cannot produce page content. The rejection carries the reason that exec
+ * would have carried, keeping fetched pages on the harness `web_fetch` tool that logs them.
+ */
+function rejectNativeFetch(stream: CursorConnectStream, query: InteractionQuery, mcpTools: readonly McpToolDefinition[]): void {
+  sendClient(stream, {
+    message: {
+      case: 'interactionResponse',
+      value: create(InteractionResponseSchema, {
+        id: query.id,
+        result: {
+          case: 'webFetchRequestResponse',
+          value: create(WebFetchRequestResponseSchema, {
+            result: {
+              case: 'rejected',
+              value: create(WebFetchRequestResponse_RejectedSchema, { reason: nativeRejectionReason('fetchArgs', mcpTools) }),
+            },
           }),
         },
       }),
@@ -853,6 +881,14 @@ function handleServerMessage(
     if (query.query.case === 'webSearchRequestQuery') {
       approveWebSearch(stream, query)
       return {}
+    }
+    // A refused native call sits between two stretches of output, so text written
+    // after the refusal starts its own block.
+    if (query.query.case === 'webFetchRequestQuery') {
+      chunks.push(...closeOpen(state.open))
+      state.open = undefined
+      rejectNativeFetch(stream, query, payload.mcpTools)
+      return { chunks }
     }
     if (query.query.case === 'askQuestionInteractionQuery') {
       chunks.push(...closeOpen(state.open))
