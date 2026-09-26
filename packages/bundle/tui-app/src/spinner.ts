@@ -1,8 +1,8 @@
 /**
  * Working indicators: one single-column animation per scenario, so the
- * glyph itself names the work — reasoning churns, streaming text fills,
- * commands spin the caret, reads pulse a lens, edits set a diamond,
- * delegation dives, plan items march corners, waits turn a clock, and tools
+ * glyph itself names the work — reasoning churns, streaming text blooms,
+ * commands and edits set a diamond, reads pulse a lens,
+ * delegation dives, todo items blink a dot, waits turn a clock, and tools
  * with no family orbit the moon — plus the shimmer the working spinner's
  * activity word carries.
  *
@@ -24,20 +24,20 @@ import type { Palette } from './style.ts'
 export const SPINNER_FRAMES = {
   /** Model reasoning with no visible text yet: the braille circle pi-tui's working spinner draws. */
   thinking: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  /** Visible text streaming in: a bar rising and falling as words land. */
-  writing: ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█', '▇', '▆', '▅', '▄', '▃', '▂'],
+  /** Visible text streaming in: a small asterisk grows and settles as words land. */
+  writing: ['·', '✣', '✳', '✦', '✽', '✤'],
   /** A tool with no family of its own: the moon orbiting. */
   calling: ['◐', '◓', '◑', '◒'],
-  /** Command execution: the terminal caret spinning. */
-  shell: ['─', '\\', '│', '/'],
+  /** Command execution: the same diamond animation as file edits. */
+  shell: ['◇', '◈', '◆', '◈'],
   /** Reading and searching: a lens pulsing into focus. */
   search: ['○', '◉', '●', '◉'],
   /** File mutation: a diamond setting solid. */
   edit: ['◇', '◈', '◆', '◈'],
   /** Delegation to a child agent: dots diving deeper. */
   subagent: ['⠁', '⠃', '⠇', '⠷', '⠿', '⠷', '⠇', '⠃'],
-  /** Plan progress: corners marching as items advance. */
-  todo: ['▖', '▘', '▝', '▗'],
+  /** Todo progress: a dot blinking in place. */
+  todo: ['·', ' '],
   /** Waiting on a retry delay or a human answer: a clock turning. */
   waiting: ['◷', '◶', '◵', '◴'],
 } as const
