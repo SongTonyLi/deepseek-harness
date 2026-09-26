@@ -56,6 +56,7 @@ import {
   TokenDeltaUpdateSchema,
   TurnEndedUpdateSchema,
   UserMessageAppendedUpdateSchema,
+  WebFetchRequestQuerySchema,
   WebSearchRequestQuerySchema,
   WriteArgsSchema,
   WriteShellStdinArgsSchema,
@@ -590,6 +591,45 @@ describe('streamCursorRun', () => {
         },
       }),
     ])))).rejects.toMatchObject({ code: 'EMPTY_RESPONSE' })
+  })
+
+  it('rejects a native Cursor web fetch and keeps the Run alive for the harness web_fetch tool', async () => {
+    const { open, written } = capturing([
+      ...textThenEnd.slice(0, 1),
+      serverMessage({
+        message: {
+          case: 'interactionQuery',
+          value: create(InteractionQuerySchema, {
+            id: 14,
+            query: {
+              case: 'webFetchRequestQuery',
+              value: create(WebFetchRequestQuerySchema, {
+                args: create(FetchArgsSchema, { url: 'https://github.com/AVIDS2/memorix' }),
+              }),
+            },
+          }),
+        },
+      }),
+      ...textThenEnd,
+    ])
+    const chunks = await collect(streamCursorRun({
+      ...request,
+      tools: [{ name: 'web_fetch', description: 'Fetch a URL', parameters: { type: 'object' } }],
+    }, 'tok', TIMING, open))
+
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(chunks.filter(chunk => chunk.type === 'block-end' && chunk.block.type === 'text')).toHaveLength(2)
+    const reply = written.find(message => message.message.case === 'interactionResponse')
+    if (reply?.message.case !== 'interactionResponse') throw new Error('expected an interaction response')
+    expect(reply.message.value.id).toBe(14)
+    const result = reply.message.value.result
+    if (result.case !== 'webFetchRequestResponse' || result.value.result.case !== 'rejected') {
+      throw new Error('expected a rejected Cursor web fetch')
+    }
+    expect(result.value.result.value.reason).toBe(
+      'Cursor\'s built-in fetch tool is not available in DeepSeek Harness. '
+      + 'Call CallDynamicTool with namespace "dsh" and toolName "web_fetch" instead.',
+    )
   })
 
   it('rejects a native Cursor question and keeps the Run alive for the harness question tool', async () => {
