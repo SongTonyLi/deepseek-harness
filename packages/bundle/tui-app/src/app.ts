@@ -92,7 +92,7 @@ import {
   type SubagentChoice,
 } from './catalog.ts'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
-import { SPINNER_MS, shimmer, spinnerFrame } from './spinner.ts'
+import { SPINNER_MS, loaderIndicator, shimmer, spinnerFrame, spinnerKindForActivity, spinnerKindForTool, type SpinnerKind } from './spinner.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
@@ -813,6 +813,8 @@ export class TuiApp {
   private usageExact = false
   /** Spinner label without the live ↑↓ suffix (`thinking`, `writing`, `calling read`, …). */
   private loaderActivity = 'thinking'
+  /** Animation the loader draws; undefined while it is stopped, so the next start syncs it. */
+  private loaderSpinnerKind: SpinnerKind | undefined = undefined
   /** Tool names still streamed or executing, in first-seen order. */
   private readonly pendingToolNames = new Map<ToolCallId, string>()
   private lastCtrlC = 0
@@ -1339,12 +1341,14 @@ export class TuiApp {
         this.statusSlot.addChild(this.loader)
         this.loader.start()
       }
+      this.syncLoaderIndicator()
       this.refreshLoader()
     } else if (this.statusSlot.children.length > 0) {
       this.loader.stop()
       this.statusSlot.removeChild(this.loader)
       this.pendingToolNames.clear()
       this.loaderActivity = 'thinking'
+      this.loaderSpinnerKind = undefined
       this.clearLiveUsage()
       this.loader.setMessage('thinking')
     }
@@ -1433,7 +1437,7 @@ export class TuiApp {
       palette: this.deps.palette,
       todoFades: this.activityTodoFades,
       ...this.activitySubagentFade === undefined ? {} : { subagentFade: this.activitySubagentFade },
-      ...this.boardSpins ? { spinner: spinnerFrame(this.deps.now()) } : {},
+      ...this.boardSpins ? { spinner: spinnerFrame(this.deps.now(), 'todo') } : {},
     })
     this.updateSpinTicker()
     const mounted = this.activitySlot.children.length > 0
@@ -3963,13 +3967,15 @@ export class TuiApp {
   }
 
   /**
-   * Spin a new card's glyph until its result lands. A card drawn from a
-   * replayed log, and every card under reduced motion, draws the static glyph.
+   * Spin a new card's glyph in its tool family's animation until its result
+   * lands. The kind is read per frame, so a streamed name the logged call
+   * confirms keeps the card's animation. A card drawn from a replayed log,
+   * and every card under reduced motion, draws the static glyph.
    * @param block - the card that was just mounted.
    */
   private spinBlock(block: ToolBlock): void {
     if (this.replaying || this.deps.reducedMotion) return
-    block.setSpinner(() => spinnerFrame(this.deps.now()))
+    block.setSpinner(() => spinnerFrame(this.deps.now(), spinnerKindForTool(block.name)))
     this.spinners.add(block)
     this.updateSpinTicker()
   }
@@ -4477,7 +4483,20 @@ export class TuiApp {
    */
   private setLoaderActivity(activity: string): void {
     this.loaderActivity = activity
+    this.syncLoaderIndicator()
     this.refreshLoader()
+  }
+
+  /**
+   * Draw the loader's animation for its activity word. Setting the indicator
+   * restarts the animation, so it runs only when the kind changed — a repeat
+   * label would otherwise pin the spinner to its first frame.
+   */
+  private syncLoaderIndicator(): void {
+    const kind = spinnerKindForActivity(this.loaderActivity)
+    if (kind === this.loaderSpinnerKind) return
+    this.loaderSpinnerKind = kind
+    this.loader.setIndicator(loaderIndicator(kind))
   }
 
   /**
@@ -4511,6 +4530,7 @@ export class TuiApp {
     this.liveUsage = { inputTokens: this.seedLiveSend(), outputTokens: 0 }
     if (this.pendingToolNames.size === 0) this.loaderActivity = 'thinking'
     else this.syncLoaderFromPendingTools()
+    this.syncLoaderIndicator()
     this.refreshLiveUsage()
   }
 
