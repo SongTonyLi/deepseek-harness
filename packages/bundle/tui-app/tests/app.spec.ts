@@ -1946,7 +1946,6 @@ describe('working indicators', () => {
     test.runTick(SPINNER_MS)
     const settled = await test.screen()
     expect(settled).toContain('◆ bash')
-    expect(settled).not.toMatch(spinning('bash', 'shell'))
     expect(test.tickArmed(SPINNER_MS)).toBe(false)
   })
 

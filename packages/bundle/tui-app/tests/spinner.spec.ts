@@ -14,6 +14,23 @@ describe('spinner', () => {
     expect(spinnerFrame(SPINNER_MS * 10)).toBe('⠋')
   })
 
+  it('uses the reference glyph cycle while writing', () => {
+    expect(SPINNER_FRAMES.writing).toEqual(['·', '✣', '✳', '✦', '✽', '✤'])
+    expect(spinnerFrame(SPINNER_MS * 5, 'writing')).toBe('✤')
+    expect(spinnerFrame(SPINNER_MS * 6, 'writing')).toBe('·')
+  })
+
+  it('uses the edit glyph cycle for shell activity', () => {
+    expect(SPINNER_FRAMES.shell).toEqual(SPINNER_FRAMES.edit)
+  })
+
+  it('blinks a dot for todo activity', () => {
+    expect(SPINNER_FRAMES.todo).toEqual(['·', ' '])
+    expect(spinnerFrame(0, 'todo')).toBe('·')
+    expect(spinnerFrame(SPINNER_MS, 'todo')).toBe(' ')
+    expect(spinnerFrame(SPINNER_MS * 2, 'todo')).toBe('·')
+  })
+
   it('draws the default kind without one and cycles every other kind', () => {
     expect(spinnerFrame(0, 'thinking')).toBe(spinnerFrame(0))
     const kinds = Object.keys(SPINNER_FRAMES) as SpinnerKind[]
@@ -97,7 +114,7 @@ describe('spinner', () => {
 
   it('hands the loader fresh frames on the shared period', () => {
     const indicator = loaderIndicator('shell')
-    expect(indicator).toEqual({ frames: ['─', '\\', '│', '/'], intervalMs: SPINNER_MS })
+    expect(indicator).toEqual({ frames: ['◇', '◈', '◆', '◈'], intervalMs: SPINNER_MS })
     expect(indicator.frames).not.toBe(SPINNER_FRAMES.shell)
   })
 
