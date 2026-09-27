@@ -83,6 +83,11 @@ export type KeyAction =
   | { kind: 'edit-latest' }
   /** Open the current model's reasoning-effort picker. */
   | { kind: 'effort' }
+  /**
+   * Move the running turn's foreground tool calls to background jobs;
+   * answered only while a turn runs, and otherwise left to the editor.
+   */
+  | { kind: 'background' }
   /** Browse the agent's todo list, as `/todos` does. */
   | { kind: 'todos' }
   /** Return from a subagent view to the session it was opened from, as `/parent` does. */
@@ -214,6 +219,7 @@ export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
     'While follow-ups wait: ↑ on an empty input edits the newest · Shift+↑ selects one',
     'Ctrl+O folds every tool card and context row',
     'Ctrl+T todos · Ctrl+P parent session · Ctrl+L redraw · ? keys',
+    'Ctrl+B moves running tool calls to the background · /jobs lists them',
     'Esc arms the stop · Esc again stops the turn',
     'Ctrl+C clears the input, twice quits · Ctrl+D quits an empty input',
   ],
@@ -241,8 +247,9 @@ const OPEN: KeyAction = { kind: 'open' }
 /**
  * What one key press means where the keyboard is.
  *
- * `Escape`, `Ctrl+O`, `Ctrl+G`, `Ctrl+T`, `Ctrl+P`, and `Ctrl+L` mean the
- * same thing everywhere and are answered first. Everything else is the region's own.
+ * `Escape`, `Ctrl+O`, `Ctrl+G`, `Ctrl+B`, `Ctrl+T`, `Ctrl+P`, and `Ctrl+L`
+ * mean the same thing everywhere and are answered first. Everything else is
+ * the region's own.
  * @param region - the region holding the keyboard.
  * @param data - the raw key bytes.
  * @returns the action to apply, or undefined when this region claims nothing
@@ -253,6 +260,7 @@ export function resolveKey(region: FocusRegion, data: string): KeyAction | undef
   if (matchesKey(data, 'escape')) return ESCAPE
   if (matchesKey(data, 'ctrl+o')) return FOLD_ALL
   if (matchesKey(data, 'ctrl+g')) return READER
+  if (matchesKey(data, 'ctrl+b')) return { kind: 'background' }
   if (matchesKey(data, 'ctrl+t')) return { kind: 'todos' }
   if (matchesKey(data, 'ctrl+p')) return { kind: 'parent' }
   if (matchesKey(data, 'ctrl+l')) return { kind: 'redraw' }

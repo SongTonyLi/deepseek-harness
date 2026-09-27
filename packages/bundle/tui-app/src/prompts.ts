@@ -204,6 +204,12 @@ export interface PickOptions {
    * @param item - the highlighted row.
    */
   onSave?: (item: PickItem) => void
+  /**
+   * Answer `Ctrl+K` with the highlighted row while the picker stays open;
+   * absent, the key does nothing here.
+   * @param item - the highlighted row.
+   */
+  onStop?: (item: PickItem) => void
 }
 
 /** Marks the row a picker opened on, so it stays visible after the highlight moves. */
@@ -243,6 +249,8 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
   private visible: readonly SelectItem[]
   /** What `Ctrl+S` does with the highlighted row, when the caller gave it a meaning. */
   private readonly onSave: ((item: PickItem) => void) | undefined
+  /** What `Ctrl+K` does with the highlighted row, when the caller gave it a meaning. */
+  private readonly onStop: ((item: PickItem) => void) | undefined
 
   constructor(palette: Palette, title: string, private readonly items: readonly PickItem[], options: PickOptions = {}) {
     const rows = items.map((item): SelectItem => ({ ...item }))
@@ -262,6 +270,7 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
     this.inForce = inForce
     this.visible = markedRows
     this.onSave = options.onSave
+    this.onStop = options.onStop
     if (inForce > 0) this.highlight(inForce)
   }
 
@@ -294,10 +303,10 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
       this.setQuery('')
       return
     }
-    if (matchesKey(data, 'ctrl+s')) {
+    if (matchesKey(data, 'ctrl+s') || matchesKey(data, 'ctrl+k')) {
       const row = this.selected()
       const item = row === null ? undefined : this.items.find(candidate => candidate.value === row.value)
-      if (item !== undefined) this.onSave?.(item)
+      if (item !== undefined) (matchesKey(data, 'ctrl+s') ? this.onSave : this.onStop)?.(item)
       return
     }
     const typed = typedText(data)

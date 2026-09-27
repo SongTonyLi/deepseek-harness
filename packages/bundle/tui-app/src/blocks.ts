@@ -29,6 +29,7 @@
  */
 
 import { Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
@@ -937,8 +938,12 @@ interface AssistantLayout {
   reply: LineRange
 }
 
-/** Lifecycle of one tool card. */
-export type ToolCardStatus = 'running' | 'done' | 'error'
+/**
+ * Lifecycle of one tool card. `background` is a call the user moved to a
+ * background job: the call's own result only names the job, and the job's
+ * outcome arrives later as a completion notice.
+ */
+export type ToolCardStatus = 'running' | 'done' | 'error' | 'background'
 
 /**
  * A tool call card: the status-coloured {@link TOOL_GLYPH}, the bold tool
@@ -1145,6 +1150,20 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   }
 
   /**
+   * Settle the card as moved to the background: the glyph takes the accent
+   * colour and the body ends on `lines` instead of a result.
+   * @param lines - the rows naming the job that took the call over.
+   */
+  setBackground(lines: string[]): void {
+    this.resultLines = lines
+    this.resultCode = undefined
+    this.resultDiff = undefined
+    this.status = 'background'
+    this.revision += 1
+    this.measured = false
+  }
+
+  /**
    * Unroll the card's rows on the application's frame tick instead of drawing
    * them all in one frame: now, and again whenever a call or a result makes
    * the card grow.
@@ -1307,11 +1326,23 @@ export class ToolBlock implements Component, ToolSection, Foldable {
 
   /**
    * The colour of this card's status glyph.
-   * @returns warning while running, success once done, error once failed.
+   * @returns warning while running, success once done, error once failed, accent once moved to the background.
    */
   private statusStyle(): (text: string) => string {
     const palette = this.theme.palette
-    return this.status === 'running' ? palette.warning : this.status === 'done' ? palette.success : palette.error
+    switch (this.status) {
+      case 'running':
+        return palette.warning
+      case 'done':
+        return palette.success
+      case 'error':
+        return palette.error
+      case 'background':
+        return palette.accent
+      /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+      default:
+        return assertNever(this.status, 'tool card status')
+    }
   }
 
   /**
@@ -1336,7 +1367,9 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const started = this.status === 'done' && this.resultLines[0]?.startsWith('started ') === true
     const tag = this.status === 'error'
       ? palette.error('[failed]')
-      : started ? palette.dim('[started]') : palette.success('[done]')
+      : this.status === 'background'
+        ? palette.accent('[background]')
+        : started ? palette.dim('[started]') : palette.success('[done]')
     const glyph = started ? palette.dim(SUBAGENT_RUNNING_GLYPH) : this.statusStyle()(SUBAGENT_RUNNING_GLYPH)
     const left = `${glyph} ${palette.dim(facts.description === '' ? this.toolName : facts.description)}${meta}`
     const cut = truncateToWidth(left, Math.max(1, width - visibleWidth(tag) - 1), '…')

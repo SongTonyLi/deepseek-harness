@@ -213,6 +213,16 @@ describe('blocks', () => {
     expect(block.render(40)).toContain('  │ boom')
   })
 
+  it('draws a call moved to the background with its job row, folded as a subagent row or open as a card', () => {
+    const block = new ToolBlock(theme, 'subagent', { title: '', lines: [] }, 1)
+    block.setSubagent({ description: 'Rank endpoints', meta: [] })
+    block.setBackground(['◇ moved to the background as tool-1 · /jobs lists it'])
+    expect(block.render(40).at(-1)).toMatch(/ \[background\]$/)
+    block.setExpanded(true)
+    expect(block.render(60)).toContain('  │ ◇ moved to the background as tool-1 · /jobs lists it')
+    expect(block.parts().at(-1)).toEqual({ kind: 'result', rows: ['◇ moved to the background as tool-1 · /jobs lists it'] })
+  })
+
   it('names a subagent row by its tool until the arguments carry a description, and fits a narrow width', () => {
     const block = new ToolBlock({ ...theme, palette: createPalette(true) }, 'subagent', { title: '', lines: [] }, 1)
     block.setSubagent({ description: '', meta: [] })

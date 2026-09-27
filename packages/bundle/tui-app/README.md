@@ -60,7 +60,7 @@ The subagent panel is drawn while a subagent session under the bound one is resi
 
 ### Keys and commands
 
-The conversation, input, subagent panel, and status bar form the vertical arrow-key walk: `Down` at the newest section, `Up` on the subagent panel's first row, and `Up` on the status bar with no subagent panel drawn all land at the caret. The follow-ups list sits above the input; `Shift+Up` enters it while it is drawn, and it joins the `Tab` walk. The activity board sits between follow-ups and the input and is not a focus region. While a region other than the editor has the keyboard, `Tab` and `Shift+Tab` walk the regions that are drawn, wrapping at both ends; in the editor, `Tab` takes the offered completion and `Shift+Tab` opens the reasoning-effort picker. A printable key pressed in any of them returns to the input and types there, so a sentence started while reading lands where it was aimed; `Space` in the conversation is the one exception, and folds the marked tool card or context block. `Ctrl+G`, `Ctrl+O`, `Ctrl+T`, `Ctrl+P`, and `Ctrl+L` mean the same thing in every one of those regions, and `Ctrl+C` and `Ctrl+D` return the keyboard to the input before they act. A prompt and the reader own their whole key stream instead, and answer `Ctrl+C` by giving the keyboard back.
+The conversation, input, subagent panel, and status bar form the vertical arrow-key walk: `Down` at the newest section, `Up` on the subagent panel's first row, and `Up` on the status bar with no subagent panel drawn all land at the caret. The follow-ups list sits above the input; `Shift+Up` enters it while it is drawn, and it joins the `Tab` walk. The activity board sits between follow-ups and the input and is not a focus region. While a region other than the editor has the keyboard, `Tab` and `Shift+Tab` walk the regions that are drawn, wrapping at both ends; in the editor, `Tab` takes the offered completion and `Shift+Tab` opens the reasoning-effort picker. A printable key pressed in any of them returns to the input and types there, so a sentence started while reading lands where it was aimed; `Space` in the conversation is the one exception, and folds the marked tool card or context block. `Ctrl+G`, `Ctrl+O`, `Ctrl+B`, `Ctrl+T`, `Ctrl+P`, and `Ctrl+L` mean the same thing in every one of those regions, and `Ctrl+C` and `Ctrl+D` return the keyboard to the input before they act. A prompt and the reader own their whole key stream instead, and answer `Ctrl+C` by giving the keyboard back.
 
 While the input has the keyboard:
 
@@ -79,6 +79,7 @@ While the input has the keyboard:
 | `Ctrl+G` | Read the conversation full screen, on its newest section |
 | `Ctrl+O` | Expand or collapse every tool card and context row |
 | `Ctrl+T` | Browse the agent's todo list, the same list `/todos` opens |
+| `Ctrl+B` | While a turn runs, move its running tool calls to background jobs so the agent keeps working; outside a turn the editor moves the caret left |
 | `Ctrl+P` | Return from a subagent view to the session it was entered from, or end a `/btw` side agent, like `/parent` |
 | `Ctrl+L` | Redraw the whole screen from scratch |
 | `?` | On an empty input, list the commands and keys, like `/help`; inside a draft it is typed |
@@ -191,6 +192,7 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/changes [turn]` | Browse the files the latest turn changed, or turn `turn`, with their line counts; `Enter` opens one file's turn-start to turn-end comparison |
 | `/subagents` | Browse the subagent sessions under this session; `Enter` opens a readable one as a subagent view and an unreadable one's details |
 | `/parent` | Return from a subagent view to the session it was entered from, or end a `/btw` side agent, like `Ctrl+P` |
+| `/jobs` | Browse this session's background jobs, the calls moved with `Ctrl+B` and the jobs the agent started, with status and elapsed time; `Enter` shows one job's status and output tail, and `Ctrl+K` stops the highlighted job |
 | `/settings [ns [path value]]` | List namespaces, show one, or set one field; `/settings reset <ns>` restores defaults |
 | `/plugins` | The composed plugins with enablement and lifecycle phase; `/plugins bundles` lists the profile's bundles, `/plugins enable <id>` and `/plugins disable <id>` switch a plugin entry or a bundle, `/plugins add <spec>` installs a bundle, `/plugins remove <name>` removes one |
 | `/tools` | Expand or collapse every tool card and context row, like `Ctrl+O` |
@@ -203,6 +205,10 @@ Every other `/name` line goes to the shared command registry, so `/compact`, `/g
 Every picker the terminal opens — `/model`'s model and reasoning-effort lists, the current-model effort list shared by empty `/effort` and editor `Shift+Tab`, the permission-preset list empty `/permission` opens, the persisted-session list shared by `/resume` and `/sessions`, the `/subagents` and `/todos` lists, and the rows `/signin` and `/login` raise — filters its rows as you type: the query matches each row's label and description together, its whitespace- and slash-separated tokens must all match, and the rows are ordered best match first, so `dsk chat` and `deepseek/chat` both find `deepseek/deepseek-chat` and `gpt5` finds `gpt-5`. `Backspace` drops the last character, `Ctrl+U` clears the query, `Esc` clears a non-empty query and cancels the picker once the query is empty, `Up` / `Down` move within the matches, and `Enter` picks the highlighted row. The dim line above the rows reads `type to filter · Enter selects · Esc cancels` while the query is empty and `filter: <query> · <kept>/<total>` afterwards; a query nothing matches draws `no row matches "<query>"` in place of the rows, and the `✓` on the row in force — the row a picker opens on — shows only while the query is empty.
 
 `/todos`, the `todo` status-bar segment, and the unreadable rows of `/subagents` share one list-then-details interaction: the picker lists the entries, `Enter` opens the highlighted entry as a read-only page, `Up` / `Down` and `PageUp` / `PageDown` scroll that page, and `Enter`, `Esc`, or `Left` returns to the list on the entry just read, so walking several entries costs no retyped command; `Esc` at the list returns to the editor. An entry whose details cannot be read says so on its page instead of closing the list.
+
+### Background tool calls
+
+While the running turn waits on a tool call, the working spinner ends in `· Ctrl+B background`. `Ctrl+B` hands every such call of the bound Agent to the job registry as a `tool-<n>` job and answers the call at once with a result that names the job, so the turn goes on while the call keeps running. The card settles on an accent `◇` row, `◇ moved to the background as tool-1 · /jobs lists it`, which a resumed session draws the same way. While any job of the session runs, one dim line above the input lists them, as in `◇ 2 in background · tool-1 bash npm test 1m04s · bash-3 sleep 20 12s · /jobs`, and the live refresh advances their elapsed times. A shell call's own process job belongs to that call and is listed only once it outlives the call. When a job settles, a transient line names it, such as `◇ tool-1 completed · bash npm test · agent notified`, and `dsh-tool-jobs` delivers the completion notice: a busy agent reads it at its next step, and an idle one wakes. `/jobs` browses every job of the session: `Enter` shows its status, label, start, and the tail of its output, including a moved shell call's live process output, and `Ctrl+K` stops the highlighted job, which the agent is told about. Stopping the turn with `Esc` also stops the calls moved out of that turn, because the tool runtime ties every call to its turn; the stop notice counts them, and their jobs settle `killed` without waking the agent.
 
 ### Subscription sign-in
 
@@ -304,6 +310,8 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/footer.ts`](src/footer.ts) | The status bar: the ordered segments, each segment's detail rows, the unfocused line built from both ends, and the focused sliding window |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | The live subagent panel: one descendant listing plus sampled live facts become its rows, the unfocused summary line, and the focused listing |
 | [`src/queue-panel.ts`](src/queue-panel.ts) | The follow-ups list: pending-row glyphs, hanging wrap, and the enter-steer legend |
+| [`src/background.ts`](src/background.ts) | `Ctrl+B`: the `tools/execute` wrapper that tracks root calls, moves them to `tool` jobs, recognizes a shell call's own process job, and holds the jobs of a stopped turn |
+| [`src/jobs-panel.ts`](src/jobs-panel.ts) | The background-jobs line above the editor, the `/jobs` rows and detail page, and the settlement line |
 | [`src/activity-board.ts`](src/activity-board.ts) | The activity board: todo glyphs, the completed scratch-out, the row cap, and the one-line descendant summary |
 | [`src/catalog.ts`](src/catalog.ts) | Rows for `/settings`, `/plugins`, `/subagents`, `/deliverables`, `/changes`, and `/outline`, and the `/plugins` management verbs |
 | [`src/view-banner.ts`](src/view-banner.ts) | The line above the input that names an open subagent view or `/btw` side agent and the key back |
@@ -311,6 +319,9 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers listeners on one Agent and holds no mutable relation another observer could contradict. |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | Rendering, keys, commands, the stop arm, the follow-ups rows above the editor, the activity board, and both seams over a fake terminal |
+| [`tests/background.spec.ts`](tests/background.spec.ts) | `Ctrl+B` over the real tool runtime, job registry, and job tools: the spinner hint, the moved result and card, the jobs line, `/jobs` output and `Ctrl+K`, completion notices, refusal, failure, and the turn stop |
+| [`tests/background-tracking.spec.ts`](tests/background-tracking.spec.ts) | Which calls the wrapper tracks, which jobs count as a call's own, and the moved-result text |
+| [`tests/jobs-panel.spec.ts`](tests/jobs-panel.spec.ts) | The jobs line, `/jobs` rows, detail page, and settlement line as text |
 | [`tests/activity-board.spec.ts`](tests/activity-board.spec.ts) | Activity-board glyphs, the completed scratch-out, the row cap, and the descendant line |
 | [`tests/keys.spec.ts`](tests/keys.spec.ts) | What each region claims for a key, the legend steps, and the text one press types |
 | [`tests/editor.spec.ts`](tests/editor.spec.ts) | The terminal caret, `Shift+Left` / `Shift+Right` word navigation, and `!` / `!!` draft colour against pi-tui's editor behavior |
@@ -386,6 +397,26 @@ Conditional and retained: each `!` notice stays in conversation history for late
 
 Append-only conversation growth after the reusable request prefix. The notice does not change the system prompt or tool catalog. A `/model` switch starts a new request series exactly as it does from the browser.
 
+### Background tool call
+
+#### What the model sees
+
+A call the user moves with `Ctrl+B` gets an error result right away with this fixed text, `<id>` being the job's `tool-<n>` id. The error flag is required because the tool runtime validates every successful result against the tool's own output schema. When the job settles, `dsh-tool-jobs` sends its ordinary completion notice unless the model already collected the job, and `job_output` returns the call's text result. A job stopped because its turn was stopped sends no notice.
+
+##### Moved call result
+
+```markdown
+The user moved this call to the background. It keeps running as job <id>. You are notified when it finishes; read its result with job_output, or stop it with job_kill. Continue with steps that do not depend on it.
+```
+
+#### Token effect
+
+Conditional and retained: the fixed result replaces the call's own result in history, and the completion notice and the `job_output` read that carries the call's result are added later.
+
+#### KV Cache effect
+
+Append-only conversation growth after the reusable request prefix. Moving a call does not change the system prompt or tool catalog.
+
 ### Side agent
 
 #### What the model sees
@@ -424,6 +455,7 @@ These limits describe the terminal surface as shipped; they are not a general CL
 - **The terminal's own caret can flicker** — the editor draws no caret of its own and the app turns the terminal cursor on, which pi-tui then moves across the lines it repaints; a terminal that does not honor the synchronized-output sequences pi-tui wraps a frame in can show that movement.
 - **Runs through the `dsh` launcher** — starting the profile another way fails at startup, because only the launcher can request the process exit.
 - **A `/btw` side agent is read-only by tool name and sandbox** — `btwTools` must name only tools that read, because the side agent shares the workspace with the working agent; a command tool can read anything the `read-only` sandbox mode allows, and without a confining command executor command tools are hidden. It inherits only what the working session has logged: reply text still streaming is absent. Its log is stored like a subagent session's and hidden from `/resume` and `/sessions`, and Web has no `/btw`.
+- **A moved call stays tied to its turn and returns text** — the tool runtime fuses the turn's signal into every call, so `Esc` on the turn that dispatched a call stops it even after `Ctrl+B`; a job result is a string, so other content blocks of the call's result are named as `[image omitted]` and the like; and moving needs `ctx.jobs` with `dsh-tool-jobs`, which the base profile composes.
 - **`!` is one-shot and not a TTY** — each line is a fresh `ctx.shell.run`; there is no persistent shell or interactive program. The Web composer does not intercept `!`. An optional first prompt on the command line is always a user message.
 
 <a id="dev-note"></a>

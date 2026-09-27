@@ -21,11 +21,14 @@
   en: be0e9f07314547a5
   zh: e55e8e668b3f703f
 /deepseek-ai-dsh-tui-app/use-this-package/the-screen:
-  en: 28704cd17ca6b37d
-  zh: c091d14b798acccd
+  en: 16087917fa08726c
+  zh: e45dec9a0fa09642
 /deepseek-ai-dsh-tui-app/use-this-package/keys-and-commands:
-  en: 86ee3c54b190bcb4
-  zh: c6f3fcc741afaca4
+  en: 2e7932b9fb296b74
+  zh: df3a5d5ab3e21f04
+/deepseek-ai-dsh-tui-app/use-this-package/background-tool-calls:
+  en: 322ae3c6d76383ec
+  zh: 8c38eee4b57ed8dd
 /deepseek-ai-dsh-tui-app/use-this-package/subscription-sign-in:
   en: 7c1b0e685a3a9415
   zh: 49f3bdc3e99d6259
@@ -36,8 +39,8 @@
   en: 23ba736da2686f52
   zh: d30ce253dd934750
 /deepseek-ai-dsh-tui-app/use-this-package/configuration:
-  en: de84f025363b07e4
-  zh: 5004b1a0758c58ed
+  en: 6f3968bd43059ee2
+  zh: 522aebc38fe8fc18
 /deepseek-ai-dsh-tui-app/understand-the-implementation:
   en: f124d406565fef39
   zh: 90344b5eec319cad
@@ -51,8 +54,8 @@
   en: 142f04bf29e981dd
   zh: a1689297b06c9ca6
 /deepseek-ai-dsh-tui-app/understand-the-implementation/source-map:
-  en: f6bd9e5b67b3652f
-  zh: cef041b9a91b245b
+  en: d4b312aec290d553
+  zh: 99e69009c981cc7d
 /deepseek-ai-dsh-tui-app/understand-the-implementation/invariant-ownership:
   en: 0ddf6de8928026d5
   zh: 24feedcbb9e9d676
@@ -77,6 +80,21 @@
 /deepseek-ai-dsh-tui-app/model-experience/user-typed-shell-command/kv-cache-effect:
   en: 5b83189b640899dd
   zh: 232c1ef2f192bd4c
+/deepseek-ai-dsh-tui-app/model-experience/background-tool-call:
+  en: 325019794223c5fa
+  zh: 7ea0055b28d10846
+/deepseek-ai-dsh-tui-app/model-experience/background-tool-call/what-the-model-sees:
+  en: 014cef57bd1e994e
+  zh: 1b5df1ceaa4830ed
+/deepseek-ai-dsh-tui-app/model-experience/background-tool-call/what-the-model-sees/moved-call-result:
+  en: 434507f4855ece52
+  zh: 3df40dcea19a8b52
+/deepseek-ai-dsh-tui-app/model-experience/background-tool-call/token-effect:
+  en: fdec4eeeee7c6335
+  zh: a900f1ef88e85179
+/deepseek-ai-dsh-tui-app/model-experience/background-tool-call/kv-cache-effect:
+  en: 8a5bab15e1637c6a
+  zh: e1075bfdb6952fdc
 /deepseek-ai-dsh-tui-app/model-experience/side-agent:
   en: 1c67a481715ccab3
   zh: cb1ee722aa3b9201
@@ -90,8 +108,8 @@
   en: 1dadc4a2f1560eaa
   zh: dc4697c269bc16b9
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work:
-  en: 6c5c2264668d24f7
-  zh: 025b0085b347b04d
+  en: 768f55ebb0a75616
+  zh: c512d13f4b3763e8
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work/dev-note:
   en: 5629c6159cec997f
   zh: 17f2d7e1f96da7f1

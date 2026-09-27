@@ -184,6 +184,8 @@ export const KEY = {
   home: '\u001b[H',
   end: '\u001b[F',
   ctrlG: '\u0007',
+  ctrlB: '\u0002',
+  ctrlK: '\u000b',
   ctrlU: '\u0015',
   backspace: '\u007f',
   slash: '/',
@@ -319,6 +321,8 @@ export async function bench(options: {
   color?: boolean
   /** Start with the Agent already running. */
   running?: boolean
+  /** Called after each cancel of a scripted Agent, as a live loop aborts the running turn's signal there. */
+  onCancel?: () => void
   /** Omit the model selection and the Agent's model options. */
   unselected?: boolean
   /** Make every host operation fail with this message. */
@@ -406,7 +410,11 @@ export async function bench(options: {
         inbox: createInboxStub(),
         get status() { return childStatuses.get(session.id) ?? hostStatus },
         ctx: ownerCtx,
-        cancel: (_reason, options) => { calls.cancels += 1; calls.cancelOptions = options },
+        cancel: (_reason, cancelOptions) => {
+          calls.cancels += 1
+          calls.cancelOptions = cancelOptions
+          options.onCancel?.()
+        },
         runMaintenance: () => Promise.reject(new Error('not used')),
         send: () => {},
         followup: (message) => { calls.followups.push(message) },
