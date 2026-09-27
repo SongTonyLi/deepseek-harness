@@ -4,10 +4,12 @@
  * turns keystrokes into agent input, answers the approval and user-questions
  * seams for that Agent, and switches between sessions through its host. Above
  * the editor it draws an activity board of the open turn's todos and the
- * latest descendant line. Under the editor it keeps two docked regions the
- * keyboard can take over — the subagent panel and the status bar — and one
- * repeating tick advances their elapsed counters and re-reads a stale
- * subagent listing. A second tick, at its own period, brightens streamed
+ * latest descendant line, and a live line while background jobs run; `Ctrl+B`
+ * moves the running tool calls to those jobs (`./background.ts`). Under the
+ * editor it keeps two docked regions the keyboard can take over — the
+ * subagent panel and the status bar — and one repeating tick advances their
+ * elapsed counters and the jobs line's, and re-reads a stale subagent
+ * listing. A second tick, at its own period, brightens streamed
  * reply text and floats out reasoning, tool cards, and activity-board rows
  * that just landed, each only as far up the frame as the renderer repaints
  * without discarding the terminal's scrollback (`./screen.ts`).
@@ -22,6 +24,7 @@ import {
   Text,
   isKeyRelease,
   matchesKey,
+  truncateToWidth,
   visibleWidth,
   type OverlayHandle,
   type RgbColor,
@@ -49,6 +52,7 @@ import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-referenc
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
+import type { JobEvent, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
 import type { AskUserQuestionAnswer, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 // Empty type imports carry the Context merges for the services this app reads through `ctx.get`.
@@ -69,6 +73,17 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import { AlternateScreen } from './alt-screen.ts'
+import { ToolBackgrounder, movedJobId, type ForegroundCall } from './background.ts'
+import {
+  BACKGROUND_GLYPH,
+  BACKGROUND_KEY_HINT,
+  JOBS_PICKER_HINT,
+  isLive,
+  jobChoice,
+  jobDetailRows,
+  renderJobsLine,
+  settledToast,
+} from './jobs-panel.ts'
 import { btwBriefMessage } from './btw.ts'
 import { attachLocalFile, type PendingAttachment } from './attach.ts'
 import {
@@ -507,6 +522,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'deliverables', description: 'List the files the agent presented in this session' },
   { name: 'changes', description: 'Browse the files the last turn changed (/changes <turn> for an earlier one; Enter shows a file\'s diff)' },
   { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter opens one as a live session view)' },
+  { name: 'jobs', description: 'Browse this session\'s background jobs (Enter shows the output, Ctrl+K stops one; Ctrl+B moves running tool calls here)' },
   { name: 'parent', description: 'Return from a subagent view or a /btw side agent to the session it was opened from' },
   { name: 'btw', description: 'Open a temporary side agent with this session\'s context to ask questions while the agent works (/btw <question>)', hint: '<question>' },
   { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
@@ -534,6 +550,23 @@ type Tone = 'dim' | 'error' | 'success'
 
 /** How a message submitted while a turn runs reaches the Agent. */
 type SubmitMode = 'queue' | 'steer'
+
+/** Shown when `Ctrl+B` or `/jobs` is used and this composition has no `ctx.jobs`. */
+const JOBS_MISSING = 'background jobs need a job registry in this composition'
+
+/**
+ * Columns of a moved call's card headline its job label keeps. The label
+ * reaches the model in the completion notice, so it names the call without
+ * carrying a whole command. A presentation choice of this terminal surface,
+ * not a deployment setting.
+ */
+const JOB_LABEL_COLUMNS = 120
+
+/** Why a job the user stopped from `/jobs` was killed, as the model reads it. */
+const USER_STOP_REASON = 'stopped by the user'
+
+/** Shown when `Ctrl+B` is pressed while the turn runs no tool call. */
+const NOTHING_TO_BACKGROUND = 'no tool call is running · Ctrl+B moves a running call to the background'
 
 /** Shown when `!` is submitted and this composition has no `ctx.shell`. */
 const SHELL_MISSING = '! needs a shell executor in this composition'
@@ -649,6 +682,14 @@ export class TuiApp {
   private queueDraft: UserMessage | undefined
   /** Suppresses the empty-queue focus handoff during a synchronous inbox transfer. */
   private transferringQueue = false
+  /** Holds {@link jobsLine} exactly while a background job of the bound session runs. */
+  private readonly jobsSlot = new Container()
+  /** The live background-jobs line above the editor. */
+  private readonly jobsLine: Text
+  /** The bound session's background jobs at the last read, in registration order. */
+  private backgroundJobs: readonly JobView[] = []
+  /** Tracks root tool calls and moves them to background jobs on `Ctrl+B`. */
+  private readonly backgrounder: ToolBackgrounder
   /** Holds {@link panel} exactly while the bound session has subagent rows. */
   private readonly panelSlot = new Container()
   /** The terminal's alternate screen, which the reader draws on; see {@link AlternateScreen}. */
@@ -868,6 +909,11 @@ export class TuiApp {
     this.editor.onChange = () => { this.syncEditorBorder() }
     this.queue = new Text('', 0, 0)
     this.activity = new Text('', 0, 0)
+    this.jobsLine = new Text('', 0, 0)
+    this.backgrounder = new ToolBackgrounder({
+      jobs: () => deps.ctx.get('jobs'),
+      changed: () => { this.onForegroundCallsChanged() },
+    })
     this.panel = new Text('', 0, 0)
     this.banner = new ViewBanner(palette)
     this.footer = new FooterBar(() => ({
@@ -883,7 +929,7 @@ export class TuiApp {
     this.modals = new ModalQueue({ tui: this.tui, slot: this.modalSlot, focusAfter: this.editor })
     const tree = [
       this.header, this.chat, this.statusSlot, this.modalSlot, this.inspector, this.queueSlot,
-      this.activitySlot, this.banner, this.editor, this.panelSlot, this.footer,
+      this.activitySlot, this.jobsSlot, this.banner, this.editor, this.panelSlot, this.footer,
     ]
     for (const child of tree) this.tui.addChild(child)
   }
@@ -953,8 +999,13 @@ export class TuiApp {
         if (!this.claimPrompt(request.agent)) return next()
         return this.askQuestions(request.questions, request.signal)
       }),
+      ctx.on('tools/execute', (exec, next) => this.backgrounder.around(exec, next)),
       this.tui.addInputListener(data => this.onKey(data)),
     )
+    const jobs = ctx.get('jobs')
+    if (jobs !== undefined) {
+      this.disposers.push(jobs.events.subscribe({ owners: 'all' }, (event) => { this.onJobEvent(event) }))
+    }
     const projections = ctx.get('sessionProjections')
     if (projections !== undefined) {
       this.disposers.push(projections.onChanged((session) => {
@@ -1102,6 +1153,7 @@ export class TuiApp {
     this.refreshQueue()
     this.refreshFooter()
     this.refreshSubagentPanel()
+    this.refreshJobs()
     // Seeding the panel is a listing of its own, not an event handler's read.
     void this.reconcileSubagents()
   }
@@ -1742,7 +1794,8 @@ export class TuiApp {
    * one runs at a time, and a stopped app runs none.
    */
   private updateTicker(): void {
-    if (!this.stopped && (this.turnStartedAt !== undefined || this.subagentsStale || this.panelView.ticking)) {
+    const jobsTicking = this.backgroundJobs.some(isLive)
+    if (!this.stopped && (this.turnStartedAt !== undefined || this.subagentsStale || this.panelView.ticking || jobsTicking)) {
       this.ticker ??= this.deps.tick(() => { this.onTick() }, this.deps.liveRefreshMs)
       return
     }
@@ -1756,6 +1809,7 @@ export class TuiApp {
   private onTick(): void {
     if (this.subagentsStale) void this.reconcileSubagents()
     this.refreshSubagentPanel()
+    if (this.backgroundJobs.some(isLive)) this.refreshJobs()
     if (this.turnStartedAt !== undefined) this.refreshFooter()
   }
 
@@ -1887,6 +1941,151 @@ export class TuiApp {
       /* v8 ignore next -- subagentDetail, the only resolver today, reports its own read failures as rows */
       return [describeFailure(error)]
     }
+  }
+
+  /** Redraw what follows the foreground calls: the spinner's key hint and the jobs line. */
+  private onForegroundCallsChanged(): void {
+    this.refreshLoader()
+    this.refreshJobs()
+  }
+
+  /**
+   * Follow one job-registry event: the backgrounder learns which jobs belong
+   * to a running call, the jobs line follows the bound session's jobs, and a
+   * settlement of one of them shows a transient line.
+   * @param event - the registry event.
+   */
+  private onJobEvent(event: JobEvent): void {
+    this.backgrounder.observe(event)
+    if (event.type === 'output') return
+    const { job } = event
+    if (job.owner !== undefined && job.owner !== this.agent.session.id) return
+    this.refreshJobs()
+    if (event.type !== 'settled' || event.cause === 'teardown' || this.backgrounder.isInner(job.id)) return
+    // A kill the model requested is answered by its own `job_kill` result, so
+    // only a settlement nobody waited on is certain to reach the Agent.
+    this.showToast(settledToast(job, !event.awaited && event.cause === 'producer'))
+  }
+
+  /**
+   * Re-read the bound session's background jobs and redraw the live line
+   * above the editor. A job a running call registered for itself is that
+   * call's own work, not background work, and is left out while it runs.
+   */
+  private refreshJobs(): void {
+    const jobs = this.deps.ctx.get('jobs')
+    this.backgroundJobs = jobs === undefined
+      ? []
+      : jobs.list(this.agent.session.id).filter(job => !this.backgrounder.isInner(job.id))
+    const text = renderJobsLine(this.backgroundJobs, { palette: this.deps.palette, now: this.deps.now(), width: this.contentWidth() })
+    const mounted = this.jobsSlot.children.length > 0
+    if (text === '') {
+      if (mounted) this.jobsSlot.removeChild(this.jobsLine)
+    } else {
+      if (!mounted) this.jobsSlot.addChild(this.jobsLine)
+      this.jobsLine.setText(text)
+    }
+    this.updateTicker()
+    this.tui.requestRender()
+  }
+
+  /**
+   * Answer `Ctrl+B` during a turn: move every foreground call of the bound
+   * Agent to a background job and say what moved.
+   */
+  private moveToBackground(): void {
+    const jobs = this.deps.ctx.get('jobs')
+    if (jobs === undefined) {
+      this.showToast(JOBS_MISSING)
+      return
+    }
+    const report = this.backgrounder.moveAll(jobs, this.agent, call => this.jobLabel(call))
+    for (const refusal of report.refused) this.notice(`could not move ${refusal} to the background`, 'error')
+    const [first] = report.moved
+    if (first === undefined) {
+      if (report.refused.length === 0) this.showToast(NOTHING_TO_BACKGROUND)
+      return
+    }
+    this.showToast(report.moved.length === 1
+      ? `${BACKGROUND_GLYPH} ${first.name} moved to the background as ${first.id} · /jobs lists it`
+      : `${BACKGROUND_GLYPH} ${String(report.moved.length)} calls moved to the background · /jobs lists them`)
+  }
+
+  /**
+   * The job label of a moved call: the tool name and its card headline on one line.
+   * @param call - the call being moved.
+   * @returns the label, cut to {@link JOB_LABEL_COLUMNS} columns.
+   */
+  private jobLabel(call: ForegroundCall): string {
+    const title = this.toolBlocks.get(call.callId)?.title.split('\n', 1)[0] ?? ''
+    const label = title === '' ? call.name : `${call.name} ${title}`
+    return truncateToWidth(label, JOB_LABEL_COLUMNS, '…')
+  }
+
+  /**
+   * Walk the bound session's background jobs: one row per job, `Enter` shows
+   * its status and output, and `Ctrl+K` stops the highlighted one. The rows
+   * are read again each time the list opens, so a return from a detail page
+   * shows the statuses as they are now.
+   */
+  private async browseJobs(): Promise<void> {
+    const jobs = this.deps.ctx.get('jobs')
+    if (jobs === undefined) {
+      this.notice(JOBS_MISSING, 'error')
+      return
+    }
+    let visited: string | undefined
+    for (;;) {
+      this.refreshJobs()
+      const views = this.backgroundJobs
+      if (views.length === 0) {
+        this.notice('no background jobs in this session · Ctrl+B moves a running tool call here')
+        return
+      }
+      const now = this.deps.now()
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Background jobs', views.map(view => jobChoice(view, now)), {
+        body: [JOBS_PICKER_HINT],
+        ...visited === undefined ? {} : { current: visited },
+        onStop: (item) => {
+          const view = views.find(candidate => candidate.id === item.value)
+          /* v8 ignore next -- the picker answers with one of the rows it was handed */
+          if (view !== undefined) this.stopJob(jobs, view)
+        },
+      }))
+      if (picked === undefined) return
+      const view = views.find(candidate => candidate.id === picked.value)
+      /* v8 ignore next -- the picker settles with one of the rows it was handed */
+      if (view === undefined) return
+      visited = view.id
+      await this.showModal(new DetailPrompt(this.deps.palette, `Job ${view.id}`, this.jobDetail(jobs, view)))
+    }
+  }
+
+  /**
+   * The detail page of one job, read fresh: its status and the tail of the
+   * output its body writes, which for a moved shell call is the shell's own
+   * process job.
+   * @param jobs - the registry the list was read from.
+   * @param listed - the job as the list showed it.
+   * @returns the page rows.
+   */
+  private jobDetail(jobs: JobRegistry, listed: JobView): string[] {
+    const owner = this.agent.session.id
+    // A registry removes only the jobs a running body registered for itself,
+    // which the list leaves out, so every listed job can still be read.
+    const view = jobs.get(listed.id, owner)
+    return jobDetailRows(view, jobs.readAt(this.backgrounder.outputOf(view.id), 0, owner).chunks, this.deps.now())
+  }
+
+  /**
+   * Stop one job from `/jobs` and say whether anything was still running.
+   * @param jobs - the registry the list was read from.
+   * @param view - the highlighted job.
+   */
+  private stopJob(jobs: JobRegistry, view: JobView): void {
+    // A listed job is owned and never removed, so the kill cannot be refused.
+    const outcome = jobs.kill(view.id, this.agent.session.id, USER_STOP_REASON)
+    this.showToast(outcome === 'requested' ? `stopping ${view.id}` : `${view.id} already finished`)
   }
 
   /**
@@ -2212,6 +2411,11 @@ export class TuiApp {
         }
         void this.dispatchCommand('/effort')
         return { consume: true }
+      case 'background':
+        // Outside a turn the editor keeps `Ctrl+B`, its cursor-left key.
+        if (this.agent.status !== 'running') return this.focus === 'editor' ? undefined : { consume: true }
+        this.moveToBackground()
+        return { consume: true }
       case 'todos':
         this.focusEditor()
         void this.dispatchCommand('/todos')
@@ -2277,8 +2481,13 @@ export class TuiApp {
     }
     this.disarmStop()
     this.agent.cancel({ kind: 'user' }, { keepInbox: true })
+    const jobs = this.deps.ctx.get('jobs')
+    const moved = jobs === undefined ? 0 : this.backgrounder.holdStopped(jobs, this.agent)
     const queued = this.agent.inbox.nextTurn.length + this.agent.inbox.nextStep.length
-    this.notice(queued === 0 ? 'stopping the turn…' : `stopping the turn… ${String(queued)} queued message(s) stay queued`)
+    const facts = ['stopping the turn…']
+    if (queued > 0) facts.push(`${String(queued)} queued message(s) stay queued`)
+    if (moved > 0) facts.push(`${String(moved)} background call(s) from this turn stop with it`)
+    this.notice(facts.join(' '))
     return { consume: true }
   }
 
@@ -3215,6 +3424,9 @@ export class TuiApp {
       }
       case 'parent':
         await this.leaveSubagent()
+        return
+      case 'jobs':
+        await this.browseJobs()
         return
       case 'settings':
         await this.settings(argument)
@@ -4366,9 +4578,14 @@ export class TuiApp {
         const block = this.toolBlocks.get(result.toolCallId)
         if (block === undefined) break
         const isError = result.isError === true
-        const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
-        const body = toolResultBody(view, result.content)
-        block.setResult(body.lines, isError, body.code, body.diff)
+        const moved = isError ? movedJobId(result.content) : undefined
+        if (moved === undefined) {
+          const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
+          const body = toolResultBody(view, result.content)
+          block.setResult(body.lines, isError, body.code, body.diff)
+        } else {
+          block.setBackground([`${BACKGROUND_GLYPH} moved to the background as ${moved} · /jobs lists it`])
+        }
         this.spinners.delete(block)
         this.updateSpinTicker()
         this.fadeBlock((fade) => { block.setResultFade(fade) })
@@ -4597,10 +4814,16 @@ export class TuiApp {
     return `${shimmer(palette, activity, this.deps.now())}${rest === '' ? '' : palette.dim(rest)}`
   }
 
-  /** Draw the spinner label plus the current call's ↑send ↓receive suffix. */
+  /**
+   * Draw the spinner label plus the current call's ↑send ↓receive suffix,
+   * and the key that moves a foreground call to the background while one runs.
+   */
   private refreshLoader(): void {
+    const parts = [this.loaderActivity]
     const suffix = formatLiveUsage(this.liveUsage)
-    this.loader.setMessage(suffix === '' ? this.loaderActivity : `${this.loaderActivity} ${suffix}`)
+    if (suffix !== '') parts.push(suffix)
+    if (this.backgrounder.running(this.agent).length > 0) parts.push(`· ${BACKGROUND_KEY_HINT}`)
+    this.loader.setMessage(parts.join(' '))
   }
 
   /**

@@ -60,7 +60,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 ### 按键与命令
 
-对话记录、编辑器、子 agent 面板与状态栏构成垂直方向键走查：在最新小节上按 `Down`、在子 agent 面板第一行上按 `Up`、在没有绘制子 agent 面板时于状态栏上按 `Up`，都会落到光标处。follow-ups 列表位于输入框上方；绘制该列表时，`Shift+Up` 会进入它，它也加入 `Tab` 走查。activity board 位于 follow-ups 与输入之间，不是焦点区域。编辑器以外的区域持有键盘时，`Tab` 与 `Shift+Tab` 走遍已绘制的各区域，并在两端环绕；在编辑器中，`Tab` 采用给出的补全，`Shift+Tab` 打开推理强度选择器。在其中任何一个区域按下可打印键都会回到编辑器并在那里输入，因此在阅读时开始写的句子会落在它所指向的地方；对话记录中的 `Space` 是唯一的例外，它折叠被标记的工具卡片或上下文块。`Ctrl+G`、`Ctrl+O`、`Ctrl+T`、`Ctrl+P` 与 `Ctrl+L` 在这些区域中含义完全相同，而 `Ctrl+C` 与 `Ctrl+D` 会先把键盘交还编辑器再行动。提示与阅读器则各自持有整条按键流，并以交还键盘的方式应答 `Ctrl+C`。
+对话记录、编辑器、子 agent 面板与状态栏构成垂直方向键走查：在最新小节上按 `Down`、在子 agent 面板第一行上按 `Up`、在没有绘制子 agent 面板时于状态栏上按 `Up`，都会落到光标处。follow-ups 列表位于输入框上方；绘制该列表时，`Shift+Up` 会进入它，它也加入 `Tab` 走查。activity board 位于 follow-ups 与输入之间，不是焦点区域。编辑器以外的区域持有键盘时，`Tab` 与 `Shift+Tab` 走遍已绘制的各区域，并在两端环绕；在编辑器中，`Tab` 采用给出的补全，`Shift+Tab` 打开推理强度选择器。在其中任何一个区域按下可打印键都会回到编辑器并在那里输入，因此在阅读时开始写的句子会落在它所指向的地方；对话记录中的 `Space` 是唯一的例外，它折叠被标记的工具卡片或上下文块。`Ctrl+G`、`Ctrl+O`、`Ctrl+B`、`Ctrl+T`、`Ctrl+P` 与 `Ctrl+L` 在这些区域中含义完全相同，而 `Ctrl+C` 与 `Ctrl+D` 会先把键盘交还编辑器再行动。提示与阅读器则各自持有整条按键流，并以交还键盘的方式应答 `Ctrl+C`。
 
 编辑器持有键盘时：
 
@@ -79,6 +79,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `Ctrl+G` | 整屏读出对话记录，停在其最新小节 |
 | `Ctrl+O` | 展开或折叠所有工具卡片与上下文行 |
 | `Ctrl+T` | 浏览 agent 的 todo 列表，与 `/todos` 打开的是同一个列表 |
+| `Ctrl+B` | 轮次运行期间，把它正在运行的工具调用移为后台作业，让 agent 继续工作；轮次之外由编辑器把光标左移 |
 | `Ctrl+P` | 从子 agent 视图返回进入它之前的会话，或结束 `/btw` 旁路 agent，与 `/parent` 相同 |
 | `Ctrl+L` | 从头重绘整个屏幕 |
 | `?` | 输入为空时列出命令与按键，与 `/help` 相同；在草稿中则作为文字输入 |
@@ -191,6 +192,7 @@ follow-ups 面板持有键盘时：
 | `/changes [turn]` | 浏览最近一轮（或第 `turn` 轮）改动的文件及其行数；`Enter` 打开某个文件从轮次开始到结束的对比 |
 | `/subagents` | 浏览本会话之下的子 agent 会话；`Enter` 把可读的会话作为子 agent 视图打开，对无法读取的会话则打开其详情 |
 | `/parent` | 从子 agent 视图返回进入它之前的会话，或结束 `/btw` 旁路 agent，与 `Ctrl+P` 相同 |
+| `/jobs` | 浏览本会话的后台作业，即用 `Ctrl+B` 移走的调用与 agent 启动的作业，附带状态与耗时；`Enter` 显示一个作业的状态与输出末尾，`Ctrl+K` 停止高亮的作业 |
 | `/settings [ns [path value]]` | 列出命名空间、显示某一个或设置某个字段；`/settings reset <ns>` 恢复默认 |
 | `/plugins` | 已组合的插件及其启用状态与生命周期阶段；`/plugins bundles` 列出 profile 的组合包，`/plugins enable <id>` 与 `/plugins disable <id>` 切换某个插件条目或组合包，`/plugins add <spec>` 安装组合包，`/plugins remove <name>` 移除组合包 |
 | `/tools` | 像 `Ctrl+O` 一样展开或折叠所有工具卡片与上下文行 |
@@ -203,6 +205,10 @@ follow-ups 面板持有键盘时：
 终端打开的每个选择器——`/model` 的模型列表与推理强度列表、空参数 `/effort` 与编辑器 `Shift+Tab` 共用的当前模型推理强度列表、空参数 `/permission` 打开的权限预设列表、`/resume` 与 `/sessions` 共用的持久化会话列表、`/subagents` 与 `/todos` 的列表，以及 `/signin` 与 `/login` 引出的各行——都随输入过滤其行：查询同时匹配每行的标签与描述，其以空白与斜杠分隔的各段必须全部匹配，各行按最佳匹配在前排序，因此 `dsk chat` 与 `deepseek/chat` 都能找到 `deepseek/deepseek-chat`，`gpt5` 能找到 `gpt-5`。`Backspace` 删除最后一个字符，`Ctrl+U` 清空查询，`Esc` 在查询非空时清空查询、在查询为空时取消选择器，`Up` / `Down` 在匹配行之间移动，`Enter` 选中高亮行。行上方的暗色行在查询为空时显示 `type to filter · Enter selects · Esc cancels`，此后显示 `filter: <query> · <kept>/<total>`；无任何行匹配的查询会以 `no row matches "<query>"` 取代这些行，而生效行上的 `✓`——也就是选择器打开时定位的那一行——只在查询为空时显示。
 
 `/todos`、状态栏的 `todo` 分段与 `/subagents` 中无法读取的行共用同一套先列表、后详情的交互：选择器列出各条目，`Enter` 把高亮条目作为只读页面打开，`Up` / `Down` 与 `PageUp` / `PageDown` 滚动该页面，`Enter`、`Esc` 或 `Left` 返回列表并停在刚读过的条目上，因此连续查看多个条目无需重新输入命令；在列表上按 `Esc` 返回编辑器。详情无法读取的条目会在其页面上说明原因，而不会关闭列表。
+
+### 后台工具调用
+
+运行中的轮次等待某个工具调用时，工作旋转指示以 `· Ctrl+B background` 结尾。`Ctrl+B` 把绑定 Agent 的每个此类调用作为 `tool-<n>` 作业交给作业注册表，并立即以一个写明该作业的结果应答该调用，因此轮次继续推进，而调用仍在运行。卡片停在一行强调色的 `◇` 上，即 `◇ moved to the background as tool-1 · /jobs lists it`，恢复的会话也以同样方式绘制它。只要会话有作业在运行，输入框上方就有一行暗色文字列出它们，例如 `◇ 2 in background · tool-1 bash npm test 1m04s · bash-3 sleep 20 12s · /jobs`，实时刷新会推进各自的耗时。shell 调用自己的进程作业属于该调用，只有在它比调用活得更久之后才会被列出。作业结束时，一行临时提示会写明它，例如 `◇ tool-1 completed · bash npm test · agent notified`，`dsh-tool-jobs` 则投递完成通知：忙碌的 agent 在下一步读到它，空闲的 agent 被唤醒。`/jobs` 浏览本会话的所有作业：`Enter` 显示其状态、标签、开始时间与输出末尾，包括被移走的 shell 调用的实时进程输出；`Ctrl+K` 停止高亮的作业，agent 会得知这一点。用 `Esc` 停止轮次也会停止从该轮次移出的调用，因为工具运行时把每个调用绑定到它的轮次；停止通知会计出它们的数量，它们的作业以 `killed` 结束且不会唤醒 agent。
 
 ### 订阅登录
 
@@ -304,6 +310,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/footer.ts`](src/footer.ts) | 状态栏：有序的各分段、每个分段的详情行、未聚焦时由两端向内构建的一行，以及聚焦时的滑动窗口 |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | 实时子 agent 面板：一次后代列表加上采样到的实时事实构成其各行、未聚焦时的摘要行，以及聚焦时的列表 |
 | [`src/queue-panel.ts`](src/queue-panel.ts) | follow-ups 列表：待处理行符号、悬挂换行与 enter-steer 图例 |
+| [`src/background.ts`](src/background.ts) | `Ctrl+B`：跟踪根调用的 `tools/execute` 包装器，把调用移为 `tool` 作业、识别 shell 调用自己的进程作业，并保持被停止轮次的作业 |
+| [`src/jobs-panel.ts`](src/jobs-panel.ts) | 编辑器上方的后台作业行、`/jobs` 的行与详情页，以及作业结束提示行 |
 | [`src/activity-board.ts`](src/activity-board.ts) | activity board：todo 状态符号、已完成内容划掉、行数上限，以及一行后代摘要 |
 | [`src/catalog.ts`](src/catalog.ts) | `/settings`、`/plugins`、`/subagents`、`/deliverables`、`/changes` 与 `/outline` 的行，以及 `/plugins` 的管理动作 |
 | [`src/view-banner.ts`](src/view-banner.ts) | 输入框上方标明已打开的子 agent 视图或 `/btw` 旁路 agent 及返回按键的一行 |
@@ -311,6 +319,9 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |
 | — | 不发布运行时不变量伴随模块；应用只在一个 Agent 上注册监听器，不持有其他观察者可能与之矛盾的可变关系。 |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | 基于伪终端的渲染、按键、命令、停止装填、编辑器上方的 follow-ups 行、activity board 与两个接缝 |
+| [`tests/background.spec.ts`](tests/background.spec.ts) | 基于真实工具运行时、作业注册表与作业工具的 `Ctrl+B`：旋转指示提示、被移走的结果与卡片、作业行、`/jobs` 输出与 `Ctrl+K`、完成通知、拒绝、失败与轮次停止 |
+| [`tests/background-tracking.spec.ts`](tests/background-tracking.spec.ts) | 包装器跟踪哪些调用、哪些作业算作调用自己的作业，以及被移走结果的文本 |
+| [`tests/jobs-panel.spec.ts`](tests/jobs-panel.spec.ts) | 作业行、`/jobs` 的行、详情页与作业结束提示行的文本 |
 | [`tests/activity-board.spec.ts`](tests/activity-board.spec.ts) | activity board 的状态符号、已完成划掉、行数上限与后代行 |
 | [`tests/keys.spec.ts`](tests/keys.spec.ts) | 每个区域为一个按键认领什么、按键提示的各级，以及一次按键输入的文字 |
 | [`tests/editor.spec.ts`](tests/editor.spec.ts) | 对照 pi-tui 编辑器行为验证终端光标、`Shift+Left` / `Shift+Right` 词导航，以及 `!` / `!!` 草稿着色 |
@@ -386,6 +397,26 @@ The user ran `<command>` in the terminal.
 
 在可复用的请求前缀之后只做追加式增长。该通知不改变系统提示或工具目录。`/model` 切换像在浏览器中一样开始新的请求序列。
 
+### 后台工具调用
+
+#### 模型看到什么
+
+用户用 `Ctrl+B` 移走的调用会立即得到一个带以下固定文本的错误结果，其中 `<id>` 是该作业的 `tool-<n>` id。之所以需要错误标记，是因为工具运行时会按工具自身的输出 schema 校验每个成功结果。作业结束时，除非模型已经收取了该作业，`dsh-tool-jobs` 会发送它的普通完成通知，`job_output` 则返回该调用的文本结果。因其轮次被停止而停止的作业不发送通知。
+
+##### 被移走调用的结果
+
+```markdown
+The user moved this call to the background. It keeps running as job <id>. You are notified when it finishes; read its result with job_output, or stop it with job_kill. Continue with steps that do not depend on it.
+```
+
+#### Token 影响
+
+有条件且会保留：固定结果在历史中取代该调用自己的结果，之后再加入完成通知，以及携带该调用结果的 `job_output` 读取。
+
+#### KV Cache 影响
+
+在可复用的请求前缀之后只追加对话内容。移走调用不会改变系统提示或工具目录。
+
 ### 旁路 agent
 
 #### 模型看到什么
@@ -424,6 +455,7 @@ The user ran `<command>` in the terminal.
 - **终端自身的光标可能闪烁**——编辑器不绘制自己的光标，应用打开终端光标，而 pi-tui 会在其重绘的各行之间移动它；不支持 pi-tui 为一帧包裹的同步输出序列的终端可能显示出这种移动。
 - **通过 `dsh` 启动器运行**——以其他方式启动该 profile 会在启动时失败，因为只有启动器能请求进程退出。
 - **`/btw` 旁路 agent 靠工具名称与沙箱保持只读**——`btwTools` 只能列出读取类工具，因为旁路 agent 与工作 agent 共享工作区；命令工具可以读取 `read-only` 沙箱模式允许的任何内容，而没有会约束命令的执行器时命令工具会被隐藏。它只继承工作会话已记录的内容：仍在流式输出的回复文本不在其中。它的日志像子 agent 会话一样被存储，并在 `/resume` 与 `/sessions` 中隐藏，Web 没有 `/btw`。
+- **被移走的调用仍绑定其轮次并返回文本**——工具运行时把轮次的信号融合进每个调用，因此即便按过 `Ctrl+B`，在派发该调用的轮次上按 `Esc` 仍会停止它；作业结果是字符串，因此调用结果中的其他内容块会被写成 `[image omitted]` 之类；移走调用需要 `ctx.jobs` 与 `dsh-tool-jobs`，base profile 已组合二者。
 - **`!` 是一次性的，也不是 TTY**——每一行都是一次新的 `ctx.shell.run`；没有持久 shell，也不能跑交互式程序。Web 编辑器不拦截 `!`。命令行上的可选首条提示始终是用户消息。
 
 <a id="dev-note"></a>
