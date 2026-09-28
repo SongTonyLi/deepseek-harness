@@ -40,6 +40,8 @@ export const SPINNER_FRAMES = {
   todo: ['·', ' '],
   /** Waiting on a retry delay or a human answer: a clock turning. */
   waiting: ['◷', '◶', '◵', '◴'],
+  /** Condensing older history into a summary: a column of dots settling down and filling back up. */
+  compacting: ['⣿', '⣶', '⣤', '⣀', '⣤', '⣶'],
 } as const
 
 /** One animation of {@link SPINNER_FRAMES}, named by the scenario that draws it. */
@@ -108,6 +110,9 @@ const CALLING_WORD = 'calling '
 /** The word that opens a scheduled model-request retry notice. */
 const RETRYING_WORD = 'retrying'
 
+/** The working spinner's label while a compaction condenses history. */
+export const COMPACTING_ACTIVITY = 'compacting'
+
 /**
  * The spinner frame drawn at one instant.
  * @param now - the current time in milliseconds.
@@ -141,7 +146,7 @@ export function spinnerKindForTool(name: string): SpinnerKind {
 
 /**
  * The animation the working spinner draws for its activity word.
- * @param activity - `thinking`, `writing`, `calling` / `calling <name>`, or a retry notice.
+ * @param activity - `thinking`, `writing`, `calling` / `calling <name>`, `compacting`, or a retry notice.
  * @returns the activity's animation; a `calling <name>` label mirrors the
  * named tool's card, and anything unrecognized draws `thinking` like the
  * loader's initial word.
@@ -152,6 +157,7 @@ export function spinnerKindForActivity(activity: string): SpinnerKind {
   if (activity === 'calling') return 'calling'
   if (activity.startsWith(CALLING_WORD)) return spinnerKindForTool(activity.slice(CALLING_WORD.length))
   if (activity.startsWith(RETRYING_WORD)) return 'waiting'
+  if (activity === COMPACTING_ACTIVITY) return 'compacting'
   return 'thinking'
 }
 

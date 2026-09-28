@@ -241,6 +241,46 @@ describe('tui profile keyless smoke', () => {
     }
   }, TEST_TIMEOUT_MS)
 
+  it('compacts on /compact, accounts for what it compressed and preserved, and redraws that account on resume', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-compact-'))
+    try {
+      const run = await runScript(cwd, [], [
+        { marker: 'cli-mock/cli-mock', keys: `first ask${ENTER}` },
+        { marker: 'CLI tool round trip complete', keys: `second ask${ENTER}` },
+        { marker: '❯ second ask', keys: '' },
+        { marker: 'CLI tool round trip complete', keys: `/compact${ENTER}` },
+        // The summary is folded under the account, so its first row is the last one drawn.
+        { marker: 'CLI_COMPACTION_SUMMARY', keys: '' },
+      ])
+      expect(run.exitCode, `stderr:\n${run.stderr}\nstdout:\n${run.stdout}`).toBe(0)
+      const at = run.stdout.indexOf('context compacted by /compact')
+      expect(at, run.stdout).toBeGreaterThan(-1)
+      const block = run.stdout.slice(at)
+      // The token meter prices both sides of the replacement.
+      expect(block).toMatch(/context compacted by \/compact · ~[\d.]+k? → ~[\d.]+k? tokens/u)
+      expect(block).toMatch(/compressed\s+\d+ items from turns 1–2/u)
+      expect(block).toContain('❯ first ask')
+      expect(block).toContain('❯ second ask')
+      expect(block).toMatch(/preserved\s+system prompt\s+turn 2 · 1 reply/u)
+      expect(block).toContain('summary · cli-mock')
+      // The checkpoint's framing and the command's own result text are not drawn beside the block.
+      expect(run.stdout).not.toContain('compact-checkpoint')
+      expect(run.stdout).not.toContain('Compacted ')
+      const saved = /--resume (session-[\w-]+)/u.exec(run.stderr)
+      expect(saved, run.stderr).not.toBeNull()
+      const sessionId = saved![1]!
+
+      const resumed = await runScript(cwd, ['--resume', sessionId], [
+        { marker: 'CLI_COMPACTION_SUMMARY', keys: '' },
+      ])
+      expect(resumed.exitCode, `stderr:\n${resumed.stderr}\nstdout:\n${resumed.stdout}`).toBe(0)
+      expect(resumed.stdout).toMatch(/context compacted by \/compact · ~[\d.]+k? → ~[\d.]+k? tokens/u)
+      expect(resumed.stdout).toContain('turn 2 · 1 reply')
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  }, TEST_TIMEOUT_MS)
+
   it('runs the shell call of a read-only /btw side agent beside the session and leaves the session log alone', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-btw-'))
     try {

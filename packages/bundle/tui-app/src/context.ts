@@ -2,18 +2,23 @@
  * Project logged system prompts and injected user-role messages into the
  * compact titles and navigable sections the terminal transcript walks.
  *
- * Compaction replacements, tool results, and the user's own prompts are not
- * context: those have their own blocks. An empty system-prompt rendering logs
- * that no prompt is in force and is omitted here.
+ * Compaction checkpoints, tool results, and the user's own prompts are not
+ * context: those have their own blocks, a checkpoint the compaction block
+ * `./compaction.ts` accounts for. An empty system-prompt rendering logs that
+ * no prompt is in force and is omitted here.
  * @module @deepseek-ai/dsh-tui-app/context
  */
 
+import type { CompactionCheckpointSource } from '@deepseek-ai/dsh-compaction/checkpoint'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SectionKind, SectionPart } from './navigation.ts'
 import { contentText } from './transcript.ts'
 
 /** Producer-declared forms this surface presents structurally. */
 const KNOWN_FORMS = ['instructions', 'catalog', 'snapshot', 'notice', 'relay', 'recall'] as const
+
+/** The source kind every compaction backend stamps on its replacement checkpoint. */
+const COMPACT_CHECKPOINT_KIND: CompactionCheckpointSource['kind'] = 'compact-checkpoint'
 
 /** One of {@link KNOWN_FORMS}. */
 type KnownForm = (typeof KNOWN_FORMS)[number]
@@ -47,17 +52,53 @@ export function systemPromptView(text: string, update: boolean): ContextProjecti
  * @returns the section, or undefined when this message is not injected context.
  */
 export function injectedContextView(source: unknown, content: readonly ContentBlock[]): ContextProjection | undefined {
+  const context = contextSource(source)
+  if (context === undefined) return undefined
+  const { record, form } = context
+  return {
+    title: contextTitle(context),
+    parts: form === 'snapshot' ? snapshotParts(record, content) : [{ kind: partKind(form), rows: rowsOf(content) }],
+  }
+}
+
+/**
+ * The title {@link injectedContextView} gives one injected message, without
+ * projecting its rows.
+ * @param source - the message's durable source.
+ * @returns the title, or undefined when this message is not injected context.
+ */
+export function injectedContextTitle(source: unknown): string | undefined {
+  const context = contextSource(source)
+  return context === undefined ? undefined : contextTitle(context)
+}
+
+/** A durable source that injects context, with the fields its title and parts read. */
+interface ContextSource {
+  readonly record: Record<string, unknown>
+  readonly kind: string
+  readonly form: KnownForm | undefined
+}
+
+/**
+ * Narrow a message source to injected context.
+ * @param source - the message's durable source.
+ * @returns the record, kind, and known form, or undefined for a prompt, a tool result, a model source, a checkpoint, or no source.
+ */
+function contextSource(source: unknown): ContextSource | undefined {
   const record = recordOf(source)
   const kind = stringField(record, 'kind')
   if (record === undefined || kind === undefined) return undefined
-  if (kind === 'user' || kind === 'tool' || kind === 'model') return undefined
-  if (kind === 'plugin' && stringField(record, 'plugin') === 'compact') return undefined
-  const form = knownForm(stringField(record, 'form'))
-  const producer = producerOf(record, kind)
-  return {
-    title: titled(form, producer, stringField(record, 'summary')),
-    parts: form === 'snapshot' ? snapshotParts(record, content) : [{ kind: partKind(form), rows: rowsOf(content) }],
-  }
+  if (kind === 'user' || kind === 'tool' || kind === 'model' || kind === COMPACT_CHECKPOINT_KIND) return undefined
+  return { record, kind, form: knownForm(stringField(record, 'form')) }
+}
+
+/**
+ * Title one injected context by form, producer, and notice summary.
+ * @param context - the narrowed source.
+ * @returns the title.
+ */
+function contextTitle({ record, kind, form }: ContextSource): string {
+  return titled(form, producerOf(record, kind), stringField(record, 'summary'))
 }
 
 /**

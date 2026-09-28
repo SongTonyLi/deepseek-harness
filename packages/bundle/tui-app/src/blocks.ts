@@ -399,6 +399,14 @@ export class NoticeBlock implements Component {
   }
 }
 
+/** How one {@link ContextBlock} departs from a routine injection's drawing. */
+export interface ContextBlockOptions {
+  /** Draw the glyph and title in the accent color rather than dim, for context the user should notice. */
+  readonly accent?: boolean
+  /** How many leading parts the fold never takes; the preview rows count from the first part after them. */
+  readonly pinnedParts?: number
+}
+
 /**
  * A system prompt or injected context under a dim title, folded to
  * `contextPreviewLines` body rows until it is opened.
@@ -409,6 +417,8 @@ export class NoticeBlock implements Component {
  * complete, so the walk, the inspector, and any reader see every row whatever
  * the transcript draws. Snapshot contributions keep their names above their
  * own rows, and the Left/Right walk still addresses one contribution at a time.
+ * A compaction checkpoint draws as one of these with an accent title and its
+ * compressed and preserved account pinned above the folded summary.
  */
 export class ContextBlock implements Component, ContextSection, Foldable {
   readonly navigable = true as const
@@ -427,12 +437,14 @@ export class ContextBlock implements Component, ContextSection, Foldable {
    * @param title - form and producer, a notice summary, or `system prompt`.
    * @param sectionParts - the model-facing rows, one part per snapshot contribution.
    * @param turn - the turn the message was appended in.
+   * @param options - the accent title and the pinned leading parts; a routine injection passes none.
    */
   constructor(
     private readonly theme: BlockTheme,
     readonly title: string,
     private readonly sectionParts: readonly SectionPart[],
     readonly turn: number,
+    private readonly options: ContextBlockOptions = {},
   ) {}
 
   /**
@@ -508,9 +520,10 @@ export class ContextBlock implements Component, ContextSection, Foldable {
     // same width: pi-tui refuses to write a line wider than the terminal.
     const dimRows = (text: string): string[] => wrapTextWithAnsi(text, textWidth).map(line => indent(palette.dim(line)))
     const title = wrapTextWithAnsi(this.title, textWidth)
+    const tone = this.options.accent === true ? palette.accent : palette.dim
     // The title says what was injected, so it is never folded away; the fold
     // takes only the body, and the ranges address it on its own.
-    const head = ['', ...title.map((line, index) => `${palette.dim(index === 0 ? CONTEXT_GLYPH : ' ')} ${palette.dim(line)}`)]
+    const head = ['', ...title.map((line, index) => `${tone(index === 0 ? CONTEXT_GLYPH : ' ')} ${tone(line)}`)]
     const body: string[] = []
     const ranges: { from: number; to: number }[] = []
     for (const part of this.sectionParts) {
@@ -524,7 +537,9 @@ export class ContextBlock implements Component, ContextSection, Foldable {
       }
       ranges.push({ from, to: body.length })
     }
-    const kept = this.theme.contextPreviewLines
+    // Every row of the pinned parts is kept; the preview counts from the part after them.
+    const pinned = ranges[(this.options.pinnedParts ?? 0) - 1]?.to ?? 0
+    const kept = pinned + this.theme.contextPreviewLines
     const cut = !this.expanded && body.length > kept
     const shown = cut ? [...body.slice(0, kept), ...dimRows(foldMarker(body.length - kept, marked ? 'marked' : 'transcript'))] : body
     return { lines: [...head, ...shown], head: head.length, ranges, cut, kept, body: body.length }

@@ -2,13 +2,12 @@
  * Persistent session status for the terminal: one read of the session
  * projections becomes plain facts, and pure formatters turn those facts into
  * footer parts, the report sections `/status` and the status bar's segment
- * details share, and the one-line notices for compaction and model-request
- * retries. Nothing here touches the terminal, the palette, or the agent.
+ * details share, and the one-line notice for model-request retries. Nothing
+ * here touches the terminal, the palette, or the agent.
  * @module @deepseek-ai/dsh-tui-app/status
  */
 
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { SessionEventMap } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import type { GoalPhase } from '@deepseek-ai/dsh-goal/types'
 import type { LlmRetryEventData } from '@deepseek-ai/dsh-llm-retry/types'
@@ -17,8 +16,6 @@ import type { PlanProjection } from '@deepseek-ai/dsh-plan-mode/types'
 import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/types'
 import type { ContextBreakdownProjection, TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
-// Type-only: merges the `compaction/summary` event into `SessionEventMap`.
-import type {} from '@deepseek-ai/dsh-compaction/types'
 import { TODO_GLYPH } from './todos.ts'
 import { formatTokens } from './transcript.ts'
 
@@ -318,16 +315,6 @@ export function formatDuration(ms: number): string {
   if (seconds < 60) return `${String(Math.round(seconds * 10) / 10)}s`
   const whole = Math.round(seconds)
   return `${String(Math.floor(whole / 60))}m${String(whole % 60)}s`
-}
-
-/**
- * The notice a completed compaction earns.
- * @param data - the `compaction/summary` event data.
- * @returns e.g. `compacted 12 items (~3.4k tokens)`.
- */
-export function compactionNotice(data: Pick<SessionEventMap['compaction/summary'], 'shadowedSeqs' | 'shadowedTokenCount'>): string {
-  const count = data.shadowedSeqs.length
-  return `compacted ${String(count)} ${plural(count, 'item')} (~${formatTokens(data.shadowedTokenCount)} tokens)`
 }
 
 /**
