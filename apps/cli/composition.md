@@ -3,7 +3,7 @@
 
 # DSH Base Composition
 
-The dsh-base bundle patch shared by the web, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.
+The dsh-base bundle patch shared by the web, tui, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.
 
 ```mermaid
 flowchart LR
@@ -76,6 +76,8 @@ flowchart LR
   cfg --> plugin_dsh_base_storage_domain
   plugin_dsh_base_session_projection_cache["session-projection-cache<br/>@deepseek-ai/dsh-session-projection-cache"]
   cfg --> plugin_dsh_base_session_projection_cache
+  plugin_dsh_base_otel["otel<br/>@deepseek-ai/dsh-otel"]
+  cfg --> plugin_dsh_base_otel
   plugin_dsh_base_session_telemetry_otel["session-telemetry-otel<br/>@deepseek-ai/dsh-session-telemetry-otel"]
   cfg --> plugin_dsh_base_session_telemetry_otel
   plugin_dsh_base_subprocess["subprocess<br/>@deepseek-ai/dsh-subprocess-local"]
@@ -234,6 +236,7 @@ flowchart LR
 | `storage-json` | `@deepseek-ai/dsh-storage-json` |
 | `storage-domain` | `@deepseek-ai/dsh-storage-domain` |
 | `session-projection-cache` | `@deepseek-ai/dsh-session-projection-cache` |
+| `otel` | `@deepseek-ai/dsh-otel` |
 | `session-telemetry-otel` | `@deepseek-ai/dsh-session-telemetry-otel` |
 | `subprocess` | `@deepseek-ai/dsh-subprocess-local` |
 | `sandbox` | `@deepseek-ai/dsh-sandbox-local` |

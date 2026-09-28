@@ -21,6 +21,7 @@ import type { ConnectFrame } from '../src/connect.ts'
 import { CursorRunRegistry } from '../src/park.ts'
 import { streamCursorRun } from '../src/stream.ts'
 import type { OpenCursorStream } from '../src/stream.ts'
+import { collectStream } from './collect-stream.ts'
 
 const TIMING = { streamIdleTimeoutMs: 5_000, parkedRunTimeoutMs: 60_000, toolCallSettleMs: 50 }
 
@@ -144,7 +145,7 @@ async function parkedFirstStep(ids: readonly string[], options: GenerateOptions 
 }
 
 async function drain(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
-  return await Array.fromAsync(stream)
+  return collectStream(stream)
 }
 
 function mcpResults(written: readonly AgentClientMessage[]) {

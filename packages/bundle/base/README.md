@@ -25,7 +25,7 @@ Every base-backed `dsh --profile` surface runs on `dsh-base`, so those surfaces 
 <a id="use-this-package"></a>
 ## Use this package
 
-You get the dsh core automatically: the shipped `web`, `headless`, `sdk`, and `acp` profiles already include it, and a custom profile names it as its first bundle. After that, everything works with no further configuration.
+You get the dsh core automatically: the shipped `web`, `tui`, `headless`, `sdk`, and `acp` profiles already include it, and a custom profile names it as its first bundle. After that, everything works with no further configuration.
 
 ### A minimal custom profile
 
@@ -43,7 +43,7 @@ To build a profile on the shared core, create a profile with a `package.json` th
 }
 ```
 
-Run `dsh --profile my-profile "your task"` and you get a working agent with model access, tools, persistence, and the default permission policy. The shipped `web`, `headless`, `sdk`, and `acp` profiles are created for you on first use. To add more bundles, run `dsh plugin --profile <name> add <package>`; in-box bundles resolve from the dsh installation. The profile contract is documented in the [app-boot profile section](../../boot/app-boot/README.md).
+Run `dsh --profile my-profile "your task"` and you get a working agent with model access, tools, persistence, and the default permission policy. The shipped `web`, `tui`, `headless`, `sdk`, and `acp` profiles are created for you on first use. To add more bundles, run `dsh plugin --profile <name> add <package>`; in-box bundles resolve from the dsh installation. The profile contract is documented in the [app-boot profile section](../../boot/app-boot/README.md).
 
 ### What you get
 

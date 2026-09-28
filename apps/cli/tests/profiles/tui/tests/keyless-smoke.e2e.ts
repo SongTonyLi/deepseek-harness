@@ -11,7 +11,7 @@
  * symbol misses the tools instance; the shipped profile is a built artifact.
  */
 
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -91,6 +91,7 @@ async function runScript(cwd: string, args: readonly string[], steps: readonly S
       // shell command unconfined so the round trip completes on hosts without
       // a usable sandbox backend.
       DSH_PERMISSION_MODE: 'danger-full-access',
+      DSH_CLI_MOCK_REVIEW_TRACE: join(cwd, '.auto-review-requests'),
       NO_COLOR: '1',
       COLUMNS: '120',
       LINES: '40',
@@ -236,6 +237,23 @@ describe('tui profile keyless smoke', () => {
       expect(explicitResume.stdout).not.toContain('{{model}}')
       expect(explicitResume.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(explicitResume.stderr).toContain(`--resume ${sessionId}`)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  }, TEST_TIMEOUT_MS)
+
+  it('selects Auto review in the shipped TUI profile and reviews the tool before execution', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-auto-review-'))
+    try {
+      const run = await runScript(cwd, [], [
+        { marker: 'cli-mock/cli-mock', keys: `/permission auto${ENTER}` },
+        { marker: '/permission: preset auto', keys: `auto-approved tool${ENTER}` },
+        { marker: 'CLI tool round trip complete: CLI_TOOL_ROUND_TRIP', keys: '' },
+      ])
+      expect(run.exitCode, `stderr:\n${run.stderr}\nstdout:\n${run.stdout}`).toBe(0)
+      expect(run.stdout).toContain('❯ auto-approved tool')
+      expect(run.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
+      expect(await readFile(join(cwd, '.auto-review-requests'), 'utf8')).toBe('reviewed\n')
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }

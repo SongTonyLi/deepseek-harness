@@ -25,7 +25,7 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用本包
 
-你会自动获得 dsh 核心：随发行版交付的 `web`、`headless`、`sdk` 与 `acp` profile 已包含它，自定义 profile 则把它列为第一个组合包。之后一切无需任何额外配置即可工作。
+你会自动获得 dsh 核心：随发行版交付的 `web`、`tui`、`headless`、`sdk` 与 `acp` profile 已包含它，自定义 profile 则把它列为第一个组合包。之后一切无需任何额外配置即可工作。
 
 ### 最小自定义 profile
 
@@ -43,7 +43,7 @@ kind: "package-bundle"
 }
 ```
 
-运行 `dsh --profile my-profile "your task"`，你就得到一个可用的 agent（智能体），带模型访问、工具、持久化与默认权限策略。随发行版交付的 `web`、`headless`、`sdk` 与 `acp` profile 会在首次使用时为你创建。要添加更多组合包，运行 `dsh plugin --profile <name> add <package>`；内置组合包从 dsh 安装目录解析。profile 约定见 [app-boot 的 profile 章节](../../boot/app-boot/README.zh.md)。
+运行 `dsh --profile my-profile "your task"`，你就得到一个可用的 agent（智能体），带模型访问、工具、持久化与默认权限策略。随发行版交付的 `web`、`tui`、`headless`、`sdk` 与 `acp` profile 会在首次使用时为你创建。要添加更多组合包，运行 `dsh plugin --profile <name> add <package>`；内置组合包从 dsh 安装目录解析。profile 约定见 [app-boot 的 profile 章节](../../boot/app-boot/README.zh.md)。
 
 ### 你得到什么
 

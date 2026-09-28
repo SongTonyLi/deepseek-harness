@@ -63,6 +63,7 @@ import {
 } from '../src/native/agent_pb.ts'
 import type { AgentClientMessage, ExecServerMessage, ExecuteHookRequest } from '../src/native/agent_pb.ts'
 import { createOpenCursorStream, streamCursorRun } from '../src/stream.ts'
+import { collectStream } from './collect-stream.ts'
 import type { OpenCursorStream } from '../src/stream.ts'
 import { buildCursorRun } from '../src/request.ts'
 import { frameConnectMessage } from '../src/connect.ts'
@@ -75,7 +76,7 @@ afterEach(() => {
 })
 
 function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
-  return Array.fromAsync(stream)
+  return collectStream(stream)
 }
 
 function serverMessage(message: Parameters<typeof create<typeof AgentServerMessageSchema>>[1]) {

@@ -24,20 +24,20 @@ it('boots default Web without experimental modules, scheduling, time context, or
     expect(roster.entries).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: '@deepseek-ai/dsh-host-webserver', state: FiberState.ACTIVE }),
       expect.objectContaining({ name: '@deepseek-ai/dsh-client-modules', state: FiberState.ACTIVE }),
+      expect.objectContaining({ name: '@deepseek-ai/dsh-api-authorization-controller', state: FiberState.ACTIVE }),
     ]))
     expect(roster.entries.some(entry => entry.name.endsWith('/runtime-roster-observer.js') && entry.state === FiberState.ACTIVE)).toBe(true)
     expect(roster.plugins.length).toBeGreaterThan(roster.entries.length)
     expect(roster.modules.some(url => modulePackage(url) === '@deepseek-ai/dsh')).toBe(true)
     expect(roster.client.entries.length).toBeGreaterThan(0)
-    for (const name of [
-      '@deepseek-ai/dsh-client-ui-sidebar-browser',
-      '@deepseek-ai/dsh-time-context',
-      '@deepseek-ai/dsh-schedule',
-      '@deepseek-ai/dsh-client-ui-schedule',
-    ]) {
-      const entry = roster.entries.find(entry => entry.name === name)
-      expect(entry, name).toBeDefined()
-      expect(entry!.state, name).toBeUndefined()
+    expect(delivered.entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-settings-signin')).toBe(true)
+    const browser = roster.entries.find(entry => entry.name === '@deepseek-ai/dsh-client-ui-sidebar-browser')
+    expect(browser).toBeDefined()
+    expect(browser!.state).toBeUndefined()
+    expect(delivered.entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-sidebar-browser')).toBe(false)
+    // The optional Schedule bundle inserts these rows; the shipped composition carries none of them.
+    for (const name of ['@deepseek-ai/dsh-time-context', '@deepseek-ai/dsh-schedule', '@deepseek-ai/dsh-client-ui-schedule']) {
+      expect(roster.entries.some(entry => entry.name === name), name).toBe(false)
       expect(delivered.entries.some(entry => entry.id === name), name).toBe(false)
     }
     expect(experimentalRuntimeReferences(roster)).toEqual([])

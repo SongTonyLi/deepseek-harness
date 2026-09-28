@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { CursorAdapter } from '../src/adapter.ts'
+import { collectStream } from './collect-stream.ts'
 import { CursorCatalog } from '../src/catalog.ts'
 import { resolveAdapterOptions } from '../src/config.ts'
 import { create, toBinary } from '@bufbuild/protobuf'
@@ -35,12 +36,12 @@ describe('CursorAdapter', () => {
       id: 'mystery',
       name: 'mystery',
     })
-    await expect(Array.fromAsync(adapter.stream({
+    await expect(collectStream(adapter.stream({
       provider: 'other',
       model: 'composer-2',
       messages: [],
     }))).rejects.toMatchObject({ code: 'NO_ADAPTER' })
-    await expect(Array.fromAsync(adapter.stream({
+    await expect(collectStream(adapter.stream({
       provider: 'cursor',
       model: 'composer-2',
       messages: [],
@@ -84,7 +85,7 @@ describe('CursorAdapter', () => {
         })(),
       }),
     })
-    const chunks = await Array.fromAsync(adapter.stream({
+    const chunks = await collectStream(adapter.stream({
       provider: 'cursor',
       model: 'composer-2',
       messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
@@ -102,7 +103,7 @@ describe('CursorAdapter', () => {
         throw new Error('offline')
       },
     })
-    await expect(Array.fromAsync(adapter.stream({
+    await expect(collectStream(adapter.stream({
       provider: 'cursor',
       model: 'composer-2',
       messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],

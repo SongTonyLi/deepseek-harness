@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   ToolCallId,
@@ -40,6 +41,16 @@ class CliMockAdapter extends LlmAdapter {
   async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (process.env.DSH_CLI_MOCK_FAILURE === '1') {
       yield { type: 'finish', reason: { kind: 'error', failure: { code: 'SERVER', message: 'CLI mock provider failed' } } }
+      return
+    }
+    if (options.system?.startsWith('REVIEW_POLICY\n')) {
+      const trace = process.env.DSH_CLI_MOCK_REVIEW_TRACE
+      if (trace !== undefined) appendFileSync(trace, 'reviewed\n', { mode: 0o600 })
+      const verdict = '{"risk":"low","decision":"allow"}'
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text: verdict }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: verdict } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
     if (options.purpose === 'compaction') {

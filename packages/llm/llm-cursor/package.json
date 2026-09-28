@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-llm-cursor",
   "description": "Cursor subscription adapter with PKCE sign-in and Connect/protobuf HTTP/2 streaming",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.1",
   "publishConfig": {
     "access": "public"
   },
