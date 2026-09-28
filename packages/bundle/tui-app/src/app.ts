@@ -46,8 +46,9 @@ declare module '@deepseek-ai/dsh-llm' {
     'tui-app': { kind: 'tui-app'; form: 'notice'; summary: string }
   }
 }
+import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
-import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
@@ -67,6 +68,7 @@ import type {} from '@deepseek-ai/dsh-skill'
 // Carries the subagent lifecycle events, the descendant listing, and the
 // `subagentTiming` projection key; `tokenUsage` rides the token meter.
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
+import type {} from '@deepseek-ai/dsh-token-meter'
 import type {} from '@deepseek-ai/dsh-token-meter/client'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-approval'
@@ -107,7 +109,7 @@ import {
   type SubagentChoice,
 } from './catalog.ts'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
-import { SPINNER_MS, loaderIndicator, shimmer, spinnerFrame, spinnerKindForActivity, spinnerKindForTool, type SpinnerKind } from './spinner.ts'
+import { COMPACTING_ACTIVITY, SPINNER_MS, loaderIndicator, shimmer, spinnerFrame, spinnerKindForActivity, spinnerKindForTool, type SpinnerKind } from './spinner.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
@@ -174,7 +176,15 @@ import { ReaderPane, type ReaderExit } from './reader-screen.ts'
 import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
 import { GuardedMainScreen, pageContentWidth, repaintFloor } from './screen.ts'
 import { describeSession, listSessionChoices, type SessionChoice } from './sessions.ts'
-import { compactionNotice, readStatusFacts, retryMessage, statusReport } from './status.ts'
+import { readStatusFacts, retryMessage, statusReport } from './status.ts'
+import {
+  COMPACTION_ACCOUNT_PARTS,
+  CompactionLedger,
+  compactionFailure,
+  compactionParts,
+  compactionTitle,
+  type CompactionOutcome,
+} from './compaction.ts'
 import {
   renderSubagentPanel,
   subagentPanelView,
@@ -218,6 +228,15 @@ const QUIT_DOUBLE_PRESS_MS = 600
 
 /** What input reports while the host is opening another session. */
 const SESSION_SWITCH_WAIT = 'wait for the session switch to finish'
+
+/** What a session switch reports while a dispatched `/compact` runs. */
+const COMPACTION_SWITCH_WAIT = 'wait for the compaction to finish (Esc cancels it) before switching sessions'
+
+/** The working spinner's message after its `compacting` word while a dispatched `/compact` runs. */
+const COMPACTION_LOADER_DETAIL = 'context · Esc cancels'
+
+/** What a prompt submitted while a dispatched `/compact` runs reports. */
+const COMPACTION_QUEUE_NOTICE = 'queued: the prompt starts once compaction finishes'
 
 /** The one extra key the model picker answers, stated above its rows. */
 const MODEL_PICKER_HINT = 'Ctrl+S saves the highlighted model as the default for the next launch'
@@ -809,6 +828,18 @@ export class TuiApp {
   private stopArmedUntil = 0
   /** Abort of the in-flight user `!` command, when one is running. */
   private shellAbort: AbortController | undefined
+  /** Abort of the `/compact` this terminal dispatched and still waits on; `Esc` cancels it. */
+  private compacting: AbortController | undefined
+  /**
+   * The transaction the last dispatched `/compact` opened. Its command result
+   * reports a failure, so the log's closing marker for it prints nothing more,
+   * including one that lands after a cancelled command stopped waiting.
+   */
+  private dispatchedCompaction: CompactionId | undefined
+  /** The `compaction/summary` seq of the last block drawn, which a `/compact` success result names. */
+  private drawnCompaction: SessionSeq | undefined
+  /** Mirrors the bound session's surface to account for each compaction that lands on it. */
+  private readonly compactions: CompactionLedger
   /**
    * How many of the viewport's own first lines the renderer can no longer
    * repaint, from the last frame the guard settled. The transient line
@@ -897,6 +928,7 @@ export class TuiApp {
     this.header = new Text('', 0, 0)
     this.inspector = new InspectorPane(() => this.inspectorView(), { palette, previewLines: deps.focusPreviewLines })
     this.loader = new Loader(this.tui, palette.accent, message => this.paintLoaderMessage(message), 'thinking')
+    this.compactions = new CompactionLedger(message => deps.ctx.get('tokenMeter')?.estimateMessage(message))
     // pi-tui starts the spinner interval in the constructor; it runs only while mounted.
     this.loader.stop()
     this.editor = new BarCursorEditor(this.tui, editorTheme(palette), { paddingX: 1 })
@@ -1061,6 +1093,7 @@ export class TuiApp {
   stop(): void {
     if (this.stopped) return
     this.dropUserShell()
+    this.dropCompaction()
     this.restoreQueueDraft()
     this.stopped = true
     this.updateTicker()
@@ -1095,6 +1128,7 @@ export class TuiApp {
   /** Draw `next` as the terminal's session: clear the transcript and replay its history. */
   private bind(next: BoundSession): void {
     this.dropUserShell()
+    this.dropCompaction()
     if (this.queueDraft !== undefined) {
       this.restoreQueueDraft()
       this.editor.setText('')
@@ -1141,6 +1175,9 @@ export class TuiApp {
     this.panelSelection = undefined
     this.listingFailure = undefined
     this.subagentsStale = false
+    this.compactions.clear()
+    this.dispatchedCompaction = undefined
+    this.drawnCompaction = undefined
     this.setWorking(next.agent.status === 'running')
     // Replayed history describes what the session already did, so its cards
     // are drawn settled however long ago they were logged.
@@ -1166,6 +1203,10 @@ export class TuiApp {
   private async switchSession(open: () => Promise<BoundSession>, verb: string): Promise<void> {
     if ([this.bound, ...this.parents].some(bound => bound.agent.status === 'running')) {
       this.notice('stop the running turn (Esc twice) before switching sessions', 'error')
+      return
+    }
+    if (this.compacting !== undefined) {
+      this.notice(COMPACTION_SWITCH_WAIT, 'error')
       return
     }
     this.cancelPickers()
@@ -2450,8 +2491,10 @@ export class TuiApp {
    * From a docked region it hands the keyboard back to the editor and starts
    * the handoff window, so a second press landing in the editor does nothing
    * at all: leaving a region, a page, or a picker can never stop a running
-   * turn. In the editor it arms the stop and says so, and only a second press
-   * while that line is still on screen stops the turn.
+   * turn. In the editor it cancels a running `!` command or `/compact` at
+   * once, which changes nothing in the conversation; otherwise it arms the
+   * stop and says so, and only a second press while that line is still on
+   * screen stops the turn.
    * @returns the consume marker, or undefined while the editor's open
    * autocomplete answers the key itself.
    */
@@ -2466,6 +2509,10 @@ export class TuiApp {
     if (this.editor.isShowingAutocomplete()) return undefined
     if (this.shellAbort !== undefined) {
       this.shellAbort.abort()
+      return { consume: true }
+    }
+    if (this.compacting !== undefined) {
+      this.compacting.abort()
       return { consume: true }
     }
     if (this.agent.status !== 'running') {
@@ -3301,7 +3348,13 @@ export class TuiApp {
       content: [...retained, ...attachments.map(attachment => attachment.block), { type: 'text', text }],
       source: terminalPromptSource(draft),
     })
-    if (agent.status !== 'running') {
+    if (this.compacting !== undefined) {
+      // The Agent reads as idle during compaction but holds the wake until it
+      // settles, so the prompt waits in the follow-ups list and is drawn when
+      // its turn claims it.
+      agent.followup(message)
+      this.notice(COMPACTION_QUEUE_NOTICE)
+    } else if (agent.status !== 'running') {
       // An idle Agent takes the prompt at once, so it is drawn here and the
       // durable `user/message` that follows is not drawn a second time.
       this.submittedIds.add(message.id)
@@ -3434,6 +3487,9 @@ export class TuiApp {
       case 'plugins':
         await this.plugins(argument)
         return
+      case 'compact':
+        await this.compact(line)
+        return
       default:
         await this.runSharedCommand(line, name)
     }
@@ -3452,25 +3508,91 @@ export class TuiApp {
     this.tui.requestRender()
   }
 
-  private async runSharedCommand(line: string, name: string): Promise<void> {
+  /**
+   * Run one command of the shared registry and print its result into the
+   * session it ran on. A success that names the `compaction/summary` this
+   * terminal just drew as a block prints nothing more; a run whose signal
+   * aborted reports the cancel; a result that settles after a session switch
+   * or quit prints nothing.
+   * @param line - the complete slash-command line.
+   * @param name - the lowercase command name, for the notices.
+   * @param signal - cancels the run; a run nothing cancels passes none.
+   */
+  private async runSharedCommand(line: string, name: string, signal = new AbortController().signal): Promise<void> {
     const registry = this.deps.ctx.get('commands')
     if (registry === undefined) {
       this.notice(`unknown command /${name}`, 'error')
       return
     }
+    const bound = this.bound
     try {
-      const execution = await registry.execute(this.agent, line, [], new AbortController().signal)
+      const execution = await registry.execute(this.agent, line, [], signal)
+      if (this.stopped || this.bound !== bound) return
       if (execution === undefined) {
         this.notice(`unknown command /${name}`, 'error')
         return
       }
       const result = execution.result
       if (result.kind === 'error') this.notice(`/${name}: ${result.text}`, 'error')
-      else this.notice(result.text === undefined ? `/${name} done` : `/${name}: ${result.text}`, 'success')
+      else if (result.sourceEventSeq === undefined || result.sourceEventSeq !== this.drawnCompaction) {
+        this.notice(result.text === undefined ? `/${name} done` : `/${name}: ${result.text}`, 'success')
+      }
     } catch (error: unknown) {
-      this.notice(`/${name} failed: ${describeFailure(error)}`, 'error')
+      if (this.stopped || this.bound !== bound) return
+      if (signal.aborted) this.notice(`/${name} cancelled`)
+      else this.notice(`/${name} failed: ${describeFailure(error)}`, 'error')
     }
     this.refreshFooter()
+  }
+
+  /**
+   * Run `/compact` through the shared registry under a `compacting` spinner
+   * that `Esc` cancels. The summary it lands is drawn from the log as its own
+   * block, which says what was compressed and what was preserved; a prompt
+   * submitted meanwhile waits in the follow-ups list until it finishes.
+   * @param line - the complete `/compact` line, arguments included.
+   */
+  private async compact(line: string): Promise<void> {
+    if (this.compacting !== undefined) {
+      this.notice('a compaction is already running · Esc cancels it', 'error')
+      return
+    }
+    if (this.agent.status === 'running') {
+      this.notice('/compact runs between turns: let this turn finish, or stop it (Esc twice)', 'error')
+      return
+    }
+    const controller = new AbortController()
+    this.compacting = controller
+    this.setWorking(true)
+    this.setLoaderActivity(COMPACTING_ACTIVITY)
+    try {
+      await this.runSharedCommand(line, 'compact', controller.signal)
+    } finally {
+      this.settleCompaction(controller)
+    }
+  }
+
+  /**
+   * Take the `compacting` spinner down once the `/compact` that `controller`
+   * belongs to settles, unless bind or quit already dropped it.
+   * @param controller - the run's abort controller.
+   */
+  private settleCompaction(controller: AbortController): void {
+    if (this.compacting !== controller) return
+    this.compacting = undefined
+    // A prompt queued meanwhile may already have started its turn.
+    this.setWorking(this.agent.status === 'running')
+    this.setLoaderActivity('thinking')
+  }
+
+  /**
+   * Detach and abort the dispatched `/compact`, if any: its late settle then
+   * finds another run, or none, and prints nothing into the next session.
+   */
+  private dropCompaction(): void {
+    const running = this.compacting
+    this.compacting = undefined
+    running?.abort()
   }
 
   private async chooseModel(argument: string): Promise<void> {
@@ -4531,6 +4653,8 @@ export class TuiApp {
     }
     // A logged event is drawn after the streamed text that preceded it.
     this.pacer?.flush()
+    const compaction = this.compactions.observe(event, this.turn)
+    if (compaction !== undefined) this.showCompaction(compaction)
     switch (event.type) {
       case 'turn/start':
         // The turn every later event of this turn belongs to, including the
@@ -4611,8 +4735,14 @@ export class TuiApp {
       case 'permission/preset':
         this.refreshFooter()
         break
-      case 'compaction/summary':
-        this.notice(compactionNotice(event.data))
+      case 'compaction/start':
+        if (event.data.turn === null) {
+          // Only the `/compact` this terminal waits on opens a standalone bracket here.
+          if (this.compacting !== undefined) this.dispatchedCompaction = event.data.compactionId
+        } else if (!this.replaying) {
+          // Automatic compaction runs inside the open turn, between two model calls.
+          this.setLoaderActivity(COMPACTING_ACTIVITY)
+        }
         break
       case 'workspace/changes': {
         const summary = this.deps.ctx.get('workspaceChanges')?.summary(session.id, event.seq)
@@ -4692,6 +4822,30 @@ export class TuiApp {
     const block = new ContextBlock(this.theme, title, parts, turn)
     block.setExpanded(this.toolsExpanded)
     this.chat.addChild(block)
+  }
+
+  /**
+   * Draw one closed compaction: a landed summary as an accent context block
+   * whose compressed and preserved account stays drawn above the folded
+   * summary, and a failed `/compact` as a notice unless the command that
+   * opened it reports the failure itself. A failed automatic attempt changes
+   * nothing and the turn outlives it, so it draws nothing, as in the browser.
+   * @param outcome - how the transaction closed.
+   */
+  private showCompaction(outcome: CompactionOutcome): void {
+    if (outcome.kind === 'failed') {
+      if (outcome.manual && outcome.compactionId !== this.dispatchedCompaction) this.notice(compactionFailure(outcome), 'error')
+      return
+    }
+    const { report } = outcome
+    const block = new ContextBlock(this.theme, compactionTitle(report), compactionParts(report), report.turn, {
+      accent: true,
+      pinnedParts: COMPACTION_ACCOUNT_PARTS,
+    })
+    block.setExpanded(this.toolsExpanded)
+    this.chat.addChild(block)
+    this.drawnCompaction = report.summarySeq
+    this.tui.requestRender()
   }
 
   /**
@@ -4817,9 +4971,12 @@ export class TuiApp {
   /**
    * Draw the spinner label plus the current call's ↑send ↓receive suffix,
    * and the key that moves a foreground call to the background while one runs.
+   * While a dispatched `/compact` runs, the label reads `compacting context`
+   * and names the key that cancels it.
    */
   private refreshLoader(): void {
     const parts = [this.loaderActivity]
+    if (this.compacting !== undefined) parts.push(COMPACTION_LOADER_DETAIL)
     const suffix = formatLiveUsage(this.liveUsage)
     if (suffix !== '') parts.push(suffix)
     if (this.backgrounder.running(this.agent).length > 0) parts.push(`· ${BACKGROUND_KEY_HINT}`)

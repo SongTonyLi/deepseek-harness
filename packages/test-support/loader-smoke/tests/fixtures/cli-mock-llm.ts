@@ -14,8 +14,13 @@ const SHELL_TOOL = process.platform === 'win32' ? 'pwsh' : 'bash'
 const SHELL_COMMAND = process.platform === 'win32'
   ? "Write-Output 'CLI_TOOL_ROUND_TRIP'"
   : 'printf CLI_TOOL_ROUND_TRIP'
+/** The whole summary a compaction request receives, short enough to shrink any shadowed span. */
+const COMPACTION_SUMMARY = '## Primary Request and Intent\n- CLI_COMPACTION_SUMMARY'
 
-/** Keyless headless-agent adapter: one production shell call followed by a final answer. */
+/**
+ * Keyless headless-agent adapter: one production shell call followed by a
+ * final answer, and a fixed text summary for a compaction request.
+ */
 class CliMockAdapter extends LlmAdapter {
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return {
@@ -35,6 +40,13 @@ class CliMockAdapter extends LlmAdapter {
   async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (process.env.DSH_CLI_MOCK_FAILURE === '1') {
       yield { type: 'finish', reason: { kind: 'error', failure: { code: 'SERVER', message: 'CLI mock provider failed' } } }
+      return
+    }
+    if (options.purpose === 'compaction') {
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text: COMPACTION_SUMMARY }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: COMPACTION_SUMMARY } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
     const last = options.messages.at(-1)

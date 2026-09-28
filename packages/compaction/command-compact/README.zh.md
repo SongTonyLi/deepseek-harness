@@ -62,7 +62,7 @@ kind: "package-reference"
   name: '@deepseek-ai/dsh-command-compact'
 ```
 
-随附 `dsh` 基础配置把它挂载在默认后端旁，Web 客户端提供命令适配器。未组合命令适配器的自动化接口只保留自动压缩。
+随附 `dsh` 基础配置把它挂载在默认后端旁，Web 客户端与[终端](../../bundle/tui-app/README.zh.md)提供命令适配器；二者都依据日志事件绘出已落地的压缩，而不依据该命令的结果文本。未组合命令适配器的自动化接口只保留自动压缩。
 
 ### 对话会发生什么
 

@@ -68,14 +68,8 @@ describe('status', () => {
     expect(test.terminal.text()).toContain('no session status yet')
   })
 
-  it('draws compaction and model-retry facts from the log', async () => {
+  it('draws model-retry facts from the log', async () => {
     const test = await bench({ running: true })
-    test.session.append('compaction/summary', {
-      shadowedSeqs: [1, 2, 3],
-      shadowedTokenCount: 3400,
-      summary: 'earlier work',
-      turn: 1,
-    } as never)
     test.session.append('llm/retry', {
       mode: 'normal',
       retry: 2,
@@ -86,7 +80,6 @@ describe('status', () => {
       step: 1,
     } as never)
     await test.settle()
-    expect(test.terminal.text()).toContain('compacted 3 items (~3.4k tokens)')
     expect(test.terminal.text()).toContain('retrying (2/5) in 4s · RATE_LIMIT: provider busy')
   })
 })

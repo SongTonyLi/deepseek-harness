@@ -220,7 +220,7 @@ export const KEY_LINES: Record<FocusRegion, readonly string[]> = {
     'Ctrl+O folds every tool card and context row',
     'Ctrl+T todos · Ctrl+P parent session · Ctrl+L redraw · ? keys',
     'Ctrl+B moves running tool calls to the background · /jobs lists them',
-    'Esc arms the stop · Esc again stops the turn',
+    'Esc arms the stop · Esc again stops the turn · Esc cancels a running /compact',
     'Ctrl+C clears the input, twice quits · Ctrl+D quits an empty input',
   ],
   transcript: [

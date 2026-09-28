@@ -1,7 +1,7 @@
 /** Status facts read from the projection snapshot and their footer, report, and notice text. */
 
 import { describe, expect, it } from 'vitest'
-import { SessionSeq, type Session } from '@deepseek-ai/dsh-session'
+import type { Session } from '@deepseek-ai/dsh-session'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type { GoalId, GoalProjection } from '@deepseek-ai/dsh-goal/types'
 import type { LlmRetryEventData, RetryId } from '@deepseek-ai/dsh-llm-retry/types'
@@ -9,7 +9,6 @@ import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/type
 import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
 import {
   cacheHitPercent,
-  compactionNotice,
   footerStatus,
   formatDuration,
   readStatusFacts,
@@ -243,13 +242,6 @@ describe('formatDuration', () => {
 })
 
 describe('notices', () => {
-  it('describes a compaction by its shadowed items and price', () => {
-    expect(compactionNotice({ shadowedSeqs: [SessionSeq(3), SessionSeq(4)], shadowedTokenCount: 3400 }))
-      .toBe('compacted 2 items (~3.4k tokens)')
-    expect(compactionNotice({ shadowedSeqs: [SessionSeq(3)], shadowedTokenCount: 12 }))
-      .toBe('compacted 1 item (~12 tokens)')
-  })
-
   it('describes a retry with its attempt, wait, and failure', () => {
     const base = {
       retryId: 'r1' as RetryId,

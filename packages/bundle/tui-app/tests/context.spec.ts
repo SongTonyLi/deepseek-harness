@@ -1,7 +1,7 @@
 /** Project logged system prompts and injected context into transcript sections. */
 
 import { describe, expect, it } from 'vitest'
-import { injectedContextView, systemPromptView } from '../src/context.ts'
+import { injectedContextTitle, injectedContextView, systemPromptView } from '../src/context.ts'
 
 const text = (value: string) => [{ type: 'text' as const, text: value }]
 
@@ -23,12 +23,20 @@ describe('systemPromptView', () => {
 })
 
 describe('injectedContextView', () => {
-  it('skips the user\'s own prompt, a tool result, a model source, and a compaction replacement', () => {
+  it('skips the user\'s own prompt, a tool result, a model source, and a compaction checkpoint', () => {
     expect(injectedContextView({ kind: 'user' }, text('hi'))).toBeUndefined()
     expect(injectedContextView({ kind: 'tool', callId: 'c' }, text('out'))).toBeUndefined()
     expect(injectedContextView({ kind: 'model' }, text('x'))).toBeUndefined()
-    expect(injectedContextView({ kind: 'plugin', plugin: 'compact' }, text('summary'))).toBeUndefined()
+    expect(injectedContextView({ kind: 'compact-checkpoint', compactionId: 'c1' }, text('summary'))).toBeUndefined()
     expect(injectedContextView(null, text('x'))).toBeUndefined()
+  })
+
+  it('titles injected context without projecting its rows, and titles nothing else', () => {
+    const source = { kind: 'plugin', plugin: 'tui-app', form: 'notice', summary: '! ls' }
+    expect(injectedContextTitle(source)).toBe(injectedContextView(source, text('output'))?.title)
+    expect(injectedContextTitle(source)).toBe('notice · ! ls')
+    expect(injectedContextTitle({ kind: 'user' })).toBeUndefined()
+    expect(injectedContextTitle({ kind: 'compact-checkpoint', compactionId: 'c1' })).toBeUndefined()
   })
 
   it('names instructions by form and producer, and keeps the model-facing text as one part', () => {
