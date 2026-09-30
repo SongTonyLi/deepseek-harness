@@ -31,6 +31,7 @@
 import { Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
+import { paintKeys } from './key-chips.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
 import type { DiffMark } from './diff.ts'
@@ -387,7 +388,7 @@ export class NoticeBlock implements Component {
 
   constructor(theme: BlockTheme, text: string, tone: 'dim' | 'error' | 'success' = 'dim') {
     const palette = theme.palette
-    this.text = new Text(palette[tone](`· ${text}`), 0, 0)
+    this.text = new Text(paintKeys(palette, `· ${text}`, palette[tone], 'prose'), 0, 0)
   }
 
   invalidate(): void {
@@ -541,7 +542,9 @@ export class ContextBlock implements Component, ContextSection, Foldable {
     const pinned = ranges[(this.options.pinnedParts ?? 0) - 1]?.to ?? 0
     const kept = pinned + this.theme.contextPreviewLines
     const cut = !this.expanded && body.length > kept
-    const shown = cut ? [...body.slice(0, kept), ...dimRows(foldMarker(body.length - kept, marked ? 'marked' : 'transcript'))] : body
+    const marker = (): string[] =>
+      wrapTextWithAnsi(paintKeys(palette, foldMarker(body.length - kept, marked ? 'marked' : 'transcript')), textWidth).map(indent)
+    const shown = cut ? [...body.slice(0, kept), ...marker()] : body
     return { lines: [...head, ...shown], head: head.length, ranges, cut, kept, body: body.length }
   }
 }
@@ -1301,11 +1304,13 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const kept = this.expanded
       ? body
       : foldRows(body, this.theme.toolPreviewLines, hidden => foldMarker(hidden, marked ? 'marked' : 'transcript'))
-    // A changed row keeps its own syntax colour and takes the tint filling it
-    // from the mark instead, so nothing paints it twice.
-    const shown = paintCodeRows(kept, code, this.theme.codeHighlight)
-    const callCount = Math.min(this.call.lines.length + loading.length, shown.length)
     const cut = !this.expanded && body.length > this.theme.toolPreviewLines
+    // A changed row keeps its own syntax colour and takes the tint filling it
+    // from the mark instead, so nothing paints it twice. The fold marker keeps
+    // the terminal's own colour around the key it names.
+    const painted = paintCodeRows(kept, code, this.theme.codeHighlight)
+    const shown = cut ? [...painted.slice(0, -1), paintKeys(palette, kept.at(-1) as string, text => text)] : painted
+    const callCount = Math.min(this.call.lines.length + loading.length, shown.length)
     // Marks align with the body like the spans; the fold marker, the last
     // kept row of a cut body, is never filled.
     const marks = [

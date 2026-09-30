@@ -8,6 +8,7 @@ import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { InboxTarget } from '@deepseek-ai/dsh-agent'
 import { BODY_MARGIN, bodyLine, bottomRule, fitLegend, topRule, type FrameTone } from './frame.ts'
+import { paintKeys } from './key-chips.ts'
 import { HINTS, QUEUE_ENTRY_HINT } from './keys.ts'
 import type { Palette } from './style.ts'
 import { contentText } from './transcript.ts'
@@ -109,7 +110,7 @@ export function renderQueuePanel(rows: readonly QueuePanelRow[], render: QueuePa
     }
   }
   const hints = selected === undefined ? [QUEUE_ENTRY_HINT] : HINTS.queue
-  lines.push(bodyLine(palette.dim(fitLegend(hints, room)), width, palette, tone))
+  lines.push(bodyLine(paintKeys(palette, fitLegend(hints, room)), width, palette, tone))
   lines.push(bottomRule({ width, palette, tone }))
   return lines.join('\n')
 }

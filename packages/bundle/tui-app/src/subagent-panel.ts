@@ -20,6 +20,7 @@ import { visibleWidth } from '@earendil-works/pi-tui'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import { fitLegend } from './frame.ts'
+import { paintKeys } from './key-chips.ts'
 import { HINTS } from './keys.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { Palette } from './style.ts'
@@ -195,8 +196,8 @@ export function renderSubagentPanel(view: SubagentPanelView, render: SubagentPan
     return palette.dim(parts.join(SEPARATOR))
   }
   const counts = `subagents${SEPARATOR}${String(total)} listed`
-  const heading = `${counts}${SEPARATOR}${focusHints(render.width - visibleWidth(counts) - visibleWidth(SEPARATOR))}`
-  const lines = [palette.dim(heading)]
+  const hints = focusHints(render.width - visibleWidth(counts) - visibleWidth(SEPARATOR))
+  const lines = [`${palette.dim(`${counts}${SEPARATOR}`)}${paintKeys(palette, hints)}`]
   for (const [index, row] of view.rows.entries()) {
     lines.push(index === selected ? pulse(palette, palette.accent(row.text), render.level ?? 0) : palette.dim(row.text))
   }

@@ -15,6 +15,7 @@
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { fitLegend } from './frame.ts'
+import { paintKeys } from './key-chips.ts'
 import { HINTS, entryHints } from './keys.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import {
@@ -483,7 +484,7 @@ function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, wid
     .filter(token => token !== '').join(palette.dim(SEPARATOR))
   if (hint === '') return fitLine(left, width)
   const padding = ' '.repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(hint)))
-  return fitLine(`${left}${padding}${palette.link(hint)}`, width)
+  return fitLine(`${left}${padding}${paintKeys(palette, hint, palette.link)}`, width)
 }
 
 /**
@@ -509,8 +510,8 @@ function expansionBody(segment: FooterSegment | undefined): string {
  */
 function expansionLine(segment: FooterSegment | undefined, palette: Palette, width: number): string {
   const body = expansionBody(segment)
-  const legend = fitLegend(HINTS.bar, width)
-  const suffix = palette.dim(body === '' ? legend : `${SEPARATOR}${legend}`)
+  const legend = paintKeys(palette, fitLegend(HINTS.bar, width))
+  const suffix = body === '' ? legend : `${palette.dim(SEPARATOR)}${legend}`
   const prefix = palette.dim(body)
   const rest = width - visibleWidth(suffix)
   if (rest < 1) return fitLine(`${prefix}${suffix}`, width)

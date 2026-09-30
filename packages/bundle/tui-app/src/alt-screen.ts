@@ -16,11 +16,13 @@
  * belongs rather than by printing downward, so nothing here ever scrolls the
  * terminal. Each paint writes only the rows whose text changed since the last
  * one, wrapped in one synchronized-output pair so the terminal shows whole
- * frames.
+ * frames. Each paint takes the key marks out of its rows first and keeps
+ * where each marked key was drawn, by screen row.
  * @module @deepseek-ai/dsh-tui-app/alt-screen
  */
 
 import { type Terminal } from '@earendil-works/pi-tui'
+import { EMPTY_KEY_FRAME, keyAt, takeKeyFrame, type KeyFrame } from './key-chips.ts'
 
 /** Switch to the alternate screen, saving the main one. */
 const ENTER = '\u001b[?1049h'
@@ -68,6 +70,8 @@ export class AlternateScreen {
   /** The terminal width the drawn rows were written at, so a resize repaints them all. */
   private drawnWidth = 0
   private entered = false
+  /** The keys the last paint drew, by screen row. */
+  private keys: KeyFrame = EMPTY_KEY_FRAME
 
   /**
    * @param terminal - the terminal whose two screens these are.
@@ -89,6 +93,7 @@ export class AlternateScreen {
     if (this.entered) return
     this.entered = true
     this.drawn = []
+    this.keys = EMPTY_KEY_FRAME
     this.drawnWidth = this.terminal.columns
     this.terminal.write(`${ENTER}${NO_AUTOWRAP}${HIDE_CARET}${CLEAR}`)
   }
@@ -96,11 +101,14 @@ export class AlternateScreen {
   /**
    * Draw one frame.
    * @param lines - the frame, one entry per screen row from the top; rows the
-   * frame no longer has are cleared. Nothing is written while the main screen
-   * is the one the terminal shows.
+   * frame no longer has are cleared. Key marks are taken out before a row is
+   * written. Nothing is written while the main screen is the one the
+   * terminal shows.
    */
   paint(lines: readonly string[]): void {
     if (!this.entered) return
+    const marked = takeKeyFrame(lines)
+    this.keys = marked.keys
     // A terminal that resized cleared this screen itself, and every row it
     // still holds was wrapped for the old width.
     if (this.terminal.columns !== this.drawnWidth) {
@@ -108,14 +116,25 @@ export class AlternateScreen {
       this.drawnWidth = this.terminal.columns
     }
     let frame = BEGIN_FRAME
-    for (const [row, line] of lines.entries()) {
+    for (const [row, line] of marked.lines.entries()) {
       if (this.drawn[row] === line) continue
       frame += `${cursorTo(row)}${CLEAR_ROW}${line}`
     }
-    for (let row = lines.length; row < this.drawn.length; row += 1) frame += `${cursorTo(row)}${CLEAR_ROW}`
-    this.drawn = [...lines]
+    for (let row = marked.lines.length; row < this.drawn.length; row += 1) frame += `${cursorTo(row)}${CLEAR_ROW}`
+    this.drawn = marked.lines
     frame += END_FRAME
     this.terminal.write(frame)
+  }
+
+  /**
+   * The key the last paint drew at one cell.
+   * @param row - the screen row, counted from 0 at the top.
+   * @param column - the column, counted from 0.
+   * @returns the bytes that key sends, or undefined when no chip covers the
+   * cell or the main screen is the one the terminal shows.
+   */
+  keyAt(row: number, column: number): string | undefined {
+    return this.entered ? keyAt(this.keys, row, column) : undefined
   }
 
   /**

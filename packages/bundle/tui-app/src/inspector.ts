@@ -22,6 +22,7 @@
 
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
 import { BODY_MARGIN, bodyLine, bottomRule, chip, fitLegend, ruleRoom, topRule, type FrameTone } from './frame.ts'
+import { paintKeys } from './key-chips.ts'
 import { HINTS } from './keys.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { PartLabel } from './navigation.ts'
@@ -112,10 +113,10 @@ export function renderInspector(view: InspectorView, render: InspectorRender): s
     for (const line of partsStrip(view.parts, palette, room)) lines.push(bodyLine(line, width, palette, tone, level))
   }
   const wrapped = view.rows.flatMap(row => wrapTextWithAnsi(row, room))
-  const body = foldRows(wrapped, render.previewLines, hidden => palette.dim(foldMarker(hidden, 'inspector')))
+  const body = foldRows(wrapped, render.previewLines, hidden => paintKeys(palette, foldMarker(hidden, 'inspector')))
   for (const row of body) lines.push(bodyLine(row, width, palette, tone, level))
   lines.push(bottomRule({
-    left: palette.dim(fitLegend(HINTS.transcript, ruleRoom(width))),
+    left: paintKeys(palette, fitLegend(HINTS.transcript, ruleRoom(width))),
     width,
     palette,
     tone,

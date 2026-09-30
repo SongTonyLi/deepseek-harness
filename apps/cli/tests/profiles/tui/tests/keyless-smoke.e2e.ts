@@ -16,11 +16,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { runTuiScript, type Run, type Step } from './run-tui-script.ts'
+import { plain, runTuiScript, type Run, type Step } from './run-tui-script.ts'
 
 const PROCESS_TIMEOUT_MS = 60_000
 const TEST_TIMEOUT_MS = PROCESS_TIMEOUT_MS * 3 + 15_000
 const configPath = fileURLToPath(new URL('./fixtures/cli.patch.yml', import.meta.url))
+const mousePatch = fileURLToPath(new URL('./fixtures/mouse.patch.yml', import.meta.url))
 const ENTER = '\r'
 const CTRL_G = '\u0007'
 const CTRL_P = '\u0010'
@@ -30,9 +31,31 @@ const SHIFT_UP = '\u001b[1;2A'
 const SHIFT_LEFT = '\u001b[1;2D'
 const SHIFT_RIGHT = '\u001b[1;2C'
 const ESCAPE = '\u001b'
+/** Mouse press and release reports, SGR-encoded, as the tui app turns them on and off. */
+const MOUSE_ON = '\u001b[?1000h\u001b[?1006h'
+const MOUSE_OFF = '\u001b[?1006l\u001b[?1000l'
 
 function runScript(cwd: string, args: readonly string[], steps: readonly Step[]): Promise<Run> {
   return runTuiScript(cwd, args, steps, configPath)
+}
+
+/**
+ * A left click on the `Esc` chip of the reader's legend. The reader writes
+ * each of its rows at an absolute position, so the row a legend was last
+ * written to is the row the click lands on.
+ * @param raw - everything the terminal was written so far.
+ * @returns the SGR press and release on that chip's first cell.
+ */
+function clickReaderEsc(raw: string): string {
+  const rows = raw.split(/\u001b\[(\d+);1H/u)
+  for (let at = rows.length - 1; at >= 2; at -= 2) {
+    const line = plain(rows[at] ?? '')
+    const column = line.search(/Esc (?:q )?closes/u)
+    if (column === -1) continue
+    const cell = `${String(Array.from(line.slice(0, column)).length + 1)};${rows[at - 1] ?? ''}`
+    return `\u001b[<0;${cell}M\u001b[<0;${cell}m`
+  }
+  throw new Error('the reader wrote no legend naming Esc')
 }
 
 describe('tui profile keyless smoke', () => {
@@ -115,6 +138,31 @@ describe('tui profile keyless smoke', () => {
       expect(explicitResume.stdout).not.toContain('{{model}}')
       expect(explicitResume.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(explicitResume.stderr).toContain(`--resume ${sessionId}`)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  }, TEST_TIMEOUT_MS)
+
+  it('presses the key a click lands on once mouse is set, and gives the mouse back on quit', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'dsh-tui-mouse-'))
+    try {
+      const run = await runScript(cwd, ['--patch', mousePatch], [
+        { marker: 'cli-mock/cli-mock', keys: `read this${ENTER}` },
+        { marker: 'CLI tool round trip complete', keys: CTRL_G },
+        // A click on the legend's Esc closes the reader; Shift+Up then walks
+        // the conversation, which only the input answers with its read mode.
+        { marker: 'closes', keys: raw => `${clickReaderEsc(raw)}${SHIFT_UP}` },
+        { marker: ' ● READ ', keys: '' },
+      ])
+      expect(run.exitCode, `stderr:\n${run.stderr}\nstdout:\n${run.stdout}`).toBe(0)
+      const enabled = run.raw.indexOf(MOUSE_ON)
+      expect(enabled).toBeGreaterThan(-1)
+      const reader = run.raw.indexOf('\u001b[?1049h', enabled)
+      expect(run.raw.indexOf('\u001b[?1049l', reader)).toBeGreaterThan(reader)
+      expect(run.stdout.indexOf(' ● READ ', run.stdout.indexOf(' ● READER '))).toBeGreaterThan(-1)
+      // No report reached the editor as typed text.
+      expect(run.stdout).not.toMatch(/\[<0;\d+;\d+[Mm]/u)
+      expect(run.raw.lastIndexOf(MOUSE_OFF)).toBeGreaterThan(run.raw.lastIndexOf(MOUSE_ON))
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }

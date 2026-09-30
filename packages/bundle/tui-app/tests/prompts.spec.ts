@@ -7,6 +7,9 @@ import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt } 
 import { createPalette } from '../src/style.ts'
 import { KEY } from './bench.ts'
 
+/** One key as a colored palette draws its chip: accent, underlined. */
+const chip = (label: string): string => `\u001b[4m\u001b[36m${label}\u001b[39m\u001b[24m`
+
 const palette = createPalette(false)
 
 describe('prompts', () => {
@@ -171,7 +174,10 @@ describe('prompts', () => {
       const colored = new DetailPrompt(createPalette(true), 'session-a', ['reviewer'])
       const lines = page(colored)
       expect(lines[1]).toBe('\u001b[1m\u001b[36msession-a\u001b[39m\u001b[22m')
-      expect(lines.at(-1)).toBe(`\u001b[2m${HINT}\u001b[22m`)
+      const dim = (text: string): string => `\u001b[2m${text}\u001b[22m`
+      expect(lines.at(-1)).toBe(
+        `${chip('↑')}${dim(' ')}${chip('↓')}${dim(' scroll · ')}${chip('Enter')}${dim(', ')}${chip('Esc')}${dim(', or ')}${chip('←')}${dim(' returns')}`,
+      )
       prompt.invalidate()
     })
 

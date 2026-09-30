@@ -1,0 +1,4 @@
+# Clickable key chips over the keyless tui patch: a click on a drawn key presses it.
+- id: tui-app
+  config:
+    mouse: true

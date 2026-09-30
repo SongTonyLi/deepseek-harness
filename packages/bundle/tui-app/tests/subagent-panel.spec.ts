@@ -14,6 +14,9 @@ import {
   type SubagentPanelView,
 } from '../src/subagent-panel.ts'
 
+/** One key as a colored palette draws its chip: accent, underlined. */
+const chip = (label: string): string => `\u001b[4m\u001b[36m${label}\u001b[39m\u001b[24m`
+
 /** A fixed instant the running elapsed values are measured against. */
 const NOW = Date.UTC(2026, 1, 3, 14, 25, 0)
 
@@ -119,7 +122,8 @@ describe('renderSubagentPanel', () => {
     const built = view([child('session-kid'), child('session-other')])
     const drawn = renderSubagentPanel(built, { palette: createPalette(true), selected: 1, width: WIDE })
     const [heading, first, second] = drawn.split('\n')
-    expect(heading).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
+    expect(heading).toContain(`${chip('↑')}${chip('↓')}\u001b[2m children · \u001b[22m${chip('Enter')}\u001b[2m opens · \u001b[22m`)
+    expect(heading).toContain(`${chip('Tab')}\u001b[2m regions · \u001b[22m${chip('Esc')}\u001b[2m input\u001b[22m`)
     expect(first).toContain('\u001b[2msession-kid')
     expect(second).toContain('\u001b[36msession-other')
   })

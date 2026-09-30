@@ -19,6 +19,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { BTW_SANDBOXED_TOOLS, BTW_TOOLS } from '../src/btw.ts'
 import { Config, apply, internals } from '../src/index.ts'
+import { DISABLE_MOUSE, ENABLE_MOUSE } from '../src/pointer.ts'
 import { FakeTerminal, KEY } from './bench.ts'
 
 const originalInternals = { ...internals }
@@ -186,6 +187,7 @@ function config(overrides: Partial<Config> = {}): Config {
     streamPaceFrames: 8,
     toolRevealFrames: 6,
     reducedMotion: false,
+    mouse: false,
     openBrowser: true,
     btwTools: [...BTW_TOOLS],
     btwSandboxedTools: [...BTW_SANDBOXED_TOOLS],
@@ -214,6 +216,23 @@ describe('tui runner', () => {
     expect(observed.order).toEqual(['followup', 'release', 'cancel', 'flush', 'dispose', 'exit:0'])
     expect(observed.err).toContain('saved; resume with: dsh --profile tui --resume session-')
     expect(observed.terminal.stopped).toBe(true)
+  })
+
+  it('turns the terminal\'s mouse reports on for the run only when mouse is set', async () => {
+    const quiet = await bench()
+    apply(quiet.ctx, config())
+    await settled()
+    expect(quiet.observed.terminal.written).not.toContain(ENABLE_MOUSE)
+    quiet.observed.terminal.type(KEY.ctrlD)
+    await settled()
+    const { ctx, observed } = await bench()
+    apply(ctx, config({ mouse: true }))
+    await settled()
+    expect(observed.terminal.written).toContain(ENABLE_MOUSE)
+    observed.terminal.type(KEY.ctrlD)
+    await settled()
+    expect(observed.terminal.written.indexOf(DISABLE_MOUSE)).toBeGreaterThan(observed.terminal.written.indexOf(ENABLE_MOUSE))
+    expect(observed.order.at(-1)).toBe('exit:0')
   })
 
   it('drives the live counter from a real interval and clears it on quit', async () => {
@@ -596,6 +615,7 @@ describe('the presentation tunables', () => {
       streamPaceFrames: 8,
       toolRevealFrames: 6,
       reducedMotion: false,
+      mouse: false,
       openBrowser: true,
       btwTools: [...BTW_TOOLS],
       btwSandboxedTools: [...BTW_SANDBOXED_TOOLS],

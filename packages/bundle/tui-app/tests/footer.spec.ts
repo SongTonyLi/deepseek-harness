@@ -19,6 +19,9 @@ import type { MotionLevel } from '../src/motion.ts'
 import type { StatusFacts } from '../src/status.ts'
 import { createPalette } from '../src/style.ts'
 
+/** One key as a colored palette draws its chip: accent, underlined. */
+const chip = (label: string): string => `\u001b[4m\u001b[36m${label}\u001b[39m\u001b[24m`
+
 const model: ModelSelection = { provider: 'deepseek', model: 'deepseek-chat' }
 
 /** A width that holds every segment this file builds, so windowing stays out of the way. */
@@ -277,12 +280,12 @@ describe('renderFooter', () => {
     expect(styled[0]).not.toContain('\n')
   })
 
-  it('distinguishes the model, live turn, context, and entry keys by color', () => {
+  it('distinguishes the model, live turn, and context by color, and draws each entry key as a chip', () => {
     const [line = ''] = renderFooter(buildFooterSegments(crowded()), { palette: createPalette(true), width: WIDE })
     expect(line).toContain('\u001b[36mdeepseek-chat\u001b[39m')
     expect(line).toContain('\u001b[33mturn 1m12s\u001b[39m')
     expect(line).toContain('\u001b[38;5;141mctx 42%\u001b[39m')
-    expect(line).toContain('\u001b[38;5;141mShift+↑ read · Shift+↓ status\u001b[39m')
+    expect(line).toContain(`${chip('Shift+↑')}\u001b[38;5;141m read · \u001b[39m${chip('Shift+↓')}\u001b[38;5;141m status\u001b[39m`)
     expect(visibleWidth(line)).toBe(WIDE)
   })
 
@@ -348,7 +351,8 @@ describe('renderFooter', () => {
     expect(bar).toContain('\u001b[2mdeepseek-chat\u001b[22m')
     expect(bar).toContain('\u001b[2m/work\u001b[22m')
     expect(expansion).toContain('reasoning effort: the model\'s own default')
-    expect(expansion).toContain('←→ segments')
+    // Each arrow of the pair is its own chip, so each presses its own key.
+    expect(expansion).toContain(`${chip('←')}${chip('→')}\u001b[2m segments · \u001b[22m${chip('Enter')}`)
   })
 
   it('lifts the selected label while a walk is still moving and settles back onto the accent', () => {

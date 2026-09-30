@@ -168,6 +168,17 @@ export interface Config {
    * `toastMs` and then disappears, because the window it names has to end.
    */
   reducedMotion: boolean
+  /**
+   * Make every key the screen names clickable. Keys are drawn as underlined
+   * chips whether or not this is on - `Ctrl+G`, `Esc`, `Shift+↑`, and the
+   * rest, in legends, pickers, notices, and the reader - and with it on, a
+   * click on a chip presses that key, exactly as typing it would. Turning it
+   * on turns the terminal's mouse reports on, so the terminal sends the wheel
+   * and plain click-drag to the application instead of scrolling its
+   * scrollback or selecting text; most terminals still do both with `Shift`
+   * held (`Option` in iTerm2).
+   */
+  mouse: boolean
   /** Permit local default-browser handoff for authorization pages. */
   openBrowser: boolean
   /**
@@ -202,6 +213,7 @@ export const Config: z<Config> = z.object({
   streamPaceFrames: z.natural().default(STREAM_PACE_FRAMES),
   toolRevealFrames: z.natural().default(TOOL_REVEAL_FRAMES),
   reducedMotion: z.boolean().default(false),
+  mouse: z.boolean().default(false),
   openBrowser: z.boolean().default(true),
   btwTools: z.array(z.string()).default([...BTW_TOOLS]),
   btwSandboxedTools: z.array(z.string()).default([...BTW_SANDBOXED_TOOLS]),
@@ -437,7 +449,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     host: sessions,
     initial,
     terminal: host.createTerminal(),
-    palette: createPalette(host.color),
+    palette: createPalette(host.color, config.mouse),
     toolPreviewLines: config.toolPreviewLines,
     contextPreviewLines: config.contextPreviewLines,
     focusPreviewLines: config.focusPreviewLines,
