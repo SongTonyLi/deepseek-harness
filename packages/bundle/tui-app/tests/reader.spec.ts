@@ -349,13 +349,9 @@ describe('readerRows', () => {
     }
   })
 
-  it('names the mode, the turn, the listed prompts, and the keys', () => {
+  it('pins the prompt and names the turn, the listed prompts, and the keys', () => {
     const lines = draw(held, 95, 40).join('\n')
-    expect(lines).toContain(' ● READER ')
-    // The rule states where the reading is in the list, which is what the
-    // readout under it states too: the blocks before the first prompt are a
-    // row of the list too, so a turn's own number sits one behind its position.
-    expect(lines).toContain('turn 2 of 3')
+    expect(lines.split('\n')[0]).toBe(' ❯ fix the fade at the top ')
     // The turn being read leads with `❯`, its prompt is cut before the
     // markers, and the section the reader holds is marked under it.
     expect(lines).toContain('│ ❯ 1  fix the fade… ✻¶◆1│')

@@ -486,6 +486,8 @@ export interface TuiAppDeps {
    * grows; `0` draws them at once. Reduced motion also draws them at once.
    */
   toolRevealFrames: number
+  /** Milliseconds each running tool-card glyph frame lasts. */
+  toolSpinnerMs: number
   /** Draw streamed text and tool cards in their own colors, with no ramp and no fade tick. */
   reducedMotion: boolean
   /**
@@ -936,7 +938,11 @@ export class TuiApp {
     // reports on; it is also what marks each key a click is resolved against.
     let terminal = deps.terminal
     if (palette.clickableKeys) {
-      const pointer: PointerTerminal = new PointerTerminal(deps.terminal, (cell) => { this.onClick(pointer, cell) })
+      const pointer: PointerTerminal = new PointerTerminal(
+        deps.terminal,
+        (cell) => { this.onClick(pointer, cell) },
+        (step) => { this.onScroll(step) },
+      )
       terminal = pointer
     }
     this.tui = new GuardedMainScreen(terminal, true, (viewportTop, width, frameLines) => {
@@ -2400,6 +2406,19 @@ export class TuiApp {
     // into the editor, at the caret and with the keyboard.
     if (action === undefined) return this.focus === 'editor' ? undefined : { consume: true }
     return this.onAction(action, data)
+  }
+
+  /**
+   * Scroll the reader, opening it at the newest section on the first wheel tick.
+   * Modal prompts retain the terminal and ignore the wheel.
+   * @param step - -1 for up, 1 for down.
+   */
+  private onScroll(step: -1 | 1): void {
+    if (this.modals.isActive() || this.queuedModals > 0) return
+    if (this.reader === undefined) this.openReader()
+    if (!this.readerScreen.active) return
+    this.reader?.pane.handleInput(step === -1 ? '\u001b[A' : '\u001b[B')
+    this.queueReaderPaint()
   }
 
   /**
@@ -4397,7 +4416,7 @@ export class TuiApp {
    */
   private spinBlock(block: ToolBlock): void {
     if (this.replaying || this.deps.reducedMotion) return
-    block.setSpinner(() => spinnerFrame(this.deps.now(), spinnerKindForTool(block.name)))
+    block.setSpinner(() => spinnerFrame(this.deps.now(), spinnerKindForTool(block.name), this.deps.toolSpinnerMs))
     this.spinners.add(block)
     this.updateSpinTicker()
   }

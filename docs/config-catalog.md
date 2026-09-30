@@ -4277,6 +4277,8 @@ export interface Config {
    * rows at once. `0` draws every row at once, and so does `reducedMotion`.
    */
   toolRevealFrames: number
+  /** Milliseconds each running tool-card glyph frame lasts; activity dots remain at 80 ms. */
+  toolSpinnerMs: number
   /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
@@ -4293,8 +4295,9 @@ export interface Config {
    * click on a chip presses that key, exactly as typing it would. Turning it
    * on turns the terminal's mouse reports on, so the terminal sends the wheel
    * and plain click-drag to the application instead of scrolling its
-   * scrollback or selecting text; most terminals still do both with `Shift`
-   * held (`Option` in iTerm2).
+   * scrollback or selecting text. The wheel opens and scrolls the full-screen
+   * reader unless a modal prompt is open. Most terminals still scroll native
+   * scrollback and select text with `Shift` held (`Option` in iTerm2).
    */
   mouse: boolean
   /** Permit local default-browser handoff for authorization pages. */

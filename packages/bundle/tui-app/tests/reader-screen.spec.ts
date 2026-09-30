@@ -53,6 +53,26 @@ function mounted(options: { block?: number; part?: number; rows?: number; width?
 }
 
 describe('the reader pane', () => {
+  it('pins a one-line prompt while scrolling and restores the reader heading at the top', () => {
+    const test = mounted({ rows: 12, width: 50 })
+    expect(test.draw().split('\n')[0]).toBe(' ❯ fix the fade at the top ')
+    expect(test.type(KEY.down).split('\n')[0]).toBe(' ❯ fix the fade at the top ')
+    expect(test.type(KEY.up).split('\n')[0]).toBe(' ❯ fix the fade at the top ')
+    expect(test.type(KEY.home).split('\n')[0]).toContain(' ● READER ')
+    expect(test.type(KEY.down).split('\n')[0]).toBe(' ❯ fix the fade at the top ')
+    test.blocks.push(source('assistant', [{ kind: 'reply', rows: Array.from({ length: 20 }, () => 'more reply') }], { turn: 2 }))
+    test.pane.handleInput(']')
+    expect(test.draw().split('\n')[0]).toContain(' ● READER ')
+    expect(test.type(KEY.down).split('\n')[0]).toBe(' ❯ run the tests ')
+  })
+
+  it('collapses multiline prompts and truncates the pinned bar to terminal columns', () => {
+    const test = mounted({ rows: 12, width: 24 })
+    test.blocks[1] = source('user', [{ kind: 'user', rows: ['first line', 'second line with extra text'] }])
+    expect(test.draw().split('\n')[0]).toBe(' ❯ first line second li…')
+    expect(test.pane.render(24)).toHaveLength(12)
+  })
+
   it('re-reads the transcript on every render, so a section that lands shows up', () => {
     const test = mounted()
     expect(test.draw()).not.toContain('landed after opening')
@@ -183,7 +203,7 @@ describe('the reader pane', () => {
     test.pane.withdraw()
     expect(test.exits).toMatchObject([{ target: 'editor' }])
     // A key after the settlement changes nothing.
-    expect(test.type(KEY.down)).toContain(' ● READER ')
+    expect(test.type(KEY.down)).toContain('❯ fix the fade at the top')
 
     const withdrawn = mounted()
     withdrawn.pane.withdraw()
@@ -222,8 +242,9 @@ describe('the reader pane', () => {
 
   it('draws nothing of its own state when invalidated', () => {
     const test = mounted()
+    const before = test.draw()
     test.pane.invalidate()
-    expect(test.draw()).toContain(' ● READER ')
+    expect(test.draw()).toBe(before)
   })
 
   it('fills the screen it was given, whatever the terminal is', () => {
