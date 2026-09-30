@@ -50,6 +50,7 @@
       - option "qwen-token-plan-individual"
       - option "radius"
       - option "together"
+      - option "typesafe"
       - option "vercel-ai-gateway"
       - option "xai"
       - option "xiaomi"
