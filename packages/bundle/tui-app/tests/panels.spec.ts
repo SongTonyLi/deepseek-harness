@@ -291,6 +291,78 @@ describe('catalog commands', () => {
     expect(test.terminal.text()).toContain('/settings failed: settings namespace "missing" is not registered')
   })
 
+  it('selects the web-search route through the search settings', async () => {
+    const writes: unknown[] = []
+    const stored: { baseURL?: string } = {}
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('settings', {
+          describe: () => [{ ns: 'web-search-deepseek', revision: 2, value: stored, user: {}, applies: 'live', secrets: [] }],
+          mutate: (...args: unknown[]) => { writes.push(['mutate', ...args]); return Promise.resolve() },
+          replace: (...args: unknown[]) => { writes.push(['replace', ...args]); return Promise.resolve() },
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/search')
+    await test.settle()
+    expect(test.terminal.text()).toContain('Web search route')
+    expect(test.terminal.text()).toContain('DeepSeek ✓')
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.terminal.text()).toContain('web search: OpenRouter deepseek/deepseek-v4-flash-0731')
+    stored.baseURL = 'https://openrouter.ai/api/v1'
+    typeLine(test.terminal, '/search')
+    await test.settle()
+    expect(test.terminal.text()).toContain('OpenRouter DeepSeek ✓')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    typeLine(test.terminal, '/search deepseek')
+    typeLine(test.terminal, '/search openrouter deepseek/custom')
+    typeLine(test.terminal, '/search google')
+    typeLine(test.terminal, '/search deepseek extra')
+    await test.settle()
+    expect(writes).toEqual([
+      ['mutate', 'web-search-deepseek', [{ op: 'set', path: ['baseURL'], value: 'https://openrouter.ai/api/v1' }], 2],
+      ['mutate', 'web-search-deepseek', [{ op: 'set', path: ['apiKeyEnv'], value: 'OPENROUTER_API_KEY' }], 2],
+      ['mutate', 'web-search-deepseek', [{ op: 'set', path: ['model'], value: 'deepseek/deepseek-v4-flash-0731' }], 2],
+      ['replace', 'web-search-deepseek', {}, 2],
+      ['mutate', 'web-search-deepseek', [{ op: 'set', path: ['baseURL'], value: 'https://openrouter.ai/api/v1' }], 2],
+      ['mutate', 'web-search-deepseek', [{ op: 'set', path: ['apiKeyEnv'], value: 'OPENROUTER_API_KEY' }], 2],
+      ['mutate', 'web-search-deepseek', [{ op: 'set', path: ['model'], value: 'deepseek/custom' }], 2],
+    ])
+    const screen = test.terminal.text()
+    expect(screen).toContain('web search: DeepSeek')
+    expect(screen).toContain('web search: OpenRouter deepseek/custom')
+    expect(screen).toContain('unknown search route "google" (available: deepseek, openrouter)')
+    expect(screen).toContain('usage: /search deepseek | /search openrouter [model]')
+  })
+
+  it('searches through the OpenRouter model /model selected', async () => {
+    const writes: unknown[] = []
+    const test = await bench({
+      selected: { provider: 'openrouter', model: 'deepseek/picked' },
+      before: (ctx) => {
+        ctx.provide('settings', {
+          describe: () => [{ ns: 'web-search-deepseek', revision: 1, value: {}, user: {}, applies: 'live', secrets: [] }],
+          mutate: (...args: unknown[]) => { writes.push(args); return Promise.resolve() },
+          replace: () => Promise.resolve(),
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/search openrouter')
+    await test.settle()
+    expect(writes.at(-1)).toEqual(['web-search-deepseek', [{ op: 'set', path: ['model'], value: 'deepseek/picked' }], 1])
+    expect(test.terminal.text()).toContain('web search: OpenRouter deepseek/picked')
+  })
+
+  it('reports a search route failure when settings are not mounted', async () => {
+    const test = await bench()
+    typeLine(test.terminal, '/search deepseek')
+    await test.settle()
+    expect(test.terminal.text()).toContain('settings are not mounted in this profile')
+  })
+
   it('completes shared commands with their input hint', async () => {
     const test = await bench({
       before: async (ctx) => {

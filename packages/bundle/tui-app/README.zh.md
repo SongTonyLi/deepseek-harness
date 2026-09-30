@@ -173,6 +173,7 @@ follow-ups 面板持有键盘时：
 | `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认，在模型列表中按 `Ctrl+S` 则把高亮的模型存为下次启动的默认而不关闭列表 |
 | `/effort [id]` | 不带参数时为下一次请求打开当前模型的推理强度选择器，与编辑器中的 `Shift+Tab` 打开的是同一个；id 直接选择，`/effort default` 恢复提供方默认值 |
 | `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它 |
+| `/search [deepseek\|openrouter [model]]` | 不带参数时打开网页搜索路由选择器；`deepseek` 恢复默认路由，`openrouter` 通过 OpenRouter 路由 `web_search`，使用 `OPENROUTER_API_KEY` 与所输入的模型（默认：`/model` 所选模型属于 OpenRouter 时使用该模型，否则为 `deepseek/deepseek-v4-flash-0731`）。它写入 `web-search-deepseek` 设置命名空间，下一次搜索即读取 |
 | `/resume` | 打开与 `/sessions` 相同的持久化会话选择器，并恢复选中的先前会话 |
 | `/sessions` | 打开持久化会话选择器，并切换到选中的会话 |
 | `/new` | 开始新会话 |
@@ -281,6 +282,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/sessions.ts`](src/sessions.ts) | `/resume` 与 `/sessions` 共用的持久化会话列表及选择器行；标题来自实时或缓存的 title 投影 |
 | [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行 |
 | [`src/permission.ts`](src/permission.ts) | `/permission` 的权限预设名称及选择器行 |
+| [`src/search-route.ts`](src/search-route.ts) | `/search` 背后的网页搜索路由及 `web-search-deepseek` 设置写入 |
 | [`src/attach.ts`](src/attach.ts) | `/attach`：本地文件经附件存储成为图片或文件块 |
 | [`src/export.ts`](src/export.ts) | `/export`：通过导出包的归档辅助函数写出会话日志 ZIP |
 | [`src/blocks.ts`](src/blocks.ts) | 对话记录组件：用户提示、用户 shell 运行、assistant 回复、工具卡片、系统提示词与注入上下文、通知；可导航的块暴露其各小节并绘制焦点标记条，可折叠的块则承载两个折叠键共用的那条标记。每个块保留上次画出的行，回复还保留上次 Markdown 解析所着色的代码围栏，并只对最后一个已关闭围栏之后仍打开的尾部重新词法分析，因此已稳定的对话记录每帧只花每块一次键比较，一次流式增量也只为发生变化的那个围栏着色 |
