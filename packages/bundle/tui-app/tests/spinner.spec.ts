@@ -24,11 +24,11 @@ describe('spinner', () => {
     expect(SPINNER_FRAMES.shell).toEqual(SPINNER_FRAMES.edit)
   })
 
-  it('blinks a dot for todo activity', () => {
-    expect(SPINNER_FRAMES.todo).toEqual(['·', ' '])
-    expect(spinnerFrame(0, 'todo')).toBe('·')
+  it('blinks a filled circle for todo activity', () => {
+    expect(SPINNER_FRAMES.todo).toEqual(['●', ' '])
+    expect(spinnerFrame(0, 'todo')).toBe('●')
     expect(spinnerFrame(SPINNER_MS, 'todo')).toBe(' ')
-    expect(spinnerFrame(SPINNER_MS * 2, 'todo')).toBe('·')
+    expect(spinnerFrame(SPINNER_MS * 2, 'todo')).toBe('●')
   })
 
   it('draws the default kind without one and cycles every other kind', () => {
@@ -101,15 +101,19 @@ describe('spinner', () => {
     }
   })
 
-  it('mirrors the named tool on a calling label and waits on a retry notice', () => {
-    expect(spinnerKindForActivity('thinking')).toBe('thinking')
-    expect(spinnerKindForActivity('writing')).toBe('writing')
-    expect(spinnerKindForActivity('calling')).toBe('calling')
-    expect(spinnerKindForActivity('calling bash')).toBe('shell')
-    expect(spinnerKindForActivity('calling edit')).toBe('edit')
-    expect(spinnerKindForActivity('calling plugin_manager')).toBe('calling')
-    expect(spinnerKindForActivity('retrying (1/5) in 4s · RATE_LIMIT: busy')).toBe('waiting')
-    expect(spinnerKindForActivity('')).toBe('thinking')
+  it('uses rotating dots for every working activity without changing the cycle', () => {
+    for (const activity of ['thinking', 'writing', 'calling', 'calling bash', 'calling glob',
+      'calling edit', 'calling plugin_manager', 'compacting', 'retrying (1/5) in 4s · RATE_LIMIT: busy', '']) {
+      expect(spinnerKindForActivity(activity)).toBe('thinking')
+      expect(loaderIndicator(spinnerKindForActivity(activity)).frames).toEqual([...SPINNER_FRAMES.thinking])
+    }
+  })
+
+  it('holds tool-family glyphs for the caller-selected slower period', () => {
+    expect(spinnerFrame(0, 'shell', 160)).toBe('◇')
+    expect(spinnerFrame(80, 'shell', 160)).toBe('◇')
+    expect(spinnerFrame(160, 'shell', 160)).toBe('◈')
+    expect(spinnerFrame(640, 'shell', 160)).toBe('◇')
   })
 
   it('hands the loader fresh frames on the shared period', () => {

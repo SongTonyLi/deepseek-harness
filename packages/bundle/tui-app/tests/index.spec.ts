@@ -186,6 +186,7 @@ function config(overrides: Partial<Config> = {}): Config {
     streamFadeStepMs: 16,
     streamPaceFrames: 8,
     toolRevealFrames: 6,
+    toolSpinnerMs: 160,
     reducedMotion: false,
     mouse: false,
     openBrowser: true,
@@ -614,12 +615,19 @@ describe('the presentation tunables', () => {
       streamFadeStepMs: 16,
       streamPaceFrames: 8,
       toolRevealFrames: 6,
+      toolSpinnerMs: 160,
       reducedMotion: false,
       mouse: false,
       openBrowser: true,
       btwTools: [...BTW_TOOLS],
       btwSandboxedTools: [...BTW_SANDBOXED_TOOLS],
     })
+  })
+
+  it('accept a configurable tool glyph period no faster than the redraw tick', () => {
+    expect(() => validate({ toolSpinnerMs: 79 })).toThrow()
+    expect(() => validate({ toolSpinnerMs: 160.5 })).toThrow()
+    expect(validate({ toolSpinnerMs: 240 })).toMatchObject({ toolSpinnerMs: 240 })
   })
 
   it('refuse a reader narrower than two readable panels', () => {

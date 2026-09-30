@@ -777,6 +777,24 @@ describe('TuiApp', () => {
     expect(test.calls.cancels).toBe(1)
   })
 
+  it('opens the reader with the wheel and keeps the prompt pinned while scrolling both ways', async () => {
+    const test = await bench({ clickableKeys: true })
+    typeLine(test.terminal, 'keep this request visible')
+    test.appendAssistant([{ type: 'text', text: Array.from({ length: 80 }, (_, index) => `reply line ${String(index)}`).join('\n\n') }])
+    await test.settle()
+    test.terminal.type('\u001b[<64;10;10M')
+    await test.settle()
+    expect(await test.screen()).toContain('❯ keep this request visible')
+    test.terminal.type('\u001b[<65;10;10M')
+    await test.settle()
+    expect(await test.screen()).toContain('❯ keep this request visible')
+    expect(await test.screen()).toContain('row ')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    typeLine(test.terminal, 'back at the input')
+    expect(test.calls.followups).toHaveLength(2)
+  })
+
   it('reads the newest section full screen from the input and from /turns', async () => {
     const test = await bench()
     typeLine(test.terminal, 'read the spec')
@@ -1959,6 +1977,8 @@ describe('working indicators', () => {
     const first = (await test.screen()).match(spinning('bash', 'shell'))?.[0]
     expect(first).toBeDefined()
     test.runTick(SPINNER_MS)
+    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(first)
+    test.runTick(SPINNER_MS)
     const next = (await test.screen()).match(spinning('bash', 'shell'))?.[0]
     expect(next).toBeDefined()
     expect(next).not.toBe(first)
@@ -1969,6 +1989,19 @@ describe('working indicators', () => {
     expect(test.tickArmed(SPINNER_MS)).toBe(false)
   })
 
+  it('uses the configured slower glyph period without changing the redraw tick', async () => {
+    const test = await bench({ toolSpinnerMs: 240 })
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    const first = (await test.screen()).match(spinning('bash', 'shell'))?.[0]
+    expect(first).toBe(`${spinnerFrame(BENCH_NOW, 'shell', 240)} bash`)
+    test.runTick(SPINNER_MS)
+    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(first)
+    test.runTick(SPINNER_MS)
+    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(first)
+    test.runTick(SPINNER_MS)
+    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).not.toBe(first)
+  })
+
   it('draws each running tool card in its own family animation', async () => {
     const test = await bench()
     await test.settle()
@@ -1976,9 +2009,9 @@ describe('working indicators', () => {
     test.appendToolCall('call-2', 'edit', { path: 'src/app.ts' })
     test.appendToolCall('call-3', 'read', { path: 'package.json' })
     const screen = await test.screen()
-    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'shell')} bash`)
-    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'edit')} edit`)
-    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'search')} read`)
+    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'shell', 160)} bash`)
+    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'edit', 160)} edit`)
+    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'search', 160)} read`)
   })
 
   it('draws a static glyph and arms no spinner tick under reduced motion or for a replayed card', async () => {

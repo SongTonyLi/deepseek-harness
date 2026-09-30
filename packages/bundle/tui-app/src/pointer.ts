@@ -91,8 +91,8 @@ function isLeftButton(report: PointerReport): boolean {
 /**
  * The terminal the tree renders into, with clicks reported on top of it.
  *
- * A click is a left press and a left release on the same cell; any other
- * report, a wheel tick included, is consumed without effect, so no mouse
+ * A click is a left press and a left release on the same cell; wheel ticks
+ * reach the optional scroll callback. Other reports are consumed, so no mouse
  * report ever reaches the editor as typed text. Every other method is the
  * wrapped terminal's own.
  */
@@ -107,8 +107,13 @@ export class PointerTerminal implements Terminal {
   /**
    * @param terminal - the terminal to report clicks on.
    * @param onClick - called with the cell of each click.
+   * @param onScroll - called with -1 for wheel up and 1 for wheel down; omitted ignores scrolling.
    */
-  constructor(private readonly terminal: Terminal, private readonly onClick: (cell: Cell) => void) {}
+  constructor(
+    private readonly terminal: Terminal,
+    private readonly onClick: (cell: Cell) => void,
+    private readonly onScroll?: (step: -1 | 1) => void,
+  ) {}
 
   get columns(): number {
     return this.terminal.columns
@@ -192,6 +197,12 @@ export class PointerTerminal implements Terminal {
    * @param report - one parsed mouse report.
    */
   private onReport(report: PointerReport): void {
+    const button = report.button & ~0b1_1100
+    if (!report.release && (button === 64 || button === 65)) {
+      this.pressed = undefined
+      this.onScroll?.(button === 64 ? -1 : 1)
+      return
+    }
     if (!isLeftButton(report)) return
     if (!report.release) {
       this.pressed = { column: report.column, row: report.row }

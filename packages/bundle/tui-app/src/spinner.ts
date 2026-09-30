@@ -1,10 +1,6 @@
 /**
- * Working indicators: one single-column animation per scenario, so the
- * glyph itself names the work — reasoning churns, streaming text blooms,
- * commands and edits set a diamond, reads pulse a lens,
- * delegation dives, todo items blink a dot, waits turn a clock, and tools
- * with no family orbit the moon — plus the shimmer the working spinner's
- * activity word carries.
+ * Working indicators: rotating braille dots above the prompt, tool-family
+ * glyphs on running cards, and a shimmer across the working activity word.
  *
  * Pure. Frame lookups read a wall-clock instant the caller passes in, so
  * every surface drawing at the same moment draws the same frame, and the
@@ -36,8 +32,8 @@ export const SPINNER_FRAMES = {
   edit: ['◇', '◈', '◆', '◈'],
   /** Delegation to a child agent: dots diving deeper. */
   subagent: ['⠁', '⠃', '⠇', '⠷', '⠿', '⠷', '⠇', '⠃'],
-  /** Todo progress: a dot blinking in place. */
-  todo: ['·', ' '],
+  /** Todo progress: a filled circle blinking in place, one column and larger than a middle dot. */
+  todo: ['●', ' '],
   /** Waiting on a retry delay or a human answer: a clock turning. */
   waiting: ['◷', '◶', '◵', '◴'],
   /** Condensing older history into a summary: a column of dots settling down and filling back up. */
@@ -104,12 +100,6 @@ const TOOL_PREFIXES: ReadonlyArray<readonly [string, SpinnerKind]> = [
   ['schedule_', 'todo'],
 ]
 
-/** The word that opens the working spinner's tool-call label. */
-const CALLING_WORD = 'calling '
-
-/** The word that opens a scheduled model-request retry notice. */
-const RETRYING_WORD = 'retrying'
-
 /** The working spinner's label while a compaction condenses history. */
 export const COMPACTING_ACTIVITY = 'compacting'
 
@@ -117,11 +107,12 @@ export const COMPACTING_ACTIVITY = 'compacting'
  * The spinner frame drawn at one instant.
  * @param now - the current time in milliseconds.
  * @param kind - the scenario whose frames are drawn; `thinking` draws the braille circle.
+ * @param intervalMs - how long each frame lasts, in milliseconds; positive.
  * @returns one frame of that scenario.
  */
-export function spinnerFrame(now: number, kind: SpinnerKind = 'thinking'): string {
+export function spinnerFrame(now: number, kind: SpinnerKind = 'thinking', intervalMs: number = SPINNER_MS): string {
   const frames = SPINNER_FRAMES[kind]
-  const index = Math.floor(now / SPINNER_MS) % frames.length
+  const index = Math.floor(now / intervalMs) % frames.length
   /* v8 ignore next -- the modulo keeps the index inside the frame list */
   return frames[index] ?? frames[0]
 }
@@ -145,19 +136,11 @@ export function spinnerKindForTool(name: string): SpinnerKind {
 }
 
 /**
- * The animation the working spinner draws for its activity word.
- * @param activity - `thinking`, `writing`, `calling` / `calling <name>`, `compacting`, or a retry notice.
- * @returns the activity's animation; a `calling <name>` label mirrors the
- * named tool's card, and anything unrecognized draws `thinking` like the
- * loader's initial word.
+ * The shared rotating-dot animation above the prompt, independent of its label.
+ * @param _activity - the working activity label; every label draws the same dots.
+ * @returns `thinking` for every activity, keeping the dot cycle continuous as labels change.
  */
-export function spinnerKindForActivity(activity: string): SpinnerKind {
-  if (activity === 'thinking') return 'thinking'
-  if (activity === 'writing') return 'writing'
-  if (activity === 'calling') return 'calling'
-  if (activity.startsWith(CALLING_WORD)) return spinnerKindForTool(activity.slice(CALLING_WORD.length))
-  if (activity.startsWith(RETRYING_WORD)) return 'waiting'
-  if (activity === COMPACTING_ACTIVITY) return 'compacting'
+export function spinnerKindForActivity(_activity: string): SpinnerKind {
   return 'thinking'
 }
 

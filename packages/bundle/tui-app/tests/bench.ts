@@ -405,6 +405,8 @@ export async function bench(options: {
   streamPaceFrames?: number
   /** Frames a tool card's rows unroll over; `0`, the default, draws every row at once. */
   toolRevealFrames?: number
+  /** Milliseconds each tool-card spinner frame lasts. */
+  toolSpinnerMs?: number
   /** Ask for streamed text drawn with no ramp. */
   reducedMotion?: boolean
   /** The environment the fade capability is decided from; empty by default, which yields the two-level mode. */
@@ -574,6 +576,7 @@ export async function bench(options: {
     fadeStepMs,
     streamPaceFrames: options.streamPaceFrames ?? 0,
     toolRevealFrames: options.toolRevealFrames ?? 0,
+    toolSpinnerMs: options.toolSpinnerMs ?? 160,
     reducedMotion: options.reducedMotion ?? false,
     env: options.env ?? {},
     now: () => now,

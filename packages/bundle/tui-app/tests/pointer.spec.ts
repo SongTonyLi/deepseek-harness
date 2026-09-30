@@ -95,6 +95,19 @@ describe('parsePointer', () => {
 })
 
 describe('PointerTerminal', () => {
+  it('reports vertical wheel presses without sending mouse bytes to the editor', () => {
+    const inner = new Recorder()
+    const steps: number[] = []
+    const delivered: string[] = []
+    const pointer = new PointerTerminal(inner, () => {}, step => steps.push(step))
+    pointer.start(data => delivered.push(data), () => {})
+    for (const button of [64, 65, 68, 81]) inner.send(`\u001b[<${String(button)};1;1M`)
+    inner.send('\u001b[<64;1;1m')
+    inner.send('\u001b[<66;1;1M')
+    expect(steps).toEqual([-1, 1, -1, 1])
+    expect(delivered).toEqual([])
+  })
+
   it('turns mouse reports on after the terminal starts and off before it stops', () => {
     const { inner, pointer } = pointerOver()
     expect(inner.calls).toEqual(['start', `write ${ENABLE_MOUSE}`])

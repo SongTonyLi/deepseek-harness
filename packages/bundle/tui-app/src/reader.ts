@@ -33,7 +33,7 @@ import {
   type TurnGroup,
   type TurnMarkers,
 } from './navigation.ts'
-import { createPalette, markdownTheme, type CodeHighlighter, type Palette, type Style } from './style.ts'
+import { bandRow, createPalette, markdownTheme, type CodeHighlighter, type Palette, type Style } from './style.ts'
 import { paintCodeRows, type CodeSpan } from './transcript.ts'
 
 /** Columns the reader needs before it draws the held turn beside the turn list. */
@@ -1261,8 +1261,14 @@ export function readerRows(state: ReaderState, groups: readonly TurnGroup[], ren
   // come must not be what a narrow terminal drops.
   const report = readout(state, groups, geometry, totalTurns)
   const legendRoom = ruleRoom(width) - visibleWidth(report) - 1
+  const prompt = group?.sections
+    .map(section => blocks[section.block]?.parts()[section.part])
+    .find(part => part?.kind === 'user')
+  const pinned = geometry.pane > 0 && state.offset > 0 && prompt !== undefined
+    ? bandRow(palette, truncateToWidth(` ${PROMPT_GLYPH} ${prompt.rows.join(' ').replaceAll(/\s+/gu, ' ').trim()} `, width, ELLIPSIS), width)
+    : undefined
   return [
-    topRule({
+    pinned ?? topRule({
       chip: chip(palette, READER_CHIP),
       title: palette.bold(palette.accent(`turn ${String(place(selected, groups.length))} of ${String(groups.length)}`)),
       width,
