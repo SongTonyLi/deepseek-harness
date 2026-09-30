@@ -3993,7 +3993,7 @@ export class TuiApp {
         })
       }
     }
-    return items
+    return items.sort((left, right) => left.label.localeCompare(right.label, 'en', { numeric: true }))
   }
 
   /**

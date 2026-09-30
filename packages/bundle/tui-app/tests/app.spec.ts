@@ -1314,6 +1314,26 @@ describe('TuiApp', () => {
     expect(test.selection.current).toEqual({ provider: 'p2', model: 'b' })
   })
 
+  it('lists models sorted by provider and model id with numeric parts in order', async () => {
+    const test = await bench({
+      before: (ctx) => {
+        ctx.provide('llm', {
+          listProviders: () => [{ id: 'zed', name: 'Zed' }, { id: 'alpha', name: 'Alpha' }],
+          resolveModelInfo: () => Promise.resolve({}),
+          listModels: (provider: string) => Promise.resolve(provider === 'zed'
+            ? [{ provider, id: 'm', name: 'M' }]
+            : ['m-10', 'm-9'].map(id => ({ provider, id, name: id }))),
+        } as never)
+      },
+    })
+    typeLine(test.terminal, '/model')
+    await test.settle()
+    const screen = test.terminal.text()
+    expect(screen.indexOf('alpha/m-9')).toBeGreaterThan(-1)
+    expect(screen.indexOf('alpha/m-9')).toBeLessThan(screen.indexOf('alpha/m-10'))
+    expect(screen.indexOf('alpha/m-10')).toBeLessThan(screen.indexOf('zed/m'))
+  })
+
   it('reports when no provider offers a model', async () => {
     const test = await bench()
     typeLine(test.terminal, '/model')
