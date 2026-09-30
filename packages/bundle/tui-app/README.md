@@ -173,6 +173,7 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/model` | Pick the model (type to filter the rows), then its reasoning effort when the model declares more than one, for the next request; `/model <provider>/<model>` selects directly, `/model save` stores the current selection as the default, and `Ctrl+S` in the model list stores the highlighted model as the default for the next launch without closing the list |
 | `/effort [id]` | With no argument, open the current model's reasoning-effort picker for the next request, the same picker as editor `Shift+Tab`; an id selects directly and `/effort default` restores the provider default |
 | `/permission [preset]` | With no argument, open the permission-preset picker; a preset selects directly. The shipped profile includes experimental Auto review; `/permission auto` selects it for the current session |
+| `/search [deepseek\|openrouter [model]]` | With no argument, open the web-search route picker; `deepseek` restores the default route and `openrouter` routes `web_search` through OpenRouter with `OPENROUTER_API_KEY` and the typed model (default: the model `/model` selected when it is an OpenRouter model, otherwise `deepseek/deepseek-v4-flash-0731`). It writes the `web-search-deepseek` settings namespace, which the next search reads |
 | `/resume` | Open the same persisted-session picker as `/sessions` and resume the selected previous session |
 | `/sessions` | Open the persisted-session picker and switch to the selected session |
 | `/new` | Start a new session |
@@ -281,6 +282,7 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/sessions.ts`](src/sessions.ts) | The persisted-session list and picker rows shared by `/resume` and `/sessions`; titles come from the live or cached title projection |
 | [`src/effort.ts`](src/effort.ts) | Reasoning-effort names and picker rows shared by `/model`, `/effort`, and editor `Shift+Tab` |
 | [`src/permission.ts`](src/permission.ts) | Permission-preset names and picker rows for `/permission` |
+| [`src/search-route.ts`](src/search-route.ts) | Web-search routes and the `web-search-deepseek` settings writes behind `/search` |
 | [`src/attach.ts`](src/attach.ts) | `/attach`: local files into image or file blocks through the attachment store |
 | [`src/export.ts`](src/export.ts) | `/export`: the session-log ZIP written through the export package's archive helpers |
 | [`src/blocks.ts`](src/blocks.ts) | Transcript components: user prompt, user-shell run, assistant reply, tool card, system prompt and injected context, notice; the navigable blocks expose their sections and draw the focus gutter, and the foldable ones carry the marker both fold keys name. Each block keeps the lines it last drew and a reply keeps the coloured fences of its last Markdown parse and re-lexes only the open tail after the last closed fence, so a frame of a settled transcript costs one key comparison per block and a stream delta colours only the fence that changed |

@@ -115,6 +115,7 @@ import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
 import { parseUserShellLine, userShellContextText, userShellTranscriptRows } from './shell-line.ts'
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
+import { SEARCH_ROUTE_ITEMS, applySearchRoute, currentSearchRoute, type SearchRoute } from './search-route.ts'
 import { matchPermission, permissionHint, permissionItems } from './permission.ts'
 import { exportSessionZip } from './export.ts'
 import { RowReveal, StreamPacer } from './pace.ts'
@@ -545,6 +546,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'parent', description: 'Return from a subagent view or a /btw side agent to the session it was opened from' },
   { name: 'btw', description: 'Open a temporary side agent with this session\'s context to ask questions while the agent works (/btw <question>)', hint: '<question>' },
   { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
+  { name: 'search', description: 'Pick the web-search route (/search deepseek, /search openrouter [model])', hint: '<route>' },
   { name: 'plugins', description: 'List the composed plugins (/plugins bundles, /plugins enable|disable <id>, /plugins add <spec>, /plugins remove <name>)' },
   { name: 'tools', description: 'Expand or collapse every tool card and context row' },
   { name: 'turns', description: 'Read the conversation full screen, turns side by side (Ctrl+G)' },
@@ -3407,6 +3409,9 @@ export class TuiApp {
       case 'permission':
         await this.choosePermission(argument)
         return
+      case 'search':
+        await this.chooseSearchRoute(argument)
+        return
       case 'sessions':
       case 'resume':
         await this.openSessionPicker()
@@ -3823,6 +3828,44 @@ export class TuiApp {
       ? 'effort: provider default from the next request'
       : `effort ${effort} from the next request`, 'success')
     this.refreshFooter()
+  }
+
+  /**
+   * Choose the web-search route: an empty argument opens the picker on the
+   * route in force, `deepseek` or `openrouter [model]` selects directly. Without a
+   * typed model, `openrouter` searches with the model `/model` selected when that model is on the
+   * `openrouter` provider.
+   * @param argument - a route id with an optional OpenRouter model, or empty for the picker.
+   */
+  private async chooseSearchRoute(argument: string): Promise<void> {
+    try {
+      const [typed, model, ...extra] = argument === '' ? [] : argument.split(/\s+/u)
+      let route: SearchRoute
+      if (typed === undefined) {
+        const picked = await this.showModal(new PickPrompt(
+          this.deps.palette,
+          'Web search route',
+          [...SEARCH_ROUTE_ITEMS],
+          { current: currentSearchRoute(this.deps.ctx) },
+        ))
+        if (picked === undefined) return
+        route = picked.value as SearchRoute
+      } else if (typed === 'deepseek' || typed === 'openrouter') {
+        route = typed
+      } else {
+        this.notice(`unknown search route "${typed}" (available: deepseek, openrouter)`, 'error')
+        return
+      }
+      if (extra.length > 0 || (model !== undefined && route !== 'openrouter')) {
+        this.notice('usage: /search deepseek | /search openrouter [model]', 'error')
+        return
+      }
+      const selected = this.currentSelection()
+      const inherited = selected.provider === 'openrouter' ? selected.model : undefined
+      this.notice(await applySearchRoute(this.deps.ctx, route, model ?? inherited), 'success')
+    } catch (error: unknown) {
+      this.notice(describeFailure(error), 'error')
+    }
   }
 
   /**

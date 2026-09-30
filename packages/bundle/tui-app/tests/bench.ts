@@ -325,6 +325,8 @@ export async function bench(options: {
   onCancel?: () => void
   /** Omit the model selection and the Agent's model options. */
   unselected?: boolean
+  /** The model selection the session starts with; defaults to `test-provider/test-model`. */
+  selected?: { provider: string; model: string }
   /** Make every host operation fail with this message. */
   hostFailure?: string
   /** Hold every host operation until the returned release is called. */
@@ -429,13 +431,13 @@ export async function bench(options: {
     resume: () => Promise.reject(new Error('not used')),
   })
   const selection: ModelSelectionRef = {
-    current: options.unselected === true ? undefined : { provider: 'test-provider', model: 'test-model' },
+    current: options.unselected === true ? undefined : options.selected ?? { provider: 'test-provider', model: 'test-model' },
     assembled: undefined,
   }
   const { agent } = await ctx.agents.create({
     sessionId: 'session-tui-test' as Agent['id'],
     meta: { cwd: '/work' },
-    ...options.unselected === true ? {} : { agentOptions: { provider: 'test-provider', model: 'test-model' } },
+    ...options.unselected === true ? {} : { agentOptions: options.selected ?? { provider: 'test-provider', model: 'test-model' } },
   })
   const terminal = new FakeTerminal()
   if (options.background !== false) terminal.backgroundReply = options.background ?? 'not-a-color'

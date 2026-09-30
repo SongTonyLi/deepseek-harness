@@ -83,6 +83,17 @@ export function showSetting(ctx: Context, ns: string): string[] {
 }
 
 /**
+ * One namespace's resolved value with secrets redacted.
+ * @param ctx - plugin context carrying the optional settings service.
+ * @param ns - the registered namespace to read.
+ * @returns the resolved section value.
+ * @throws {Error} when no settings service is mounted or `ns` is not registered.
+ */
+export function settingValue(ctx: Context, ns: string): unknown {
+  return requireDescriptor(requireSettings(ctx), ns).value
+}
+
+/**
  * Write one field of a namespace's user section through a path-addressed
  * `set` against the revision read at call time. `rawValue` is parsed as JSON
  * when it is valid JSON and stored as a string otherwise; an empty `path`
