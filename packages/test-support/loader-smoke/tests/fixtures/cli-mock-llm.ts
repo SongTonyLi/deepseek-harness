@@ -1,5 +1,6 @@
 import { appendFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
+import { loadReplayScript, resolveScriptedEntry, type ReplayEntry } from '@deepseek-ai/dsh-llm-replay'
 import {
   ToolCallId,
   LlmAdapter,
@@ -23,6 +24,18 @@ const COMPACTION_SUMMARY = '## Primary Request and Intent\n- CLI_COMPACTION_SUMM
  * final answer, and a fixed text summary for a compaction request.
  */
 class CliMockAdapter extends LlmAdapter {
+  private readonly replay: ReplayEntry[] | undefined
+
+  constructor() {
+    super()
+    const file = process.env.DSH_TUI_SNAPSHOT_SESSION
+    this.replay = file === undefined ? undefined : loadReplayScript({ file })
+  }
+
+  assertReplayConsumed(): void {
+    if (this.replay !== undefined && this.replay.length !== 0) throw new Error('CLI mock left recorded model calls unconsumed')
+  }
+
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return {
       provider,
@@ -44,6 +57,12 @@ class CliMockAdapter extends LlmAdapter {
       return
     }
     if (options.system?.startsWith('REVIEW_POLICY\n')) {
+      if (process.env.DSH_CLI_MOCK_REJECT_REVIEW_TEMPERATURE === '1' && options.temperature !== undefined) {
+        yield { type: 'finish', reason: { kind: 'error', failure: {
+          code: 'PI_AI_ERROR', message: 'Codex error: Unsupported parameter: temperature',
+        } } }
+        return
+      }
       const trace = process.env.DSH_CLI_MOCK_REVIEW_TRACE
       if (trace !== undefined) appendFileSync(trace, 'reviewed\n', { mode: 0o600 })
       const verdict = '{"risk":"low","decision":"allow"}'
@@ -58,6 +77,14 @@ class CliMockAdapter extends LlmAdapter {
       yield { type: 'text-delta', index: 0, text: COMPACTION_SUMMARY }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: COMPACTION_SUMMARY } }
       yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    if (this.replay !== undefined) {
+      const entry = this.replay.shift()
+      if (entry === undefined) throw new Error('CLI mock exhausted the recorded model script')
+      const resolved = resolveScriptedEntry(entry, options.messages)
+      if (resolved.kind !== 'chunks') throw new Error('CLI mock requires recorded successful model chunks')
+      yield* resolved.chunks
       return
     }
     const last = options.messages.at(-1)
@@ -94,7 +121,9 @@ export const inject = ['llm']
 
 /** Register the keyless `cli-mock` adapter. */
 export function apply(ctx: Context): void {
-  ctx.llm.registerAdapter(['cli-mock'], new CliMockAdapter())
+  const adapter = new CliMockAdapter()
+  ctx.llm.registerAdapter(['cli-mock'], adapter)
+  ctx.effect(() => () => { adapter.assertReplayConsumed() }, 'CLI mock replay consumption')
   ctx.on('agent/request', async ({ step }, next) => {
     const config = await next()
     return step === 2 ? { ...config, reasoningEffort: OFF } : config

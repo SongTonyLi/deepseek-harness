@@ -84,7 +84,7 @@ No runtime invariant companion is published: this single effect owns selection a
 
 #### What the model sees
 
-The reviewer uses the latest `request/header.config` provider and model with the shipped adapter's default reasoning. Its fixed `REVIEW_POLICY` replaces human approval for exactly one action: allow executes immediately with Full access. The other four sections contain only the retained facts described above. It returns one strict JSON text object with `risk` and `decision`; deny may include a string `reason`. Reasoning blocks may precede that single text block. Only `low + allow`, `medium + allow/deny`, and `high + deny` are valid.
+The reviewer uses the latest `request/header.config` provider and model with the shipped adapter's default reasoning. The `temperature` setting accepts numbers from `0` through `2` or `provider-default`, which omits the request parameter; the plugin defaults to `0`, while the bundle selects `provider-default` only for the `tui` profile so providers that reject temperature can review calls. Its fixed `REVIEW_POLICY` replaces human approval for exactly one action: allow executes immediately with Full access. The other four sections contain only the retained facts described above. It returns one strict JSON text object with `risk` and `decision`; deny may include a string `reason`. Reasoning blocks may precede that single text block. Only `low + allow`, `medium + allow/deny`, and `high + deny` are valid.
 
 #### Token effect
 
