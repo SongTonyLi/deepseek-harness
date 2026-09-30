@@ -13,6 +13,7 @@
 
 import { truncateToWidth, visibleWidth, type Component, type OverlayOptions } from '@earendil-works/pi-tui'
 import { recolorLines, type FadeStyle, type RegisteredFade } from './fade.ts'
+import { paintKeys } from './key-chips.ts'
 import type { Palette } from './style.ts'
 
 /**
@@ -237,7 +238,11 @@ export class ToastPane implements Component {
     // with, so the padding is measured in columns rather than in characters.
     const body = truncateToWidth(this.text, field, ELLIPSIS)
     const padding = ' '.repeat(Math.max(0, field - visibleWidth(body)))
-    const lines = [`╭${rule}╮`, `│ ${body}${padding}│`, `╰${rule}╯`].map(palette.dim)
+    const lines = [
+      palette.dim(`╭${rule}╮`),
+      `${palette.dim('│ ')}${paintKeys(palette, body, palette.dim, 'prose')}${palette.dim(`${padding}│`)}`,
+      palette.dim(`╰${rule}╯`),
+    ]
     const age = this.settings.age()
     return age === undefined ? lines : recolorLines(lines, age, this.settings.style())
   }

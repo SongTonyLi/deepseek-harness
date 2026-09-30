@@ -21,6 +21,7 @@ import { Markdown, fuzzyFilter, truncateToWidth, visibleWidth, wrapTextWithAnsi,
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { mixFadeColor, nearestAnsi256, recolorLines, type FadeStyle } from './fade.ts'
 import { bottomRule, chip, fitLegend, legendRule, ruleRoom, topRule } from './frame.ts'
+import { paintKeys } from './key-chips.ts'
 import {
   cursorAt,
   sectionLabel,
@@ -1174,7 +1175,7 @@ function frameRow(columns: readonly BodyColumn[], row: number, palette: Palette,
  */
 function legendText(state: ReaderState, palette: Palette, room: number): string {
   if (state.column === 'filter') return palette.accent(truncateToWidth(`/ ${state.query ?? ''}`, Math.max(1, room), ELLIPSIS))
-  return palette.dim(fitLegend(READER_HINTS[state.column], room))
+  return paintKeys(palette, fitLegend(READER_HINTS[state.column], room))
 }
 
 /**

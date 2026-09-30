@@ -62,6 +62,8 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 对话记录、编辑器、子 agent 面板与状态栏构成垂直方向键走查：在最新小节上按 `Down`、在子 agent 面板第一行上按 `Up`、在没有绘制子 agent 面板时于状态栏上按 `Up`，都会落到光标处。follow-ups 列表位于输入框上方；绘制该列表时，`Shift+Up` 会进入它，它也加入 `Tab` 走查。activity board 位于 follow-ups 与输入之间，不是焦点区域。编辑器以外的区域持有键盘时，`Tab` 与 `Shift+Tab` 走遍已绘制的各区域，并在两端环绕；在编辑器中，`Tab` 采用给出的补全，`Shift+Tab` 打开推理强度选择器。在其中任何一个区域按下可打印键都会回到编辑器并在那里输入，因此在阅读时开始写的句子会落在它所指向的地方；对话记录中的 `Space` 是唯一的例外，它折叠被标记的工具卡片或上下文块。`Ctrl+G`、`Ctrl+O`、`Ctrl+B`、`Ctrl+T`、`Ctrl+P` 与 `Ctrl+L` 在这些区域中含义完全相同，而 `Ctrl+C` 与 `Ctrl+D` 会先把键盘交还编辑器再行动。提示与阅读器则各自持有整条按键流，并以交还键盘的方式应答 `Ctrl+C`。
 
+屏幕上写出的每个按键都画成一枚徽标，以强调色加下划线与周围文字区分开：出现在状态栏、各区域的按键提示、选择器与提示、临时提示行、折叠标记、通知、`/help` 与阅读器中。设置 `mouse: true` 后，左键点击一枚徽标就按下该键，与键入它完全相同：点击状态栏中的 `Shift+↓` 会走到状态栏，点击已布防的停止提示行中的 `Esc` 会停止轮次，`↑↓` 这类成对箭头中的每个箭头各自按下自己的键。开启它会打开终端的鼠标报告，因此滚轮与普通的点击拖动交给应用，而不再滚动终端的回滚缓冲区或选择文本；大多数终端在按住 `Shift`（iTerm2 中为 `Option`）时仍可滚动与选择。
+
 编辑器持有键盘时：
 
 | 按键 | 效果 |
@@ -241,6 +243,7 @@ follow-ups 面板持有键盘时：
 | `streamPaceFrames` | `8` | 积压的流式回复文字或工具参数要经过多少帧才全部上屏。思考块结束时，或回复文字或工具调用开始时，仍在队列中的思考立即画出；`0` 与 `reducedMotion` 一样，收到即绘制 |
 | `toolRevealFrames` | `6` | 工具卡片出现或其结果落下时，其各行展开所用的帧数，每帧展开隐藏行的一份。展开卡片，以及正在展开的行已位于渲染器可重绘范围之上的卡片，都会一次画出所有行；`0` 与 `reducedMotion` 一样，一次画出所有行 |
 | `reducedMotion` | `false` | 以稳定颜色绘制流式文本、流式推理、工具卡片与应用自身的边框装饰，不做淡入、不做抬亮、没有旋转符号或扫光，也不重复重绘 |
+| `mouse` | `false` | 让每枚按键徽标都可点击：左键点击其中一枚即按下它的键。它会打开终端的鼠标报告，因此滚轮与普通的点击拖动交给应用而非终端；大多数终端在按住 `Shift` 时仍可滚动与选择 |
 | `openBrowser` | `true` | 把被标记的授权页面交给本地默认浏览器 |
 | `btwTools` | `read`、`read_image`、`glob`、`grep`、`web_search`、`web_fetch`、`session_*` 查询工具、`skill`、MCP 资源读取工具、`ask_user_question` | `/btw` 旁路 agent 可以调用的全局工具；本组合未注册的名称会被跳过 |
 | `btwSandboxedTools` | `bash`、`pwsh` | 仅当命令执行器会约束命令时 `/btw` 旁路 agent 才可调用的命令工具；它们在 `read-only` 沙箱模式下运行 |
@@ -294,8 +297,10 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/reader.ts`](src/reader.ts) | 作为纯数据的阅读器：其状态、按键变成的各个意图、其几何布局，以及它画出的各行 |
 | [`src/reader-screen.ts`](src/reader-screen.ts) | 画在备用屏幕上的阅读器面板：其按键映射，以及它把键盘留在何处 |
 | [`src/btw.ts`](src/btw.ts) | `/btw`：以工作会话的完整日志构造旁路 agent 的种子、其只读工具与沙箱限制，以及开场通知 |
-| [`src/screen.ts`](src/screen.ts) | 每一帧据以排版与绘制的页边距、在构建一帧与写出该帧之间带若干次结算的主屏幕、每次结算所依据的重绘窗口、每个块的重绘下界，以及把对话记录挡在终端之外的挂起 |
-| [`src/alt-screen.ts`](src/alt-screen.ts) | 终端的备用屏幕：接管它、在其上按绝对行址绘制，以及把对话记录自己的屏幕交还 |
+| [`src/screen.ts`](src/screen.ts) | 每一帧据以排版与绘制的页边距、在构建一帧与写出该帧之间带若干次结算的主屏幕、每次结算所依据的重绘窗口、每个块的重绘下界、把对话记录挡在终端之外的挂起，以及它从每一写出帧中取出的按键标记 |
+| [`src/alt-screen.ts`](src/alt-screen.ts) | 终端的备用屏幕：接管它、在其上按绝对行址绘制已取出按键标记的各行，以及把对话记录自己的屏幕交还 |
+| [`src/key-chips.ts`](src/key-chips.ts) | 按键徽标：提示中画成徽标的按键名、每枚徽标按下的字节、可点击徽标携带的零宽标记，以及屏幕为每个被标记按键保留的单元格 |
+| [`src/pointer.ts`](src/pointer.ts) | `mouse: true` 时的指针输入：打开与关闭终端的鼠标报告、从中读出的点击、为主屏幕上的点击定位的光标查询，以及一次点击按下的键 |
 | [`src/fade.ts`](src/fade.ts) | 流式文本淡入与浮出：基于挂钟的尾部追踪器、块时钟与注册表、淡入亮度级别、浮出混合，以及对已渲染行的重新着色 |
 | [`src/pace.ts`](src/pace.ts) | 流式节拍器：助手流与对话记录之间的有序队列，每帧释放积压的一份；以及以同样方式展开工具卡片的逐行展开器 |
 | [`src/motion.ts`](src/motion.ts) | 边框装饰的动效时钟与其调用点所绘的三级抬亮：落键、小节步进与状态栏走查 |
@@ -304,7 +309,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/toast.ts`](src/toast.ts) | 临时按键提示行：其浮层、其时钟，以及它承载的各条文字 |
 | [`src/transcript.ts`](src/transcript.ts) | 呈现视图、用量与轮次结束原因的纯文本折叠、`$ command` 的 span，以及每条标记共用的那一套折叠措辞 |
 | [`src/diff.ts`](src/diff.ts) | diff 卡片的行 diff、hunk 选择，以及卡片加框所依据的新增与删除标记 |
-| [`src/style.ts`](src/style.ts) | 调色板（含 Markdown 回复所用的暗色冷色阶标题与链接色、已完成 todo 内容所用的划线角色、提示所铺的背景带与被引导或注入的提示所铺的更深背景带、diff 卡片变更行的绿色与红色填充及符号颜色）与派生的 pi-tui 主题 |
+| [`src/style.ts`](src/style.ts) | 调色板（含 Markdown 回复所用的暗色冷色阶标题与链接色、已完成 todo 内容所用的划线角色、提示所铺的背景带与被引导或注入的提示所铺的更深背景带、diff 卡片变更行的绿色与红色填充及符号颜色）、按键徽标是否可点击，以及派生的 pi-tui 主题 |
 | [`src/highlight.ts`](src/highlight.ts) | 围栏代码、文件行与 shell 命令的语法高亮：某个块可能加载的语法、由背景选定的配色主题，以及一个 token 所用的 SGR |
 | [`src/completion.ts`](src/completion.ts) | 编辑器的斜杠命令与 `@` 引用补全 |
 | [`src/editor.ts`](src/editor.ts) | 提示编辑器的终端光标、把 `Shift+Left` / `Shift+Right` 映射到 pi-tui 词导航的逻辑，以及 `!` / `!!` 草稿上的语法高亮 |
@@ -337,7 +342,10 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/toast.spec.ts`](tests/toast.spec.ts) | 临时提示行的方框、其保持、其淡出与其提前结算 |
 | [`tests/reader.spec.ts`](tests/reader.spec.ts) | 阅读器的几何布局、其状态机、其过滤，以及它返回的各行 |
 | [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | 阅读器面板：其按键映射、它铺满的屏幕、其重新锚定与其退出 |
-| [`tests/alt-screen.spec.ts`](tests/alt-screen.spec.ts) | 备用屏幕：其成对的切换、其逐行绘制，以及更短的一帧所清除的行 |
+| [`tests/alt-screen.spec.ts`](tests/alt-screen.spec.ts) | 备用屏幕：其成对的切换、其逐行绘制、更短的一帧所清除的行，以及一次绘制保留的按键 |
+| [`tests/key-chips.spec.ts`](tests/key-chips.spec.ts) | 每条提示画成徽标的按键、每枚徽标按下且 pi-tui 能读出的字节，以及被标记的一行所保留的单元格 |
+| [`tests/pointer.spec.ts`](tests/pointer.spec.ts) | 鼠标报告的打开与关闭、什么算作一次点击、同一时刻仅一个在途的光标查询，以及一次点击按下的键 |
+| [`tests/clicks.spec.ts`](tests/clicks.spec.ts) | 在运行中的应用里点击画出的按键：状态栏、已滚动的帧、已布防的停止、阅读器、落在所有徽标之外的点击，以及在光标报告到达前接管终端的阅读器 |
 | [`tests/commands.spec.ts`](tests/commands.spec.ts) | 基于脚本化服务的 `/resume` 与 `/sessions` 选择器、附件、队列、技能、登录、导出、引用、`/effort` 与 `Shift+Tab` 共用的选择器、`/permission` 选择器，以及模型列表中的 `Ctrl+S` |
 | [`tests/shell.spec.ts`](tests/shell.spec.ts) | 提交时解析的 `!` / `!!` 分发、实时草稿解析、下一步 inject、Esc 取消，以及缺少 shell 时的通知 |
 | [`tests/effort.spec.ts`](tests/effort.spec.ts) | 共用的推理强度名称、选择器行、当前强度提示与输入参数匹配 |
@@ -457,6 +465,7 @@ The user moved this call to the background. It keeps running as job <id>. You ar
 - **溢出行之后的各行不可选中**——面板最多绘制六行，`Up` / `Down` 在其两端会离开面板；被折叠进 `+<n> more` 的子会话通过 `/subagents` 到达，后者遍历完整的后代树。
 - **面板的文字按其上次刷新时的宽度构建**——面板绘制期间改变终端大小，其标题按键提示与行文字会保持那次宽度所选的形态，直到下一次列表更新、选择移动或实时重绘重新构建它们。
 - **淡入需要终端的应答**——其亮度级别由终端对启动时发出的查询所报告的背景色构建，因此保持沉默、或既不编码真彩色也不编码 256 色的终端只会得到两级的暗淡模式；`NO_COLOR`、被禁用的调色板、`TERM=dumb` 与 `reducedMotion` 会完全关闭每一种淡入与每一种边框抬亮，临时提示行届时在保持结束时直接消失，而不是淡出。
+- **点击需要终端配合**——设置 `mouse: true` 后，终端的鼠标报告在整个运行期间都处于打开状态，因此不按住 `Shift` 时，滚轮与普通的点击拖动不再滚动回滚缓冲区或选择文本；主屏幕上的点击依据终端对光标位置查询的应答来定位，因此从不应答的终端会忽略主屏幕上的点击，而阅读器的屏幕不需要应答；终端向回滚动时，回滚缓冲区中的徽标无法点击，因为鼠标报告指的是实时屏幕上的行。
 - **终端自身的光标可能闪烁**——编辑器不绘制自己的光标，应用打开终端光标，而 pi-tui 会在其重绘的各行之间移动它；不支持 pi-tui 为一帧包裹的同步输出序列的终端可能显示出这种移动。
 - **通过 `dsh` 启动器运行**——以其他方式启动该 profile 会在启动时失败，因为只有启动器能请求进程退出。
 - **`/btw` 旁路 agent 靠工具名称与沙箱保持只读**——`btwTools` 只能列出读取类工具，因为旁路 agent 与工作 agent 共享工作区；命令工具可以读取 `read-only` 沙箱模式允许的任何内容，而没有会约束命令的执行器时命令工具会被隐藏。它只继承工作会话已记录的内容：仍在流式输出的回复文本不在其中。它的日志像子 agent 会话一样被存储，并在 `/resume` 与 `/sessions` 中隐藏，Web 没有 `/btw`。

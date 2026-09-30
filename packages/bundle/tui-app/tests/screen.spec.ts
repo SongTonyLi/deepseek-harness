@@ -1,8 +1,10 @@
 /** The guarded main screen: its page margins, the repaint window it hands its guard, its settle passes, and its suspension. */
 
 import { describe, expect, it } from 'vitest'
-import type { Component } from '@earendil-works/pi-tui'
+import { Text, type Component } from '@earendil-works/pi-tui'
+import { keyAt, paintKeys } from '../src/key-chips.ts'
 import { GuardedMainScreen, PAGE_MARGIN_COLUMNS, pageContentWidth, repaintFloor } from '../src/screen.ts'
+import { createPalette } from '../src/style.ts'
 import { FakeTerminal } from './bench.ts'
 
 /** A child that counts its renders and draws whatever it was last given. */
@@ -70,6 +72,24 @@ describe('GuardedMainScreen', () => {
     const { screen, child } = screenWith(40, () => false)
     expect(screen.render(20)).toEqual([`${MARGIN}first`, `${MARGIN}tail`])
     expect(child.renders).toBe(1)
+  })
+
+  it('writes a frame without its key marks and keeps where the written frame drew each key', () => {
+    const { screen, terminal, child } = screenWith(10, () => false)
+    const clickable = createPalette(false, true)
+    child.lines = ['plain', paintKeys(clickable, 'go · Esc input')]
+    expect(screen.keyFrame().keys.size).toBe(0)
+    screen.showOverlay(new Text(paintKeys(clickable, 'Ctrl+C quits'), 0, 0), { anchor: 'top-right', width: 12, nonCapturing: true })
+    screen.renderNow()
+    expect(terminal.output).not.toContain('\u001b_')
+    expect(terminal.output).toContain('go · Esc input')
+    const { keys, cursorLine } = screen.keyFrame()
+    // The page margin moves every key one column right of where it was laid out.
+    expect(keyAt(keys, 1, MARGIN.length + 5)).toBe('\u001b')
+    expect(keyAt(keys, 1, 5)).toBeUndefined()
+    // An overlay is composited before the marks are taken out, so its keys are the frame's own.
+    expect(keyAt(keys, 0, terminal.columns - 12)).toBe('\u0003')
+    expect(cursorLine).toBe(screen.captureRenderState().hardwareCursorRow)
   })
 
   it('lays the tree out inside the margins and moves every drawn line right by the left one', () => {

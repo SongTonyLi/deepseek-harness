@@ -173,6 +173,8 @@ import {
 } from './activity-board.ts'
 import { queuePanelRows, renderQueuePanel, type QueuePanelRow } from './queue-panel.ts'
 import { READER_HINTS } from './reader.ts'
+import { keyAt, paintKeys } from './key-chips.ts'
+import { PointerTerminal, type Cell } from './pointer.ts'
 import { ReaderPane, type ReaderExit } from './reader-screen.ts'
 import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
 import { GuardedMainScreen, pageContentWidth, repaintFloor } from './screen.ts'
@@ -203,7 +205,7 @@ import {
   toastDrawable,
   toastOverlay,
 } from './toast.ts'
-import { editorTheme, paintDiffRows, type Palette } from './style.ts'
+import { editorTheme, paintDiffRows, type Palette, type Style } from './style.ts'
 import {
   EMPTY_USAGE,
   addUsage,
@@ -226,6 +228,9 @@ import {
 
 /** A second Ctrl+C inside this window quits. */
 const QUIT_DOUBLE_PRESS_MS = 600
+
+/** Text drawn in the terminal's own colors, as a footer segment's detail rows are. */
+const plainText: Style = text => text
 
 /** What input reports while the host is opening another session. */
 const SESSION_SWITCH_WAIT = 'wait for the session switch to finish'
@@ -444,6 +449,10 @@ export interface TuiAppDeps {
   initial: BoundSession
   /** The terminal the tree renders into; tests substitute a fake. */
   terminal: Terminal
+  /**
+   * What every surface draws with. A palette with clickable keys also turns
+   * the terminal's mouse reports on for as long as the application runs.
+   */
   palette: Palette
   /** Collapsed tool-card body rows. */
   toolPreviewLines: number
@@ -923,7 +932,14 @@ export class TuiApp {
     // of its own, so the terminal's own cursor is the caret. Setting it here
     // rather than through `setShowHardwareCursor` keeps the constructor from
     // requesting a render before the tree has children.
-    this.tui = new GuardedMainScreen(deps.terminal, true, (viewportTop, width, frameLines) => {
+    // A palette whose keys are clickable is what turns the terminal's mouse
+    // reports on; it is also what marks each key a click is resolved against.
+    let terminal = deps.terminal
+    if (palette.clickableKeys) {
+      const pointer: PointerTerminal = new PointerTerminal(deps.terminal, (cell) => { this.onClick(pointer, cell) })
+      terminal = pointer
+    }
+    this.tui = new GuardedMainScreen(terminal, true, (viewportTop, width, frameLines) => {
       return this.settleFrame(viewportTop, width, frameLines)
     })
     this.readerScreen = new AlternateScreen(deps.terminal)
@@ -1458,8 +1474,8 @@ export class TuiApp {
     const trail = this.parents.length === 0
       ? palette.dim('· /help for commands')
       : this.asides.has(this.bound)
-        ? `${palette.accent(`◆ ${BTW_VIEW_TITLE}`)} ${palette.dim('· Ctrl+P ends it and returns')}`
-        : `${palette.accent(`◆ subagent view ${'›'.repeat(this.parents.length)}`)} ${palette.dim('· Ctrl+P returns')}`
+        ? `${palette.accent(`◆ ${BTW_VIEW_TITLE}`)} ${paintKeys(palette, '· Ctrl+P ends it and returns')}`
+        : `${palette.accent(`◆ subagent view ${'›'.repeat(this.parents.length)}`)} ${paintKeys(palette, '· Ctrl+P returns')}`
     this.header.setText(`${palette.bold(palette.accent('dsh'))} ${palette.dim('·')} ${name} ${trail}`)
     this.tui.requestRender()
   }
@@ -2387,6 +2403,34 @@ export class TuiApp {
   }
 
   /**
+   * Press the key whose chip a click landed on, exactly as typing it would.
+   *
+   * The reader's screen is addressed by row. The main screen is drawn from
+   * wherever the shell left the cursor, so the frame line under the click is
+   * placed by asking the terminal where its cursor is: the renderer left it on
+   * a known frame line, and the click is that many rows away. The keys are
+   * read from the frame written when the click arrived, so a frame drawn
+   * while the terminal answers cannot move the target.
+   * @param pointer - the terminal the click was reported on, which presses the key.
+   * @param cell - the clicked cell.
+   */
+  private onClick(pointer: PointerTerminal, cell: Cell): void {
+    if (this.readerScreen.active) {
+      const key = this.readerScreen.keyAt(cell.row, cell.column)
+      if (key !== undefined) pointer.press(key)
+      return
+    }
+    const frame = this.tui.keyFrame()
+    pointer.locateCursor((cursorRow) => {
+      // The reader can take the terminal while the report is on its way, and
+      // its screen draws none of the keys this frame recorded.
+      if (this.readerScreen.active) return
+      const key = keyAt(frame.keys, frame.cursorLine + cell.row - cursorRow, cell.column)
+      if (key !== undefined) pointer.press(key)
+    })
+  }
+
+  /**
    * Apply one resolved key action.
    * @param action - what the key named where the keyboard is.
    * @param data - the raw key bytes, which a typing action hands to the editor.
@@ -2919,7 +2963,7 @@ export class TuiApp {
     /* v8 ignore next -- the bar draws at least the model segment, and an absent id falls back to it */
     if (segment === undefined) return
     if (segment.detail.kind === 'rows') {
-      this.showBlock(segment.detail.rows)
+      this.showBlock(segment.detail.rows.map(row => paintKeys(this.deps.palette, row, plainText, 'prose')))
       return
     }
     // The todo list is the one page the bar hands to the app today.
@@ -3508,8 +3552,9 @@ export class TuiApp {
    */
   private showHelp(): void {
     const palette = this.deps.palette
-    const rows = this.completableCommands().map(command => `/${command.name.padEnd(12)} ${palette.dim(command.description)}`)
-    this.chat.addChild(new Text([...rows, '', ...helpKeyLines().map(palette.dim)].join('\n'), 0, 1))
+    const rows = this.completableCommands()
+      .map(command => `/${command.name.padEnd(12)} ${paintKeys(palette, command.description, palette.dim, 'prose')}`)
+    this.chat.addChild(new Text([...rows, '', ...helpKeyLines().map(line => paintKeys(palette, line))].join('\n'), 0, 1))
     this.tui.requestRender()
   }
 
@@ -5006,9 +5051,9 @@ export class TuiApp {
   private paintLoaderMessage(message: string): string {
     const palette = this.deps.palette
     const activity = this.loaderActivity
-    if (this.deps.reducedMotion || !message.startsWith(activity)) return palette.dim(message)
+    if (this.deps.reducedMotion || !message.startsWith(activity)) return paintKeys(palette, message, palette.dim, 'prose')
     const rest = message.slice(activity.length)
-    return `${shimmer(palette, activity, this.deps.now())}${rest === '' ? '' : palette.dim(rest)}`
+    return `${shimmer(palette, activity, this.deps.now())}${rest === '' ? '' : paintKeys(palette, rest, palette.dim, 'prose')}`
   }
 
   /**

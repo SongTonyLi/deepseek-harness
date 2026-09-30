@@ -1,7 +1,9 @@
 /**
  * The terminal palette: one table of SGR open/close pairs behind named roles,
  * so components never emit raw escape codes. A disabled palette returns text
- * unchanged for dumb terminals and captured output.
+ * unchanged for dumb terminals and captured output. The palette also says
+ * whether the keys a surface names are clickable, because it is what every
+ * surface draws a key chip with.
  * @module @deepseek-ai/dsh-tui-app/style
  */
 
@@ -51,12 +53,19 @@ export interface Palette {
   removedSign: Style
   /** Whether styling is active; false yields verbatim text from every role. */
   readonly enabled: boolean
+  /**
+   * Whether a click on a drawn key presses it: each key chip then carries the
+   * zero-width mark the screens resolve a click against, and the application
+   * turns the terminal's mouse reports on. Independent of {@link Palette.enabled},
+   * so keys stay clickable without color.
+   */
+  readonly clickableKeys: boolean
 }
 
 const ESC = '\u001b['
 
 /** SGR open/close code pairs by role. */
-const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, close: string]> = {
+const SGR: Record<Exclude<keyof Palette, 'enabled' | 'clickableKeys'>, readonly [open: string, close: string]> = {
   dim: ['2', '22'],
   bold: ['1', '22'],
   italic: ['3', '23'],
@@ -80,9 +89,10 @@ const SGR: Record<Exclude<keyof Palette, 'enabled'>, readonly [open: string, clo
 /**
  * Build the palette.
  * @param enabled - whether escape sequences are emitted; false makes every role the identity.
+ * @param clickableKeys - whether key chips carry click marks; false by default.
  * @returns the palette.
  */
-export function createPalette(enabled: boolean): Palette {
+export function createPalette(enabled: boolean, clickableKeys = false): Palette {
   const role = (name: keyof typeof SGR): Style => {
     const [open, close] = SGR[name]
     return enabled ? text => `${ESC}${open}m${text}${ESC}${close}m` : text => text
@@ -107,6 +117,7 @@ export function createPalette(enabled: boolean): Palette {
     addedSign: role('addedSign'),
     removedSign: role('removedSign'),
     enabled,
+    clickableKeys,
   }
 }
 

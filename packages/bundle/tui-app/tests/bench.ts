@@ -60,6 +60,12 @@ export function exportStubs(ctx: Context, id: SessionId, missing = false): void 
 /** The OSC 11 background-color query pi-tui writes, `ESC ] 11 ; ? BEL`. */
 const OSC11_BACKGROUND_QUERY = '\u001b]11;?\u0007'
 
+/** The cursor-position query, device status report 6. */
+const CURSOR_QUERY = '\u001b[6n'
+
+/** The writes that move the cursor between rows: a line feed, a relative or absolute CSI move, and home. */
+const ROW_MOVE = /\r?\n|\u001b\[(\d*)([AB])|\u001b\[(?:(\d+);\d+)?H/gu
+
 /** A terminal that records what the tree writes and lets tests type into it. */
 export class FakeTerminal implements Terminal {
   output = ''
@@ -81,6 +87,21 @@ export class FakeTerminal implements Terminal {
    * that lets the query time out.
    */
   backgroundReply: string | undefined
+  /**
+   * The screen row the cursor is on, counted from 0, as a terminal that
+   * starts on a clean screen tracks it: a line feed moves down and scrolls at
+   * the last row, `ESC [ n A` and `ESC [ n B` move up and down, and home or an
+   * absolute move puts it on its row.
+   */
+  cursorRow = 0
+  /**
+   * How a cursor-position query is answered: at once, as a terminal on the
+   * same machine does, or held until {@link FakeTerminal.answerCursor}, for a
+   * spec that acts while the answer is on its way.
+   */
+  cursorReply: 'now' | 'held' = 'now'
+  /** The answer a held query is waiting to deliver. */
+  private heldCursor: string | undefined
   private onInput: ((data: string) => void) | undefined
   private onResize: (() => void) | undefined
 
@@ -101,6 +122,18 @@ export class FakeTerminal implements Terminal {
   write(data: string): void {
     this.output += data
     this.written += data
+    for (const move of data.matchAll(ROW_MOVE)) {
+      const [sequence, count, direction, absolute] = move
+      const step = count === undefined || count === '' ? 1 : Number(count)
+      if (direction === 'A') this.cursorRow = Math.max(0, this.cursorRow - step)
+      else if (direction === 'B' || !sequence.startsWith('\u001b')) this.cursorRow = Math.min(this.rows - 1, this.cursorRow + step)
+      else this.cursorRow = absolute === undefined ? 0 : Number(absolute) - 1
+    }
+    if (data.includes(CURSOR_QUERY)) {
+      const reply = `\u001b[${String(this.cursorRow + 1)};1R`
+      if (this.cursorReply === 'now') this.type(reply)
+      else this.heldCursor = reply
+    }
     // pi-tui registers the pending query before it writes it, so answering
     // from inside the write is what a terminal that replies at once does.
     if (this.backgroundReply !== undefined && data.includes(OSC11_BACKGROUND_QUERY)) {
@@ -118,6 +151,24 @@ export class FakeTerminal implements Terminal {
 
   setTitle(title: string): void {
     this.title = title
+  }
+
+  /** Deliver the answer a held cursor query is waiting on. */
+  answerCursor(): void {
+    const reply = this.heldCursor
+    this.heldCursor = undefined
+    if (reply !== undefined) this.type(reply)
+  }
+
+  /**
+   * Click the left button on one cell, as a terminal reporting SGR mouse
+   * events sends a press and a release there.
+   * @param cell - the 0-based column and row.
+   */
+  click(cell: { column: number; row: number }): void {
+    const at = `${String(cell.column + 1)};${String(cell.row + 1)}`
+    this.type(`\u001b[<0;${at}M`)
+    this.type(`\u001b[<0;${at}m`)
   }
 
   /** Feed one key or a string of printable characters as the terminal would. */
@@ -319,6 +370,8 @@ export async function bench(options: {
   /** How long a transient key-feedback line holds before it fades out. */
   toastMs?: number
   color?: boolean
+  /** Draw every key clickable, which also turns the terminal's mouse reports on. */
+  clickableKeys?: boolean
   /** Start with the Agent already running. */
   running?: boolean
   /** Called after each cancel of a scripted Agent, as a live loop aborts the running turn's signal there. */
@@ -509,7 +562,7 @@ export async function bench(options: {
     host,
     initial,
     terminal,
-    palette: createPalette(options.color ?? false),
+    palette: createPalette(options.color ?? false, options.clickableKeys ?? false),
     toolPreviewLines: options.toolPreviewLines ?? 3,
     contextPreviewLines: options.contextPreviewLines ?? CONTEXT_PREVIEW_LINES,
     focusPreviewLines: options.focusPreviewLines ?? FOCUS_PREVIEW_LINES,

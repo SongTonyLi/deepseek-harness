@@ -4288,6 +4288,17 @@ export interface Config {
    * `toastMs` and then disappears, because the window it names has to end.
    */
   reducedMotion: boolean
+  /**
+   * Make every key the screen names clickable. Keys are drawn as underlined
+   * chips whether or not this is on - `Ctrl+G`, `Esc`, `Shift+↑`, and the
+   * rest, in legends, pickers, notices, and the reader - and with it on, a
+   * click on a chip presses that key, exactly as typing it would. Turning it
+   * on turns the terminal's mouse reports on, so the terminal sends the wheel
+   * and plain click-drag to the application instead of scrolling its
+   * scrollback or selecting text; most terminals still do both with `Shift`
+   * held (`Option` in iTerm2).
+   */
+  mouse: boolean
   /** Permit local default-browser handoff for authorization pages. */
   openBrowser: boolean
   /**

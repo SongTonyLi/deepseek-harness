@@ -8,6 +8,7 @@
 import { Input, Markdown, SelectList, Text, fuzzyFilter, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type SelectListLayoutOptions, type TUI } from '@earendil-works/pi-tui'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { planReviewOptions, type AskUserQuestionAnswerItem, type AskUserQuestionItem, type AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
+import { paintKeys } from './key-chips.ts'
 import { typedText } from './keys.ts'
 import { markdownTheme, selectListTheme, type Palette } from './style.ts'
 import { foldRows } from './transcript.ts'
@@ -138,8 +139,17 @@ abstract class ListPrompt<T> implements ModalPrompt<T> {
 
   render(width: number): string[] {
     const inner = Math.max(1, width - 2)
-    const body = this.body.flatMap(line => wrapTextWithAnsi(this.palette.dim(line), inner).map(part => `  ${part}`))
+    const body = this.body.flatMap(line => wrapTextWithAnsi(this.paintBody(line), inner).map(part => `  ${part}`))
     return ['', ...this.heading.render(width), ...body, ...this.listLines(width)]
+  }
+
+  /**
+   * Style one body row.
+   * @param line - the row, unstyled.
+   * @returns the row dim; a subclass whose rows name keys draws those as chips.
+   */
+  protected paintBody(line: string): string {
+    return this.palette.dim(line)
   }
 
   /**
@@ -290,6 +300,16 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
     this.settle(undefined)
   }
 
+  /**
+   * Style one body row: a picker's rows are hints its caller wrote, so the
+   * keys they name are drawn as chips.
+   * @param line - the row, unstyled.
+   * @returns the row dim, its keys as chips.
+   */
+  protected override paintBody(line: string): string {
+    return paintKeys(this.palette, line, this.palette.dim, 'prose')
+  }
+
   override handleInput(data: string): void {
     if (matchesKey(data, 'escape') && this.query !== '') {
       this.setQuery('')
@@ -319,12 +339,12 @@ export class PickPrompt extends ListPrompt<PickItem | undefined> {
 
   protected override listLines(width: number): string[] {
     const filter = this.query === ''
-      ? FILTER_HINT
-      : `filter: ${this.query} · ${String(this.visible.length)}/${String(this.rows.length)}`
+      ? paintKeys(this.palette, FILTER_HINT)
+      : this.palette.dim(`filter: ${this.query} · ${String(this.visible.length)}/${String(this.rows.length)}`)
     const shown = this.query !== '' && this.visible.length === 0
       ? [this.palette.dim(`  no row matches "${this.query}"`)]
       : super.listLines(width)
-    return [this.palette.dim(filter), ...shown]
+    return [filter, ...shown]
   }
 }
 
@@ -398,7 +418,7 @@ export class DetailPrompt implements ModalPrompt<void> {
       '',
       ...this.heading.render(width),
       ...wrapped.slice(this.offset, this.offset + DETAIL_MAX_VISIBLE),
-      this.palette.dim(`${DETAIL_HINT}${position}`),
+      `${paintKeys(this.palette, DETAIL_HINT)}${position === '' ? '' : this.palette.dim(position)}`,
     ]
   }
 }
@@ -532,10 +552,10 @@ export class QuestionPrompt implements ModalPrompt<QuestionResult> {
     if (this.typing) {
       this.input.focused = true
       lines.push(...this.input.render(width))
-      lines.push(this.palette.dim('Enter answers · Esc back to the options'))
+      lines.push(paintKeys(this.palette, 'Enter answers · Esc back to the options'))
     } else {
       lines.push(...this.list.render(width))
-      if (this.question.multiSelect === true) lines.push(this.palette.dim('Space toggles · Enter on Done confirms · Esc cancels'))
+      if (this.question.multiSelect === true) lines.push(paintKeys(this.palette, 'Space toggles · Enter on Done confirms · Esc cancels'))
     }
     return lines
   }

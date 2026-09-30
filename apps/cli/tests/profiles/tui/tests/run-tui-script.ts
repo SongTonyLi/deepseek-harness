@@ -17,8 +17,12 @@ const CTRL_D = '\u0004'
  */
 const STEP_TIMEOUT_MS = 30_000
 
-/** Drop CSI, OSC, and APC sequences so assertions read the rendered words. */
-function plain(output: string): string {
+/**
+ * Drop CSI, OSC, and APC sequences so assertions read the rendered words.
+ * @param output - what the terminal was written.
+ * @returns the rendered words.
+ */
+export function plain(output: string): string {
   return output
     .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/gu, '')
     .replace(/\u001b_[^\u0007\u001b]*(?:\u0007|\u001b\\)/gu, '')
@@ -44,8 +48,12 @@ export interface Run {
 export interface Step {
   /** The rendered words the step waits for, searched after the previous step's own. */
   marker: string
-  /** The bytes to send once it appears; empty waits for the marker alone. */
-  keys: string
+  /**
+   * The bytes to send once it appears; empty waits for the marker alone. A
+   * function reads them from everything written so far, sequences included,
+   * for input that depends on where something was drawn, such as a click.
+   */
+  keys: string | ((raw: string) => string)
 }
 
 /**
@@ -123,7 +131,7 @@ export async function runTuiScript(
       if (at < 0) return
       from = at + next.marker.length
       step += 1
-      send(next.keys)
+      send(typeof next.keys === 'string' ? next.keys : next.keys(seen))
       armStep()
     }
     finish()

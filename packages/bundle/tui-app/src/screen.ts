@@ -28,10 +28,15 @@
  * side of every frame: the tree lays out in the columns that remain and each
  * drawn line is moved right by that many spaces, so nothing the conversation
  * or the docked chrome draws touches either edge of the terminal.
+ *
+ * Every frame leaves here without its key marks: the screen takes them out
+ * of the finished frame, overlays composited, and keeps where each marked
+ * key was drawn ({@link GuardedMainScreen.keyFrame}).
  * @module @deepseek-ai/dsh-tui-app/screen
  */
 
 import { TuiMainScreen, type Terminal } from '@earendil-works/pi-tui'
+import { EMPTY_KEY_FRAME, takeKeyFrame, type KeyFrame } from './key-chips.ts'
 
 /**
  * How many times one frame is offered to the guard before it is written. Two
@@ -95,6 +100,14 @@ export function repaintFloor(start: number, viewportTop: number): number {
   return Math.max(0, viewportTop - start)
 }
 
+/** The keys the last written frame drew, as a click is placed against them. */
+export interface MainKeyFrame {
+  /** The keys by frame line. */
+  readonly keys: KeyFrame
+  /** The frame line the renderer left the terminal's cursor on. */
+  readonly cursorLine: number
+}
+
 /**
  * The main screen that settles each frame between building it and writing it.
  *
@@ -116,6 +129,8 @@ export function repaintFloor(start: number, viewportTop: number): number {
 export class GuardedMainScreen extends TuiMainScreen {
   /** What draws instead while another surface holds the terminal; absent while this screen does. */
   private onSuspendedRender: (() => void) | undefined
+  /** The keys the last frame drew, by frame line. */
+  private keys: KeyFrame = EMPTY_KEY_FRAME
   /**
    * @param terminal - the terminal the tree renders into.
    * @param showHardwareCursor - whether the terminal's own cursor is the caret.
@@ -182,6 +197,31 @@ export class GuardedMainScreen extends TuiMainScreen {
       return
     }
     suspended()
+  }
+
+  /**
+   * Where the last written frame drew its keys, and the frame line the
+   * terminal's cursor was left on, which is what a cursor report places the
+   * frame by.
+   * @returns the snapshot; later frames never change it.
+   */
+  keyFrame(): MainKeyFrame {
+    return { keys: this.keys, cursorLine: this.captureRenderState().hardwareCursorRow }
+  }
+
+  /**
+   * Take every key mark out of the finished frame before pi-tui resets and
+   * writes its lines, keeping where each key was drawn. The renderer calls
+   * this once per frame, after the overlays are composited into it and before
+   * it is compared with what the terminal holds, so the kept cells are the
+   * written frame's own.
+   * @param lines - the finished frame.
+   * @returns the frame with pi-tui's line resets applied and no key mark left.
+   */
+  protected override applyLineResets(lines: string[]): string[] {
+    const marked = takeKeyFrame(lines)
+    this.keys = marked.keys
+    return super.applyLineResets(marked.lines)
   }
 
   /** Write the frame, unless another surface holds the terminal. */

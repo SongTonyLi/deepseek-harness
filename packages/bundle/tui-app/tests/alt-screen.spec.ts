@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { AlternateScreen } from '../src/alt-screen.ts'
+import { paintKeys } from '../src/key-chips.ts'
+import { createPalette } from '../src/style.ts'
 import { FakeTerminal } from './bench.ts'
 
 /** Switch to the alternate screen. */
@@ -121,5 +123,27 @@ describe('the alternate screen', () => {
     screen.enter()
     screen.paint(['drawn'])
     expect(drawn(terminal)).toContain('drawn')
+  })
+
+  it('writes rows without their key marks and answers the key under a cell while it holds the terminal', () => {
+    const { screen, terminal } = screenOver()
+    const legend = paintKeys(createPalette(false, true), 'Esc closes')
+    screen.enter()
+    drawn(terminal)
+    screen.paint(['top', legend])
+    const written = drawn(terminal)
+    expect(written).toContain('Esc closes')
+    expect(written).not.toContain('\u001b_')
+    expect(screen.keyAt(1, 0)).toBe('\u001b')
+    expect(screen.keyAt(1, 3)).toBeUndefined()
+    expect(screen.keyAt(0, 0)).toBeUndefined()
+    // The rows are compared without their marks, so an unchanged legend is not written again.
+    screen.paint(['top', legend])
+    expect(drawn(terminal)).not.toContain('Esc')
+    screen.leave()
+    expect(screen.keyAt(1, 0)).toBeUndefined()
+    // A new visit starts with no key until its first paint.
+    screen.enter()
+    expect(screen.keyAt(1, 0)).toBeUndefined()
   })
 })

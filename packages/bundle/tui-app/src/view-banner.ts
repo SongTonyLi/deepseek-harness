@@ -9,6 +9,7 @@
  */
 
 import { truncateToWidth, type Component } from '@earendil-works/pi-tui'
+import { paintKeys } from './key-chips.ts'
 import { bandRow, type Palette } from './style.ts'
 
 /** What the trail calls the session the first subagent view was opened from. */
@@ -58,7 +59,7 @@ export class ViewBanner implements Component {
     const row = [
       `${palette.warning(VIEW_GLYPH)} ${palette.bold(palette.warning(this.title))}`,
       [...trail, palette.bold(current)].join(palette.dim(' › ')),
-      `${palette.accent('Ctrl+P')} ${palette.dim(`back to ${back}`)}`,
+      `${paintKeys(palette, 'Ctrl+P')} ${palette.dim(`back to ${back}`)}`,
     ].join(palette.dim('  ·  '))
     return [bandRow(palette, truncateToWidth(` ${row}`, width, '…'), width)]
   }
