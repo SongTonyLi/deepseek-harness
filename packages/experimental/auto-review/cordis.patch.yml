@@ -1,3 +1,6 @@
 - insert:
     - id: auto-review
       name: '@deepseek-ai/dsh-experimental-auto-review'
+      config:
+        # TUI users can select providers that reject explicit temperature.
+        temperature: !!js "ctx.get('profileContext')?.name === 'tui' ? 'provider-default' : 0"

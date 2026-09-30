@@ -1,5 +1,10 @@
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
+import Include from '@deepseek-ai/cordis-plugin-include'
+import z from '@deepseek-ai/schemastery'
+import { loadOverlayPatches, mountRootInclude } from '@deepseek-ai/dsh-app-boot'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-instructions'
 import { compactCheckpointSource, CompactionId } from '@deepseek-ai/dsh-compaction'
@@ -129,6 +134,7 @@ function reasoningDecisionChunks(text: string): StreamChunk[] {
 async function harness(
   script: ReviewScript[],
   permissionConfig: NonNullable<Parameters<typeof PermissionPresetService.Config>[0]> = { presets: PRESETS, defaultPreset: 'workspace-write' },
+  reviewOptions: { temperature?: number | 'provider-default'; profile?: string } = {},
 ): Promise<{ ctx: Context; adapter: RecordingAdapter; auto: PluginFiber }> {
   const ctx = new Context()
   contexts.push(ctx)
@@ -147,7 +153,35 @@ async function harness(
   await ctx.plugin(PermissionPresetService, permissionConfig)
   const adapter = new RecordingAdapter(script)
   ctx.llm.registerAdapter(['review'], adapter)
-  const auto = await ctx.plugin(AutoReview)
+  let auto: PluginFiber
+  if (reviewOptions.profile === undefined) {
+    auto = await ctx.plugin(AutoReview, { temperature: reviewOptions.temperature ?? 0 })
+  } else {
+    ctx.provide('profileContext', {
+      name: reviewOptions.profile, dir: '/profile', patchPath: '/profile/cordis.patch.yml',
+      installAnchor: '/installation/package.json', cwd: '/workspace', home: '/home',
+      startedBundles: [], overlays: [], telemetryDisabledEnv: undefined,
+    })
+    await ctx.plugin(Loader)
+    ctx.loader.builtins.include = Include
+    const internal: ModuleLoaderV2 = {
+      version: 'v2', loadCache: new Map(),
+      import: (specifier: string) => {
+        if (specifier !== '@deepseek-ai/dsh-experimental-auto-review') throw new Error(`unexpected Loader import: ${specifier}`)
+        return Promise.resolve(AutoReview)
+      },
+      register(): never { throw new Error('unexpected module hook registration') },
+      getOrCreateModuleJob(): never { throw new Error('unexpected module job creation') },
+      resolveSync(): never { throw new Error('unexpected synchronous module resolution') },
+      load(): never { throw new Error('unexpected module load') },
+    }
+    ctx.loader.internal = internal
+    const entry = await mountRootInclude(ctx, fileURLToPath(new URL('./fixtures/cordis.yml', import.meta.url)),
+      loadOverlayPatches('test', fileURLToPath(new URL('../cordis.patch.yml', import.meta.url))))
+    await ctx.loader.await()
+    if (entry?.fiber === undefined) throw new Error('Auto-review fixture did not mount')
+    auto = entry.fiber
+  }
   return { ctx, adapter, auto }
 }
 
@@ -259,6 +293,70 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe('native review request', () => {
+  it('defaults reviewer temperature to zero', () => {
+    expect(AutoReview.Config()).toEqual({ temperature: 0 })
+  })
+
+  it.each([0.5, 'provider-default'] as const)('uses explicit reviewer temperature %s', async (temperature) => {
+    const { ctx, adapter } = await harness([decisionChunks('{"risk":"low","decision":"allow"}')], undefined, { temperature })
+    const probe = registerProbe(ctx)
+    const { session, agent } = autoSession(ctx, 'explicit-temperature')
+    appendHeader(session, [{ name: 'probe', description: 'Inspect the workspace.', parameters: {} }])
+    const callId = ToolCallId('explicit-temperature-call')
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{"path":"target"}' }])
+    appendNativeCall(session, callId, 'probe', '{"path":"target"}')
+    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId,
+      name: 'probe', arguments: { path: 'target' }, agent })
+    expect(result.isError).toBe(false)
+    expect(probe.runs()).toBe(1)
+    if (temperature === 'provider-default') expect(adapter.requests[0]).not.toHaveProperty('temperature')
+    else expect(adapter.requests[0]?.temperature).toBe(0.5)
+  })
+
+  it.each([-1, 2.1, NaN, Infinity, 'unsupported'])('rejects invalid reviewer temperature %s', (temperature) => {
+    expect(() => z.resolve({ temperature }, AutoReview.Config, {})).toThrow()
+  })
+
+  it('executes an allowed TUI bash call when the reviewer rejects temperature', async () => {
+    const { ctx, adapter } = await harness([async function* (options) {
+      if (options.temperature !== undefined) {
+        yield { type: 'finish', reason: { kind: 'error', failure: {
+          code: 'PI_AI_ERROR', message: 'Codex error: Unsupported parameter: temperature',
+        } } }
+        return
+      }
+      yield* decisionChunks('{"risk":"low","decision":"allow"}')
+    }], undefined, { profile: 'tui' })
+    const bash = registerProbe(ctx, 'bash')
+    const { session, agent } = autoSession(ctx, 'tui-temperature')
+    appendHeader(session, [{ name: 'bash', description: 'Inspect the workspace.', parameters: {} }])
+    const callId = ToolCallId('tui-bash')
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'bash', arguments: '{"path":"target"}' }])
+    appendNativeCall(session, callId, 'bash', '{"path":"target"}')
+
+    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId,
+      name: 'bash', arguments: { path: 'target' }, agent })
+
+    expect(result.isError, JSON.stringify(result)).toBe(false)
+    expect(bash.runs()).toBe(1)
+    expect(adapter.requests[0]).not.toHaveProperty('temperature')
+  })
+
+  it.each(['web', 'headless'])('keeps zero reviewer temperature for the %s bundle', async (profile) => {
+    const { ctx, adapter } = await harness([decisionChunks('{"risk":"low","decision":"allow"}')], undefined, { profile })
+    const probe = registerProbe(ctx)
+    const { session, agent } = autoSession(ctx, `temperature-${profile}`)
+    appendHeader(session, [{ name: 'probe', description: 'Inspect the workspace.', parameters: {} }])
+    const callId = ToolCallId(`temperature-${profile}-call`)
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{"path":"target"}' }])
+    appendNativeCall(session, callId, 'probe', '{"path":"target"}')
+    const result = await ctx.tools.execute({ signal: new AbortController().signal, callId,
+      name: 'probe', arguments: { path: 'target' }, agent })
+    expect(result.isError).toBe(false)
+    expect(probe.runs()).toBe(1)
+    expect(adapter.requests[0]?.temperature).toBe(0)
+  })
+
   it('uses the latest route and exactly the filtered logged five-section input', async () => {
     const { ctx, adapter } = await harness([
       reasoningDecisionChunks('{"risk":"low","decision":"allow"}'),

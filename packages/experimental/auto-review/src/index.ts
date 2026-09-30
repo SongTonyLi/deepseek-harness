@@ -9,6 +9,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-instructions'
 import {
@@ -124,6 +125,23 @@ interface ScopedPtcStart {
 export const name = 'experimental-auto-review'
 /** Complete host services required before Auto may be advertised. */
 export const inject = ['approval', 'llm', 'permissionPresets', 'sessions', 'tools']
+
+/** Sampling configuration for per-call reviewer requests. */
+export interface Config {
+  /** Reviewer temperature from 0 through 2; `provider-default` omits the parameter. */
+  temperature: number | 'provider-default'
+}
+
+/** Validate reviewer sampling configuration. */
+export const Config: z<Config> = z.object({
+  temperature: z.union([
+    z.transform(z.number().min(0).max(2), (value) => {
+      if (!Number.isFinite(value)) throw new Error('reviewer temperature must be finite')
+      return value
+    }),
+    z.const('provider-default'),
+  ]).default(0),
+})
 
 /** Return JSON text for one immutable logged value. */
 function json(value: unknown): string {
@@ -623,6 +641,7 @@ async function classifyRisk(
   agent: Agent,
   exec: ToolExecution,
   signal: AbortSignal,
+  config: Config,
 ): Promise<AutoReviewDecision> {
   const snapshot = snapshotAutoReview(agent, exec)
   // This review prompt is sent only through ctx.llm.stream and never enters a Session log.
@@ -634,7 +653,7 @@ async function classifyRisk(
       role: 'user',
       content: [{ type: 'text', text: reviewUserText(snapshot) }],
     }],
-    temperature: 0,
+    ...config.temperature === 'provider-default' ? {} : { temperature: config.temperature },
     signal,
   })
   return readDecision(ctx.llm.stream(options))
@@ -678,7 +697,7 @@ function failed(exec: ToolExecution, error: unknown): PreToolDecision {
 }
 
 /** Install the Auto preset and its prepended per-call review gate. */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config): void {
   // Retain the injected service while this context drains on disposal.
   const permissionPresets = ctx.permissionPresets
   let accepting = true
@@ -702,7 +721,7 @@ export function apply(ctx: Context): void {
       active.add(completed.promise)
       try {
         const signal = AbortSignal.any([exec.signal, lifecycle.signal])
-        const review = await classifyRisk(ctx, agent, exec, signal).then(
+        const review = await classifyRisk(ctx, agent, exec, signal, config).then(
           decision => ({ ok: true as const, decision }),
           (error: unknown) => ({ ok: false as const, error }),
         )

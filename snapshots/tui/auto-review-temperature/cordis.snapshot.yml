@@ -1,0 +1,6 @@
+- id: session-persistence-jsonl
+  config:
+    root: !!js "ctx.get('profileContext').cwd + '/.sessions'"
+    compression: none
+- id: session-title-llm
+  disabled: true
