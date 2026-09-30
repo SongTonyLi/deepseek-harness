@@ -1,13 +1,14 @@
-- menu "模型与推理等级":
-  - group "DeepSeek":
-    - text: DeepSeek
-    - menuitemradio "Messages Flash" [checked]
-    - menuitemradio "DeepSeek-V4-Pro"
-  - group "Cursor":
-    - text: Cursor
-    - menuitemradio "Composer 2"
-    - menuitemradio "Composer 2 Fast"
-    - menuitemradio "Composer 1.5"
-    - menuitemradio "Claude 4.5 Sonnet"
-    - menuitemradio "Claude 4.6 Opus"
-    - menuitemradio "GPT-5.1"
+- group "模型与推理等级":
+  - menu "模型":
+    - group "DeepSeek":
+      - text: DeepSeek
+      - menuitemradio "Messages Flash" [checked]
+      - menuitemradio "DeepSeek-V4-Pro"
+    - group "Cursor":
+      - text: Cursor
+      - menuitemradio "Composer 2"
+      - menuitemradio "Composer 2 Fast"
+      - menuitemradio "Composer 1.5"
+      - menuitemradio "Claude 4.5 Sonnet"
+      - menuitemradio "Claude 4.6 Opus"
+      - menuitemradio "GPT-5.1"
