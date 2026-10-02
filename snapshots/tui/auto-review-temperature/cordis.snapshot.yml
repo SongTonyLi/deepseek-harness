@@ -4,3 +4,8 @@
     compression: none
 - id: session-title-llm
   disabled: true
+- id: sandbox-apple-container
+  name: '@deepseek-ai/dsh-sandbox-apple-container'
+  config:
+    backend: local
+    executable: './missing-snapshot-container'
