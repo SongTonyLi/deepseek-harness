@@ -86,10 +86,18 @@ describe('paintKeys', () => {
     const palette = createPalette(true)
     const painted = paintKeys(palette, 'Ctrl+G reader · Esc input')
     expect(painted).toBe(
-      '\u001b[4m\u001b[36mCtrl+G\u001b[39m\u001b[24m\u001b[2m reader · \u001b[22m\u001b[4m\u001b[36mEsc\u001b[39m\u001b[24m\u001b[2m input\u001b[22m',
+      '\u001b[3m\u001b[36mCtrl+G\u001b[39m\u001b[23m\u001b[2m reader · \u001b[22m\u001b[3m\u001b[36mEsc\u001b[39m\u001b[23m\u001b[2m input\u001b[22m',
     )
     expect(paintKeys(palette, 'no keys here', palette.link)).toBe('\u001b[38;5;141mno keys here\u001b[39m')
     expect(visibleWidth(paintKeys(createPalette(true, true), 'Ctrl+G reader · Esc input'))).toBe(visibleWidth('Ctrl+G reader · Esc input'))
+  })
+
+  it('draws a chip italic in the accent color with no underline, behind the mark a click on it resolves', () => {
+    const chip = '\u001b[3m\u001b[36mCtrl+O\u001b[39m\u001b[23m'
+    expect(paintKeys(createPalette(true), 'Ctrl+O')).toBe(chip)
+    const marked = paintKeys(createPalette(true, true), 'Ctrl+O')
+    expect(marked).toBe(`\u001b_dsh-key;6;Ctrl+O\u0007${chip}`)
+    expect(takeKeySpots(marked)).toEqual({ line: chip, spots: [{ from: 0, to: 6, bytes: '\u000f' }] })
   })
 
   it('marks a chip only on a palette whose keys are clickable', () => {

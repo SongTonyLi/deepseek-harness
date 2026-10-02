@@ -1,50 +1,76 @@
 /**
- * Working indicators: rotating braille dots above the prompt, tool-family
- * glyphs on running cards, and a shimmer across the working activity word.
+ * Working indicators: a braille status glyph and a shimmer on the activity
+ * line above the prompt, and tool-family glyphs on running cards and on the
+ * activity board's in-progress todo rows.
  *
- * Pure. Frame lookups read a wall-clock instant the caller passes in, so
- * every surface drawing at the same moment draws the same frame, and the
- * application owns the tick that redraws them.
+ * Pure. Every animation has {@link SPINNER_CYCLE} frames, and a frame lookup
+ * reads a wall-clock instant and a frame period the caller passes in, so
+ * every surface drawn at the same moment steps at the same instant and the
+ * application owns the one tick that redraws them. Only the activity line
+ * draws braille, so its glyph never repeats a card's; indicators of one card
+ * family spin at different phases ({@link staggerPhase}).
  * @module @deepseek-ai/dsh-tui-app/spinner
  */
 
-import type { LoaderIndicatorOptions } from '@earendil-works/pi-tui'
 import { isSubagentTool } from './transcript.ts'
 import type { Palette } from './style.ts'
 
 /**
- * The frames each scenario cycles through, every frame one column wide like
- * the glyph it replaces. A presentation choice of this terminal surface, not
- * a deployment setting.
+ * One working animation: eight frames, each one column wide like the glyph
+ * it replaces, and every two adjacent frames, the last and the first
+ * included, different.
  */
-export const SPINNER_FRAMES = {
-  /** Model reasoning with no visible text yet: the braille circle pi-tui's working spinner draws. */
-  thinking: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  /** Visible text streaming in: a small asterisk grows and settles as words land. */
-  writing: ['·', '✣', '✳', '✦', '✽', '✤'],
-  /** A tool with no family of its own: the moon orbiting. */
-  calling: ['◐', '◓', '◑', '◒'],
-  /** Command execution: the same diamond animation as file edits. */
-  shell: ['◇', '◈', '◆', '◈'],
-  /** Reading and searching: a lens pulsing into focus. */
-  search: ['○', '◉', '●', '◉'],
+export type SpinnerFrames = readonly [string, string, string, string, string, string, string, string]
+
+/** Frames in every working animation; one cycle lasts this many frame periods. */
+export const SPINNER_CYCLE: SpinnerFrames['length'] = 8
+
+/**
+ * The activity line's animation for each working status. Every glyph is
+ * braille and no card or todo row draws braille. A presentation choice of
+ * this terminal surface, not a deployment setting.
+ */
+export const ACTIVITY_SPINNERS = {
+  /** Model reasoning, and any label with no status of its own: three dots circling the cell. */
+  thinking: ['⠙', '⠸', '⢰', '⣠', '⣄', '⡆', '⠇', '⠋'],
+  /** Visible reply text streaming in: lines filling the cell, then streaming up out of it. */
+  writing: ['⠉', '⠛', '⠿', '⣿', '⣶', '⣤', '⣀', '⣉'],
+  /** A tool call streamed or running, whichever tool it names: one dot orbiting the cell. */
+  calling: ['⠁', '⠈', '⠐', '⠠', '⢀', '⡀', '⠄', '⠂'],
+  /** A scheduled model-request retry: a bar sliding down the cell and back. */
+  retrying: ['⠉', '⠛', '⠶', '⣤', '⣀', '⣤', '⠶', '⠛'],
+  /** Condensing older history into a summary: a full cell settling and refilling. */
+  compacting: ['⣿', '⣷', '⣶', '⣦', '⣤', '⣦', '⣶', '⣷'],
+} as const satisfies Record<string, SpinnerFrames>
+
+/** One status of the activity line, named by what the agent is doing. */
+export type ActivityStatus = keyof typeof ACTIVITY_SPINNERS
+
+/**
+ * The animation a running tool card's glyph cycles through, by tool family;
+ * the activity board's in-progress todo rows draw the `todo` family. No two
+ * families share a glyph. A presentation choice of this terminal surface,
+ * not a deployment setting.
+ */
+export const TOOL_SPINNERS = {
+  /** Command execution: a block turning around the cell. */
+  shell: ['▖', '▌', '▘', '▀', '▝', '▐', '▗', '▄'],
   /** File mutation: a diamond setting solid. */
-  edit: ['◇', '◈', '◆', '◈'],
-  /** Delegation to a child agent: dots diving deeper. */
-  subagent: ['⠁', '⠃', '⠇', '⠷', '⠿', '⠷', '⠇', '⠃'],
-  /** Todo progress: a filled circle blinking in place, one column and larger than a middle dot. */
-  todo: ['●', ' '],
-  /** Waiting on a retry delay or a human answer: a clock turning. */
-  waiting: ['◷', '◶', '◵', '◴'],
-  /** Condensing older history into a summary: a column of dots settling down and filling back up. */
-  compacting: ['⣿', '⣶', '⣤', '⣀', '⣤', '⣶'],
-} as const
+  edit: ['⋄', '◇', '◈', '◆', '❖', '◆', '◈', '◇'],
+  /** Reading and searching: a lens focusing. */
+  search: ['·', '∘', '◌', '○', '◍', '◎', '◉', '●'],
+  /** Delegation to a child agent, a folded subagent row included: a pointer turning. */
+  subagent: ['▲', '◥', '►', '◢', '▼', '◣', '◄', '◤'],
+  /** Planning and scheduling, and an in-progress todo row: a bar rising and falling. */
+  todo: ['▁', '▂', '▃', '▅', '▇', '▅', '▃', '▂'],
+  /** Waiting on a human answer: a shade breathing in and out. */
+  waiting: [' ', '░', '▒', '▓', '█', '▓', '▒', '░'],
+  /** A tool with no family of its own: a star blooming. */
+  other: ['✧', '✦', '✶', '✷', '✸', '✹', '✺', '✻'],
+} as const satisfies Record<string, SpinnerFrames>
 
-/** One animation of {@link SPINNER_FRAMES}, named by the scenario that draws it. */
-export type SpinnerKind = keyof typeof SPINNER_FRAMES
-
-/** How long one spinner frame or shimmer step is drawn, in milliseconds; pi-tui's working spinner period. */
-export const SPINNER_MS = 80
+/** One tool family of {@link TOOL_SPINNERS}. */
+export type ToolFamily = keyof typeof TOOL_SPINNERS
 
 /** Blank steps between two shimmer passes, so the sweep pauses past the word's end. */
 const SHIMMER_GAP = 6
@@ -87,10 +113,10 @@ const TODO_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'create_goal', 'g
 const WAITING_TOOLS: ReadonlySet<string> = new Set(['ask_user_question', 'exit_plan_mode'])
 
 /**
- * Tool-name prefixes per spinner family, checked after the exact sets above.
- * An MCP or custom tool that keeps its family's prefix inherits the animation.
+ * Tool-name prefixes per family, checked after the exact sets above. An MCP
+ * or custom tool that keeps its family's prefix inherits the animation.
  */
-const TOOL_PREFIXES: ReadonlyArray<readonly [string, SpinnerKind]> = [
+const TOOL_PREFIXES: ReadonlyArray<readonly [string, ToolFamily]> = [
   ['terminal_', 'shell'],
   ['session_', 'search'],
   ['cordis_inspect_', 'search'],
@@ -100,74 +126,140 @@ const TOOL_PREFIXES: ReadonlyArray<readonly [string, SpinnerKind]> = [
   ['schedule_', 'todo'],
 ]
 
-/** The working spinner's label while a compaction condenses history. */
+/** The activity line's label while a compaction condenses history. */
 export const COMPACTING_ACTIVITY = 'compacting'
 
 /**
- * The spinner frame drawn at one instant.
- * @param now - the current time in milliseconds.
- * @param kind - the scenario whose frames are drawn; `thinking` draws the braille circle.
- * @param intervalMs - how long each frame lasts, in milliseconds; positive.
- * @returns one frame of that scenario.
+ * The activity line's label for a streamed or executing tool call.
+ * @param name - the tool name when one is known.
+ * @returns `calling <name>`, or `calling` when the name has not arrived.
  */
-export function spinnerFrame(now: number, kind: SpinnerKind = 'thinking', intervalMs: number = SPINNER_MS): string {
-  const frames = SPINNER_FRAMES[kind]
-  const index = Math.floor(now / intervalMs) % frames.length
-  /* v8 ignore next -- the modulo keeps the index inside the frame list */
-  return frames[index] ?? frames[0]
+export function callingActivity(name: string | undefined): string {
+  return name ? `calling ${name}` : 'calling'
 }
 
 /**
- * The animation a running tool card draws for `name`.
- * @param name - the tool the model called.
- * @returns the tool family's animation, or `calling` for a tool with no family.
+ * Whether the activity line already names a tool call.
+ * @param activity - the activity line's current label.
+ * @returns true for `calling` and `calling <name>`.
  */
-export function spinnerKindForTool(name: string): SpinnerKind {
+export function isCallingActivity(activity: string): boolean {
+  return activity === 'calling' || activity.startsWith('calling ')
+}
+
+/**
+ * The status the activity line animates for its label.
+ * @param activity - the label: `thinking`, `writing`, `calling` or
+ * `calling <name>`, a scheduled retry starting with `retrying`, or
+ * {@link COMPACTING_ACTIVITY}.
+ * @returns the label's status; `calling` whichever tool the label names, and
+ * `thinking` for any other label.
+ */
+export function activityStatus(activity: string): ActivityStatus {
+  if (activity === 'writing') return 'writing'
+  if (isCallingActivity(activity)) return 'calling'
+  if (activity.startsWith('retrying')) return 'retrying'
+  if (activity === COMPACTING_ACTIVITY) return 'compacting'
+  return 'thinking'
+}
+
+/**
+ * The family whose animation a running tool card draws for `name`.
+ * @param name - the tool the model called.
+ * @returns the tool's family, or `other` for a tool with no family.
+ */
+export function toolFamily(name: string): ToolFamily {
   if (SHELL_TOOLS.has(name)) return 'shell'
   if (EDIT_TOOLS.has(name)) return 'edit'
   if (SEARCH_TOOLS.has(name)) return 'search'
   if (isSubagentTool(name) || SUBAGENT_TOOLS.has(name)) return 'subagent'
   if (TODO_TOOLS.has(name)) return 'todo'
   if (WAITING_TOOLS.has(name)) return 'waiting'
-  for (const [prefix, kind] of TOOL_PREFIXES) {
-    if (name.startsWith(prefix)) return kind
+  for (const [prefix, family] of TOOL_PREFIXES) {
+    if (name.startsWith(prefix)) return family
   }
-  return 'calling'
+  return 'other'
 }
 
 /**
- * The shared rotating-dot animation above the prompt, independent of its label.
- * @param _activity - the working activity label; every label draws the same dots.
- * @returns `thinking` for every activity, keeping the dot cycle continuous as labels change.
+ * The frame an indicator draws at one instant. The frame index advances
+ * once per `periodMs` of wall clock, so indicators drawn at the same instant
+ * step together, and a change of animation keeps the beat.
+ * @param frames - the animation drawn.
+ * @param now - the current time in milliseconds.
+ * @param periodMs - how long each frame lasts, in milliseconds; positive.
+ * @param phase - how many frames the indicator runs ahead of the clock, from 0 to {@link SPINNER_CYCLE} - 1.
+ * @returns the frame at that instant.
  */
-export function spinnerKindForActivity(_activity: string): SpinnerKind {
-  return 'thinking'
+export function spinnerFrame(frames: SpinnerFrames, now: number, periodMs: number, phase = 0): string {
+  const index = (Math.floor(now / periodMs) + phase) % SPINNER_CYCLE
+  /* v8 ignore next -- the modulo keeps the index inside the frame list */
+  return frames[index] ?? frames[0]
 }
 
 /**
- * The pi-tui loader indicator that draws `kind`. Every kind shares
- * {@link SPINNER_MS} so the shimmer, which steps once per that period of wall
- * clock, advances one step per loader frame whatever the animation.
- * @param kind - the scenario whose frames the loader draws.
- * @returns the loader's frames and frame interval.
+ * At how many of a cycle's instants two indicators of `frames`, `shift`
+ * frames apart, draw the same glyph.
+ * @param frames - the animation both indicators draw.
+ * @param shift - the first indicator's phase minus the second's.
+ * @returns a count from 0 to {@link SPINNER_CYCLE}.
  */
-export function loaderIndicator(kind: SpinnerKind): LoaderIndicatorOptions {
-  return { frames: [...SPINNER_FRAMES[kind]], intervalMs: SPINNER_MS }
+function coincidences(frames: SpinnerFrames, shift: number): number {
+  let count = 0
+  for (const [index, frame] of frames.entries()) {
+    if (frame === frames[(((index + shift) % SPINNER_CYCLE) + SPINNER_CYCLE) % SPINNER_CYCLE]) count += 1
+  }
+  return count
+}
+
+/**
+ * The phase a new indicator of `frames` spins at beside the indicators of
+ * the same animation already spinning: a phase whose glyph differs from each
+ * of theirs at every instant while one is left, otherwise the phase whose
+ * glyph coincides with theirs at the fewest instants of a cycle. Ties go to
+ * the phase farthest from its nearest neighbour, then to the lowest. An
+ * animation whose frames are all distinct leaves every phase no indicator
+ * holds; a palindromic one leaves only the phases an odd number of frames
+ * away from each.
+ * @param frames - the animation the new indicator draws.
+ * @param taken - the phases of the indicators of `frames` spinning now, one per indicator.
+ * @returns a phase from 0 to {@link SPINNER_CYCLE} - 1.
+ */
+export function staggerPhase(frames: SpinnerFrames, taken: readonly number[]): number {
+  let best = 0
+  let fewest = Number.POSITIVE_INFINITY
+  let widest = -1
+  for (let phase = 0; phase < SPINNER_CYCLE; phase += 1) {
+    let matches = 0
+    let gap: number = SPINNER_CYCLE
+    for (const other of taken) {
+      matches += coincidences(frames, phase - other)
+      const distance = Math.abs(phase - other)
+      gap = Math.min(gap, distance, SPINNER_CYCLE - distance)
+    }
+    if (matches < fewest || (matches === fewest && gap > widest)) {
+      best = phase
+      fewest = matches
+      widest = gap
+    }
+  }
+  return best
 }
 
 /**
  * Draw `text` dim with a bright highlight sweeping across it, one character
- * per {@link SPINNER_MS}: the character under the sweep is bold, its
- * neighbours are drawn at the plain foreground, and the sweep rests for
- * {@link SHIMMER_GAP} steps past the end before starting again.
+ * per `periodMs`: the character under the sweep is bold, its neighbours are
+ * drawn at the plain foreground, and the sweep rests for {@link SHIMMER_GAP}
+ * steps past the end before starting again.
  * @param palette - the palette the sweep is drawn with; a disabled palette returns `text` unchanged.
  * @param text - the plain text to draw.
  * @param now - the current time in milliseconds.
+ * @param periodMs - how long the sweep rests on each character, in milliseconds; positive.
  * @returns the styled text, the same visible width as `text`.
  */
-export function shimmer(palette: Palette, text: string, now: number): string {
+export function shimmer(palette: Palette, text: string, now: number, periodMs: number): string {
   const chars = Array.from(new Intl.Segmenter().segment(text), part => part.segment)
-  const at = Math.floor(now / SPINNER_MS) % (chars.length + SHIMMER_GAP)
+  const at = Math.floor(now / periodMs) % (chars.length + SHIMMER_GAP)
   const tone = (index: number): 'bright' | 'plain' | 'dim' => {
     const distance = Math.abs(index - at)
     return distance === 0 ? 'bright' : distance === 1 ? 'plain' : 'dim'

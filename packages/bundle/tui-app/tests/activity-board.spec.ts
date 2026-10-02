@@ -1,15 +1,15 @@
-/** Activity-board rows: todo glyphs, the completed scratch-out, the row cap, and the one-line descendant summary. */
+/** Activity-board rows: todo glyphs, in-progress spinner frames, the completed scratch-out, the row cap, and the descendant line. */
 
 import { describe, expect, it } from 'vitest'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import {
   ACTIVITY_BOARD_MAX_TODOS,
-  activityBoardSpins,
   activityBoardView,
   activityResultParts,
   activityTurnEndStatus,
   formatActivitySubagentLine,
   renderActivityBoard,
+  spinningTodos,
 } from '../src/activity-board.ts'
 import type { BlockFade } from '../src/blocks.ts'
 import { createPalette } from '../src/style.ts'
@@ -109,13 +109,30 @@ describe('renderActivityBoard', () => {
     expect(shown.indexOf('✓')).toBeLessThan(shown.indexOf('▸'))
   })
 
-  it('draws an in-progress todo on the given spinner frame and reports that it spins', () => {
+  it('draws each in-progress todo on its own spinner frame and names the rows that spin', () => {
     const view = activityBoardView({ todos: mixed })
-    expect(activityBoardSpins(view)).toBe(true)
-    const shown = renderActivityBoard(view, { palette: color, spinner: '⠹' })
-    expect(shown).toContain('\u001b[33m⠹\u001b[39m write the data layer')
+    expect(spinningTodos(view)).toEqual(['write the data layer'])
+    const shown = renderActivityBoard(view, { palette: color, spinners: new Map([['write the data layer', '▃']]) })
+    expect(shown).toContain('\u001b[33m▃\u001b[39m write the data layer')
     expect(shown).toContain('\u001b[36m○\u001b[39m wire the picker')
-    expect(activityBoardSpins(activityBoardView({ todos: [{ content: 'wire the picker', status: 'pending' }] }))).toBe(false)
+    expect(spinningTodos(activityBoardView({ todos: [{ content: 'wire the picker', status: 'pending' }] }))).toEqual([])
+
+    const parallel = activityBoardView({
+      todos: [
+        { content: 'build the client', status: 'in_progress' },
+        { content: 'build the server', status: 'in_progress' },
+        { content: 'ship both', status: 'in_progress' },
+        { content: 'wire the picker', status: 'pending' },
+      ],
+    })
+    expect(spinningTodos(parallel)).toEqual(['build the client', 'build the server', 'ship both'])
+    const frames = new Map([['build the client', '▂'], ['build the server', '▅'], ['wire the picker', '▇']])
+    expect(renderActivityBoard(parallel, { palette, spinners: frames }).split('\n')).toEqual([
+      '▂ build the client',
+      '▅ build the server',
+      '▸ ship both',
+      '○ wire the picker',
+    ])
   })
 
   it('appends +N more under a list past the cap and the descendant line last', () => {

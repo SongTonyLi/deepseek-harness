@@ -76,8 +76,11 @@ export interface ActivityBoardRender {
   todoFades?: ReadonlyMap<string, BlockFade>
   /** Live fade of the descendant line; omitted draws it settled. */
   subagentFade?: BlockFade
-  /** The spinner frame an in-progress todo draws in place of its glyph; omitted draws the glyph. */
-  spinner?: string
+  /**
+   * The spinner frame each in-progress todo draws in place of its glyph,
+   * keyed by content; an in-progress row with no entry draws the glyph.
+   */
+  spinners?: ReadonlyMap<string, string>
 }
 
 /**
@@ -145,17 +148,17 @@ export function activityTurnEndStatus(reason: TurnEndReason): string {
 }
 
 /**
- * Whether one board draw holds a row the spinner animates.
+ * The rows of one board draw that a spinner animates.
  * @param view - the rows one draw produced.
- * @returns true while an in-progress todo is drawn.
+ * @returns the content of every drawn in-progress todo, in write order.
  */
-export function activityBoardSpins(view: ActivityBoardView): boolean {
-  return view.todos.some(row => row.status === 'in_progress')
+export function spinningTodos(view: ActivityBoardView): string[] {
+  return view.todos.filter(row => row.status === 'in_progress').map(row => row.content)
 }
 
 /**
  * Render the board. Todo rows lead with status-colored glyphs, an in-progress
- * one with the spinner frame when one is given; completed content is dim and
+ * one with its spinner frame when one is given; completed content is dim and
  * scratched out. A list past the cap ends on `+<n> more`.
  * The descendant line is last. An empty view returns the empty string so the
  * slot can unmount.
@@ -169,7 +172,7 @@ export function renderActivityBoard(view: ActivityBoardView, render: ActivityBoa
   for (const row of view.todos) {
     const content = paintTodoContent(row.content, row.status, text => palette.dim(palette.strikethrough(text)))
     const paint = row.status === 'completed' ? palette.success : row.status === 'in_progress' ? palette.warning : palette.accent
-    const glyph = row.status === 'in_progress' && render.spinner !== undefined ? render.spinner : TODO_GLYPH[row.status]
+    const glyph = (row.status === 'in_progress' ? render.spinners?.get(row.content) : undefined) ?? TODO_GLYPH[row.status]
     lines.push(fadedLine(`${paint(glyph)} ${content}`, render.todoFades?.get(row.content)))
   }
   if (view.hidden > 0) lines.push(palette.dim(`+${String(view.hidden)} more`))

@@ -11,7 +11,7 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, HINTS, widestHint } from '../src/keys.ts'
 import { LANDING_TICKS, SEGMENT_TICKS } from '../src/motion.ts'
-import { KEY, bench, type Bench } from './bench.ts'
+import { KEY, bench, spinning, type Bench } from './bench.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
   for (const char of text) terminal.type(char)
@@ -80,7 +80,7 @@ describe('status', () => {
       step: 1,
     } as never)
     await test.settle()
-    expect(test.terminal.text()).toContain('retrying (2/5) in 4s · RATE_LIMIT: provider busy')
+    expect(test.terminal.text()).toMatch(spinning('retrying (2/5) in 4s · RATE_LIMIT: provider busy', 'retrying'))
   })
 })
 

@@ -17,6 +17,7 @@ import {
   resolveFadeCapability,
   type FadeStyle,
 } from '../src/fade.ts'
+import { paintKeys } from '../src/key-chips.ts'
 import { createPalette } from '../src/style.ts'
 
 const BLACK: RgbColor = { r: 0, g: 0, b: 0 }
@@ -53,6 +54,19 @@ const YELLOW_GLYPH = '\u001b[33m\u25cf\u001b[39m'
 
 /** Dim italic reasoning, as AssistantBlock wraps streamed reasoning. */
 const DIM_REASONING = '\u001b[2m\u001b[3mhello world\u001b[23m\u001b[22m'
+
+/**
+ * Whether italic is in force at the first cell of `text`: the last `ESC[3m`
+ * before it follows every `ESC[23m` and full reset there. False when the line
+ * does not carry `text`.
+ */
+function italicAt(line: string, text: string): boolean {
+  const at = line.indexOf(text)
+  if (at === -1) return false
+  const before = line.slice(0, at)
+  const closed = Math.max(...['\u001b[23m', '\u001b[0m', '\u001b[m'].map(close => before.lastIndexOf(close)))
+  return before.lastIndexOf('\u001b[3m') > closed
+}
 
 /**
  * A clock the spec moves by hand, standing in for the application's wall clock.
@@ -564,6 +578,15 @@ describe('recolorLines', () => {
     expect(fadeRgbs(recolorLines(['\u001b[38;5mclip\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
     expect(fadeRgbs(recolorLines(['\u001b[1;32mgreen\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
     expect(fadeRgbs(recolorLines(['\u001b[;31mred\u001b[39m'], 0, COLOR)[0] ?? '').length).toBeGreaterThan(0)
+  })
+
+  it('keeps a key chip italic through the float-out and closes the italic with the chip', () => {
+    const marker = paintKeys(createPalette(true), '… 2 more rows · Ctrl+O expands', text => text)
+    for (const flight of [recolorLines([marker], 0, COLOR)[0] ?? '', recolorLines([marker], 0, DIM_STYLE)[0] ?? '']) {
+      expect(italicAt(flight, 'Ctrl+O')).toBe(true)
+      expect(italicAt(flight, ' expands')).toBe(false)
+    }
+    expect(recolorLines([marker], COLOR.ramp.length, COLOR)).toEqual([marker])
   })
 
   it('encodes a float-out mix as a 256-color index, not a fade-in gray slot', () => {
