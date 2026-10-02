@@ -7,8 +7,8 @@ import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt } 
 import { createPalette } from '../src/style.ts'
 import { KEY } from './bench.ts'
 
-/** One key as a colored palette draws its chip: accent, underlined. */
-const chip = (label: string): string => `\u001b[4m\u001b[36m${label}\u001b[39m\u001b[24m`
+/** One key as a colored palette draws its chip: accent, italic. */
+const chip = (label: string): string => `\u001b[3m\u001b[36m${label}\u001b[39m\u001b[23m`
 
 const palette = createPalette(false)
 

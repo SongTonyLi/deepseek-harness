@@ -171,7 +171,7 @@ export interface Config {
    */
   reducedMotion: boolean
   /**
-   * Make every key the screen names clickable. Keys are drawn as underlined
+   * Make every key the screen names clickable. Keys are drawn as italic
    * chips whether or not this is on - `Ctrl+G`, `Esc`, `Shift+↑`, and the
    * rest, in legends, pickers, notices, and the reader - and with it on, a
    * click on a chip presses that key, exactly as typing it would. Turning it

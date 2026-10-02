@@ -156,14 +156,13 @@ function mark(width: number, key: string): string {
 }
 
 /**
- * How a chip is drawn: the accent color, underlined, so a key reads apart
- * from the words around it, and as something to click, with or without
- * color.
+ * How a chip is drawn: italic in the accent color, so a key reads apart from
+ * the words around it, and by its color from the dim italic of reasoning.
  * @param palette - the active palette.
  * @returns the chip style.
  */
 function chipStyle(palette: Palette): Style {
-  return text => palette.underline(palette.accent(text))
+  return text => palette.italic(palette.accent(text))
 }
 
 /**

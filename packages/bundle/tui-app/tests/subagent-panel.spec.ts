@@ -14,8 +14,8 @@ import {
   type SubagentPanelView,
 } from '../src/subagent-panel.ts'
 
-/** One key as a colored palette draws its chip: accent, underlined. */
-const chip = (label: string): string => `\u001b[4m\u001b[36m${label}\u001b[39m\u001b[24m`
+/** One key as a colored palette draws its chip: accent, italic. */
+const chip = (label: string): string => `\u001b[3m\u001b[36m${label}\u001b[39m\u001b[23m`
 
 /** A fixed instant the running elapsed values are measured against. */
 const NOW = Date.UTC(2026, 1, 3, 14, 25, 0)
