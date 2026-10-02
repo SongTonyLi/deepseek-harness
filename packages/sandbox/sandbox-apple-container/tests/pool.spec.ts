@@ -1,10 +1,11 @@
 /** ContainerPool over a scripted runtime double. */
 
-import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContainerPool, PID_LABEL } from '../src/pool.ts'
+import type { PoolOptions } from '../src/pool.ts'
 import type { ContainerSpec, ContainerState, ListedContainer } from '../src/runtime.ts'
 
 const dirs: string[] = []
@@ -53,10 +54,21 @@ class RuntimeDouble {
   }
 }
 
-function setup(recheckMs = 1000): { runtime: RuntimeDouble; pool: ContainerPool; clock: { now: number } } {
+function setup(
+  recheckMs = 1000,
+  layout: Partial<Pick<PoolOptions, 'protectedPaths' | 'readOnlyMounts' | 'hidden'>> = {},
+): { runtime: RuntimeDouble; pool: ContainerPool; clock: { now: number } } {
   const runtime = new RuntimeDouble()
   const clock = { now: 0 }
-  const pool = new ContainerPool(runtime, { pid: 42, recheckMs, now: () => clock.now })
+  const pool = new ContainerPool(runtime, {
+    pid: 42,
+    recheckMs,
+    now: () => clock.now,
+    protectedPaths: ['.git'],
+    readOnlyMounts: [],
+    hidden: { names: ['.env'], maxDepth: 4, skipDirs: ['node_modules'] },
+    ...layout,
+  })
   return { runtime, pool, clock }
 }
 
@@ -71,6 +83,7 @@ describe('ContainerPool', () => {
       name,
       labels: { [PID_LABEL]: '42', 'dsh.workspace': root, 'dsh.mode': 'workspace-write' },
       mounts: [{ source: root, target: root, readonly: false }],
+      maskedPaths: [],
     })
     const readOnly = await pool.ensure({ mode: 'read-only', workspaceRoot: root })
     expect(readOnly).not.toBe(name)
@@ -90,6 +103,41 @@ describe('ContainerPool', () => {
     expect(runtime.runs[0]?.mounts).toEqual([
       { source: root, target: root, readonly: false },
       { source: root, target: link, readonly: false },
+    ])
+  })
+
+  it('keeps protected directories read-only under workspace-write and masks hidden files', async () => {
+    const { runtime, pool } = setup()
+    const root = workspace()
+    const link = join(workspace(), 'link')
+    symlinkSync(root, link)
+    mkdirSync(join(root, '.git'))
+    mkdirSync(join(root, 'node_modules'))
+    writeFileSync(join(root, '.env'), 'KEY=1')
+    writeFileSync(join(root, 'node_modules', '.env'), 'KEY=2')
+    await pool.ensure({ mode: 'workspace-write', workspaceRoot: link })
+    expect(runtime.runs[0]?.mounts).toEqual([
+      { source: root, target: root, readonly: false },
+      { source: root, target: link, readonly: false },
+      { source: join(root, '.git'), target: join(root, '.git'), readonly: true },
+      { source: join(root, '.git'), target: join(link, '.git'), readonly: true },
+    ])
+    expect(runtime.runs[0]?.maskedPaths).toEqual([join(root, '.env'), join(link, '.env')])
+    await pool.ensure({ mode: 'read-only', workspaceRoot: root })
+    expect(runtime.runs[1]?.mounts).toEqual([{ source: root, target: root, readonly: true }])
+  })
+
+  it('mounts existing extra directories read-only at their own and canonical paths', async () => {
+    const real = workspace()
+    const alias = join(workspace(), 'skills')
+    symlinkSync(real, alias)
+    const { runtime, pool } = setup(1000, { readOnlyMounts: [real, alias, join(real, 'missing')] })
+    const root = workspace()
+    await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    expect(runtime.runs[0]?.mounts.slice(1)).toEqual([
+      { source: real, target: real, readonly: true },
+      { source: real, target: real, readonly: true },
+      { source: real, target: alias, readonly: true },
     ])
   })
 

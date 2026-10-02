@@ -35,10 +35,14 @@ describe('shim arguments', () => {
 })
 
 describe('environment forwarding', () => {
-  it('matches exact keys and trailing-star prefixes', () => {
+  it('matches whole names with star wildcards anywhere, ignoring case', () => {
     expect(isDenied('PATH', ARGS.denylist)).toBe(true)
     expect(isDenied('XPC_SERVICE_NAME', ARGS.denylist)).toBe(true)
     expect(isDenied('PATHS', ARGS.denylist)).toBe(false)
+    expect(isDenied('DEEPSEEK_API_KEY', ['*KEY*'])).toBe(true)
+    expect(isDenied('github_token', ['*TOKEN*'])).toBe(true)
+    expect(isDenied('A.B', ['A.B'])).toBe(true)
+    expect(isDenied('AXB', ['A.B'])).toBe(false)
   })
 
   it('writes allowed single-line variables only', () => {
@@ -49,9 +53,11 @@ describe('environment forwarding', () => {
       MULTI: 'a\nb',
       'NOT-A-NAME': 'x',
       EMPTY: '',
+      HTTPS_PROXY: 'http://user:hunter2@proxy:8080',
+      NO_AUTH_PROXY: 'http://proxy:8080',
       UNSET: undefined,
     }, ARGS.denylist)
-    expect(text).toBe('FOO=bar baz\nEMPTY=\n')
+    expect(text).toBe('FOO=bar baz\nEMPTY=\nNO_AUTH_PROXY=http://proxy:8080\n')
   })
 })
 

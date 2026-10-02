@@ -39,6 +39,8 @@ export interface ContainerSpec {
   mounts: readonly ContainerMount[]
   /** Labels (`--label key=value`). */
   labels: Readonly<Record<string, string>>
+  /** Guest files replaced by `/dev/null` (`--masked-path`); each must exist when the container starts. */
+  maskedPaths: readonly string[]
 }
 
 /** One listed container and its labels. */
@@ -114,6 +116,7 @@ export class ContainerRuntime {
       ...this.options.cpus === undefined ? [] : ['--cpus', String(this.options.cpus)],
       ...this.options.memory === undefined ? [] : ['--memory', this.options.memory],
       ...spec.mounts.flatMap(mount => ['--mount', `type=bind,source=${mount.source},target=${mount.target}${mount.readonly ? ',readonly' : ''}`]),
+      ...spec.maskedPaths.flatMap(path => ['--masked-path', path]),
       this.options.image, 'sleep', 'infinity',
     ])
     if (result.code !== 0) throw new Error(`container run failed: ${firstLine(result)}`)

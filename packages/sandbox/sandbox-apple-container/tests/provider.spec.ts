@@ -183,7 +183,8 @@ describe('AppleContainerSandboxProvider', () => {
     expect(await backendContext(h.ctx, agent)).toBe(
       'Commands confined by the DSH file sandbox run inside a Linux container from image "node:22-bookworm". '
       + `Only the session workspace ${JSON.stringify(h.root)} is shared with the host; `
-      + 'files written elsewhere stay inside the container and are not visible to file tools.',
+      + 'files written elsewhere stay inside the container and are not visible to file tools. '
+      + 'File tools cannot read host paths outside the workspace, and secret files such as `.env` and private keys are hidden from commands and file tools.',
     )
     setSandboxMode(session, 'danger-full-access')
     expect(await backendContext(h.ctx, agent)).toBe('')
@@ -237,6 +238,34 @@ describe('AppleContainerSandboxProvider', () => {
     ])
   })
 
+  it('confines host reads of container sessions to the workspace and extra mounts', async () => {
+    const skills = tempDir('dsh-provider-skills-')
+    const h = await mounted({ policy: 'workspace-write', config: { readOnlyMounts: [skills], hiddenFiles: ['.env'] } })
+    const session = h.session('s-scope')
+    const policy = { mode: 'workspace-write' as const, workspaceRoot: h.root, sessionId: session.id }
+    expect(h.sandbox.readScope(policy)).toEqual({ roots: [h.root, skills], hiddenNames: ['.env'] })
+    expect(h.ctx.sandboxPolicy.canRead(join(h.root, 'src', 'a.ts'), { session })).toBe(true)
+    expect(h.ctx.sandboxPolicy.canRead(join(skills, 'x', 'SKILL.md'), { session })).toBe(true)
+    expect(h.ctx.sandboxPolicy.canRead(join(h.root, '.env'), { session })).toBe(false)
+    expect(h.ctx.sandboxPolicy.canRead('/etc/passwd', { session })).toBe(false)
+    expect(h.ctx.sandboxPolicy.canRead(join(h.root, '..', 'sibling'), { session })).toBe(false)
+    expect(h.ctx.sandboxPolicy.canRead('/etc/passwd', { session, mode: 'danger-full-access' })).toBe(true)
+    expect(h.sandbox.readScope({ ...policy, mode: 'danger-full-access' })).toBeUndefined()
+    setSandboxBackend(session, 'local')
+    expect(h.sandbox.readScope(policy)).toBeUndefined()
+    expect(h.ctx.sandboxPolicy.canRead('/etc/passwd', { session })).toBe(true)
+  })
+
+  it('mounts extra read-only directories and masks hidden files in new containers', async () => {
+    const skills = tempDir('dsh-provider-mounts-')
+    const h = await mounted({ config: { readOnlyMounts: [skills] } })
+    writeFileSync(join(h.root, '.env'), 'DEEPSEEK_API_KEY=sk-test')
+    await h.sandbox.confine(['true'], { mode: 'workspace-write', workspaceRoot: h.root })
+    const run = h.fake.calls().find(call => call[0] === 'run') ?? []
+    expect(run).toContain(`type=bind,source=${skills},target=${skills},readonly`)
+    expect(run[run.indexOf('--masked-path') + 1]).toBe(join(h.root, '.env'))
+  })
+
   it('rejects invalid configuration at load', async () => {
     const ctx = new Context()
     cleanups.push(() => ctx.fiber.dispose())
@@ -246,6 +275,12 @@ describe('AppleContainerSandboxProvider', () => {
       .rejects.toThrow('envDenylist entries must be non-empty and contain no comma')
     await expect(ctx.plugin(AppleContainerSandboxProvider, { backend: 'local', cpus: 0 }))
       .rejects.toThrow('cpus must be positive')
+    await expect(ctx.plugin(AppleContainerSandboxProvider, { backend: 'local', readOnlyMounts: ['relative/skills'] }))
+      .rejects.toThrow('readOnlyMounts entries must be absolute paths without a comma')
+    for (const protectedPaths of [['../escape'], ['/abs'], [''], ['a,b']]) {
+      await expect(ctx.plugin(AppleContainerSandboxProvider, { backend: 'local', protectedPaths }))
+        .rejects.toThrow('protectedPaths entries must be workspace-relative paths')
+    }
   })
 
   it('passes resources to container run', async () => {

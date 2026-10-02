@@ -17,7 +17,7 @@ import type { GenericCallView, SearchResultView, ToolResult } from '@deepseek-ai
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import type { GrepMatch } from './search-core.ts'
-import { SearchError, previewLine, retainGrepMatches, runRipgrep, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
+import { SearchError, previewLine, retainGrepMatches, runRipgrep, searchReadScope, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
 import { grepSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'
 
@@ -105,12 +105,17 @@ export function parseGrepArgs(args: { pattern: string; path?: string; include?: 
  * and the target behind `--`, so a leading-dash value can never be parsed as
  * a flag.
  *
+ * File names the sandbox hides ride as trailing negated globs, which take
+ * precedence over the include glob.
+ *
  * @param input - the validated arguments.
+ * @param hiddenNames - file-name globs whose contents must not be searched.
  * @returns the complete ripgrep argument vector (excluding the binary itself).
  */
-export function buildGrepCommand(input: GrepInput): string[] {
+export function buildGrepCommand(input: GrepInput, hiddenNames: readonly string[] = []): string[] {
   const parts = ['--json', `--regexp=${input.pattern}`]
   if (input.include !== undefined) parts.push(`--glob=${input.include}`)
+  for (const name of hiddenNames) parts.push(`--iglob=!${name}`)
   if (input.path !== undefined) parts.push('--', input.path)
   return parts
 }
@@ -320,7 +325,8 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
     },
     async execute(args, exec) {
       const input = parseGrepArgs(args)
-      const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand(input), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
+      const hiddenNames = searchReadScope(ctx, exec, 'grep', input.path)?.hiddenNames ?? []
+      const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand(input, hiddenNames), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
       if (run.noMatches) return { matches: [] }
 
       const all: GrepMatch[] = []

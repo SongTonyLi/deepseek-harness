@@ -2,15 +2,22 @@
  * The provider's owned containers: one per (canonical workspace root, confined
  * mode), shared by every session and subagent in that workspace and mode. The
  * workspace is bind-mounted at its canonical path, plus its lexical path when
- * that differs; `read-only` mounts it read-only. A cached container is
- * re-inspected at most once per `recheckMs` and restarted when gone.
+ * that differs; `read-only` mounts it read-only, and `workspace-write` mounts
+ * its protected directories (such as `.git`) read-only. Extra read-only
+ * directories are mounted at their own paths, and hidden files found at start
+ * are masked. A cached container is re-inspected at most once per `recheckMs`
+ * and restarted when gone.
  * @module @deepseek-ai/dsh-sandbox-apple-container/pool
  */
 
 import { createHash } from 'node:crypto'
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
 import { canonicalPath } from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedSandboxMode, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import type { ContainerRuntime } from './runtime.ts'
+import type { ContainerMount, ContainerRuntime } from './runtime.ts'
+import { findHiddenFiles } from './secrets.ts'
+import type { HiddenFileScan } from './secrets.ts'
 
 /** Label naming the owning DSH process id. */
 export const PID_LABEL = 'dsh.pid'
@@ -33,6 +40,17 @@ export interface PoolOptions {
   recheckMs: number
   /** Clock in milliseconds. */
   now: () => number
+  /** Workspace-relative directories mounted read-only under `workspace-write`. */
+  protectedPaths: readonly string[]
+  /** Absolute host directories mounted read-only at their own paths. */
+  readOnlyMounts: readonly string[]
+  /** Files masked with `/dev/null` in the guest. */
+  hidden: HiddenFileScan
+}
+
+/** Whether `path` is an existing directory. */
+function isDirectory(path: string): boolean {
+  return statSync(path, { throwIfNoEntry: false })?.isDirectory() === true
 }
 
 /** The runtime operations the pool uses. */
@@ -115,14 +133,24 @@ export class ContainerPool {
     const state = await this.runtime.state(name)
     if (state === 'running') return
     if (state === 'stopped') await this.runtime.remove(name)
-    const readonly = mode === 'read-only'
+    // Every guest path under the workspace also appears under its lexical spelling.
+    const spellings = (path: string): string[] => lexical === root ? [path] : [path, join(lexical, path.slice(root.length))]
+    const bind = (source: string, readonly: boolean): ContainerMount[] => spellings(source).map(target => ({ source, target, readonly }))
+    const protectedDirs = mode === 'workspace-write'
+      ? this.options.protectedPaths.map(path => join(root, path)).filter(isDirectory)
+      : []
     await this.runtime.run({
       name,
       labels: { [PID_LABEL]: String(this.options.pid), 'dsh.workspace': root, 'dsh.mode': mode },
       mounts: [
-        { source: root, target: root, readonly },
-        ...lexical === root ? [] : [{ source: root, target: lexical, readonly }],
+        ...bind(root, mode === 'read-only'),
+        ...protectedDirs.flatMap(dir => bind(dir, true)),
+        ...this.options.readOnlyMounts.flatMap((path) => {
+          const source = canonicalPath(path)
+          return isDirectory(source) ? [...new Set([source, path])].map(target => ({ source, target, readonly: true })) : []
+        }),
       ],
+      maskedPaths: findHiddenFiles(root, this.options.hidden).flatMap(spellings),
     })
   }
 }

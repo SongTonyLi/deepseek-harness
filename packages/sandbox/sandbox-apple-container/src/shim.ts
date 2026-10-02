@@ -56,17 +56,21 @@ export function parseShimArgs(args: readonly string[]): ShimArgs {
 /**
  * Whether the denylist withholds `key` from the guest.
  * @param key - an environment variable name.
- * @param denylist - exact names, or prefixes ending in `*`.
+ * @param denylist - name globs where `*` matches any run of characters; matching ignores case.
  * @returns true when `key` is withheld.
  */
 export function isDenied(key: string, denylist: readonly string[]): boolean {
-  return denylist.some(entry => entry.endsWith('*') ? key.startsWith(entry.slice(0, -1)) : key === entry)
+  return denylist.some(entry => new RegExp(`^${entry.split('*').map(part => part.replaceAll(/[.+?^${}()|[\]\\]/gu, String.raw`\$&`)).join('.*')}$`, 'iu').test(key))
 }
+
+/** A URL carrying `user:password@` credentials, such as an authenticated proxy. */
+const URL_CREDENTIALS = /:\/\/[^/\s@]*:[^/\s@]*@/u
 
 /**
  * The `--env-file` text for `env`: one `KEY=value` line per forwarded
- * variable. Denied keys, names outside POSIX identifier syntax, and values
- * containing a line break are omitted because the file format cannot carry them.
+ * variable. Denied keys and values embedding URL credentials are withheld;
+ * names outside POSIX identifier syntax and values containing a line break are
+ * omitted because the file format cannot carry them.
  * @param env - the shim's environment.
  * @param denylist - keys withheld from the guest.
  * @returns the file contents.
@@ -74,7 +78,8 @@ export function isDenied(key: string, denylist: readonly string[]): boolean {
 export function envFileText(env: NodeJS.ProcessEnv, denylist: readonly string[]): string {
   let text = ''
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || isDenied(key, denylist) || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\r\n]/u.test(value)) continue
+    if (value === undefined || isDenied(key, denylist) || URL_CREDENTIALS.test(value)) continue
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\r\n]/u.test(value)) continue
     text += `${key}=${value}\n`
   }
   return text

@@ -14,6 +14,7 @@
  */
 
 import { existsSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -21,8 +22,8 @@ import { z as zod } from 'zod'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
-import { SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
-import type { ConfinedArgv, RunnerFailureRule, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
+import { SandboxUnavailableError, canonicalPath } from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, RunnerFailureRule, SandboxExecutionPolicy, SandboxPolicy, SandboxReadScope } from '@deepseek-ai/dsh-sandbox'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import type { Config as LocalConfig } from '@deepseek-ai/dsh-sandbox-local'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
@@ -38,10 +39,21 @@ import { SHIM_FAILURE_EXIT, SHIM_FAILURE_PREFIX, encodeShimArgs } from './shim.t
 export { SANDBOX_BACKENDS, isSandboxBackend, setSandboxBackend } from './session-backend.ts'
 export type { SandboxBackend } from './session-backend.ts'
 
-/** Host-specific environment keys the shim withholds from the guest by default. */
+/**
+ * Environment names the shim withholds from the guest by default: host-specific
+ * paths and session plumbing, plus every credential-shaped name, even one a
+ * composition passes deliberately.
+ */
 export const DEFAULT_ENV_DENYLIST: readonly string[] = [
   'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'PWD', 'OLDPWD', 'SHLVL', 'SSH_AUTH_SOCK',
   '__CF*', 'XPC_*', 'DYLD_*', 'TERM_PROGRAM*',
+  '*KEY*', '*TOKEN*', '*SECRET*', '*PASSWORD*', '*PASSWD*', '*CREDENTIAL*', '*COOKIE*', '*PRIVATE*', 'AWS_*',
+]
+
+/** File names hidden from confined commands and host file tools by default: environment files, private keys, and credential stores. */
+export const DEFAULT_HIDDEN_FILES: readonly string[] = [
+  '.env', '.env.*', '.envrc', '*.pem', '*.key', '*.p12', '*.pfx',
+  'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', '.npmrc', '.pypirc', '.netrc', '.git-credentials',
 ]
 
 /** Stderr text of a write the read-only workspace mount refused. */
@@ -68,8 +80,18 @@ export interface Config extends LocalConfig {
   autoStart?: boolean
   /** Minimum milliseconds between liveness checks of a cached container (default: 10000). */
   recheckMs?: number
-  /** Environment keys not forwarded to the guest; a trailing `*` matches a prefix (default: {@link DEFAULT_ENV_DENYLIST}). */
+  /** Environment name globs not forwarded to the guest; `*` matches any run, case-insensitively (default: {@link DEFAULT_ENV_DENYLIST}). */
   envDenylist?: string[]
+  /** Absolute host directories mounted read-only at their own paths and readable by file tools, such as skill roots (default: none). */
+  readOnlyMounts?: string[]
+  /** Workspace-relative directories kept read-only under `workspace-write`; host programs execute their contents (default: `['.git']`). */
+  protectedPaths?: string[]
+  /** File-name globs hidden from confined commands and host file tools (default: {@link DEFAULT_HIDDEN_FILES}). */
+  hiddenFiles?: string[]
+  /** Directory depth of the workspace scan that masks hidden files when a container starts (default: 8). */
+  hiddenFilesMaxDepth?: number
+  /** Directory names the hidden-file scan does not enter (default: `['node_modules', '.git']`). */
+  hiddenFilesSkipDirs?: string[]
 }
 
 /** The sandbox-backend projection's state schema. */
@@ -129,6 +151,11 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
     autoStart: z.boolean().default(true),
     recheckMs: z.natural().default(10_000),
     envDenylist: z.array(z.string()).default([...DEFAULT_ENV_DENYLIST]),
+    readOnlyMounts: z.array(z.string()).default([]),
+    protectedPaths: z.array(z.string()).default(['.git']),
+    hiddenFiles: z.array(z.string()).default([...DEFAULT_HIDDEN_FILES]),
+    hiddenFilesMaxDepth: z.natural().default(8),
+    hiddenFilesSkipDirs: z.array(z.string()).default(['node_modules', '.git']),
   })])
 
   static inject = ['sessions', 'sessionProjections']
@@ -138,6 +165,8 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   private readonly executable: string
   private readonly image: string
   private readonly envDenylist: readonly string[]
+  private readonly readOnlyMounts: readonly string[]
+  private readonly hiddenFiles: readonly string[]
   private readonly runtime: ContainerRuntime
   private readonly pool: ContainerPool
 
@@ -152,6 +181,15 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       throw new Error('sandbox-apple-container: envDenylist entries must be non-empty and contain no comma')
     }
     if (config.cpus === 0) throw new Error('sandbox-apple-container: cpus must be positive')
+    this.readOnlyMounts = config.readOnlyMounts as string[]
+    if (this.readOnlyMounts.some(path => !isAbsolute(path) || path.includes(','))) {
+      throw new Error('sandbox-apple-container: readOnlyMounts entries must be absolute paths without a comma')
+    }
+    const protectedPaths = config.protectedPaths as string[]
+    if (protectedPaths.some(path => path === '' || isAbsolute(path) || path.includes(',') || path.split(/[\\/]/u).includes('..'))) {
+      throw new Error('sandbox-apple-container: protectedPaths entries must be workspace-relative paths without `..` or a comma')
+    }
+    this.hiddenFiles = config.hiddenFiles as string[]
     this.runtime = new ContainerRuntime({
       executable: this.executable,
       image: this.image,
@@ -159,7 +197,14 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       ...config.cpus === undefined ? {} : { cpus: config.cpus },
       ...config.memory === undefined ? {} : { memory: config.memory },
     })
-    this.pool = new ContainerPool(this.runtime, { pid: process.pid, recheckMs: config.recheckMs as number, now: Date.now })
+    this.pool = new ContainerPool(this.runtime, {
+      pid: process.pid,
+      recheckMs: config.recheckMs as number,
+      now: Date.now,
+      protectedPaths,
+      readOnlyMounts: this.readOnlyMounts,
+      hidden: { names: this.hiddenFiles, maxDepth: config.hiddenFilesMaxDepth as number, skipDirs: config.hiddenFilesSkipDirs as string[] },
+    })
 
     ctx.sessionProjections.register({
       key: 'sandboxBackend',
@@ -196,7 +241,8 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
           if (policy.mode === 'danger-full-access') return ''
           return `Commands confined by the DSH file sandbox run inside a Linux container from image ${JSON.stringify(this.image)}. `
             + `Only the session workspace ${JSON.stringify(policy.workspaceRoot)} is shared with the host; `
-            + 'files written elsewhere stay inside the container and are not visible to file tools.'
+            + 'files written elsewhere stay inside the container and are not visible to file tools. '
+            + 'File tools cannot read host paths outside the workspace, and secret files such as `.env` and private keys are hidden from commands and file tools.'
         },
       })
     })
@@ -235,8 +281,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
    *   `SANDBOX_UNAVAILABLE` when the container cannot be started.
    */
   override async confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
-    const session = policy.sessionId === undefined ? undefined : this.ctx.sessions.get(policy.sessionId)
-    if (this.backendFor(session) === 'local') return super.confine(argv, policy, signal)
+    if (this.policyBackend(policy) === 'local') return super.confine(argv, policy, signal)
     signal?.throwIfAborted()
     let container: string
     try {
@@ -254,6 +299,26 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       denialSignatures: CONTAINER_DENIAL_SIGNATURES,
       runnerFailureRules: CONTAINER_RUNNER_FAILURE_RULES,
     }
+  }
+
+  /**
+   * The host read scope of a container-backed confined policy: the workspace
+   * (canonical and as spelled) and the extra read-only mounts, minus the
+   * hidden files. The local backend and `danger-full-access` confine no reads.
+   * @param policy - the calling session's resolved policy.
+   * @returns the scope, or `undefined` when reads are unconfined.
+   */
+  override readScope(policy: SandboxExecutionPolicy): SandboxReadScope | undefined {
+    if (policy.mode === 'danger-full-access' || this.policyBackend(policy) === 'local') return undefined
+    return {
+      roots: [...new Set([policy.workspaceRoot, canonicalPath(policy.workspaceRoot), ...this.readOnlyMounts])],
+      hiddenNames: this.hiddenFiles,
+    }
+  }
+
+  /** The backend of the session a policy names; agentless and unknown sessions use the default. */
+  private policyBackend(policy: SandboxExecutionPolicy): SandboxBackend {
+    return this.backendFor(policy.sessionId === undefined ? undefined : this.ctx.sessions.get(policy.sessionId))
   }
 
   /**

@@ -58,16 +58,18 @@ describe('ContainerRuntime', () => {
     expect(fake.calls()[0]).toEqual(['inspect', 'dsh-1'])
   })
 
-  it('runs an idle container with labels, resources, and bind mounts', async () => {
+  it('runs an idle container with labels, resources, bind mounts, and masks', async () => {
     const { fake, runtime } = setup({ cpus: 2, memory: '4g' })
     await runtime.run({
       name: 'dsh-1',
       labels: { 'dsh.pid': '42' },
       mounts: [{ source: '/ws', target: '/ws', readonly: true }, { source: '/ws', target: '/link', readonly: false }],
+      maskedPaths: ['/ws/.env'],
     })
     expect(fake.calls()).toEqual([[
       'run', '--detach', '--init', '--rm', '--name', 'dsh-1', '--label', 'dsh.pid=42', '--cpus', '2', '--memory', '4g',
       '--mount', 'type=bind,source=/ws,target=/ws,readonly', '--mount', 'type=bind,source=/ws,target=/link',
+      '--masked-path', '/ws/.env',
       'node:22-bookworm', 'sleep', 'infinity',
     ]])
   })
@@ -75,7 +77,7 @@ describe('ContainerRuntime', () => {
   it('reports a failed run', async () => {
     const { fake, runtime } = setup()
     fake.answer('run', { code: 1, stderr: 'Error: image not found' })
-    await expect(runtime.run({ name: 'dsh-1', labels: {}, mounts: [] })).rejects.toThrow('container run failed: Error: image not found')
+    await expect(runtime.run({ name: 'dsh-1', labels: {}, mounts: [], maskedPaths: [] })).rejects.toThrow('container run failed: Error: image not found')
   })
 
   it('deletes a container by name', async () => {

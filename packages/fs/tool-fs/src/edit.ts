@@ -11,6 +11,7 @@ import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-
 import type {} from '@deepseek-ai/dsh-fs'
 import { computeHunkDiffs, diffJson, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
+import { assertSandboxReadable } from './read-target.ts'
 import { sessionResolveOptions } from './session-cwd.ts'
 import type { FsSandboxController } from './sandbox.ts'
 
@@ -115,6 +116,7 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
       // > backend default, plus the session cwd root) BEFORE anything executes.
       const sandboxPolicy = await sandbox.resolvePolicy('edit', args, exec)
       const target = await ctx.fs.resolve(input.filePath, sessionResolveOptions(exec, sandboxPolicy?.workspaceRoot))
+      assertSandboxReadable(ctx, exec, target, sandboxPolicy?.mode)
       // Single-slot decision: the policy plugin returns { version: vObserved } or
       // throws FS_NOT_OBSERVED; the bare default is undefined (unconditional edit).
       // No stat — the bare default never manufactures a version basis. The intent
