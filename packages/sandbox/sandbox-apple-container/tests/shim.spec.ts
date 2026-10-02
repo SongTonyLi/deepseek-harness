@@ -15,7 +15,7 @@ import {
   settleArgs,
   wrapperScript,
 } from '../src/shim.ts'
-import type { ShimArgs, ShimChild, ShimDeps } from '../src/shim.ts'
+import type { ShimArgs, ShimDeps } from '../src/shim.ts'
 
 const ARGS: ShimArgs = { executable: '/bin/container', container: 'dsh-1', denylist: ['PATH', 'XPC_*'], argv: ['bash', '-c', 'true'] }
 
@@ -95,7 +95,7 @@ function harness(settleCode = 0): Harness {
     tty: false,
     spawn: (executable, args) => {
       spawned.push([executable, ...args])
-      return child as ShimChild
+      return child
     },
     run: (executable, args) => {
       controls.push([executable, ...args])

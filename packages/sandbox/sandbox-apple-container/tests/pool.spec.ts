@@ -3,7 +3,7 @@
 import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContainerPool, PID_LABEL } from '../src/pool.ts'
 import type { ContainerSpec, ContainerState, ListedContainer } from '../src/runtime.ts'
 
@@ -75,11 +75,10 @@ describe('ContainerPool', () => {
     const readOnly = await pool.ensure({ mode: 'read-only', workspaceRoot: root })
     expect(readOnly).not.toBe(name)
     expect(runtime.runs[1]?.mounts).toEqual([{ source: root, target: root, readonly: true }])
-    expect(pool.entries(root)).toEqual([
+    expect(pool.entries()).toEqual([
       { mode: 'workspace-write', root, name },
       { mode: 'read-only', root, name: readOnly },
     ])
-    expect(pool.entries(workspace())).toEqual([])
   })
 
   it('also mounts the lexical path of a symlinked workspace', async () => {
@@ -146,6 +145,23 @@ describe('ContainerPool', () => {
     await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: root })).resolves.toMatch(/^dsh-/u)
   })
 
+  it('keeps a slot cleared by dispose while its start fails', async () => {
+    const { runtime, pool } = setup()
+    const root = workspace()
+    let fail: (error: Error) => void = () => {}
+    runtime.run = (spec) => {
+      runtime.calls.push(`run ${spec.name}`)
+      return new Promise((_resolve, reject) => { fail = reject })
+    }
+    const pending = pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    await vi.waitFor(() => { expect(runtime.calls.some(call => call.startsWith('run'))).toBe(true) })
+    const disposed = pool.dispose()
+    fail(new Error('container run failed: interrupted'))
+    await expect(pending).rejects.toThrow('interrupted')
+    await disposed
+    expect(pool.entries()).toEqual([])
+  })
+
   it('rejects a workspace root containing a comma', async () => {
     const { pool } = setup()
     await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: '/no,such' })).rejects.toThrow('contains a comma')
@@ -172,6 +188,6 @@ describe('ContainerPool', () => {
     runtime.calls = []
     await pool.dispose()
     expect(runtime.calls).toEqual([`remove ${a}`, `remove ${b}`])
-    expect(pool.entries(root)).toEqual([])
+    expect(pool.entries()).toEqual([])
   })
 })

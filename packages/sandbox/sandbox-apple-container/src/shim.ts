@@ -195,7 +195,8 @@ export async function runShim(args: ShimArgs, deps: ShimDeps): Promise<number> {
     deps.stderr(`${SHIM_FAILURE_PREFIX}the container runtime failed before the command started (container exec exited ${exit})\n`)
     return SHIM_FAILURE_EXIT
   } catch (error: unknown) {
-    deps.stderr(`${SHIM_FAILURE_PREFIX}${error instanceof Error ? error.message : String(error)}\n`)
+    // The only rejection is the child's `error` event, which carries an Error.
+    deps.stderr(`${SHIM_FAILURE_PREFIX}${(error as Error).message}\n`)
     return SHIM_FAILURE_EXIT
   } finally {
     unsubscribe()

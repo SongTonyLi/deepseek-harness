@@ -3,7 +3,7 @@
  * mode), shared by every session and subagent in that workspace and mode. The
  * workspace is bind-mounted at its canonical path, plus its lexical path when
  * that differs; `read-only` mounts it read-only. A cached container is
- * re-inspected at most once per `recheckMs` and recreated when gone.
+ * re-inspected at most once per `recheckMs` and restarted when gone.
  * @module @deepseek-ai/dsh-sandbox-apple-container/pool
  */
 
@@ -62,37 +62,32 @@ export class ContainerPool {
       throw new Error(`workspace root ${JSON.stringify(policy.workspaceRoot)} contains a comma, which \`container --mount\` cannot express`)
     }
     const key = `${policy.mode}\0${root}`
-    const cached = this.slots.get(key)
-    if (cached !== undefined) {
-      await cached.ready
-      const now = this.options.now()
-      if (now - cached.checkedAt < this.options.recheckMs) return cached.name
-      cached.checkedAt = now
-      if (await this.runtime.state(cached.name) === 'running') return cached.name
-      if (this.slots.get(key) === cached) this.slots.delete(key)
-      return this.ensure(policy)
+    const now = this.options.now()
+    let slot = this.slots.get(key)
+    if (slot === undefined) {
+      const name = `dsh-${createHash('sha256').update(key).digest('hex').slice(0, 12)}-${this.options.pid}`
+      slot = { mode: policy.mode, root, name, checkedAt: now, ready: this.start(name, policy.mode, root, policy.workspaceRoot) }
+      this.slots.set(key, slot)
+    } else if (now - slot.checkedAt >= this.options.recheckMs) {
+      const { name } = slot
+      slot.checkedAt = now
+      slot.ready = slot.ready.then(() => this.start(name, policy.mode, root, policy.workspaceRoot))
     }
-    const name = `dsh-${createHash('sha256').update(key).digest('hex').slice(0, 12)}-${this.options.pid}`
-    const ready = this.start(name, policy.mode, root, policy.workspaceRoot)
-    const slot: Slot = { mode: policy.mode, root, name, checkedAt: this.options.now(), ready }
-    this.slots.set(key, slot)
     try {
       await slot.ready
     } catch (error: unknown) {
       if (this.slots.get(key) === slot) this.slots.delete(key)
       throw error
     }
-    return name
+    return slot.name
   }
 
   /**
-   * The started containers mounting `root`.
-   * @param root - a workspace root, canonicalized before comparison.
-   * @returns the entries in start order.
+   * Every owned container.
+   * @returns the entries in first-start order.
    */
-  entries(root: string): PoolEntry[] {
-    const canonical = canonicalPath(root)
-    return [...this.slots.values()].filter(slot => slot.root === canonical).map(({ mode, name }) => ({ mode, root: canonical, name }))
+  entries(): PoolEntry[] {
+    return [...this.slots.values()].map(({ mode, root, name }) => ({ mode, root, name }))
   }
 
   /**
@@ -107,11 +102,12 @@ export class ContainerPool {
     await Promise.all(stale.map(container => this.runtime.remove(container.id)))
   }
 
-  /** Delete every owned container. */
+  /** Delete every owned container, after any in-flight start settles. */
   async dispose(): Promise<void> {
-    const names = [...this.slots.values()].map(slot => slot.name)
+    const slots = [...this.slots.values()]
     this.slots.clear()
-    await Promise.all(names.map(name => this.runtime.remove(name)))
+    await Promise.allSettled(slots.map(slot => slot.ready))
+    await Promise.all(slots.map(slot => this.runtime.remove(slot.name)))
   }
 
   private async start(name: string, mode: ConfinedSandboxMode, root: string, lexical: string): Promise<void> {
