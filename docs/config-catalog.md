@@ -4329,8 +4329,15 @@ export interface Config {
    * rows at once. `0` draws every row at once, and so does `reducedMotion`.
    */
   toolRevealFrames: number
-  /** Milliseconds each running tool-card glyph frame lasts; activity dots remain at 80 ms. */
-  toolSpinnerMs: number
+  /**
+   * How long one frame of every working animation lasts, in milliseconds:
+   * the activity line's status glyph and the shimmer across its word, the
+   * glyph of each running tool card, each folded subagent row, and each
+   * in-progress todo on the activity board. They all step together, on one
+   * tick of this period that runs only while one of them is drawn. Every
+   * animation has eight frames, so one cycle lasts `8 * spinnerMs`.
+   */
+  spinnerMs: number
   /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
@@ -4341,7 +4348,7 @@ export interface Config {
    */
   reducedMotion: boolean
   /**
-   * Make every key the screen names clickable. Keys are drawn as underlined
+   * Make every key the screen names clickable. Keys are drawn as italic
    * chips whether or not this is on - `Ctrl+G`, `Esc`, `Shift+↑`, and the
    * rest, in legends, pickers, notices, and the reader - and with it on, a
    * click on a chip presses that key, exactly as typing it would. Turning it

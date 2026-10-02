@@ -307,9 +307,10 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`src/fade.ts`](src/fade.ts) | The streamed-text fade: the wall-clock tail tracker, the block-fade clock and registry, the fade-in ramp, the float-out mix, and the recolor of rendered lines |
 | [`src/pace.ts`](src/pace.ts) | The stream pacer: the ordered queue between the assistant stream and the transcript, drained a backlog share per frame; and the row reveal that unrolls a tool card the same way |
 | [`src/motion.ts`](src/motion.ts) | The chrome motion clock and the three-level lift its call sites draw with: the landing, the section step, and the bar walk |
-| [`src/spinner.ts`](src/spinner.ts) | The per-scenario spinner animations running glyphs cycle through and the shimmer the working spinner's label carries |
+| [`src/spinner.ts`](src/spinner.ts) | The working animations: the activity line's braille status animations, the tool-family animations of running cards and in-progress todos, the frame each draws at one instant, the phase that keeps indicators of one family apart, and the shimmer the activity label carries |
 | [`src/prompts.ts`](src/prompts.ts) | Approval, question, picker, and read-only detail prompts plus the modal queue |
 | [`src/toast.ts`](src/toast.ts) | The transient key-feedback line: its overlay, its clock, and the lines it carries |
+| [`src/pinned-prompt.ts`](src/pinned-prompt.ts) | The pinned prompt: the one-row bar naming a prompt, when the main screen floats it over the viewport's first row, and its overlay pane |
 | [`src/transcript.ts`](src/transcript.ts) | Pure text folding of presentation views, usage, and turn-end reasons, the `$ command` span, and the one fold grammar every marker is written in |
 | [`src/diff.ts`](src/diff.ts) | Line diff, hunk selection, and the addition and removal marks diff cards box |
 | [`src/style.ts`](src/style.ts) | The palette, including the cool dark-mode heading and link hues a Markdown reply uses, the strikethrough role completed todo content uses, the background band a prompt is drawn on and the darker one a steered or injected prompt is drawn on, the green and red fills and sign colours of a diff card's changed rows, whether key chips are clickable, and the derived pi-tui themes |
@@ -338,11 +339,13 @@ The patch rides over `dsh-base`: it sets the coding persona prefix and cwd suffi
 | [`tests/editor.spec.ts`](tests/editor.spec.ts) | The terminal caret, `Shift+Left` / `Shift+Right` word navigation, and `!` / `!!` draft colour against pi-tui's editor behavior |
 | [`tests/frame.spec.ts`](tests/frame.spec.ts) | The rules, the chip, the body rows, and the legend a width holds |
 | [`tests/motion.spec.ts`](tests/motion.spec.ts) | The motion clock's levels, its repaint demand, and the lift each level draws |
-| [`tests/spinner.spec.ts`](tests/spinner.spec.ts) | Spinner frame steps per scenario, tool and activity mapping, and the shimmer's sweep, rest, and disabled-palette output |
+| [`tests/spinner.spec.ts`](tests/spinner.spec.ts) | The animation sets (eight one-column frames, braille only on the activity line, disjoint tool families), tool and activity mapping, the wall-clock frame step, the phase stagger, and the shimmer's sweep, rest, and disabled-palette output |
 | [`tests/pace.spec.ts`](tests/pace.spec.ts) | The pacer's per-frame share, grapheme cuts, arrival order, flush, per-channel flush, and clear, and the row reveal's per-frame share, settle, and clamp |
 | [`tests/stream-pace.spec.ts`](tests/stream-pace.spec.ts) | Paced reply text and tool arguments in stream order, thinking drawn when its block ends, the flush at stream end and before a logged event, reduced motion, and tool cards unrolling on the frame tick |
 | [`tests/view-banner.spec.ts`](tests/view-banner.spec.ts) | The subagent-view line's trail, back target, width, and absence at the main session |
 | [`tests/toast.spec.ts`](tests/toast.spec.ts) | The transient line's box, its hold, its fade, and its early settlement |
+| [`tests/pinned-prompt.spec.ts`](tests/pinned-prompt.spec.ts) | The pinned row, when the main screen draws it, the overlay layout, and the keys under the bar |
+| [`tests/pinned-prompt-app.spec.ts`](tests/pinned-prompt-app.spec.ts) | The pinned bar on the running main screen: when it shows and leaves, the prompt it follows, the repaint window, and the scrollback it never reaches |
 | [`tests/reader.spec.ts`](tests/reader.spec.ts) | The reader's geometry, its state machine, its filter, and the rows it returns |
 | [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | The reader pane: its key map, the screen it fills, its re-anchoring, and its exit |
 | [`tests/alt-screen.spec.ts`](tests/alt-screen.spec.ts) | The alternate screen: its balanced switches, its per-row drawing, the rows a shorter frame clears, and the keys a paint keeps |

@@ -307,9 +307,10 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/fade.ts`](src/fade.ts) | 流式文本淡入与浮出：基于挂钟的尾部追踪器、块时钟与注册表、淡入亮度级别、浮出混合，以及对已渲染行的重新着色 |
 | [`src/pace.ts`](src/pace.ts) | 流式节拍器：助手流与对话记录之间的有序队列，每帧释放积压的一份；以及以同样方式展开工具卡片的逐行展开器 |
 | [`src/motion.ts`](src/motion.ts) | 边框装饰的动效时钟与其调用点所绘的三级抬亮：落键、小节步进与状态栏走查 |
-| [`src/spinner.ts`](src/spinner.ts) | 运行中符号按场景轮播的旋转动画，以及工作旋转指示标签所带的扫光 |
+| [`src/spinner.ts`](src/spinner.ts) | 工作动画：活动行按状态区分的盲文动画、运行中卡片与进行中 todo 的工具家族动画、每个指示在某一时刻画出的帧、让同一家族的指示彼此错开的相位，以及活动标签所带的扫光 |
 | [`src/prompts.ts`](src/prompts.ts) | 审批、提问、选择器与只读详情提示以及模态队列 |
 | [`src/toast.ts`](src/toast.ts) | 临时按键提示行：其浮层、其时钟，以及它承载的各条文字 |
+| [`src/pinned-prompt.ts`](src/pinned-prompt.ts) | 固定提示：指明某条提示的单行横条、主屏幕何时把它浮在视口首行之上，以及它的浮层面板 |
 | [`src/transcript.ts`](src/transcript.ts) | 呈现视图、用量与轮次结束原因的纯文本折叠、`$ command` 的 span，以及每条标记共用的那一套折叠措辞 |
 | [`src/diff.ts`](src/diff.ts) | diff 卡片的行 diff、hunk 选择，以及卡片加框所依据的新增与删除标记 |
 | [`src/style.ts`](src/style.ts) | 调色板（含 Markdown 回复所用的暗色冷色阶标题与链接色、已完成 todo 内容所用的划线角色、提示所铺的背景带与被引导或注入的提示所铺的更深背景带、diff 卡片变更行的绿色与红色填充及符号颜色）、按键徽标是否可点击，以及派生的 pi-tui 主题 |
@@ -338,11 +339,13 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/editor.spec.ts`](tests/editor.spec.ts) | 对照 pi-tui 编辑器行为验证终端光标、`Shift+Left` / `Shift+Right` 词导航，以及 `!` / `!!` 草稿着色 |
 | [`tests/frame.spec.ts`](tests/frame.spec.ts) | 边框线、徽标、正文行，以及某个宽度容纳得下的按键提示 |
 | [`tests/motion.spec.ts`](tests/motion.spec.ts) | 动效时钟的各个级别、它对重绘的要求，以及每一级所绘的抬亮 |
-| [`tests/spinner.spec.ts`](tests/spinner.spec.ts) | 各场景旋转帧的步进、工具与活动的映射，以及扫光的扫过、停顿与调色板禁用时的输出 |
+| [`tests/spinner.spec.ts`](tests/spinner.spec.ts) | 各组动画（八个单列帧、盲文只用于活动行、工具家族互不相交）、工具与活动的映射、按挂钟的帧步进、相位错开，以及扫光的扫过、停顿与调色板禁用时的输出 |
 | [`tests/pace.spec.ts`](tests/pace.spec.ts) | 节拍器的每帧份额、按字素切分、到达顺序、flush、按通道 flush 与 clear，以及逐行展开器的每帧份额、settle 与 clamp |
 | [`tests/stream-pace.spec.ts`](tests/stream-pace.spec.ts) | 按流顺序分批绘制的回复文字与工具参数，思考块结束时画出思考，流结束时与已记录事件前的 flush，reducedMotion，以及在帧节拍上展开的工具卡片 |
 | [`tests/view-banner.spec.ts`](tests/view-banner.spec.ts) | 子 agent 视图行的路径、返回目标、宽度，以及在主会话时不绘制 |
 | [`tests/toast.spec.ts`](tests/toast.spec.ts) | 临时提示行的方框、其保持、其淡出与其提前结算 |
+| [`tests/pinned-prompt.spec.ts`](tests/pinned-prompt.spec.ts) | 固定的那一行、主屏幕何时绘制它、浮层布局，以及横条下方的按键 |
+| [`tests/pinned-prompt-app.spec.ts`](tests/pinned-prompt-app.spec.ts) | 运行中主屏幕上的固定横条：何时出现与离开、它跟随的提示、重绘窗口，以及它从不进入的回滚缓冲区 |
 | [`tests/reader.spec.ts`](tests/reader.spec.ts) | 阅读器的几何布局、其状态机、其过滤，以及它返回的各行 |
 | [`tests/reader-screen.spec.ts`](tests/reader-screen.spec.ts) | 阅读器面板：其按键映射、它铺满的屏幕、其重新锚定与其退出 |
 | [`tests/alt-screen.spec.ts`](tests/alt-screen.spec.ts) | 备用屏幕：其成对的切换、其逐行绘制、更短的一帧所清除的行，以及一次绘制保留的按键 |
