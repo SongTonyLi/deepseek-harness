@@ -378,6 +378,7 @@
     { "path": "./packages/shell/tool-pwsh" },
     { "path": "./native/system/packages/entry" },
     { "path": "./packages/sandbox/sandbox" },
+    { "path": "./packages/sandbox/sandbox-apple-container" },
     { "path": "./packages/sandbox/sandbox-local" },
     { "path": "./packages/sandbox/sandbox-policy" },
     { "path": "./packages/sandbox/sandbox-windows-acl" },

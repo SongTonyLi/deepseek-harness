@@ -27,22 +27,23 @@ Each session's backend is `container` or `local`. The `local` backend delegates 
 
 ### Execution shim
 
-`confine` returns `[process.execPath, <exec-shim.js>, <container id>, '--', ...argv]`. The host-side shim:
+`confine` returns `[process.execPath, <exec-shim.js>, <executable>, <container>, <denylist>, '--', ...argv]`. The host-side shim:
 
 1. Uses its own `process.cwd()` as the guest working directory (`-w`).
-2. Writes its environment, minus the configured `envDenylist` keys and any value containing a newline, to a private temporary `--env-file`, so values never appear in process arguments.
+2. Writes its environment, minus the `envDenylist` keys and any value containing a newline, to a private temporary `--env-file`, so values never appear in process arguments.
 3. Adds `-i`, plus `-t` when stdin is a TTY.
-4. Runs `sh -c 'echo $$ > /run/dsh-<token>.pid; exec "$@"'` under `setsid -w` in the guest.
-5. On `SIGTERM`, `SIGINT`, or `SIGHUP`, runs `container exec <id> sh -c 'kill -<sig> -$(cat /run/dsh-<token>.pid)'`, because `container` 1.5.0 does not forward signals through `container exec`.
-6. Exits with the guest exit status and removes the env file.
+4. Runs the argv under `setsid -w sh -c` in the guest; the wrapper records its process-group id in `/run/dsh-<token>.pid` and a start sentinel in `/run/dsh-<token>.started`, and removes both after a zero exit.
+5. On `SIGTERM`, `SIGINT`, or `SIGHUP`, runs `container exec <id> sh -c 'kill -<sig> -$(cat /run/dsh-<token>.pid)'`, because `container` 1.5.0 does not forward signals through `container exec`, then exits with `128 + signal number`.
+6. After a nonzero exit, removes the token files and checks the start sentinel. A missing sentinel means the runtime failed before the command started: the shim prints `dsh-container-exec: ` followed by the reason and exits 125.
 
-The shim resolves from the built `lib/` entry like the windows-acl runner. The image must provide `sh` and util-linux `setsid`.
+The shim resolves from the built `lib/` entry like the windows-acl runner, with the tsx source fallback. The image must provide `sh` and util-linux `setsid`.
 
 ### Confinement facts
 
 - `enforcement: 'full'`: host file effects are limited to the mounted workspace, and the guest cannot read unmounted host paths.
 - `denialSignatures: ['read-only file system']`, so a `read-only` write denial feeds the existing escalation path, whose approved retry runs in the `workspace-write` container.
-- `runnerFailureRules`: `container` CLI diagnostics beginning with `Error:` together with the shim's own failure line, so a broken runtime surfaces as `SANDBOX_UNAVAILABLE` rather than a command failure.
+- `runnerFailureRules: [{ allowedExitCodes: [125], fatalSignatures: ['dsh-container-exec: '] }]`. The `container` CLI's own `Error:` lines are not matched, because ordinary commands print the same prefix.
+- A cached container is re-inspected at most once per `recheckMs` per confine; a container that disappeared is recreated.
 
 ### Configuration
 
@@ -53,20 +54,20 @@ The shim resolves from the built `lib/` entry like the windows-acl runner. The i
 | `image` | `node:22-bookworm` | OCI image every owned container runs |
 | `cpus`, `memory` | unset | Per-container resources; unset uses `container` system defaults |
 | `autoStart` | `true` | Start the `container` API server once when it is stopped |
+| `recheckMs` | `10000` | Minimum interval between liveness checks of a cached container |
 | `envDenylist` | host-specific keys (`PATH`, `HOME`, `TMPDIR`, `SHELL`, `USER`, `LOGNAME`, `PWD`, `OLDPWD`, `SHLVL`, `SSH_AUTH_SOCK`, `__CF*`, `XPC_*`, `DYLD_*`, `TERM_PROGRAM*`) | Environment keys the shim does not forward; a trailing `*` matches a prefix |
 | `local` | `{}` | Config passed to the embedded `dsh-sandbox-local` |
 
 ### Session state and model visibility
 
-- A log-only `sandbox/backend` session event records a runtime switch. It carries `ignorable: true` so builds without this plugin still open the log. The effective backend is the last event's value, otherwise the deployment default.
-- A `sandbox:backend` runtime-context contribution tells the model, under the `container` backend, that commands run in a Linux container from image `<image>`, that only the workspace root is shared with the host, and that writes elsewhere stay inside the container.
-- The `ctx.sandboxBackend` service exposes `status(session)` (backend, image, container id and state per mode) and `select(session, backend)`.
+- A log-only `sandbox/backend` session event records a runtime switch, following the `sandbox/mode` precedent; the `sandboxBackend` session-projection unit folds it. The effective backend is the last event's value, otherwise the deployment default. Agentless calls use the deployment default.
+- A `sandbox:backend` runtime-context contribution at the centrally allocated `SANDBOX_BACKEND` order tells the model, when the session resolves to the `container` backend and a confined mode, that confined commands run in a Linux container from image `<image>`, that only the workspace root is shared with the host, and that writes elsewhere stay inside the container. Under `local` or `danger-full-access` the contribution is empty.
+- The provider registers a shared `/sandbox` command on `ctx.commands`. `/sandbox` reports the backend, image, and container state; `/sandbox container` and `/sandbox local` append `sandbox/backend`, and the next confined call uses the new backend.
 
 ### TUI
 
-- `packages/bundle/tui-app/cordis.patch.yml` replaces the base `sandbox` entry with this package, making the container the TUI default.
-- `/sandbox` prints the session's backend and container status. `/sandbox container` and `/sandbox local` switch the current session; the next confined call uses the new backend.
-- Without `ctx.sandboxBackend`, `/sandbox` reports that the backend switch is not mounted in this profile.
+- `packages/bundle/tui-app/cordis.patch.yml` replaces the base `sandbox` entry with this package and sets `backend` to `container` on macOS arm64 and `local` elsewhere, so Linux CI keeps local confinement.
+- The TUI already dispatches unknown slash commands to `ctx.commands`, so `/sandbox` needs no terminal-local handler.
 
 ## Alternatives considered
 
@@ -97,4 +98,5 @@ The shim resolves from the built `lib/` entry like the windows-acl runner. The i
 - Host filesystem tools and guest commands disagree about paths outside the workspace.
 - Terminal resizes (`SIGWINCH`) do not reach guest processes.
 - The first command after install waits for a roughly 400 MB image pull when the background warm-up has not finished.
+- Builds older than this change refuse logs containing `sandbox/backend`, as with any new required event.
 - Upstream `container` releases are product versions; the `-v` parsing and signal-forwarding workarounds must be revisited on upgrade.
