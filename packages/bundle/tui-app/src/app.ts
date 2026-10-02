@@ -109,7 +109,19 @@ import {
   type SubagentChoice,
 } from './catalog.ts'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
-import { COMPACTING_ACTIVITY, SPINNER_MS, loaderIndicator, shimmer, spinnerFrame, spinnerKindForActivity, spinnerKindForTool, type SpinnerKind } from './spinner.ts'
+import {
+  ACTIVITY_SPINNERS,
+  COMPACTING_ACTIVITY,
+  TOOL_SPINNERS,
+  activityStatus,
+  callingActivity,
+  isCallingActivity,
+  shimmer,
+  spinnerFrame,
+  staggerPhase,
+  toolFamily,
+  type ToolFamily,
+} from './spinner.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
@@ -163,12 +175,12 @@ import {
 } from './footer.ts'
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
 import {
-  activityBoardSpins,
   activityBoardView,
   activityResultParts,
   activityTurnEndStatus,
   formatActivitySubagentLine,
   renderActivityBoard,
+  spinningTodos,
   type ActivityBoardSubagent,
 } from './activity-board.ts'
 import { queuePanelRows, renderQueuePanel, type QueuePanelRow } from './queue-panel.ts'
@@ -486,9 +498,14 @@ export interface TuiAppDeps {
    * grows; `0` draws them at once. Reduced motion also draws them at once.
    */
   toolRevealFrames: number
-  /** Milliseconds each running tool-card glyph frame lasts. */
-  toolSpinnerMs: number
-  /** Draw streamed text and tool cards in their own colors, with no ramp and no fade tick. */
+  /**
+   * How long one frame of every working animation lasts, in milliseconds:
+   * the activity line's glyph and shimmer, running tool cards, folded
+   * subagent rows, and in-progress todo rows all step together, and it is
+   * the period of the tick that redraws them.
+   */
+  spinnerMs: number
+  /** Draw streamed text and tool cards in their own colors, with no ramp, no spinner glyph, and no fade or spinner tick. */
   reducedMotion: boolean
   /**
    * Process environment the fade capability is decided from (`NO_COLOR`,
@@ -505,8 +522,9 @@ export interface TuiAppDeps {
   /**
    * Start one repeating tick. The app arms at most one per purpose and only
    * while that purpose needs it: the live refresh while a turn is running, a
-   * listed child is timing an open turn, or the listing is stale, and the
-   * fade while streamed text or a tool card is still brightening. The
+   * listed child is timing an open turn, or the listing is stale, the fade
+   * while streamed text or a tool card is still brightening, and the spinner
+   * tick while a working animation is drawn. The
    * production source registers each interval as an effect of the plugin
    * fiber; tests substitute a source they step by hand.
    * @param callback - runs once per period.
@@ -652,24 +670,6 @@ type EffortLookup =
   | { kind: 'failed'; message: string }
 
 /**
- * Spinner word for a streamed or executing tool.
- * @param name - the tool name when one is known.
- * @returns `calling <name>`, or `calling` when the name has not arrived.
- */
-function callingActivity(name: string | undefined): string {
-  return name ? `calling ${name}` : 'calling'
-}
-
-/**
- * Whether the spinner is already naming a tool call.
- * @param activity - the current spinner word.
- * @returns true for `calling` and `calling <name>`.
- */
-function isCallingActivity(activity: string): boolean {
-  return activity === 'calling' || activity.startsWith('calling ')
-}
-
-/**
  * Source for a prompt the person typed in this terminal.
  * A string `rpcId` is the admission mark Auto review treats as a human instruction.
  * An edited draft keeps a non-user source; a user draft is admitted again.
@@ -805,10 +805,16 @@ export class TuiApp {
   private readonly pacer: StreamPacer | undefined
   /** Tool cards whose rows are still unrolling; each drops out once its reveal caught up. */
   private readonly reveals = new Set<ToolBlock>()
-  /** Running tool cards whose glyph spins; each drops out once it stops spinning. */
-  private readonly spinners = new Set<ToolBlock>()
-  /** Whether the activity board last drew an in-progress todo on the spinner. */
-  private boardSpins = false
+  /**
+   * Running tool cards whose glyph spins, with the phase each spins at for
+   * its whole run; each drops out once it stops spinning.
+   */
+  private readonly spinners = new Map<ToolBlock, number>()
+  /**
+   * The phase each in-progress todo row the activity board last drew spins
+   * at, by content; a row keeps its phase while it stays in progress.
+   */
+  private readonly boardSpinners = new Map<string, number>()
   /**
    * Whether the open turn has committed an assistant message, after which a
    * user prompt reaching the log was steered or injected rather than opening
@@ -898,8 +904,6 @@ export class TuiApp {
   private usageExact = false
   /** Spinner label without the live ↑↓ suffix (`thinking`, `writing`, `calling read`, …). */
   private loaderActivity = 'thinking'
-  /** Animation the loader draws; undefined while it is stopped, so the next start syncs it. */
-  private loaderSpinnerKind: SpinnerKind | undefined = undefined
   /** Tool names still streamed or executing, in first-seen order. */
   private readonly pendingToolNames = new Map<ToolCallId, string>()
   private lastCtrlC = 0
@@ -951,10 +955,11 @@ export class TuiApp {
     this.readerScreen = new AlternateScreen(deps.terminal)
     this.header = new Text('', 0, 0)
     this.inspector = new InspectorPane(() => this.inspectorView(), { palette, previewLines: deps.focusPreviewLines })
-    this.loader = new Loader(this.tui, palette.accent, message => this.paintLoaderMessage(message), 'thinking')
+    // A loader with no frames of its own draws no indicator and arms no
+    // interval: the status glyph is painted into its message on the spinner
+    // tick, so it steps with every other working animation.
+    this.loader = new Loader(this.tui, palette.accent, message => this.paintLoaderMessage(message), 'thinking', { frames: [] })
     this.compactions = new CompactionLedger(message => deps.ctx.get('tokenMeter')?.estimateMessage(message))
-    // pi-tui starts the spinner interval in the constructor; it runs only while mounted.
-    this.loader.stop()
     this.editor = new BarCursorEditor(this.tui, editorTheme(palette), { paddingX: 1 })
     this.editor.shellPaint = { highlight: this.codeHighlight, warning: palette.warning, paddingX: 1 }
     this.editor.setAutocompleteProvider(editorCompletion({
@@ -1128,7 +1133,6 @@ export class TuiApp {
     this.modals.withdrawActive()
     this.dropReader()
     this.hideToast()
-    this.loader.stop()
     // The shell that regains the terminal keeps whatever caret shape it was
     // left with, so the application gives the terminal's own shape back.
     this.deps.terminal.write(SET_TERMINAL_DEFAULT_CURSOR)
@@ -1454,22 +1458,26 @@ export class TuiApp {
 
   private setWorking(working: boolean): void {
     if (working) {
-      if (this.statusSlot.children.length === 0) {
-        this.statusSlot.addChild(this.loader)
-        this.loader.start()
-      }
-      this.syncLoaderIndicator()
+      if (!this.loaderMounted()) this.statusSlot.addChild(this.loader)
       this.refreshLoader()
-    } else if (this.statusSlot.children.length > 0) {
-      this.loader.stop()
+    } else if (this.loaderMounted()) {
       this.statusSlot.removeChild(this.loader)
       this.pendingToolNames.clear()
       this.loaderActivity = 'thinking'
-      this.loaderSpinnerKind = undefined
       this.clearLiveUsage()
       this.loader.setMessage('thinking')
     }
+    this.updateSpinTicker()
     this.tui.requestRender()
+  }
+
+  /**
+   * Whether the activity line is drawn, which it is exactly while the agent
+   * works or a dispatched `/compact` runs.
+   * @returns true while the loader is mounted.
+   */
+  private loaderMounted(): boolean {
+    return this.statusSlot.children.length > 0
   }
 
   private refreshHeader(): void {
@@ -1549,12 +1557,17 @@ export class TuiApp {
       todos: this.activityTodos,
       ...this.activitySubagent === undefined ? {} : { subagent: this.activitySubagent },
     })
-    this.boardSpins = !this.deps.reducedMotion && activityBoardSpins(view)
+    this.syncBoardSpinners(this.deps.reducedMotion ? [] : spinningTodos(view))
+    const now = this.deps.now()
+    const spinners = new Map<string, string>()
+    for (const [content, phase] of this.boardSpinners) {
+      spinners.set(content, spinnerFrame(TOOL_SPINNERS.todo, now, this.deps.spinnerMs, phase))
+    }
     const text = renderActivityBoard(view, {
       palette: this.deps.palette,
       todoFades: this.activityTodoFades,
       ...this.activitySubagentFade === undefined ? {} : { subagentFade: this.activitySubagentFade },
-      ...this.boardSpins ? { spinner: spinnerFrame(this.deps.now(), 'todo') } : {},
+      spinners,
     })
     this.updateSpinTicker()
     const mounted = this.activitySlot.children.length > 0
@@ -1565,6 +1578,22 @@ export class TuiApp {
       this.activity.setText(text)
     }
     this.tui.requestRender()
+  }
+
+  /**
+   * Keep the phase of each in-progress todo row that still spins, drop the
+   * rest, and stagger a row that starts spinning against every other `todo`
+   * indicator on screen.
+   * @param contents - the content of each in-progress row the board draws now.
+   */
+  private syncBoardSpinners(contents: readonly string[]): void {
+    for (const content of this.boardSpinners.keys()) {
+      if (!contents.includes(content)) this.boardSpinners.delete(content)
+    }
+    for (const content of contents) {
+      if (this.boardSpinners.has(content)) continue
+      this.boardSpinners.set(content, staggerPhase(TOOL_SPINNERS.todo, this.spinningPhases('todo')))
+    }
   }
 
   /**
@@ -4409,26 +4438,54 @@ export class TuiApp {
 
   /**
    * Spin a new card's glyph in its tool family's animation until its result
-   * lands. The kind is read per frame, so a streamed name the logged call
-   * confirms keeps the card's animation. A card drawn from a replayed log,
-   * and every card under reduced motion, draws the static glyph.
+   * lands, at a phase staggered against the other indicators of that family
+   * on screen and kept for the card's whole run. The family is read per
+   * frame, so a streamed name the logged call confirms keeps the card's
+   * animation. A card drawn from a replayed log, and every card under
+   * reduced motion, draws the static glyph.
    * @param block - the card that was just mounted.
    */
   private spinBlock(block: ToolBlock): void {
     if (this.replaying || this.deps.reducedMotion) return
-    block.setSpinner(() => spinnerFrame(this.deps.now(), spinnerKindForTool(block.name), this.deps.toolSpinnerMs))
-    this.spinners.add(block)
+    const family = toolFamily(block.name)
+    const phase = staggerPhase(TOOL_SPINNERS[family], this.spinningPhases(family))
+    block.setSpinner(() => spinnerFrame(TOOL_SPINNERS[toolFamily(block.name)], this.deps.now(), this.deps.spinnerMs, phase))
+    this.spinners.set(block, phase)
     this.updateSpinTicker()
   }
 
   /**
-   * Arm the spinner tick while a card or an in-progress todo spins and disarm
-   * it otherwise, so a session with nothing running runs no spinner timer.
-   * Exactly one runs at a time, and a stopped app runs none.
+   * The phases of the indicators of one tool family spinning right now: its
+   * running cards and, for `todo`, the activity board's in-progress rows.
+   * @param family - the family a new indicator is about to draw.
+   * @returns one phase per spinning indicator of that family.
+   */
+  private spinningPhases(family: ToolFamily): number[] {
+    const phases: number[] = []
+    for (const [block, phase] of this.spinners) {
+      if (block.spinning() && toolFamily(block.name) === family) phases.push(phase)
+    }
+    if (family === 'todo') phases.push(...this.boardSpinners.values())
+    return phases
+  }
+
+  /**
+   * Whether the activity line animates: it is drawn and reduced motion is off.
+   * @returns true while its glyph and shimmer step on the spinner tick.
+   */
+  private loaderAnimates(): boolean {
+    return !this.deps.reducedMotion && this.loaderMounted()
+  }
+
+  /**
+   * Arm the spinner tick while the activity line animates, a card spins, or
+   * an in-progress todo spins, and disarm it otherwise, so a session with
+   * nothing running runs no spinner timer. Exactly one runs at a time, and a
+   * stopped app runs none.
    */
   private updateSpinTicker(): void {
-    if (!this.stopped && (this.spinners.size > 0 || this.boardSpins)) {
-      this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, SPINNER_MS)
+    if (!this.stopped && (this.loaderAnimates() || this.spinners.size > 0 || this.boardSpinners.size > 0)) {
+      this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, this.deps.spinnerMs)
       return
     }
     const ticker = this.spinTicker
@@ -4438,15 +4495,17 @@ export class TuiApp {
   }
 
   /**
-   * One spinner period: drop the cards that stopped spinning, then redraw the
-   * rest. The board's text is built when something changes it, so it is
-   * built again here on its next frame.
+   * One spinner period: drop the cards that stopped spinning, then redraw
+   * everything that animates in one render. The activity line's message and
+   * the board's text are built when something changes them, so both are
+   * built again here on their next frame.
    */
   private onSpinTick(): void {
-    for (const block of this.spinners) {
+    for (const block of this.spinners.keys()) {
       if (!block.spinning()) this.spinners.delete(block)
     }
-    if (this.boardSpins) this.refreshActivityBoard()
+    if (this.loaderAnimates()) this.refreshLoader()
+    if (this.boardSpinners.size > 0) this.refreshActivityBoard()
     else if (this.spinners.size > 0) this.tui.requestRender()
     this.updateSpinTicker()
   }
@@ -4961,20 +5020,7 @@ export class TuiApp {
    */
   private setLoaderActivity(activity: string): void {
     this.loaderActivity = activity
-    this.syncLoaderIndicator()
     this.refreshLoader()
-  }
-
-  /**
-   * Draw the loader's animation for its activity word. Setting the indicator
-   * restarts the animation, so it runs only when the kind changed — a repeat
-   * label would otherwise pin the spinner to its first frame.
-   */
-  private syncLoaderIndicator(): void {
-    const kind = spinnerKindForActivity(this.loaderActivity)
-    if (kind === this.loaderSpinnerKind) return
-    this.loaderSpinnerKind = kind
-    this.loader.setIndicator(loaderIndicator(kind))
   }
 
   /**
@@ -5008,7 +5054,6 @@ export class TuiApp {
     this.liveUsage = { inputTokens: this.seedLiveSend(), outputTokens: 0 }
     if (this.pendingToolNames.size === 0) this.loaderActivity = 'thinking'
     else this.syncLoaderFromPendingTools()
-    this.syncLoaderIndicator()
     this.refreshLiveUsage()
   }
 
@@ -5061,18 +5106,21 @@ export class TuiApp {
   }
 
   /**
-   * Paint the working spinner's message on each of its frames: the activity
-   * word carries the shimmer, and the live ↑↓ suffix stays dim. Under reduced
-   * motion the whole message is dim.
+   * Paint the activity line for the current instant: the status glyph of the
+   * activity word in the accent color and a space, then the word carrying the
+   * shimmer, then the live ↑↓ suffix dim. Under reduced motion no glyph is
+   * drawn and the whole message is dim.
    * @param message - the loader's message, the activity word first.
-   * @returns the styled message.
+   * @returns the styled line.
    */
   private paintLoaderMessage(message: string): string {
     const palette = this.deps.palette
     const activity = this.loaderActivity
     if (this.deps.reducedMotion || !message.startsWith(activity)) return paintKeys(palette, message, palette.dim, 'prose')
+    const now = this.deps.now()
+    const glyph = spinnerFrame(ACTIVITY_SPINNERS[activityStatus(activity)], now, this.deps.spinnerMs)
     const rest = message.slice(activity.length)
-    return `${shimmer(palette, activity, this.deps.now())}${rest === '' ? '' : paintKeys(palette, rest, palette.dim, 'prose')}`
+    return `${palette.accent(glyph)} ${shimmer(palette, activity, now, this.deps.spinnerMs)}${rest === '' ? '' : paintKeys(palette, rest, palette.dim, 'prose')}`
   }
 
   /**

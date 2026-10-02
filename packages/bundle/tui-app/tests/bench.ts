@@ -20,7 +20,7 @@ import { CONTEXT_PREVIEW_LINES } from '../src/blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
 import { FOCUS_PREVIEW_LINES } from '../src/inspector.ts'
 import { READER_MIN_COLUMNS } from '../src/reader.ts'
-import { SPINNER_FRAMES, type SpinnerKind } from '../src/spinner.ts'
+import { ACTIVITY_SPINNERS, TOOL_SPINNERS, type ActivityStatus, type ToolFamily } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
 import { TOAST_MS } from '../src/toast.ts'
 
@@ -29,6 +29,13 @@ import { TOAST_MS } from '../src/toast.ts'
  * the same on every run. Specs move it with `advance` or `tick`.
  */
 export const BENCH_NOW = Date.UTC(2026, 1, 3, 14, 25, 0)
+
+/**
+ * The frame period every working animation steps at unless a spec sets
+ * `spinnerMs`, the shipped default. {@link BENCH_NOW} falls on a frame
+ * boundary where a phase-0 animation draws its first frame.
+ */
+export const BENCH_SPINNER_MS = 100
 
 /** Let the throttled renderer draw everything pending. */
 function settle(): Promise<void> {
@@ -197,15 +204,18 @@ export class FakeTerminal implements Terminal {
   }
 }
 
+/** Every animation by name; activity statuses and tool families share no name. */
+const SPINNERS = { ...ACTIVITY_SPINNERS, ...TOOL_SPINNERS }
+
 /**
- * Match `label` led by a frame of `kind`, as a running tool card or an
- * in-progress todo draws it whatever frame the clock is on.
+ * Match `label` led by a frame of `kind`, as the activity line, a running
+ * tool card, or an in-progress todo draws it whatever frame the clock is on.
  * @param label - the text after the glyph and its space.
- * @param kind - the animation the card or row draws.
+ * @param kind - the activity status or the tool family whose animation is drawn.
  * @returns the pattern.
  */
-export function spinning(label: string, kind: SpinnerKind): RegExp {
-  const frames = [...SPINNER_FRAMES[kind]]
+export function spinning(label: string, kind: ActivityStatus | ToolFamily): RegExp {
+  const frames = [...SPINNERS[kind]]
     .map(frame => frame.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
     .join('')
   return new RegExp(`[${frames}] ${label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u')
@@ -405,8 +415,8 @@ export async function bench(options: {
   streamPaceFrames?: number
   /** Frames a tool card's rows unroll over; `0`, the default, draws every row at once. */
   toolRevealFrames?: number
-  /** Milliseconds each tool-card spinner frame lasts. */
-  toolSpinnerMs?: number
+  /** Milliseconds each frame of every working animation lasts, which is also the spinner tick's period. */
+  spinnerMs?: number
   /** Ask for streamed text drawn with no ramp. */
   reducedMotion?: boolean
   /** The environment the fade capability is decided from; empty by default, which yields the two-level mode. */
@@ -576,7 +586,7 @@ export async function bench(options: {
     fadeStepMs,
     streamPaceFrames: options.streamPaceFrames ?? 0,
     toolRevealFrames: options.toolRevealFrames ?? 0,
-    toolSpinnerMs: options.toolSpinnerMs ?? 160,
+    spinnerMs: options.spinnerMs ?? BENCH_SPINNER_MS,
     reducedMotion: options.reducedMotion ?? false,
     env: options.env ?? {},
     now: () => now,

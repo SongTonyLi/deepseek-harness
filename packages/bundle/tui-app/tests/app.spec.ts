@@ -18,11 +18,12 @@ import { TOOL_RUNNING_ROW } from '../src/blocks.ts'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, QUEUE_ENTRY_HINT, REGION_LABELS, entryHints, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
-import { SPINNER_MS, shimmer, spinnerFrame } from '../src/spinner.ts'
+import { ACTIVITY_SPINNERS, SPINNER_CYCLE, TOOL_SPINNERS, shimmer, spinnerFrame, type ActivityStatus, type ToolFamily } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
+import { TODO_GLYPH } from '../src/todos.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
-import { BENCH_NOW, KEY, bench, spinning, type Bench } from './bench.ts'
+import { BENCH_NOW, BENCH_SPINNER_MS, KEY, bench, spinning, type Bench } from './bench.ts'
 import { testContextSource } from './message-sources.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
@@ -42,6 +43,33 @@ function projectionsStub(values: () => Record<string, unknown>): NonNullable<Exc
 function writeTodos(test: Bench, next: TodoItem[], turn = 1): void {
   test.session.append('turn/start', { turn })
   test.session.append('todo/write', { todos: next })
+}
+
+/**
+ * The glyph each indicator labelled `label` draws in `kind`'s animation, top to bottom.
+ * @param screen - one complete frame.
+ * @param label - the text after each indicator's glyph and its space.
+ * @param kind - the activity status or tool family the indicators draw.
+ * @returns one glyph per indicator.
+ */
+function glyphsOf(screen: string, label: string, kind: ActivityStatus | ToolFamily): string[] {
+  return Array.from(screen.matchAll(new RegExp(spinning(label, kind).source, 'gu')), match => match[0].slice(0, 1))
+}
+
+/**
+ * Step the spinner tick through one whole cycle and require, at every
+ * instant, that the indicators on screen all draw different glyphs.
+ * @param test - the bench whose screen is read.
+ * @param count - how many indicators the screen draws.
+ * @param glyphs - reads each indicator's glyph off one complete frame.
+ */
+async function expectDistinctGlyphs(test: Bench, count: number, glyphs: (screen: string) => readonly string[]): Promise<void> {
+  for (let step = 0; step < SPINNER_CYCLE; step += 1) {
+    const drawn = glyphs(await test.screen())
+    expect(drawn, `instant ${String(step)}`).toHaveLength(count)
+    expect(new Set(drawn).size, `instant ${String(step)}: ${drawn.join(' ')}`).toBe(count)
+    test.runTick(BENCH_SPINNER_MS)
+  }
 }
 
 /** A system prompt longer than any fold budget. */
@@ -471,7 +499,7 @@ describe('TuiApp', () => {
     expect(dropped).not.toMatch(spinning('edit', 'edit'))
     test.session.append('tool/call', { turn: 1, step: 1, callId: 'call-bad' as never, name: 'mystery', arguments: '{bad' })
     await test.settle()
-    expect(test.terminal.text()).toMatch(spinning('mystery', 'calling'))
+    expect(test.terminal.text()).toMatch(spinning('mystery', 'other'))
     expect(test.terminal.text()).toContain('{bad')
   })
 
@@ -1953,53 +1981,86 @@ describe('the activity board', () => {
     const test = await bench({ projections: projectionsStub(() => ({ todos })) })
     writeTodos(test, todos)
     await test.settle()
-    expect(test.tickArmed(SPINNER_MS)).toBe(true)
-    const first = (await test.screen()).match(spinning('write the layer', 'todo'))?.[0]
-    expect(first).toBe(`${spinnerFrame(BENCH_NOW, 'todo')} write the layer`)
-    test.runTick(SPINNER_MS)
-    const next = (await test.screen()).match(spinning('write the layer', 'todo'))?.[0]
-    expect(next).toBeDefined()
-    expect(next).not.toBe(first)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    expect((await test.screen()).match(spinning('write the layer', 'todo'))?.[0]).toBe(`${TOOL_SPINNERS.todo[0]} write the layer`)
+    test.runTick(BENCH_SPINNER_MS)
+    expect((await test.screen()).match(spinning('write the layer', 'todo'))?.[0]).toBe(`${TOOL_SPINNERS.todo[1]} write the layer`)
     todos = [{ content: 'write the layer', status: 'completed' }]
     test.session.append('todo/write', { todos })
     await test.settle()
-    expect(test.tickArmed(SPINNER_MS)).toBe(false)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+  })
+
+  it('staggers an in-progress todo against a running todo card, and parallel in-progress todos against each other', async () => {
+    let todos: TodoItem[] = []
+    const withCard = await bench({ projections: projectionsStub(() => ({ todos })) })
+    withCard.appendToolCall('call-1', 'todo_write', { todos: [] })
+    todos = [{ content: 'build the client', status: 'in_progress' }]
+    writeTodos(withCard, todos)
+    await expectDistinctGlyphs(withCard, 2, screen => [...glyphsOf(screen, 'todo_write', 'todo'), ...glyphsOf(screen, 'build the client', 'todo')])
+
+    let parallelTodos: TodoItem[] = []
+    const parallel = await bench({ projections: projectionsStub(() => ({ todos: parallelTodos })) })
+    parallelTodos = [
+      { content: 'build the client', status: 'in_progress' },
+      { content: 'build the server', status: 'in_progress' },
+    ]
+    writeTodos(parallel, parallelTodos)
+    await expectDistinctGlyphs(parallel, 2, screen => [...glyphsOf(screen, 'build the client', 'todo'), ...glyphsOf(screen, 'build the server', 'todo')])
   })
 })
 
 describe('working indicators', () => {
-  it('spins a running tool card on its own tick and disarms it when the result lands', async () => {
+  it('spins a running tool card one frame per spinner tick and disarms the tick when the result lands', async () => {
     const test = await bench()
     await test.settle()
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
     await test.settle()
-    expect(test.tickArmed(SPINNER_MS)).toBe(true)
-    const first = (await test.screen()).match(spinning('bash', 'shell'))?.[0]
-    expect(first).toBeDefined()
-    test.runTick(SPINNER_MS)
-    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(first)
-    test.runTick(SPINNER_MS)
-    const next = (await test.screen()).match(spinning('bash', 'shell'))?.[0]
-    expect(next).toBeDefined()
-    expect(next).not.toBe(first)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(`${TOOL_SPINNERS.shell[0]} bash`)
+    test.runTick(BENCH_SPINNER_MS)
+    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(`${TOOL_SPINNERS.shell[1]} bash`)
     test.appendToolResult('call-1', [{ type: 'text', text: 'ok' }])
-    test.runTick(SPINNER_MS)
-    const settled = await test.screen()
-    expect(settled).toContain('◆ bash')
-    expect(test.tickArmed(SPINNER_MS)).toBe(false)
+    test.runTick(BENCH_SPINNER_MS)
+    expect(await test.screen()).toContain('◆ bash')
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
   })
 
-  it('uses the configured slower glyph period without changing the redraw tick', async () => {
-    const test = await bench({ toolSpinnerMs: 240 })
+  it('steps the activity glyph on the spinner tick and keeps the beat as the label changes animation', async () => {
+    const test = await bench({ running: true })
+    await test.settle()
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    expect(await test.screen()).toContain(`${ACTIVITY_SPINNERS.thinking[0]} thinking`)
+    test.runTick(BENCH_SPINNER_MS)
+    expect(await test.screen()).toContain(`${ACTIVITY_SPINNERS.thinking[1]} thinking`)
+    test.stream.start()
+    test.stream.chunk({ type: 'text-delta', index: 0, text: 'hello' })
+    expect(await test.screen()).toContain(`${ACTIVITY_SPINNERS.writing[1]} writing`)
+    test.runTick(BENCH_SPINNER_MS)
+    expect(await test.screen()).toContain(`${ACTIVITY_SPINNERS.writing[2]} writing`)
+    test.stream.chunk({ type: 'tool-call-delta', index: 1, id: 'call-1' as never, name: 'bash', argumentsDelta: '' })
+    let screen = await test.screen()
+    expect(screen).toContain(`${ACTIVITY_SPINNERS.calling[2]} calling bash`)
+    expect(screen).toContain(`${TOOL_SPINNERS.shell[2]} bash`)
+    test.runTick(BENCH_SPINNER_MS)
+    screen = await test.screen()
+    expect(screen).toContain(`${ACTIVITY_SPINNERS.calling[3]} calling bash`)
+    expect(screen).toContain(`${TOOL_SPINNERS.shell[3]} bash`)
+  })
+
+  it('never draws the glyph of the running card the activity line names', async () => {
+    const test = await bench({ running: true })
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
-    const first = (await test.screen()).match(spinning('bash', 'shell'))?.[0]
-    expect(first).toBe(`${spinnerFrame(BENCH_NOW, 'shell', 240)} bash`)
-    test.runTick(SPINNER_MS)
-    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(first)
-    test.runTick(SPINNER_MS)
-    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(first)
-    test.runTick(SPINNER_MS)
-    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).not.toBe(first)
+    await expectDistinctGlyphs(test, 2, screen => [...glyphsOf(screen, 'calling bash', 'calling'), ...glyphsOf(screen, 'bash', 'shell')])
+  })
+
+  it('staggers running cards of one family so no two draw the same glyph at any instant', async () => {
+    const test = await bench()
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    test.appendToolCall('call-2', 'bash', { command: 'pwd' })
+    test.appendToolCall('call-3', 'edit', { path: 'a.ts' })
+    test.appendToolCall('call-4', 'edit', { path: 'b.ts' })
+    await expectDistinctGlyphs(test, 4, screen => [...glyphsOf(screen, 'bash', 'shell'), ...glyphsOf(screen, 'edit', 'edit')])
   })
 
   it('draws each running tool card in its own family animation', async () => {
@@ -2008,34 +2069,86 @@ describe('working indicators', () => {
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
     test.appendToolCall('call-2', 'edit', { path: 'src/app.ts' })
     test.appendToolCall('call-3', 'read', { path: 'package.json' })
+    test.appendToolCall('call-4', 'plugin_manager', {})
     const screen = await test.screen()
-    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'shell', 160)} bash`)
-    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'edit', 160)} edit`)
-    expect(screen).toContain(`${spinnerFrame(BENCH_NOW, 'search', 160)} read`)
+    expect(screen).toContain(`${TOOL_SPINNERS.shell[0]} bash`)
+    expect(screen).toContain(`${TOOL_SPINNERS.edit[0]} edit`)
+    expect(screen).toContain(`${TOOL_SPINNERS.search[0]} read`)
+    expect(screen).toContain(`${TOOL_SPINNERS.other[0]} plugin_manager`)
   })
 
-  it('draws a static glyph and arms no spinner tick under reduced motion or for a replayed card', async () => {
-    const reduced = await bench({ reducedMotion: true })
-    reduced.appendToolCall('call-1', 'bash', { command: 'ls' })
-    expect(await reduced.screen()).toContain('◆ bash')
-    expect(reduced.tickArmed(SPINNER_MS)).toBe(false)
+  it('runs one spinner tick for the activity line, the cards, and the board, and none once nothing animates', async () => {
+    let todos: TodoItem[] = [{ content: 'write the layer', status: 'in_progress' }]
+    const test = await bench({ running: true, projections: projectionsStub(() => ({ todos })) })
+    writeTodos(test, todos)
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    await test.settle()
+    expect(test.tickDelaysMs().filter(delayMs => delayMs === BENCH_SPINNER_MS)).toHaveLength(1)
+    test.runTick(BENCH_SPINNER_MS)
+    const screen = await test.screen()
+    expect(screen).toContain(`${ACTIVITY_SPINNERS.calling[1]} calling bash`)
+    expect(screen).toContain(`${TOOL_SPINNERS.shell[1]} bash`)
+    expect(screen).toContain(`${TOOL_SPINNERS.todo[1]} write the layer`)
+    test.appendToolResult('call-1', [{ type: 'text', text: 'ok' }])
+    todos = [{ content: 'write the layer', status: 'completed' }]
+    test.session.append('todo/write', { todos })
+    expect(test.tickDelaysMs().filter(delayMs => delayMs === BENCH_SPINNER_MS)).toHaveLength(1)
+    test.setStatus('idle')
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+  })
 
+  it('steps every working animation on the configured frame period', async () => {
+    const test = await bench({ running: true, spinnerMs: 240 })
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    expect(test.tickDelaysMs().filter(delayMs => delayMs === 240)).toHaveLength(1)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+    for (let step = 0; step < 3; step += 1) {
+      const now = BENCH_NOW + step * 240
+      const screen = await test.screen()
+      expect(screen).toContain(`${spinnerFrame(ACTIVITY_SPINNERS.calling, now, 240)} calling bash`)
+      expect(screen).toContain(`${spinnerFrame(TOOL_SPINNERS.shell, now, 240)} bash`)
+      test.runTick(240)
+    }
+  })
+
+  it('draws no animated glyph and arms no spinner tick under reduced motion', async () => {
+    const todos: TodoItem[] = [{ content: 'write the layer', status: 'in_progress' }]
+    const test = await bench({ running: true, reducedMotion: true, projections: projectionsStub(() => ({ todos })) })
+    writeTodos(test, todos)
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    const screen = await test.screen()
+    expect(screen).toContain('◆ bash')
+    expect(screen).toContain(`${TODO_GLYPH.in_progress} write the layer`)
+    expect(screen).toMatch(/^ *calling bash/mu)
+    expect(screen).not.toMatch(/[\u2800-\u28ff]/u)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+  })
+
+  it('draws a static glyph and arms no spinner tick for a replayed card', async () => {
     const history = [
       { type: 'tool/call', seq: 1, time: 1, data: { turn: 1, step: 1, callId: 'c', name: 'bash', arguments: '{"command":"ls"}' } },
     ] as never[]
     const replayed = await bench({ history })
     expect(await replayed.screen()).toContain('◆ bash')
-    expect(replayed.tickArmed(SPINNER_MS)).toBe(false)
+    expect(replayed.tickArmed(BENCH_SPINNER_MS)).toBe(false)
   })
 
-  it('shimmers the working spinner word, and leaves it dim under reduced motion', async () => {
+  it('paints the activity glyph in the accent color beside the shimmered word, and only the dim word under reduced motion', async () => {
     const test = await bench({ running: true, color: true })
     await test.settle()
-    expect(test.terminal.output).toContain(shimmer(createPalette(true), 'thinking', BENCH_NOW))
-    expect(test.terminal.output).not.toContain('\u001b[2mthinking\u001b[22m')
+    const on = createPalette(true)
+    // The sweep rests past the word's end at the bench instant; two frames
+    // later it is back on the first character.
+    const now = BENCH_NOW + 2 * BENCH_SPINNER_MS
+    const sweep = shimmer(on, 'thinking', now, BENCH_SPINNER_MS)
+    expect(sweep).toBe(`${on.bold('t')}h${on.dim('inking')}`)
+    test.runTick(BENCH_SPINNER_MS, 2 * BENCH_SPINNER_MS)
+    await test.settle()
+    expect(test.terminal.output).toContain(`${on.accent(ACTIVITY_SPINNERS.thinking[2])} ${sweep}`)
     const reduced = await bench({ running: true, color: true, reducedMotion: true })
     await reduced.settle()
     expect(reduced.terminal.output).toContain('\u001b[2mthinking\u001b[22m')
+    expect(reduced.terminal.text()).not.toMatch(/[\u2800-\u28ff]/u)
   })
 
   it('draws a prompt steered into a stepped turn on the darker band, and the turn-opening prompt on the ordinary one', async () => {

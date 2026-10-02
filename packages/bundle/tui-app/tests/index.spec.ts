@@ -186,7 +186,7 @@ function config(overrides: Partial<Config> = {}): Config {
     streamFadeStepMs: 16,
     streamPaceFrames: 8,
     toolRevealFrames: 6,
-    toolSpinnerMs: 160,
+    spinnerMs: 100,
     reducedMotion: false,
     mouse: false,
     openBrowser: true,
@@ -615,7 +615,7 @@ describe('the presentation tunables', () => {
       streamFadeStepMs: 16,
       streamPaceFrames: 8,
       toolRevealFrames: 6,
-      toolSpinnerMs: 160,
+      spinnerMs: 100,
       reducedMotion: false,
       mouse: false,
       openBrowser: true,
@@ -624,10 +624,14 @@ describe('the presentation tunables', () => {
     })
   })
 
-  it('accept a configurable tool glyph period no faster than the redraw tick', () => {
-    expect(() => validate({ toolSpinnerMs: 79 })).toThrow()
-    expect(() => validate({ toolSpinnerMs: 160.5 })).toThrow()
-    expect(validate({ toolSpinnerMs: 240 })).toMatchObject({ toolSpinnerMs: 240 })
+  it('accept one whole-millisecond frame period for every working animation, no shorter than 80 ms', () => {
+    const defaults = validate({})
+    expect(defaults.spinnerMs).toBe(100)
+    expect(defaults).not.toHaveProperty('toolSpinnerMs')
+    expect(() => validate({ spinnerMs: 79 })).toThrow()
+    expect(() => validate({ spinnerMs: 100.5 })).toThrow()
+    expect(validate({ spinnerMs: 80 })).toMatchObject({ spinnerMs: 80 })
+    expect(validate({ spinnerMs: 240 })).toMatchObject({ spinnerMs: 240 })
   })
 
   it('refuse a reader narrower than two readable panels', () => {

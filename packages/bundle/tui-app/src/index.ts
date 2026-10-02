@@ -159,8 +159,15 @@ export interface Config {
    * rows at once. `0` draws every row at once, and so does `reducedMotion`.
    */
   toolRevealFrames: number
-  /** Milliseconds each running tool-card glyph frame lasts; activity dots remain at 80 ms. */
-  toolSpinnerMs: number
+  /**
+   * How long one frame of every working animation lasts, in milliseconds:
+   * the activity line's status glyph and the shimmer across its word, the
+   * glyph of each running tool card, each folded subagent row, and each
+   * in-progress todo on the activity board. They all step together, on one
+   * tick of this period that runs only while one of them is drawn. Every
+   * animation has eight frames, so one cycle lasts `8 * spinnerMs`.
+   */
+  spinnerMs: number
   /**
    * Draw streamed assistant text, streamed reasoning, tool cards, and the
    * app's own chrome at the colors they settle in, for users who do not want
@@ -215,7 +222,7 @@ export const Config: z<Config> = z.object({
   streamFadeStepMs: z.natural().min(16).default(FADE_TICK_MS),
   streamPaceFrames: z.natural().default(STREAM_PACE_FRAMES),
   toolRevealFrames: z.natural().default(TOOL_REVEAL_FRAMES),
-  toolSpinnerMs: z.natural().min(80).default(160),
+  spinnerMs: z.natural().min(80).default(100),
   reducedMotion: z.boolean().default(false),
   mouse: z.boolean().default(false),
   openBrowser: z.boolean().default(true),
@@ -465,7 +472,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     fadeStepMs: config.streamFadeStepMs,
     streamPaceFrames: config.streamPaceFrames,
     toolRevealFrames: config.toolRevealFrames,
-    toolSpinnerMs: config.toolSpinnerMs,
+    spinnerMs: config.spinnerMs,
     reducedMotion: config.reducedMotion,
     env: process.env,
     now: () => Date.now(),

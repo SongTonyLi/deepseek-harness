@@ -40,7 +40,7 @@ describe('TUI recorded-session replay', () => {
       ], cliPatch, { LINES: '12', ...mode === 'record' ? {} : { DSH_TUI_SNAPSHOT_SESSION: join(root, name) } })
       expect(run.exitCode, `${run.stderr}\n${run.stdout}`).toBe(0)
       expect(run.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
-      expect(run.stdout).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] calling bash/u)
+      expect(run.stdout).toMatch(/[⠁⠈⠐⠠⢀⡀⠄⠂] calling bash/u)
       expect(run.stdout).toContain(`❯ ${task}`)
       expect(run.stdout).toContain('row 2/')
       expect(await readFile(join(cwd, '.auto-review-requests'), 'utf8')).toBe('reviewed\n')
