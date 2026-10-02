@@ -1,5 +1,5 @@
 ---
-description: "The process-sandbox package group: the confinement seam, per-platform backends, the shared policy resolver, and the Windows write-restriction rung."
+description: "The process-sandbox package group: the confinement seam, per-platform backends, the Apple container VM backend, the shared policy resolver, and the Windows write-restriction rung."
 kind: "package-group"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The `sandbox/` group confines subprocess execution to a file-effect policy: commands run `read-only`, write only under the session workspace (`workspace-write`), or run unrestricted (`danger-full-access`). Four packages deliver it: the confinement service (`sandbox/`), the per-platform backends for Linux, macOS, and Windows (`sandbox-local/`), the shared policy resolver (`sandbox-policy/`), and the Windows write-restriction backend (`sandbox-windows-acl/`). A confined call that a policy denies can retry through a user-approved one-time escalation. Confinement is same-world only: it shares the host kernel and filesystem, while containers, microVMs, and remote executors replace whole capabilities instead of registering here.
+The `sandbox/` group confines subprocess execution to a file-effect policy: commands run `read-only`, write only under the session workspace (`workspace-write`), or run unrestricted (`danger-full-access`). Five packages deliver it: the confinement service, local backends for Linux, macOS, and Windows, an Apple container VM backend for Macs, the shared policy resolver, and the Windows write-restriction backend. A confined call that a policy denies can retry through a user-approved one-time escalation. The VM backend mounts only the workspace and also limits what the model's file tools read; remote executors replace whole capabilities instead.
 
 ## Table of Contents
 
@@ -22,12 +22,13 @@ The `sandbox/` group confines subprocess execution to a file-effect policy: comm
 <a id="packages"></a>
 ## Packages
 
-Four packages play the confinement roles; the subsystem reference owns the exhaustive contracts and the per-call policy semantics.
+Five packages play the confinement roles; the subsystem reference owns the exhaustive contracts and the per-call policy semantics.
 
 | Package | Role | ctx key |
 |---|---|---|
 | [`sandbox/`](sandbox/README.md) | Confinement service contract: modes, enforcement, per-call policy, and the escalation vocabulary | `ctx.sandbox` |
 | [`sandbox-local/`](sandbox-local/README.md) | Per-platform confinement backends: Linux bwrap then Landlock, macOS Seatbelt, Windows restricted token | registers on `ctx.sandbox` |
+| [`sandbox-apple-container/`](sandbox-apple-container/README.md) | Apple container backend: confined commands run in a per-workspace Linux VM that mounts only the workspace; each session can switch to the local chain | registers on `ctx.sandbox` |
 | [`sandbox-policy/`](sandbox-policy/README.md) | Shared policy home: deployment defaults and per-session mode overrides for every enforcing family | `ctx.sandboxPolicy` |
 | [`sandbox-windows-acl/`](sandbox-windows-acl/README.md) | Windows write restriction: confined children may write only in the workspace and a private temp directory | — (mounted by `sandbox-local` as the win32 backend) |
 

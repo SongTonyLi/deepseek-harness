@@ -2531,6 +2531,58 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-repeat-tool-reminder -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-sandbox-apple-container -->
+<a id="deepseek-aidsh-sandbox-apple-container"></a>
+
+## `@deepseek-ai/dsh-sandbox-apple-container`
+
+- `inject`: `sessions` · `sessionProjections`
+- `refs`: [`LocalConfig`](#deepseek-aidsh-sandbox-local)
+- `source`: [`packages/sandbox/sandbox-apple-container/src/index.ts:72`](../packages/sandbox/sandbox-apple-container/src/index.ts)
+
+```ts config-catalog
+/** Plugin config: the local chain's fields plus the container backend's. */
+export interface Config extends LocalConfig {
+  /**
+   * Backend for sessions without a recorded `/sandbox` choice and for agentless
+   * calls. `auto` selects `container` on macOS on Apple silicon when the
+   * `container` CLI resolves, and `local` elsewhere (default: `auto`).
+   */
+  backend?: ConfiguredBackend
+  /** The Apple `container` CLI, resolved on `PATH` when bare (default: `container`). */
+  executable?: string
+  /** OCI image every owned container runs; it must provide `sh` and util-linux `setsid` (default: `node:22-bookworm`). */
+  image?: string
+  /** CPUs per container; unset uses the `container` system default. */
+  cpus?: number
+  /** Memory per container in `container` size syntax such as `4g`; unset uses the system default. */
+  memory?: string
+  /** Start the `container` API server once when it is stopped (default: true). */
+  autoStart?: boolean
+  /** Minimum milliseconds between liveness checks of a cached container (default: 10000). */
+  recheckMs?: number
+  /** Environment name globs not forwarded to the guest; `*` matches any run, case-insensitively (default: {@link DEFAULT_ENV_DENYLIST}). */
+  envDenylist?: string[]
+  /** Absolute host directories mounted read-only at their own paths and readable by file tools, such as skill roots (default: none). */
+  readOnlyMounts?: string[]
+  /** Workspace-relative directories kept read-only under `workspace-write`; host programs execute their contents (default: `['.git']`). */
+  protectedPaths?: string[]
+  /** File-name globs hidden from confined commands and host file tools (default: {@link DEFAULT_HIDDEN_FILES}). */
+  hiddenFiles?: string[]
+  /** Directory depth of the workspace scan that masks hidden files when a container starts (default: 8). */
+  hiddenFilesMaxDepth?: number
+  /** Directory names the hidden-file scan does not enter (default: `['node_modules', '.git']`). */
+  hiddenFilesSkipDirs?: string[]
+}
+
+/** The configured backend: a fixed backend, or `auto` resolved per host at load. */
+export type ConfiguredBackend = SandboxBackend | 'auto'
+
+/** Where confined commands run: an Apple container VM, or the host's local confinement chain. */
+export type SandboxBackend = 'container' | 'local'
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-sandbox-apple-container -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-sandbox-local -->
 <a id="deepseek-aidsh-sandbox-local"></a>
 
@@ -2572,7 +2624,7 @@ export interface Config {
 
 - `inject`: `sessionProjections`
 - `refs`: [`SandboxMode`](subsystems/sandbox.zh.md)
-- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:71`](../packages/sandbox/sandbox-policy/src/index.ts)
+- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:72`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3425,7 +3477,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-system-prompt`
 
-- `source`: [`packages/core/system-prompt/src/index.ts:247`](../packages/core/system-prompt/src/index.ts)
+- `source`: [`packages/core/system-prompt/src/index.ts:248`](../packages/core/system-prompt/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
@@ -3911,7 +3963,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-str-replace-editor`
 
 - `inject`: `tools` · `fs`
-- `source`: [`packages/fs/tool-str-replace-editor/src/index.ts:506`](../packages/fs/tool-str-replace-editor/src/index.ts)
+- `source`: [`packages/fs/tool-str-replace-editor/src/index.ts:516`](../packages/fs/tool-str-replace-editor/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the string-replacement editor tool. */

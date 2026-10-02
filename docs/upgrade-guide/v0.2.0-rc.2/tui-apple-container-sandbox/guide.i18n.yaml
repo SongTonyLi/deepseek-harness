@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.0-rc.2/tui-apple-container-sandbox/guide.md
+/:
+  en: 4e72d5036e0e6fcf
+  zh: 75e5cdf212528cf3
+/the-terminal-profile-confines-commands-in-an-apple-container-on-macos:
+  en: 908b0722b7a115db
+  zh: f24f4719f4dd4acd
+/the-terminal-profile-confines-commands-in-an-apple-container-on-macos/change:
+  en: 02d8522c73eb999e
+  zh: 1040e1658b7eb1d9
+/the-terminal-profile-confines-commands-in-an-apple-container-on-macos/migration:
+  en: ff6204dda92cf2e4
+  zh: 3677b54eb0624493

@@ -163,6 +163,7 @@ export type PromptSectionOrderName = keyof typeof SECTION_ORDERS
 
 const CONTEXT_ORDERS = {
   SANDBOX_POLICY: 110,
+  SANDBOX_BACKEND: 112,
   APPROVAL_POLICY: 115,
   SUBAGENT_DELEGATION: 120,
 } as const

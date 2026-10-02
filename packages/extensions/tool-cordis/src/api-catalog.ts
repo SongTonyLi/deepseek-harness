@@ -1870,6 +1870,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'argv', description: 'the exact argv the caller is about to spawn (program plus arguments), NOT a shell string — a shell-shaped consumer passes `[\'bash\', \'-c\', command]`.' }, { name: 'policy', description: 'the file-effect policy this execution runs under, carried per call (see {@link SandboxPolicy}).' }, { name: 'signal', description: 'cancellation while the provider resolves the policy and runner.' }],
         returns: 'the argv to spawn instead, plus the enforcement completeness the selected backend achieves for it.',
       },
+      {
+        signature: 'readScope(_policy: SandboxExecutionPolicy): SandboxReadScope | undefined',
+        description: 'What a process confined under `policy` can read on the host, or `undefined` when this backend does not confine reads. Model-facing tools that read the host for the same session must refuse paths outside the scope, so their view never exceeds the confined processes\'. The base implementation confines no reads.',
+        parameters: [{ name: '_policy', description: 'the file-effect policy of the calling session.' }],
+        returns: 'the read scope, or `undefined` for unconfined reads.',
+      },
     ],
   },
   {
@@ -1892,6 +1898,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Resolve the complete policy for one capability call. An approved explicit mode outranks the session\'s last `sandbox/mode` event, which outranks the deployment default. A session cwd is its workspace-write boundary; the configured root is the fallback for agentless calls and sessions without a cwd.',
         parameters: [{ name: 'request', description: 'optional session and approved mode override.' }],
         returns: 'the fully resolved per-call mode and absolute workspace root.',
+      },
+      {
+        signature: 'readScope(request: SandboxPolicyRequest = {}): SandboxReadScope | undefined',
+        description: 'The host read scope of confined processes under the resolved policy, from the mounted `ctx.sandbox` provider.',
+        parameters: [{ name: 'request', description: 'optional session and approved mode override, as for {@link resolve}.' }],
+        returns: 'the scope, or `undefined` when no provider confines reads.',
+      },
+      {
+        signature: 'canRead(path: string, request: SandboxPolicyRequest = {}): boolean',
+        description: 'Whether a model-facing tool may read `path` on the host: true when reads are unconfined, otherwise only inside the readScope. Tools that read file contents or search them call this before reading, so their view never exceeds the confined processes\'.',
+        parameters: [{ name: 'path', description: 'the host path about to be opened or searched.' }, { name: 'request', description: 'optional session and approved mode override, as for {@link resolve}.' }],
+        returns: 'true when the read is allowed.',
       },
       {
         signature: 'overrideOf(session: Session): SandboxMode | undefined',
@@ -6343,6 +6361,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SandboxPolicyRequest',
     declaration: 'export interface SandboxPolicyRequest {\n    session?: Session;\n    mode?: SandboxMode;\n}',
+  },
+  {
+    name: 'SandboxReadScope',
+    declaration: 'export interface SandboxReadScope {\n    roots: readonly string[];\n    hiddenNames: readonly string[];\n}',
   },
   {
     name: 'SaveFileAttachment',

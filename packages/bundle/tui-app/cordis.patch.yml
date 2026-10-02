@@ -16,7 +16,27 @@
     # Keep the same temporary process-wide PTC mode opt-in as the Web surface.
     mode: !!js process.env.DSH_TOOLS_MODE
 
+# The terminal confines commands with the Apple container backend below
+# instead of the base local sandbox row.
+- id: sandbox
+  disabled: true
+
 - insert:
+    # `auto` runs confined commands in an Apple container VM on macOS on Apple
+    # silicon when the `container` CLI is installed, and through the inherited
+    # local sandbox chain elsewhere; `/sandbox` switches one session. Skill
+    # roots are mounted read-only so loaded skills can read their resources.
+    - id: sandbox-apple-container
+      name: '@deepseek-ai/dsh-sandbox-apple-container'
+      config:
+        backend: auto
+        readOnlyMounts: !!js >-
+          process.platform !== 'darwin' ? [] : [
+            `${process.env.DSH_HOME ?? `${process.env.HOME}/.dsh`}/skills`,
+            `${process.env.DSH_AGENTS_HOME ?? `${process.env.HOME}/.agents`}/skills`,
+            ...(process.env.DSH_BUNDLED_SKILL_DIR ? [process.env.DSH_BUNDLED_SKILL_DIR] : []),
+          ]
+
     # The model-facing question tool; the terminal runner answers its
     # `user-questions/request` waterfall in the same process.
     - id: tool-ask-user

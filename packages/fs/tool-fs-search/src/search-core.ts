@@ -20,12 +20,15 @@
  */
 
 import { existsSync } from 'node:fs'
-import { isAbsolute, join, parse, relative, sep } from 'node:path'
+import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { ItemRetainer, TextRetainer } from '@deepseek-ai/dsh-output-retention'
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { isReadableIn } from '@deepseek-ai/dsh-sandbox'
+import type { SandboxReadScope } from '@deepseek-ai/dsh-sandbox'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 
@@ -80,6 +83,7 @@ export type SearchErrorCode =
   | 'SEARCH_FAILED'
   | 'SEARCH_RAW_OUTPUT_OVERFLOW'
   | 'SEARCH_ABORTED'
+  | 'SEARCH_SANDBOX_DENIED'
 
 /**
  * Typed search failure. Extends {@link HarnessError} so it carries a stable
@@ -181,6 +185,32 @@ export function resolveRgPath(): Promise<string> {
       : dependency.replace(/\.asar(?=[\\/])/u, '.asar.unpacked')
   })
   return rgPathPromise
+}
+
+/**
+ * The calling session's host read scope, after refusing a search path the
+ * sandbox hides. A search inside the scope must still exclude the scope's
+ * hidden file names from content reads.
+ * @param ctx - the plugin context; reads are unconfined without `ctx.sandboxPolicy`.
+ * @param exec - the tool execution, supplying the session and its cwd.
+ * @param toolName - `glob` or `grep`, used in the refusal.
+ * @param path - the model-supplied search path, relative to the session cwd; absent searches the cwd.
+ * @returns the read scope, or `undefined` when reads are unconfined.
+ * @throws {SearchError} `SEARCH_SANDBOX_DENIED` when the path is outside the scope.
+ */
+export function searchReadScope(
+  ctx: Context,
+  exec: ToolExecution,
+  toolName: string,
+  path: string | undefined,
+): SandboxReadScope | undefined {
+  const scope = ctx.get('sandboxPolicy')?.readScope(exec.agent === undefined ? {} : { session: exec.agent.session })
+  if (scope === undefined) return undefined
+  const target = resolve(exec.agent?.session.header.cwd ?? process.cwd(), path ?? '.')
+  if (!isReadableIn(target, scope)) {
+    throw new SearchError(`${toolName} cannot search "${path ?? '.'}": the sandbox hides this path from this session`, 'SEARCH_SANDBOX_DENIED')
+  }
+  return scope
 }
 
 /**

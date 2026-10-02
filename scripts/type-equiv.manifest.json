@@ -1308,6 +1308,11 @@
     },
     {
       "doc": "docs/subsystems/sandbox.md",
+      "symbol": "SandboxReadScope",
+      "source": "packages/sandbox/sandbox/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/sandbox.md",
       "symbol": "SandboxEnforcement",
       "source": "packages/sandbox/sandbox/src/index.ts"
     },

@@ -87,16 +87,26 @@ class MutationPolicy {
   }
 }
 
+/**
+ * Resolve an absolute model path, refusing one the calling session's sandbox
+ * hides from reads before anything observes it.
+ */
 async function resolveTarget(
   ctx: Context,
   path: string,
-  signal: AbortSignal,
+  exec: ToolRunContext,
 ): Promise<FsTarget> {
   if (path.trim().length === 0) throw new Error('path must be a non-empty string')
   if (!isAbsolute(path)) {
     throw new Error(`The path ${path} is not an absolute path, it should start with \`/\`. Maybe you meant /${path}?`)
   }
-  return ctx.fs.resolve(path, { signal })
+  const target = await ctx.fs.resolve(path, { signal: exec.signal })
+  const policy = ctx.get('sandboxPolicy')
+  const request = exec.agent === undefined ? {} : { session: exec.agent.session }
+  if (policy !== undefined && !policy.canRead(ctx.fs.processPath(target), request)) {
+    throw new FsError(`cannot read "${target.displayPath}": the sandbox hides this path from this session`, 'FS_SANDBOX_DENIED')
+  }
+  return target
 }
 
 async function statExisting(
@@ -222,7 +232,7 @@ async function viewPath(
   maxOutputChars: number,
   exec: ToolRunContext,
 ): Promise<string> {
-  const target = await resolveTarget(ctx, path, exec.signal)
+  const target = await resolveTarget(ctx, path, exec)
   const info = await statExisting(ctx, target, 'view', exec)
   if (info.type === 'directory') {
     if (viewRange !== undefined) {
@@ -247,7 +257,7 @@ async function createFile(
 ): Promise<string> {
   const content = requiredForCommand(fileText, 'file_text', 'create')
   const sandboxPolicy = policy.resolve(exec)
-  const target = await resolveTarget(ctx, path, exec.signal)
+  const target = await resolveTarget(ctx, path, exec)
   if (await ctx.fs.stat(target, exec.signal) !== undefined) {
     throw new Error(`File already exists at: ${target.displayPath}. Cannot overwrite files using command \`create\`.`)
   }
@@ -285,7 +295,7 @@ async function replaceInFile(
     throw new Error('Parameter `new_str` must be omitted or contain a string for command: str_replace')
   }
   const sandboxPolicy = policy.resolve(exec)
-  const target = await resolveTarget(ctx, path, exec.signal)
+  const target = await resolveTarget(ctx, path, exec)
   const intent = await ctx.waterfall('fs/edit-intent', target, exec, () => undefined)
   const oldValue = requiredForCommand(oldStr, 'old_str', 'str_replace', false)
   const newValue = newStr ?? ''
@@ -338,7 +348,7 @@ async function insertInFile(
   if (insertLine === undefined) throw new Error('Parameter `insert_line` is required for command: insert')
   const value = requiredForCommand(newStr, 'new_str', 'insert')
   const sandboxPolicy = policy.resolve(exec)
-  const target = await resolveTarget(ctx, path, exec.signal)
+  const target = await resolveTarget(ctx, path, exec)
   const intent = await ctx.waterfall('fs/edit-intent', target, exec, () => undefined)
   const info = await statExisting(ctx, target, 'insert', exec)
   if (info.type !== 'file') {

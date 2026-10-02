@@ -11368,6 +11368,87 @@
       }
     },
     {
+      "key": "event:sandbox/backend",
+      "kind": "event",
+      "event": "sandbox/backend",
+      "surface": false,
+      "digest": "d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 7,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "backend",
+                "type": 2,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "union",
+            "types": [
+              3,
+              4
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "container"
+          },
+          {
+            "kind": "literal",
+            "value": "local"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "sandbox/backend"
+          }
+        ]
+      }
+    },
+    {
       "key": "event:sandbox/mode",
       "kind": "event",
       "event": "sandbox/mode",
@@ -22967,6 +23048,11 @@
       ]
     },
     {
+      "digest": "30fbc84a8dff6bf29ec8744de4db391849f4d0ab4f5dc8964970d89472695964",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "312aee2f0c42aabbae6cc60d92d596d8453c0aeb061c5868d1755a69ef49e69a",
       "names": [],
       "sources": []
@@ -23048,6 +23134,11 @@
       "sources": [
         "packages/llm/llm-retry/src/types.ts:30"
       ]
+    },
+    {
+      "digest": "37754fa5ccea9aa18bcd31a960af027770bdaadbdded927360422f702215a798",
+      "names": [],
+      "sources": []
     },
     {
       "digest": "378f90f9f6022a0991928a1eaf7991094ea1920fe89a9248358a1da106e1a970",
@@ -23505,6 +23596,13 @@
       "sources": []
     },
     {
+      "digest": "548cd278c7808ebc8fb8ede51729cb980e70909bc63bcc74207aac8a56a4a6d6",
+      "names": [],
+      "sources": [
+        "packages/sandbox/sandbox-apple-container/src/session-backend.ts:25"
+      ]
+    },
+    {
       "digest": "54f9276a1617d7c12594722c89cfe864bcbe4517e9a6f9c98bab14f199a135e0",
       "names": [],
       "sources": [
@@ -23515,6 +23613,15 @@
       "digest": "557e148d30b79ee48645850832b30c717d7c3b64641deb5d6133b8b4e91ee0b8",
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "56446dcfeddd343eecdc7d8b216b773240eb63a5f16cc1121f883576ba07e2d0",
+      "names": [
+        "packages/sandbox/sandbox-apple-container/src/session-backend.ts#SandboxBackend"
+      ],
+      "sources": [
+        "packages/sandbox/sandbox-apple-container/src/session-backend.ts:13"
+      ]
     },
     {
       "digest": "5654685d7557ec747e74887237065e626a5bdfa426ca43f7fbb0b6fee9b0916c",
@@ -24680,6 +24787,11 @@
       "sources": []
     },
     {
+      "digest": "a7ccd06a53e95b2724e3948e015ae8c5e50b384a4331e0c95ee0bedc0ec8b6a2",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "a7cf43ce7c2a4c038feed1885cd7a00d5c6ee2d90a7e0d56b46f78a3e1ca327f",
       "names": [],
       "sources": []
@@ -25288,6 +25400,11 @@
       "sources": []
     },
     {
+      "digest": "d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "d48b00cb7be9b276994b0db918dc5fbfa89c11f750cc6a56ca9f4addb2aae73f",
       "names": [
         "packages/llm/llm/src/message.ts#UserMessage"
@@ -25828,7 +25945,7 @@
         "packages/sandbox/sandbox/src/index.ts#SandboxMode"
       ],
       "sources": [
-        "packages/sandbox/sandbox/src/index.ts:30"
+        "packages/sandbox/sandbox/src/index.ts:33"
       ]
     },
     {

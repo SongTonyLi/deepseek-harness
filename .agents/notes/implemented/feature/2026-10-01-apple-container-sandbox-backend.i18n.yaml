@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for 2026-10-01-apple-container-sandbox-backend.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-01-apple-container-sandbox-backend.md
+/agent-note-apple-container-sandbox-backend:
+  en: 8bd08f099a854625
+  zh: 9c62f3a327de46f1
+/agent-note-apple-container-sandbox-backend/problem:
+  en: a11574d8d7a4bf73
+  zh: 8cb6bbf7b20b6836
+/agent-note-apple-container-sandbox-backend/decision:
+  en: d094e151b6b20c92
+  zh: f94059d6c759753c
+/agent-note-apple-container-sandbox-backend/decision/containers:
+  en: c85da2dc4e58496b
+  zh: aa19587475808cc1
+/agent-note-apple-container-sandbox-backend/decision/execution-shim:
+  en: edd00cc11e82214e
+  zh: bf28fada9a7ee2f3
+/agent-note-apple-container-sandbox-backend/decision/read-scope:
+  en: 6a5df34cec3e6fb3
+  zh: e619921b9cda8a30
+/agent-note-apple-container-sandbox-backend/decision/session-state-and-model-visibility:
+  en: f144a0f8a6820e88
+  zh: 3d4bcb44ad0f2fbf
+/agent-note-apple-container-sandbox-backend/alternatives-considered:
+  en: 6d592d60c9ce1659
+  zh: 42063ded5bf1930a
+/agent-note-apple-container-sandbox-backend/consequences:
+  en: 36d0c80a60abc633
+  zh: a62c23b28173c101
+/agent-note-apple-container-sandbox-backend/testing:
+  en: b64d5a6eab4820aa
+  zh: 8d5d200b763b0483

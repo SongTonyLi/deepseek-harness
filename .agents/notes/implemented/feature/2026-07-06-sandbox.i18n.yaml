@@ -21,8 +21,8 @@
   en: 0c09534b59e2063e
   zh: 5225d6750d13b9d7
 /agent-note-the-subprocess-sandbox-confinement-seam-native-runners-escalation-and-per-session-modes/decision/design-detail/the-seam-ctx-sandbox:
-  en: 2c98e8c0bd8a9ff1
-  zh: 661b58f81f6e05c6
+  en: 7cc08a9c8e8d306a
+  zh: 543b9f639b396b8a
 /agent-note-the-subprocess-sandbox-confinement-seam-native-runners-escalation-and-per-session-modes/decision/design-detail/local-backends-and-the-shipped-launcher:
   en: 5c6bf38f958b07d0
   zh: 22bf9fac71eb643d
@@ -48,8 +48,8 @@
   en: f28b530000b8495e
   zh: f256b8b32c4ce4ef
 /agent-note-the-subprocess-sandbox-confinement-seam-native-runners-escalation-and-per-session-modes/alternatives-considered:
-  en: eabe577b837f3de2
-  zh: 4ef0167c895766a6
+  en: baa98a26915abed4
+  zh: 5eec7c2b6c29752d
 /agent-note-the-subprocess-sandbox-confinement-seam-native-runners-escalation-and-per-session-modes/consequences:
   en: c0d8279a677a0ef1
   zh: 3518fc05f8700c0b

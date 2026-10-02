@@ -15,7 +15,8 @@
 
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import type { SandboxExecutionPolicy } from './index.ts'
+import { basename, dirname, join, resolve, sep } from 'node:path'
+import type { SandboxExecutionPolicy, SandboxReadScope } from './index.ts'
 
 /**
  * Resolve a granted root to the path the enforcement layer actually compares:
@@ -52,4 +53,48 @@ export function canonicalPath(path: string): string {
 export function writableRoots(policy: SandboxExecutionPolicy): string[] {
   if (policy.mode !== 'workspace-write') return []
   return [...new Set([policy.workspaceRoot, '/tmp', tmpdir()].map(canonicalPath))]
+}
+
+/**
+ * Canonicalize a path that may not exist yet: the deepest existing ancestor
+ * resolves through symlinks and the missing remainder is appended, after
+ * lexical `.`/`..` collapse.
+ * @param path - an absolute or process-relative path.
+ * @returns the canonical spelling a containment check compares.
+ */
+function canonicalTarget(path: string): string {
+  const absolute = resolve(path)
+  const canonical = canonicalPath(absolute)
+  if (canonical !== absolute) return canonical
+  const parent = dirname(absolute)
+  return parent === absolute ? absolute : join(canonicalTarget(parent), basename(absolute))
+}
+
+/**
+ * Whether a file name matches a hidden-name glob, where `*` matches any run
+ * of characters and matching ignores case.
+ * @param name - a single path component.
+ * @param glob - a pattern such as `.env.*` or `id_rsa*`.
+ * @returns true when `name` matches the whole pattern.
+ */
+export function matchesNameGlob(name: string, glob: string): boolean {
+  const pattern = glob.split('*').map(part => part.replaceAll(/[.+?^${}()|[\]\\]/gu, String.raw`\$&`)).join('.*')
+  return new RegExp(`^${pattern}$`, 'iu').test(name)
+}
+
+/**
+ * Whether `path` is readable within `scope`: it lies inside a root after both
+ * are canonicalized (so neither `..` nor a symlink can leave the roots), and
+ * its file name matches no hidden-name glob.
+ * @param path - the host path a reader is about to open or search.
+ * @param scope - the read scope from `SandboxProvider.readScope`.
+ * @returns true when the path may be read.
+ */
+export function isReadableIn(path: string, scope: SandboxReadScope): boolean {
+  const target = canonicalTarget(path)
+  if (scope.hiddenNames.some(glob => matchesNameGlob(basename(target), glob))) return false
+  return scope.roots.some((root) => {
+    const canonicalRoot = canonicalTarget(root)
+    return target === canonicalRoot || target.startsWith(canonicalRoot.endsWith(sep) ? canonicalRoot : `${canonicalRoot}${sep}`)
+  })
 }

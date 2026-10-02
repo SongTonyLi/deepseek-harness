@@ -6,8 +6,32 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { FsError } from '@deepseek-ai/dsh-fs'
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs'
+import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { sessionResolveOptions } from './session-cwd.ts'
+
+/**
+ * Refuse a target the calling session's sandbox hides from reads: a path
+ * outside the read scope of `ctx.sandbox`, or a hidden secret file. Tools
+ * that read, edit, or overwrite (and so present) existing content call it
+ * after resolution and before any stat, so a refusal reveals nothing about
+ * the file.
+ * @param ctx - the plugin context; reads are unconfined without `ctx.sandboxPolicy`.
+ * @param exec - the current tool execution, supplying the session.
+ * @param target - the resolved target.
+ * @param mode - the call's approved escalation mode, when one applies.
+ * @throws {FsError} `FS_SANDBOX_DENIED` when the target is outside the read scope.
+ */
+export function assertSandboxReadable(ctx: Context, exec: ToolExecution, target: FsTarget, mode?: SandboxMode): void {
+  const policy = ctx.get('sandboxPolicy')
+  const session = exec.agent?.session
+  if (policy === undefined || policy.canRead(ctx.fs.processPath(target), {
+    ...session === undefined ? {} : { session },
+    ...mode === undefined ? {} : { mode },
+  })) return
+  throw new FsError(`cannot read "${target.displayPath}": the sandbox hides this path from this session`, 'FS_SANDBOX_DENIED')
+}
 
 /**
  * Resolve a model-supplied path, observe absence, and require a regular file.
@@ -22,6 +46,7 @@ export async function resolveRegularReadTarget(
   requestedPath: string,
 ): Promise<{ target: FsTarget; info: FsInfo }> {
   const target = await ctx.fs.resolve(requestedPath, sessionResolveOptions(exec))
+  assertSandboxReadable(ctx, exec, target)
   const info = await ctx.fs.stat(target, exec.signal)
   if (info === undefined) {
     ctx.emit('fs/observed', target, { kind: 'absent' }, exec)

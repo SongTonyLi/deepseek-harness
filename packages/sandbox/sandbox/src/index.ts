@@ -1,7 +1,10 @@
 /**
- * Service Definition for the same-world process-confinement capability seam: wrap exact subprocess argv under a
- * host-path file policy. Containers, microVMs, and remote execution replace the
- * surrounding capability seam instead; this service shares the host kernel and filesystem.
+ * Service Definition for the process-confinement capability seam: wrap exact
+ * subprocess argv under a host-path file policy, and report the host read
+ * scope that model-facing file tools must share. Providers either confine on
+ * the host kernel or, like the Apple container backend, run the argv in a VM
+ * that mounts the workspace at its host path; remote execution replaces the
+ * surrounding capability seam instead.
  * @module @deepseek-ai/dsh-sandbox
  */
 
@@ -19,7 +22,7 @@ export {
   validateEscalationArgs,
 } from './escalation.ts'
 export type { EscalationApproval, EscalationApprover, EscalationOutcome, EscalationRequest } from './escalation.ts'
-export { canonicalPath, writableRoots } from './roots.ts'
+export { canonicalPath, isReadableIn, matchesNameGlob, writableRoots } from './roots.ts'
 
 /**
  * File-effect policy for confined processes. `read-only` permits only required
@@ -28,6 +31,17 @@ export { canonicalPath, writableRoots } from './roots.ts'
  * and process visibility are outside this vocabulary.
  */
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+
+/**
+ * The host paths confined processes can read: everything under `roots`
+ * except files whose name matches a `hiddenNames` glob.
+ */
+export interface SandboxReadScope {
+  /** Absolute host directories confined processes can read. */
+  roots: readonly string[]
+  /** File-name globs (`*` wildcard, case-insensitive) unreadable even under the roots, such as `.env`. */
+  hiddenNames: readonly string[]
+}
 
 /** A confining (non-`danger-full-access`) mode — the modes a {@link SandboxPolicy} can carry. */
 export type ConfinedSandboxMode = Exclude<SandboxMode, 'danger-full-access'>
@@ -175,6 +189,19 @@ export abstract class SandboxProvider extends Service {
    *   the selected backend achieves for it.
    */
   abstract confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv>
+
+  /**
+   * What a process confined under `policy` can read on the host, or
+   * `undefined` when this backend does not confine reads. Model-facing tools
+   * that read the host for the same session must refuse paths outside the
+   * scope, so their view never exceeds the confined processes'. The base
+   * implementation confines no reads.
+   * @param _policy - the file-effect policy of the calling session.
+   * @returns the read scope, or `undefined` for unconfined reads.
+   */
+  readScope(_policy: SandboxExecutionPolicy): SandboxReadScope | undefined {
+    return undefined
+  }
 }
 
 export default SandboxProvider

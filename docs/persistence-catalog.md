@@ -49,6 +49,7 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:plan/mode` | event | `a7cf43ce7c2a4c038feed1885cd7a00d5c6ee2d90a7e0d56b46f78a3e1ca327f` | [`{ type: "plan/mode" }`](#persistence-type-sha256-a7cf43ce7c2a4c038feed1885cd7a00d5c6ee2d90a7e0d56b46f78a3e1ca327f) |
 | `event:request/context` | event | `37cbc9cf06d494cfe5c67f078af1605eacb8e4c2c853e9e26455b73de0ee7ccf` | [`{ type: "request/context" }`](#persistence-type-sha256-37cbc9cf06d494cfe5c67f078af1605eacb8e4c2c853e9e26455b73de0ee7ccf) |
 | `event:request/header` | event | `4208123b50df5006b181481ab45fcf1cde807b88d3fd4d340090bc2e202fac41` | [`{ type: "request/header" }`](#persistence-type-sha256-4208123b50df5006b181481ab45fcf1cde807b88d3fd4d340090bc2e202fac41) |
+| `event:sandbox/backend` | event | `d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3` | [`{ type: "sandbox/backend" }`](#persistence-type-sha256-d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3) |
 | `event:sandbox/mode` | event | `516da4cdd6d2f1e5ce488e648578ca51f40e458f707b803e5b24de870e799415` | [`{ type: "sandbox/mode" }`](#persistence-type-sha256-516da4cdd6d2f1e5ce488e648578ca51f40e458f707b803e5b24de870e799415) |
 | `event:schedule/change` | event | `a0a2e5c42e1c929445ecd1cd70f49be6b66441894ec72c08e8ae332821d4a3cb` | [`{ type: "schedule/change" }`](#persistence-type-sha256-a0a2e5c42e1c929445ecd1cd70f49be6b66441894ec72c08e8ae332821d4a3cb) |
 | `event:session-log-deepseek/delivery-accepted` | event | `d63b8b8ffad9c02fd80c43a17df4f240c1fe8118ecca9de34f9d5871838ab5b9` | [`{ type: "session-log-deepseek/delivery-accepted" }`](#persistence-type-sha256-d63b8b8ffad9c02fd80c43a17df4f240c1fe8118ecca9de34f9d5871838ab5b9) |
@@ -737,6 +738,23 @@ Source: [`packages/core/session/src/types.ts:402`](../packages/core/session/src/
 Source: [`packages/core/session/src/types.ts:390`](../packages/core/session/src/types.ts)
 
 ### `sandbox/*`
+
+<a id="sandboxbackend--log-only"></a>
+
+#### `sandbox/backend` — log-only
+
+```ts persistence-catalog
+/**
+ * The session's sandbox backend was switched — log-only (like
+ * `sandbox/mode`): durable and replayable, never in the model transcript.
+ * The LAST such event is the session's backend.
+ */
+'sandbox/backend': {
+  backend: SandboxBackend
+}
+```
+
+Source: [`packages/sandbox/sandbox-apple-container/src/session-backend.ts:25`](../packages/sandbox/sandbox-apple-container/src/session-backend.ts)
 
 <a id="sandboxmode--log-only"></a>
 
@@ -1613,6 +1631,14 @@ SHA-256: `1ebc6f9ff3aa9e3a38f8695f49bacdab1f8b7a3832741853ca46f40af56ccd01`
 
 `"completed"`
 
+<a id="persistence-type-sha256-30fbc84a8dff6bf29ec8744de4db391849f4d0ab4f5dc8964970d89472695964"></a>
+
+### `"container"`
+
+SHA-256: `30fbc84a8dff6bf29ec8744de4db391849f4d0ab4f5dc8964970d89472695964`
+
+`"container"`
+
 <a id="persistence-type-sha256-e5d3828df1ec3e2a66879de0659e0f4866d9cfffc00825ee731a66f8a0c03d98"></a>
 
 ### `"continuable"`
@@ -2011,6 +2037,14 @@ SHA-256: `4ae007ed190a72c92138b22d059b83208079c7551ca13fb59ae8cf5e23693964`
 
 `"llm/retry-started"`
 
+<a id="persistence-type-sha256-37754fa5ccea9aa18bcd31a960af027770bdaadbdded927360422f702215a798"></a>
+
+### `"local"`
+
+SHA-256: `37754fa5ccea9aa18bcd31a960af027770bdaadbdded927360422f702215a798`
+
+`"local"`
+
 <a id="persistence-type-sha256-68141cbe3994a5ffcd064c07c75996538437fd9dbf77ce8a2927e89ec577fabe"></a>
 
 ### `"max-tokens"`
@@ -2330,6 +2364,14 @@ SHA-256: `34d1ab5c5df378186d6054b1a1beea9a41e41965d6f336f0bc0025c441a82e66`
 SHA-256: `24b10f7cdae64928f89c49afc2eca0af9eb4a2f135e16f3416e6b8461fef1748`
 
 `"runtime-context"`
+
+<a id="persistence-type-sha256-a7ccd06a53e95b2724e3948e015ae8c5e50b384a4331e0c95ee0bedc0ec8b6a2"></a>
+
+### `"sandbox/backend"`
+
+SHA-256: `a7ccd06a53e95b2724e3948e015ae8c5e50b384a4331e0c95ee0bedc0ec8b6a2`
+
+`"sandbox/backend"`
 
 <a id="persistence-type-sha256-ca085dba2c877feceebf3c62f9d39c6c2a4d2314d97b94b3927a780fe8fe2bb2"></a>
 
@@ -4350,6 +4392,23 @@ One of:
 - `"resume"`
 - `"series"`
 
+<a id="persistence-type-sha256-56446dcfeddd343eecdc7d8b216b773240eb63a5f16cc1121f883576ba07e2d0"></a>
+
+<a id="persistence-type-packagessandboxsandbox-apple-containersrcsession-backendtssandboxbackend"></a>
+
+<a id="persistence-type-sandboxbackend"></a>
+
+### `SandboxBackend`
+
+SHA-256: `56446dcfeddd343eecdc7d8b216b773240eb63a5f16cc1121f883576ba07e2d0`
+
+Sources: [`packages/sandbox/sandbox-apple-container/src/session-backend.ts:13`](../packages/sandbox/sandbox-apple-container/src/session-backend.ts)
+
+One of:
+
+- `"container"`
+- `"local"`
+
 <a id="persistence-type-sha256-fab2bb09bc5e3b9db0685e8f5500b029af1a2b33e70bc703c1d5d0f596fbc1fd"></a>
 
 <a id="persistence-type-packagessandboxsandboxsrcindextssandboxmode"></a>
@@ -4360,7 +4419,7 @@ One of:
 
 SHA-256: `fab2bb09bc5e3b9db0685e8f5500b029af1a2b33e70bc703c1d5d0f596fbc1fd`
 
-Sources: [`packages/sandbox/sandbox/src/index.ts:30`](../packages/sandbox/sandbox/src/index.ts)
+Sources: [`packages/sandbox/sandbox/src/index.ts:33`](../packages/sandbox/sandbox/src/index.ts)
 
 One of:
 
@@ -5605,6 +5664,18 @@ Sources: [`packages/core/session/src/types.ts:361`](../packages/core/session/src
 | `name` | required | `string` |
 | `step` | required | `number` |
 | `turn` | required | `number` |
+
+<a id="persistence-type-sha256-548cd278c7808ebc8fb8ede51729cb980e70909bc63bcc74207aac8a56a4a6d6"></a>
+
+### `{ backend }`
+
+SHA-256: `548cd278c7808ebc8fb8ede51729cb980e70909bc63bcc74207aac8a56a4a6d6`
+
+Sources: [`packages/sandbox/sandbox-apple-container/src/session-backend.ts:25`](../packages/sandbox/sandbox-apple-container/src/session-backend.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `backend` | required | [`SandboxBackend`](#persistence-type-sha256-56446dcfeddd343eecdc7d8b216b773240eb63a5f16cc1121f883576ba07e2d0) |
 
 <a id="persistence-type-sha256-1528539c63db8b23506f0209a99ce77d8ad138adfbfcee3d4769b7382d93756c"></a>
 
@@ -8271,6 +8342,22 @@ SHA-256: `4208123b50df5006b181481ab45fcf1cde807b88d3fd4d340090bc2e202fac41`
 | `seq` | required | `number` |
 | `time` | required | `number` |
 | `type` | required | `"request/header"` |
+
+<a id="persistence-type-sha256-d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3"></a>
+
+<a id="persistence-type-eventsandboxbackend"></a>
+
+### `{ type: "sandbox/backend" }`
+
+SHA-256: `d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`{ backend }`](#persistence-type-sha256-548cd278c7808ebc8fb8ede51729cb980e70909bc63bcc74207aac8a56a4a6d6) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"sandbox/backend"` |
 
 <a id="persistence-type-sha256-516da4cdd6d2f1e5ce488e648578ca51f40e458f707b803e5b24de870e799415"></a>
 

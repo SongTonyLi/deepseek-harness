@@ -25,7 +25,8 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { z as zod } from 'zod'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent'
-import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
+import { isReadableIn } from '@deepseek-ai/dsh-sandbox'
+import type { SandboxExecutionPolicy, SandboxMode, SandboxReadScope } from '@deepseek-ai/dsh-sandbox'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -168,6 +169,30 @@ export class SandboxPolicyService extends Service {
       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
       ...session === undefined ? {} : { sessionId: session.id },
     }
+  }
+
+  /**
+   * The host read scope of confined processes under the resolved policy,
+   * from the mounted `ctx.sandbox` provider.
+   * @param request - optional session and approved mode override, as for {@link resolve}.
+   * @returns the scope, or `undefined` when no provider confines reads.
+   */
+  readScope(request: SandboxPolicyRequest = {}): SandboxReadScope | undefined {
+    return this.ctx.get('sandbox')?.readScope(this.resolve(request))
+  }
+
+  /**
+   * Whether a model-facing tool may read `path` on the host: true when reads
+   * are unconfined, otherwise only inside the {@link readScope}. Tools that
+   * read file contents or search them call this before reading, so their view
+   * never exceeds the confined processes'.
+   * @param path - the host path about to be opened or searched.
+   * @param request - optional session and approved mode override, as for {@link resolve}.
+   * @returns true when the read is allowed.
+   */
+  canRead(path: string, request: SandboxPolicyRequest = {}): boolean {
+    const scope = this.readScope(request)
+    return scope === undefined || isReadableIn(path, scope)
   }
 
   /**
