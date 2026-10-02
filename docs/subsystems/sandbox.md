@@ -2,7 +2,7 @@
 
 English | [中文](sandbox.zh.md)
 
-The process-sandbox seam of [dsh-sandbox](../../packages/sandbox/sandbox) wraps a same-world subprocess argv in a file-effect policy without coupling consumers to a platform runner. [dsh-sandbox-local](../../packages/sandbox/sandbox-local) supplies Linux bwrap/Landlock, macOS Seatbelt, and the Windows ACL restricted-token backend; [dsh-bash-sandbox](../../packages/shell/bash-sandbox) and [dsh-pwsh-sandbox](../../packages/shell/pwsh-sandbox) consume it. [dsh-sandbox-ssh](../../packages/ssh/sandbox-ssh/README.md) applies the same policy through a remote backend paired with the SSH filesystem and subprocess providers.
+The process-sandbox seam of [dsh-sandbox](../../packages/sandbox/sandbox) wraps a same-world subprocess argv in a file-effect policy without coupling consumers to a platform runner. [dsh-sandbox-local](../../packages/sandbox/sandbox-local) supplies Linux bwrap/Landlock, macOS Seatbelt, and the Windows ACL restricted-token backend; [dsh-bash-sandbox](../../packages/shell/bash-sandbox) and [dsh-pwsh-sandbox](../../packages/shell/pwsh-sandbox) consume it. [dsh-sandbox-ssh](../../packages/ssh/sandbox-ssh/README.md) applies the same policy through a remote backend paired with the SSH filesystem and subprocess providers. [dsh-sandbox-apple-container](../../packages/sandbox/sandbox-apple-container/README.md) runs confined commands in an Apple container VM that mounts only the workspace, and confines host reads to the same scope.
 
 Source: [`packages/sandbox/sandbox/src/index.ts`](../../packages/sandbox/sandbox/src/index.ts)
 
@@ -157,6 +157,23 @@ The [local provider](../../packages/sandbox/sandbox-local/README.md) owns operat
 
 Provider selection, probing, caching, and backend-specific enforcement reports belong to the [local provider](../../packages/sandbox/sandbox-local/README.md).
 
+## Read scope
+
+`ctx.sandbox.readScope(policy)` reports what a process confined under `policy` can read on the host, or `undefined` when the backend does not confine reads; the base provider returns `undefined`. `ctx.sandboxPolicy.canRead(path, request)` resolves the calling session's policy and checks a path against that scope after canonicalizing both, so neither `..` segments nor symlinks leave the roots. The `read`, `edit`, `write`, `str_replace_editor`, `grep`, and `glob` tools refuse a path outside the scope with `FS_SANDBOX_DENIED` or `SEARCH_SANDBOX_DENIED` before observing it, and `grep` excludes hidden file names from content searches, so the model's file tools never read more than its confined commands.
+
+```ts type-equiv
+/**
+ * The host paths confined processes can read: everything under `roots`
+ * except files whose name matches a `hiddenNames` glob.
+ */
+interface SandboxReadScope {
+  /** Absolute host directories confined processes can read. */
+  roots: readonly string[]
+  /** File-name globs (`*` wildcard, case-insensitive) unreadable even under the roots, such as `.env`. */
+  hiddenNames: readonly string[]
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -185,6 +202,17 @@ Abstract process-sandbox service. confine must return enforcing argv or fail clo
  *   the selected backend achieves for it.
  */
 abstract confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv>
+
+/**
+ * What a process confined under `policy` can read on the host, or
+ * `undefined` when this backend does not confine reads. Model-facing tools
+ * that read the host for the same session must refuse paths outside the
+ * scope, so their view never exceeds the confined processes'. The base
+ * implementation confines no reads.
+ * @param _policy - the file-effect policy of the calling session.
+ * @returns the read scope, or `undefined` for unconfined reads.
+ */
+readScope(_policy: SandboxExecutionPolicy): SandboxReadScope | undefined
 ```
 
 Source: [`packages/sandbox/sandbox/src/index.ts`](../../packages/sandbox/sandbox/src/index.ts)
@@ -206,6 +234,25 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
  * @returns the fully resolved per-call mode and absolute workspace root.
  */
 resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy
+
+/**
+ * The host read scope of confined processes under the resolved policy,
+ * from the mounted `ctx.sandbox` provider.
+ * @param request - optional session and approved mode override, as for {@link resolve}.
+ * @returns the scope, or `undefined` when no provider confines reads.
+ */
+readScope(request: SandboxPolicyRequest = {}): SandboxReadScope | undefined
+
+/**
+ * Whether a model-facing tool may read `path` on the host: true when reads
+ * are unconfined, otherwise only inside the {@link readScope}. Tools that
+ * read file contents or search them call this before reading, so their view
+ * never exceeds the confined processes'.
+ * @param path - the host path about to be opened or searched.
+ * @param request - optional session and approved mode override, as for {@link resolve}.
+ * @returns true when the read is allowed.
+ */
+canRead(path: string, request: SandboxPolicyRequest = {}): boolean
 
 /**
  * Read the session override without applying the deployment default.

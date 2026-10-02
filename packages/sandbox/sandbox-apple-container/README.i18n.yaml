@@ -1,0 +1,73 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/sandbox/sandbox-apple-container/README.md
+/:
+  en: f5db367582d648e9
+  zh: 10d241446995742e
+/deepseek-ai-dsh-sandbox-apple-container:
+  en: fd474288bb2dac31
+  zh: e0e109692d3df1c4
+/deepseek-ai-dsh-sandbox-apple-container/summary:
+  en: 6fcdeb62db78134c
+  zh: e710602af4bd1a41
+/deepseek-ai-dsh-sandbox-apple-container/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-sandbox-apple-container/use-this-package:
+  en: ec93fe28f7da27d7
+  zh: 36718f53bcbb2bf5
+/deepseek-ai-dsh-sandbox-apple-container/use-this-package/when-to-choose-it:
+  en: d49845cf75f81420
+  zh: 331b90bec2afb896
+/deepseek-ai-dsh-sandbox-apple-container/use-this-package/minimal-configuration:
+  en: 1a7a36bfc29d9f18
+  zh: 1769b4d7bfae4f95
+/deepseek-ai-dsh-sandbox-apple-container/use-this-package/switching-a-session:
+  en: fe0f7d5ac6160763
+  zh: 4e1455a8559d46ca
+/deepseek-ai-dsh-sandbox-apple-container/use-this-package/what-confinement-covers:
+  en: db58fc9ee37b3ac9
+  zh: c4d7f44c9209a61e
+/deepseek-ai-dsh-sandbox-apple-container/use-this-package/failures-and-recovery:
+  en: 79782500f91b1f06
+  zh: a132d680acb85edc
+/deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation:
+  en: 42b15ac6321706aa
+  zh: c8011788e17a2cd6
+/deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation/containers:
+  en: 7087986d3a71c0b6
+  zh: a94c3e9ed81e9b7e
+/deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation/execution-shim:
+  en: 62f9ae7df4c108d9
+  zh: a1efc34390a80364
+/deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation/source-map:
+  en: 866bf8dec1ab38ba
+  zh: af875a19b5ceb7b9
+/deepseek-ai-dsh-sandbox-apple-container/further-exploration:
+  en: b355596cf895ca5c
+  zh: 428721b37381c782
+/deepseek-ai-dsh-sandbox-apple-container/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-sandbox-apple-container/model-experience/container-backend-context:
+  en: 2c476ee0e446e672
+  zh: 0e29da370c83a81c
+/deepseek-ai-dsh-sandbox-apple-container/model-experience/container-backend-context/what-the-model-sees:
+  en: f30fafaeefc6b28b
+  zh: 46d7e90e11d3d0d7
+/deepseek-ai-dsh-sandbox-apple-container/model-experience/container-backend-context/what-the-model-sees/container-backend:
+  en: 25979839c019b197
+  zh: 1ada36cc7f551286
+/deepseek-ai-dsh-sandbox-apple-container/model-experience/container-backend-context/token-effect:
+  en: 163b29c0c5c5ea52
+  zh: 1cc3123cb27d99e5
+/deepseek-ai-dsh-sandbox-apple-container/model-experience/container-backend-context/kv-cache-effect:
+  en: 3ab9e835ea38981a
+  zh: 4839ebd84726eca0
+/deepseek-ai-dsh-sandbox-apple-container/known-limitations-and-deferred-work:
+  en: 774a7b78c802da01
+  zh: 920961d8b70297ba
+/deepseek-ai-dsh-sandbox-apple-container/known-limitations-and-deferred-work/dev-note:
+  en: 96a59ed933789bf0
+  zh: 87875368af115672

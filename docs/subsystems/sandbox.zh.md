@@ -2,7 +2,7 @@
 
 [English](sandbox.md) | 中文
 
-[dsh-sandbox](../../packages/sandbox/sandbox) 的进程沙箱 seam 将与配套子进程提供方共享执行环境的子进程 argv 包装在文件效果策略中，而不将消费方耦合到特定平台运行器。[dsh-sandbox-local](../../packages/sandbox/sandbox-local) 提供 Linux bwrap/Landlock、macOS Seatbelt 与 Windows ACL 受限令牌后端；[dsh-bash-sandbox](../../packages/shell/bash-sandbox) 和 [dsh-pwsh-sandbox](../../packages/shell/pwsh-sandbox) 是其消费方。[dsh-sandbox-ssh](../../packages/ssh/sandbox-ssh/README.zh.md) 通过与 SSH 文件系统及子进程提供方配套的远端后端执行同一策略。
+[dsh-sandbox](../../packages/sandbox/sandbox) 的进程沙箱 seam 将与配套子进程提供方共享执行环境的子进程 argv 包装在文件效果策略中，而不将消费方耦合到特定平台运行器。[dsh-sandbox-local](../../packages/sandbox/sandbox-local) 提供 Linux bwrap/Landlock、macOS Seatbelt 与 Windows ACL 受限令牌后端；[dsh-bash-sandbox](../../packages/shell/bash-sandbox) 和 [dsh-pwsh-sandbox](../../packages/shell/pwsh-sandbox) 是其消费方。[dsh-sandbox-ssh](../../packages/ssh/sandbox-ssh/README.zh.md) 通过与 SSH 文件系统及子进程提供方配套的远端后端执行同一策略。[dsh-sandbox-apple-container](../../packages/sandbox/sandbox-apple-container/README.zh.md) 在只挂载工作区的 Apple container 虚拟机中运行受限命令，并把宿主机读取限制在同一范围内。
 
 源码：[`packages/sandbox/sandbox/src/index.ts`](../../packages/sandbox/sandbox/src/index.ts)
 
@@ -157,6 +157,23 @@ interface ConfinedArgv {
 
 提供方选择、探测、缓存和后端特定的强制执行报告归[本地提供方](../../packages/sandbox/sandbox-local/README.zh.md)所有。
 
+## 读取范围
+
+`ctx.sandbox.readScope(policy)` 报告在 `policy` 下受限的进程能读取宿主机上的哪些内容；后端不限制读取时返回 `undefined`，基础提供方即返回 `undefined`。`ctx.sandboxPolicy.canRead(path, request)` 解析调用会话的策略，并在将路径与范围都规范化后再做比较，因此 `..` 片段和符号链接都无法离开这些根目录。`read`、`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 工具在观察路径之前，以 `FS_SANDBOX_DENIED` 或 `SEARCH_SANDBOX_DENIED` 拒绝范围之外的路径，`grep` 还会在内容搜索中排除隐藏文件名，因此模型的文件工具读取的内容永远不会超出其受限命令。
+
+```ts type-equiv
+/**
+ * The host paths confined processes can read: everything under `roots`
+ * except files whose name matches a `hiddenNames` glob.
+ */
+interface SandboxReadScope {
+  /** Absolute host directories confined processes can read. */
+  roots: readonly string[]
+  /** File-name globs (`*` wildcard, case-insensitive) unreadable even under the roots, such as `.env`. */
+  hiddenNames: readonly string[]
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -185,6 +202,17 @@ Abstract process-sandbox service. confine must return enforcing argv or fail clo
  *   the selected backend achieves for it.
  */
 abstract confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv>
+
+/**
+ * What a process confined under `policy` can read on the host, or
+ * `undefined` when this backend does not confine reads. Model-facing tools
+ * that read the host for the same session must refuse paths outside the
+ * scope, so their view never exceeds the confined processes'. The base
+ * implementation confines no reads.
+ * @param _policy - the file-effect policy of the calling session.
+ * @returns the read scope, or `undefined` for unconfined reads.
+ */
+readScope(_policy: SandboxExecutionPolicy): SandboxReadScope | undefined
 ```
 
 Source: [`packages/sandbox/sandbox/src/index.ts`](../../packages/sandbox/sandbox/src/index.ts)
@@ -206,6 +234,25 @@ The sandbox-policy service (`ctx.sandboxPolicy`). Owns the deployment default mo
  * @returns the fully resolved per-call mode and absolute workspace root.
  */
 resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy
+
+/**
+ * The host read scope of confined processes under the resolved policy,
+ * from the mounted `ctx.sandbox` provider.
+ * @param request - optional session and approved mode override, as for {@link resolve}.
+ * @returns the scope, or `undefined` when no provider confines reads.
+ */
+readScope(request: SandboxPolicyRequest = {}): SandboxReadScope | undefined
+
+/**
+ * Whether a model-facing tool may read `path` on the host: true when reads
+ * are unconfined, otherwise only inside the {@link readScope}. Tools that
+ * read file contents or search them call this before reading, so their view
+ * never exceeds the confined processes'.
+ * @param path - the host path about to be opened or searched.
+ * @param request - optional session and approved mode override, as for {@link resolve}.
+ * @returns true when the read is allowed.
+ */
+canRead(path: string, request: SandboxPolicyRequest = {}): boolean
 
 /**
  * Read the session override without applying the deployment default.

@@ -1,7 +1,10 @@
 /**
- * Service Definition for the same-world process-confinement capability seam: wrap exact subprocess argv under a
- * host-path file policy. Containers, microVMs, and remote execution replace the
- * surrounding capability seam instead; this service shares the host kernel and filesystem.
+ * Service Definition for the process-confinement capability seam: wrap exact
+ * subprocess argv under a host-path file policy, and report the host read
+ * scope that model-facing file tools must share. Providers either confine on
+ * the host kernel or, like the Apple container backend, run the argv in a VM
+ * that mounts the workspace at its host path; remote execution replaces the
+ * surrounding capability seam instead.
  * @module @deepseek-ai/dsh-sandbox
  */
 
