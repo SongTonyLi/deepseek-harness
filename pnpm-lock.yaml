@@ -2442,6 +2442,9 @@ importers:
       '@deepseek-ai/dsh-plugin-manager':
         specifier: workspace:*
         version: link:../../boot/plugin-manager
+      '@deepseek-ai/dsh-sandbox-apple-container':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-apple-container
       '@deepseek-ai/dsh-session':
         specifier: workspace:*
         version: link:../../core/session

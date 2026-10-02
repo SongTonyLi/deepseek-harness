@@ -32,12 +32,16 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { ContainerPool } from './pool.ts'
 import { ContainerRuntime } from './runtime.ts'
+import { containerSupported, resolveBackend } from './host.ts'
+import type { ConfiguredBackend } from './host.ts'
 import { isSandboxBackend, setSandboxBackend } from './session-backend.ts'
 import type { SandboxBackend } from './session-backend.ts'
 import { SHIM_FAILURE_EXIT, SHIM_FAILURE_PREFIX, encodeShimArgs } from './shim.ts'
 
 export { SANDBOX_BACKENDS, isSandboxBackend, setSandboxBackend } from './session-backend.ts'
 export type { SandboxBackend } from './session-backend.ts'
+export { containerSupported, executableResolves, resolveBackend } from './host.ts'
+export type { ConfiguredBackend, HostFacts } from './host.ts'
 
 /**
  * Environment names the shim withholds from the guest by default: host-specific
@@ -66,8 +70,12 @@ const CONTAINER_RUNNER_FAILURE_RULES: readonly RunnerFailureRule[] = [
 
 /** Plugin config: the local chain's fields plus the container backend's. */
 export interface Config extends LocalConfig {
-  /** Backend for sessions without a recorded `/sandbox` choice and for agentless calls (default: `container`). */
-  backend?: SandboxBackend
+  /**
+   * Backend for sessions without a recorded `/sandbox` choice and for agentless
+   * calls. `auto` selects `container` on macOS on Apple silicon when the
+   * `container` CLI resolves, and `local` elsewhere (default: `auto`).
+   */
+  backend?: ConfiguredBackend
   /** The Apple `container` CLI, resolved on `PATH` when bare (default: `container`). */
   executable?: string
   /** OCI image every owned container runs; it must provide `sh` and util-linux `setsid` (default: `node:22-bookworm`). */
@@ -143,7 +151,7 @@ function messageOf(error: unknown): string {
 export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   // Inline schema call: the config catalog walks `static Config` statically.
   static override Config: z<Config> = z.intersect([LocalSandboxProvider.Config, z.object({
-    backend: z.union(['container', 'local'] as const).default('container'),
+    backend: z.union(['auto', 'container', 'local'] as const).default('auto'),
     executable: z.string().default('container'),
     image: z.string().default('node:22-bookworm'),
     cpus: z.natural(),
@@ -160,8 +168,10 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
 
   static inject = ['sessions', 'sessionProjections']
 
-  /** The backend for sessions without a recorded choice. */
+  /** The backend for sessions without a recorded choice, after `auto` resolution. */
   readonly defaultBackend: SandboxBackend
+  /** Whether this host can run the container backend. */
+  readonly containerSupported: boolean
   private readonly executable: string
   private readonly image: string
   private readonly envDenylist: readonly string[]
@@ -173,8 +183,10 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   constructor(ctx: Context, config: Config) {
     super(ctx, config)
     // The schema defaults these fields; the casts record that runtime fact.
-    this.defaultBackend = config.backend as SandboxBackend
     this.executable = config.executable as string
+    const host = { platform: process.platform, arch: process.arch, path: process.env.PATH }
+    this.containerSupported = containerSupported(this.executable, host)
+    this.defaultBackend = resolveBackend(config.backend as ConfiguredBackend, this.containerSupported)
     this.image = config.image as string
     this.envDenylist = config.envDenylist as string[]
     if (this.envDenylist.some(entry => entry === '' || entry.includes(','))) {
@@ -258,6 +270,9 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
           if (backend === '') return { kind: 'success', text: await this.describe(agent.session) }
           if (!isSandboxBackend(backend)) {
             return { kind: 'error', text: `unknown backend "${backend}" (available: container, local)` }
+          }
+          if (backend === 'container' && !this.containerSupported) {
+            return { kind: 'error', text: `Apple container is unavailable on this host: it needs macOS on Apple silicon with ${JSON.stringify(this.executable)} installed` }
           }
           setSandboxBackend(agent.session, backend)
           return {

@@ -8,7 +8,7 @@
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
@@ -29,6 +29,19 @@ const cleanups: (() => void | Promise<void>)[] = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
+
+/** Present this process as `platform`/`arch` until the test ends, so backend resolution is host-independent. */
+function onHost(platform: string, arch: string): void {
+  const original = { platform: process.platform, arch: process.arch }
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  Object.defineProperty(process, 'arch', { value: arch, configurable: true })
+  cleanups.push(() => {
+    Object.defineProperty(process, 'platform', { value: original.platform, configurable: true })
+    Object.defineProperty(process, 'arch', { value: original.arch, configurable: true })
+  })
+}
+
+beforeEach(() => { onHost('darwin', 'arm64') })
 
 function tempDir(prefix: string): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
@@ -230,7 +243,7 @@ describe('AppleContainerSandboxProvider', () => {
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: tempDir('dsh-provider-warn-') })
-    await ctx.plugin(AppleContainerSandboxProvider, { executable: '/nonexistent/container' })
+    await ctx.plugin(AppleContainerSandboxProvider, { backend: 'container', executable: '/nonexistent/container' })
     await vi.waitFor(() => { expect(warn).toHaveBeenCalledTimes(2) })
     expect(warn.mock.calls.map(call => String(call[0])).sort()).toEqual([
       expect.stringContaining('removing stale containers failed: cannot run "/nonexistent/container"'),
@@ -264,6 +277,21 @@ describe('AppleContainerSandboxProvider', () => {
     const run = h.fake.calls().find(call => call[0] === 'run') ?? []
     expect(run).toContain(`type=bind,source=${skills},target=${skills},readonly`)
     expect(run[run.indexOf('--masked-path') + 1]).toBe(join(h.root, '.env'))
+  })
+
+  it('resolves auto to the local backend off Apple silicon and refuses /sandbox container there', async () => {
+    onHost('linux', 'x64')
+    const h = await mounted({ policy: 'workspace-write', config: { runnerCommand: ['runner'], runnerFailureSignatures: ['runner: '] } })
+    expect(h.sandbox.defaultBackend).toBe('local')
+    expect(h.sandbox.containerSupported).toBe(false)
+    expect((await h.sandbox.confine(['true'], { mode: 'read-only', workspaceRoot: h.root })).argv[0]).toBe('runner')
+    const agent = await agentFor(h.ctx, h.session('s-linux'))
+    expect(await command(h.ctx, agent, '/sandbox container')).toEqual({
+      kind: 'error',
+      text: `Apple container is unavailable on this host: it needs macOS on Apple silicon with ${JSON.stringify(h.fake.executable)} installed`,
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(h.fake.calls()).toEqual([])
   })
 
   it('rejects invalid configuration at load', async () => {
