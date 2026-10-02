@@ -159,6 +159,8 @@ The stable system prompt is unchanged. A changed context snapshot is appended af
 <details>
 <summary>Working context for maintainers — click to expand</summary>
 
+No invariant companion is published: the `sandboxBackend` projection validates every folded `sandbox/backend` value against its two-value state schema, so a forged value fails at replay without a separate observation.
+
 Revisit the `-v` parsing, signal-forwarding, and single-file-mount workarounds when upgrading `container`; its releases are product versions, not semantic versions.
 
 </details>

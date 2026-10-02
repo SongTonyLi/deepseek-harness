@@ -159,6 +159,8 @@ Commands confined by the DSH file sandbox run inside a Linux container from imag
 <details>
 <summary>维护者工作上下文 — 点击展开</summary>
 
+未发布 `./invariant` 配套模块：`sandboxBackend` 投影会用其二值状态 schema 校验每个折叠的 `sandbox/backend` 值，因此伪造的值会在回放时失败，无需额外的独立观察。
+
 升级 `container` 时，请重新评估 `-v` 解析、信号转发与单文件挂载这几项绕行措施；其版本号是产品版本，而非语义化版本。
 
 </details>
