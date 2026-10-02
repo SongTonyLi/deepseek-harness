@@ -36,13 +36,20 @@ describe('TUI recorded-session replay', () => {
         { marker: 'cli-mock/cli-mock', keys: '/permission auto\r' },
         { marker: '/permission: preset auto', keys: `${task}\r` },
         { marker: 'CLI tool round trip complete: CLI_TOOL_ROUND_TRIP', keys: '\u0007\u001b[H\u001b[B' },
-        { marker: 'row 2/', keys: '\u0007' },
-      ], cliPatch, { LINES: '12', ...mode === 'record' ? {} : { DSH_TUI_SNAPSHOT_SESSION: join(root, name) } })
+        { marker: 'row 2/', keys: '\u0007/sandbox\r' },
+        { marker: 'Sandbox backend', keys: '' },
+        { marker: 'Shift+↑ read · Shift+↓ status', keys: '\u001b' },
+        { marker: 'Shift+↑ read · Shift+↓ status', keys: '' },
+      ], cliPatch, { LINES: '40', ...mode === 'record' ? {} : { DSH_TUI_SNAPSHOT_SESSION: join(root, name) } })
       expect(run.exitCode, `${run.stderr}\n${run.stdout}`).toBe(0)
       expect(run.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(run.stdout).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] calling bash/u)
       expect(run.stdout).toContain(`❯ ${task}`)
       expect(run.stdout).toContain('row 2/')
+      expect(run.stdout).toContain('Sandbox backend')
+      expect(run.stdout).toContain('Container unavailable:')
+      expect(run.stdout).toContain('Access preview · Local')
+      expect(run.stdout).toContain('Sandbox bypassed: commands run on the host, regardless of backend choice.')
       expect(await readFile(join(cwd, '.auto-review-requests'), 'utf8')).toBe('reviewed\n')
       const storage = join(cwd, '.sessions')
       const paths = latestPersistedSessionPaths(await readdir(storage, { recursive: true }))
