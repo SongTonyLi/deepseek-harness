@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { stripTerminalSequences, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import { keyAt, paintKeys } from '../src/key-chips.ts'
-import { PinnedPromptPane, pinnedPromptDrawable, pinnedPromptOverlay, pinnedPromptRow } from '../src/pinned-prompt.ts'
+import { PinnedPromptPane, pinnedPromptOverlay, pinnedPromptPlacement, pinnedPromptRow } from '../src/pinned-prompt.ts'
 import { GuardedMainScreen, PAGE_MARGIN_COLUMNS, pageContentWidth } from '../src/screen.ts'
 import { createPalette } from '../src/style.ts'
 import { FakeTerminal } from './bench.ts'
@@ -37,26 +37,34 @@ describe('pinnedPromptRow', () => {
   })
 })
 
-describe('pinnedPromptDrawable', () => {
+describe('pinnedPromptPlacement', () => {
   /** A prompt that ended ten lines above a viewport over the conversation's own rows. */
   const geometry = { promptEnd: 10, transcriptEnd: 50, viewportStart: 20, viewportFloor: 0 }
 
-  it('draws while every line of the prompt lies above a conversation row the renderer can repaint', () => {
-    expect(pinnedPromptDrawable(geometry)).toBe(true)
-    expect(pinnedPromptDrawable({ ...geometry, promptEnd: 20 })).toBe(true)
+  it('places the bar on the viewport\'s first row while every line of the prompt lies above it', () => {
+    expect(pinnedPromptPlacement(geometry)).toBe(0)
+    expect(pinnedPromptPlacement({ ...geometry, promptEnd: 20 })).toBe(0)
   })
 
-  it('draws nothing while any line of the prompt is still in view', () => {
-    expect(pinnedPromptDrawable({ ...geometry, promptEnd: 21 })).toBe(false)
-    expect(pinnedPromptDrawable({ ...geometry, viewportStart: 0, promptEnd: 4 })).toBe(false)
+  it('places the bar on the first row the terminal shows after the frame shrank', () => {
+    // A frame two lines shorter leaves its viewport's first two lines above
+    // the terminal, whose first row keeps showing line 22.
+    expect(pinnedPromptPlacement({ ...geometry, viewportFloor: 2 })).toBe(2)
+    expect(pinnedPromptPlacement({ ...geometry, viewportFloor: 2, promptEnd: 22 })).toBe(2)
   })
 
-  it('draws nothing over the docked chrome', () => {
-    expect(pinnedPromptDrawable({ ...geometry, transcriptEnd: 20 })).toBe(false)
+  it('draws nothing while any line of the prompt is still on the first row the terminal shows or below it', () => {
+    expect(pinnedPromptPlacement({ ...geometry, promptEnd: 21 })).toBeUndefined()
+    expect(pinnedPromptPlacement({ ...geometry, viewportFloor: 2, promptEnd: 23 })).toBeUndefined()
+    expect(pinnedPromptPlacement({ ...geometry, viewportStart: 0, promptEnd: 4 })).toBeUndefined()
   })
 
-  it('draws nothing where the renderer can no longer repaint the viewport\'s first row', () => {
-    expect(pinnedPromptDrawable({ ...geometry, viewportFloor: 1 })).toBe(false)
+  it('draws nothing over the docked chrome or past the frame\'s end', () => {
+    expect(pinnedPromptPlacement({ ...geometry, transcriptEnd: 20 })).toBeUndefined()
+    expect(pinnedPromptPlacement({ ...geometry, viewportFloor: 2, transcriptEnd: 22 })).toBeUndefined()
+    // A frame that shrank by the terminal's height or more leaves the first
+    // row the terminal shows past its last line.
+    expect(pinnedPromptPlacement({ promptEnd: 10, transcriptEnd: 24, viewportStart: 0, viewportFloor: 30 })).toBeUndefined()
   })
 })
 
@@ -72,8 +80,9 @@ class Lines implements Component {
 }
 
 describe('the floating bar', () => {
-  it('floats on the viewport\'s first row across the whole width without taking the keyboard', () => {
-    expect(pinnedPromptOverlay()).toEqual({ anchor: 'top-left', width: '100%', margin: { top: 0 }, nonCapturing: true })
+  it('floats on the row it is placed on, across the whole width, without taking the keyboard', () => {
+    expect(pinnedPromptOverlay(0)).toEqual({ anchor: 'top-left', width: '100%', margin: { top: 0 }, nonCapturing: true })
+    expect(pinnedPromptOverlay(2)).toEqual({ anchor: 'top-left', width: '100%', margin: { top: 2 }, nonCapturing: true })
   })
 
   it('lays the bar out inside the page margins, and without them on a terminal too narrow for both', () => {
@@ -84,21 +93,36 @@ describe('the floating bar', () => {
     expect(pane.render(6)).toEqual([pinnedPromptRow(COLOR, ['run the tests'], 6)])
   })
 
-  it('covers the first row of the viewport and takes that row\'s keys with it, so a click there presses nothing', () => {
+  it('covers the first row the terminal shows and takes that row\'s keys with it, so a click there presses nothing', () => {
     const terminal = new FakeTerminal()
     terminal.rows = 4
     const clickable = createPalette(false, true)
     const screen = new GuardedMainScreen(terminal, true, () => false)
-    screen.addChild(new Lines(['one', 'two', paintKeys(clickable, 'Esc input'), 'three', paintKeys(clickable, 'Esc input'), 'four']))
+    const child = new Lines(['one', 'two', paintKeys(clickable, 'Esc input'), 'three', paintKeys(clickable, 'Esc input'), 'four'])
+    screen.addChild(child)
     screen.renderNow()
     // The viewport shows the last four of six lines, so its first row is line 2.
     expect(keyAt(screen.keyFrame().keys, 2, MARGIN.length)).toBe('\u001b')
 
-    screen.showOverlay(new PinnedPromptPane(clickable, ['the prompt']), pinnedPromptOverlay())
+    const bar = screen.showOverlay(new PinnedPromptPane(clickable, ['the prompt']), pinnedPromptOverlay(0))
     terminal.output = ''
     screen.renderNow()
     expect(stripTerminalSequences(terminal.output)).toContain(`${MARGIN} ❯ the prompt `)
-    const { keys } = screen.keyFrame()
+    let { keys } = screen.keyFrame()
+    expect(keyAt(keys, 2, MARGIN.length)).toBeUndefined()
+    expect(keyAt(keys, 4, MARGIN.length)).toBe('\u001b')
+
+    // One line fewer leaves the terminal showing line 2 first, which is one
+    // row into the shorter frame's viewport; the bar placed there stays on it.
+    bar.hide()
+    child.lines = child.lines.slice(0, 5)
+    screen.showOverlay(new PinnedPromptPane(clickable, ['the prompt']), pinnedPromptOverlay(1))
+    screen.renderNow()
+    const { previousLines, previousViewportTop } = screen.captureRenderState()
+    expect(previousViewportTop).toBe(2)
+    expect(previousLines).toHaveLength(5)
+    expect(stripTerminalSequences(previousLines[2] ?? '')).toContain(`${MARGIN} ❯ the prompt `)
+    ;({ keys } = screen.keyFrame())
     expect(keyAt(keys, 2, MARGIN.length)).toBeUndefined()
     expect(keyAt(keys, 4, MARGIN.length)).toBe('\u001b')
   })

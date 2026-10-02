@@ -167,7 +167,7 @@ import {
   type TranscriptAxis,
   type TranscriptCursor,
 } from './navigation.ts'
-import { PinnedPromptPane, pinnedPromptDrawable, pinnedPromptOverlay } from './pinned-prompt.ts'
+import { PinnedPromptPane, pinnedPromptOverlay, pinnedPromptPlacement } from './pinned-prompt.ts'
 import {
   FIRST_FOOTER_SEGMENT,
   FooterBar,
@@ -389,6 +389,12 @@ interface HeldSection {
   part: number
   /** How far above its settled accent that section's mark was last drawn. */
   level: MotionLevel
+}
+
+/** The prompt the bar names, and the viewport row the bar floats on. */
+interface PromptPin {
+  prompt: PromptSection
+  row: number
 }
 
 /** What one chrome motion lifts. */
@@ -835,12 +841,12 @@ export class TuiApp {
   /** The transient line on screen right now, with the clock that takes it down. */
   private toast: { handle: OverlayHandle; clock: ToastClock } | undefined
   /**
-   * The bar naming the newest prompt while it floats over the viewport's
-   * first row, with the prompt block it names; absent while no bar is drawn,
-   * because pi-tui pads every frame to the terminal's height while any
-   * overlay is mounted, drawn or not.
+   * The bar naming the newest prompt while it floats over the first row the
+   * terminal shows, with the prompt block it names and the viewport row it
+   * was shown on; absent while no bar is drawn, because pi-tui pads every
+   * frame to the terminal's height while any overlay is mounted, drawn or not.
    */
-  private pinned: { block: SectionSource; handle: OverlayHandle } | undefined
+  private pinned: { block: SectionSource; row: number; handle: OverlayHandle } | undefined
   /** The chrome motion running right now, and how much of the focused surface it lifts. */
   private chrome: { motion: Motion; scope: MotionScope } | undefined
   /** The lift the subagent panel's text was last built with, which only a repaint changes. */
@@ -871,9 +877,9 @@ export class TuiApp {
   private readonly compactions: CompactionLedger
   /**
    * How many of the viewport's own first lines the renderer can no longer
-   * repaint, from the last frame the guard settled. The transient line and
-   * the prompt bar composite into those lines, so this is what decides
-   * whether either can float at all.
+   * repaint, from the last frame the guard settled. The terminal's first row
+   * shows the line after them: the transient line floats only while its box
+   * stays clear of them, and the prompt bar floats on that first row.
    */
   private viewportFloor = 0
   /** Set while {@link TuiApp.bind} replays a session's history, which draws its cards settled. */
@@ -4669,9 +4675,11 @@ export class TuiApp {
    * the focus gutter, which a block gains or loses only while its first line
    * lies inside the window. A focused block above the window simply stays
    * unmarked, and the inspector reports that instead. The same walk places
-   * the bar naming the newest prompt ({@link TuiApp.pinPrompt}): pi-tui
-   * composites overlays into a frame after building it, so a bar shown or
-   * taken down here is drawn, or not, in this same frame.
+   * the bar naming the newest prompt ({@link TuiApp.pinPrompt}) on the first
+   * row the terminal shows, which after the frame shrank lies under the
+   * lines the renderer can no longer repaint: pi-tui composites overlays into
+   * a frame after building it, so a bar shown, moved, or taken down here is
+   * drawn that way in this same frame.
    * @param viewportTop - the frame's first repaintable line.
    * @param width - the width it was built at.
    * @param frameLines - how many lines the frame has, which is what places
@@ -4706,9 +4714,12 @@ export class TuiApp {
       start += child.render(width).length
       if (isPrompt) promptEnd = start
     }
-    const drawsBar = promptEnd !== undefined
-      && pinnedPromptDrawable({ promptEnd, transcriptEnd: start, viewportStart, viewportFloor: this.viewportFloor })
-    this.pinPrompt(drawsBar ? prompt : undefined)
+    let pin: PromptPin | undefined
+    if (prompt !== undefined && promptEnd !== undefined) {
+      const row = pinnedPromptPlacement({ promptEnd, transcriptEnd: start, viewportStart, viewportFloor: this.viewportFloor })
+      if (row !== undefined) pin = { prompt, row }
+    }
+    this.pinPrompt(pin)
     // A block that carries the mark right now was inside the window when this
     // guard put it there, and the window the guard is handed already covers
     // what this frame will impose, so taking the mark off again is repaintable.
@@ -4724,18 +4735,20 @@ export class TuiApp {
   }
 
   /**
-   * Float the bar naming one prompt over the viewport's first row, or take
-   * the bar down. The overlay is mounted only while a bar is drawn, and a
-   * different prompt is named by a bar of its own.
-   * @param prompt - the prompt to name, or undefined to draw no bar.
+   * Float the bar naming one prompt over one viewport row, or take the bar
+   * down. The overlay is mounted only while a bar is drawn, and an overlay's
+   * row is fixed when it is shown, so a different prompt or a different row
+   * mounts the bar again.
+   * @param pin - the prompt to name and the row to draw it on, or undefined
+   * to draw no bar.
    */
-  private pinPrompt(prompt: PromptSection | undefined): void {
-    if (this.pinned?.block === prompt?.block) return
+  private pinPrompt(pin: PromptPin | undefined): void {
+    if (this.pinned?.block === pin?.prompt.block && this.pinned?.row === pin?.row) return
     this.pinned?.handle.hide()
     this.pinned = undefined
-    if (prompt === undefined) return
-    const pane = new PinnedPromptPane(this.deps.palette, prompt.part.rows)
-    this.pinned = { block: prompt.block, handle: this.tui.showOverlay(pane, pinnedPromptOverlay()) }
+    if (pin === undefined) return
+    const pane = new PinnedPromptPane(this.deps.palette, pin.prompt.part.rows)
+    this.pinned = { block: pin.prompt.block, row: pin.row, handle: this.tui.showOverlay(pane, pinnedPromptOverlay(pin.row)) }
   }
 
   /**

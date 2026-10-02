@@ -91,6 +91,99 @@ async function send(test: Bench, line: string): Promise<void> {
   await test.settle()
 }
 
+/** One cursor movement or clear, any other control sequence, a carriage return, a line feed, or a run of text. */
+const TERMINAL_TOKEN = new RegExp([
+  String.raw`\u001b\[(\d*)([ABGHJK])`,
+  String.raw`\u001b\[[0-9;?]*[ -/]*[@-~]`,
+  String.raw`\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)`,
+  String.raw`\u001b_[^\u0007\u001b]*(?:\u0007|\u001b\\)`,
+  String.raw`\r|\n|[^\u001b\r\n]+`,
+].join('|'), 'gu')
+
+/**
+ * The rows a terminal shows and the lines it scrolled away, as the main-screen
+ * renderer's writes leave them: a line feed on the last row scrolls the first
+ * one into the scrollback, the cursor moves by rows and to a column, a row or
+ * the whole screen clears, and text overwrites one cell per character from the
+ * cursor on. Every other sequence draws nothing.
+ */
+class TerminalScreen {
+  /** The lines scrolled off the first row, oldest first. */
+  readonly scrollback: string[] = []
+  /** The rows on screen, top first. */
+  readonly shown: string[]
+  private row = 0
+  private column = 0
+
+  /** @param rows - how many rows the terminal shows. */
+  constructor(rows: number) {
+    this.shown = Array.from({ length: rows }, () => '')
+  }
+
+  /**
+   * Apply what the terminal was sent.
+   * @param data - the written bytes, in order.
+   */
+  feed(data: string): void {
+    for (const [token, count, final] of data.matchAll(TERMINAL_TOKEN)) {
+      if (final !== undefined) this.control(final, count === undefined || count === '' ? undefined : Number(count))
+      else if (token === '\r') this.column = 0
+      else if (token === '\n') this.lineFeed()
+      else if (!token.startsWith('\u001b')) this.write(token)
+    }
+  }
+
+  /**
+   * Apply one cursor movement or clear.
+   * @param final - the sequence's final byte.
+   * @param count - its numeric parameter, absent when the sequence has none.
+   */
+  private control(final: string, count: number | undefined): void {
+    switch (final) {
+      case 'A':
+        this.row = Math.max(0, this.row - (count ?? 1))
+        return
+      case 'B':
+        this.row = Math.min(this.shown.length - 1, this.row + (count ?? 1))
+        return
+      case 'G':
+        this.column = (count ?? 1) - 1
+        return
+      case 'H':
+        this.row = 0
+        this.column = 0
+        return
+      case 'J':
+        if (count === 2) this.shown.fill('')
+        if (count === 3) this.scrollback.length = 0
+        return
+      default:
+        // `K`: the whole row, or the rest of it from the cursor.
+        this.shown[this.row] = count === 2 ? '' : (this.shown[this.row] ?? '').slice(0, this.column)
+    }
+  }
+
+  /** Move down one row, scrolling the first row away from the last one. */
+  private lineFeed(): void {
+    if (this.row < this.shown.length - 1) {
+      this.row += 1
+      return
+    }
+    this.scrollback.push(this.shown.shift() ?? '')
+    this.shown.push('')
+  }
+
+  /**
+   * Overwrite cells from the cursor on.
+   * @param text - characters one column wide each.
+   */
+  private write(text: string): void {
+    const line = (this.shown[this.row] ?? '').padEnd(this.column)
+    this.shown[this.row] = `${line.slice(0, this.column)}${text}${line.slice(this.column + text.length)}`
+    this.column += text.length
+  }
+}
+
 describe('the pinned prompt', () => {
   it('draws no bar while the newest prompt is still on screen', async () => {
     const test = await bench()
@@ -162,35 +255,67 @@ describe('the pinned prompt', () => {
 
   it('writes back the row it covered before the terminal scrolls it away, and never clears the scrollback', async () => {
     const test = await tall()
-    const covered = rowAbove((await viewport(test))[1])
-    test.terminal.output = ''
+    const screen = new TerminalScreen(ROWS)
+    screen.feed(test.terminal.written)
+    expect(screen.shown[0]).toMatch(barRow('first prompt'))
+    const covered = rowAbove(screen.shown[1])
+    const mark = test.terminal.written.length
     test.appendAssistant([{ type: 'text', text: listRows(3, 'grown') }])
     await test.settle()
-    expect(test.terminal.output).not.toContain(CLEAR_SCROLLBACK)
+    screen.feed(test.terminal.written.slice(mark))
     // The renderer repaints from the row the bar left, which the grown frame
-    // draws as conversation again, and only then the bar at the new first row.
-    const written = test.terminal.text()
-    expect(written).toMatch(covered)
-    expect(written.search(covered)).toBeLessThan(written.indexOf('  ❯ first prompt '))
+    // draws as conversation again, before the terminal scrolls it away.
+    expect(screen.shown[0]).toMatch(barRow('first prompt'))
+    expect(screen.scrollback.some(line => covered.test(line))).toBe(true)
+    expect(screen.scrollback.some(line => line.startsWith('  ❯'))).toBe(false)
+    expect(test.terminal.written).not.toContain(CLEAR_SCROLLBACK)
   })
 
-  it('stays down while the renderer cannot repaint the first row, until the conversation grows past it', async () => {
+  it('stays on the first row the terminal shows when the turn ends, and moves with that row when the conversation grows', async () => {
     const test = await tall({ running: true })
-    const shown = await viewport(test)
-    expect(shown[0]).toMatch(barRow('first prompt'))
-    const covered = rowAbove(shown[1])
-    test.terminal.output = ''
-    // The working line leaves with the turn, so the frame ends above the line
-    // the renderer last raised its repaint window to.
+    const screen = new TerminalScreen(ROWS)
+    screen.feed(test.terminal.written)
+    expect(screen.shown[0]).toMatch(barRow('first prompt'))
+    const under = screen.shown[1]
+    const covered = rowAbove(under)
+
+    // The working line leaves with the turn: the frame ends two lines
+    // earlier, and the terminal keeps showing the rows it showed, with blank
+    // ones under the frame's new end.
+    let mark = test.terminal.written.length
     test.setStatus('idle')
     await test.settle()
-    expect(test.terminal.text()).toMatch(covered)
-    expect(test.terminal.text()).not.toContain('❯ first prompt')
+    screen.feed(test.terminal.written.slice(mark))
+    expect(screen.shown[0]).toMatch(barRow('first prompt'))
+    expect(screen.shown[1]).toBe(under)
+    expect(screen.shown.at(-1)).toBe('')
 
-    test.appendAssistant([{ type: 'text', text: listRows(4, 'grown') }])
+    // A conversation that grows past the terminal again scrolls it, and the
+    // bar moves to the new first row.
+    mark = test.terminal.written.length
+    test.appendAssistant([{ type: 'text', text: listRows(6, 'grown') }])
     await test.settle()
-    expect(test.terminal.text()).toContain('  ❯ first prompt ')
-    expect(test.terminal.output).not.toContain(CLEAR_SCROLLBACK)
+    screen.feed(test.terminal.written.slice(mark))
+    expect(screen.shown[0]).toMatch(barRow('first prompt'))
+    expect(screen.shown[1]).not.toBe(under)
+    expect(screen.scrollback.some(line => covered.test(line))).toBe(true)
+    expect(screen.scrollback.some(line => line.startsWith('  ❯'))).toBe(false)
+    expect(test.terminal.written).not.toContain(CLEAR_SCROLLBACK)
+  })
+
+  it('is on the first row the terminal shows again once a resize redraws a frame that shrank', async () => {
+    const test = await tall({ running: true })
+    test.setStatus('idle')
+    await test.settle()
+    const mark = test.terminal.written.length
+    // The redraw writes the whole frame from the top of a cleared screen, so
+    // the terminal ends up showing the frame's own last rows.
+    test.terminal.resize(96)
+    await test.settle()
+    const screen = new TerminalScreen(ROWS)
+    screen.feed(test.terminal.written.slice(mark))
+    expect(screen.shown[0]).toMatch(barRow('first prompt'))
+    expect(screen.shown.filter(row => row.startsWith('  ❯'))).toHaveLength(1)
   })
 
   it('draws no bar over the docked chrome of a terminal too short to show the conversation', async () => {

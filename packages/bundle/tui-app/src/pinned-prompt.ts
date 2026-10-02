@@ -3,14 +3,17 @@
  * while that prompt's own rows are out of view.
  *
  * The reader draws it in place of its top rule once the turn panel scrolls
- * past its first row. The main screen floats it over the first row of the
- * viewport once every row of the newest prompt has scrolled above the
- * viewport, so a long answer still shows which request it answers.
+ * past its first row. The main screen floats it over the first row the
+ * terminal shows once every row of the newest prompt has scrolled above that
+ * row, so a long answer still shows which request it answers.
  *
  * On the main screen the bar is a pi-tui overlay, composited into the frame
  * after the tree rendered: it moves no line of the conversation, costs the
- * frame no row, and covers the conversation row under it. When the frame
- * grows, that row changes back to its own text at a line inside the repaint
+ * frame no row, and covers the conversation row under it. pi-tui never
+ * scrolls the terminal back when a frame shrinks, so the terminal's first row
+ * keeps showing the line it showed, the top of the renderer's repaint window,
+ * and the bar stays on that line. When the frame grows past the terminal, the
+ * line the bar leaves changes back to its own text at the top of the repaint
  * window, so the renderer writes it before the terminal scrolls it into the
  * scrollback, and the bar itself never reaches the scrollback.
  * @module @deepseek-ai/dsh-tui-app/pinned-prompt
@@ -29,9 +32,6 @@ export const PROMPT_GLYPH = '❯'
 
 /** What ends a bar the width cut short; one column, so the mark itself fits. */
 const ELLIPSIS = '…'
-
-/** Which row of the viewport the main screen's bar floats on. */
-const PINNED_ROW = 0
 
 /**
  * One prompt as a single row: the prompt glyph, then the prompt's rows joined
@@ -54,40 +54,49 @@ export interface PinnedPromptGeometry {
   readonly promptEnd: number
   /** The line after the conversation's last line, where the docked chrome begins. */
   readonly transcriptEnd: number
-  /** The line the viewport's first row shows; 0 for a frame no taller than the terminal. */
+  /**
+   * The frame's first line inside the viewport pi-tui composites overlays
+   * into: the frame's length less the terminal's rows, and 0 for a frame no
+   * taller than the terminal.
+   */
   readonly viewportStart: number
   /**
    * How many of the viewport's own first lines the renderer can no longer
-   * repaint, as `repaintFloor` reports it for the viewport's first line.
+   * repaint, as `repaintFloor` reports it for the viewport's first line. A
+   * frame that shrank leaves them above the terminal's first row, which keeps
+   * showing the line after them.
    */
   readonly viewportFloor: number
 }
 
 /**
- * Whether the main screen floats the bar over the viewport's first row: while
- * every line of the prompt's block lies above the viewport, the row the bar
- * lands on belongs to the conversation rather than the header or the docked
- * chrome, and the renderer can still repaint that row. Rewriting a line above
- * the repaint window costs the terminal's whole scrollback, so once the frame
- * shrinks and leaves its viewport's first row above the window, no bar is
- * drawn until the frame grows past the window's top again.
+ * The viewport row the main screen floats the bar on: the first row the
+ * terminal shows, `viewportFloor` rows into the viewport, whose line is the
+ * renderer's first repaintable one. The bar is drawn there while every line
+ * of the prompt's block lies above that line and the line belongs to the
+ * conversation rather than the header or the docked chrome. A frame that
+ * shrank by the terminal's height or more leaves that line past the frame's
+ * end, which belongs to neither.
  * @param geometry - where the prompt, the conversation, and the viewport sit.
- * @returns true while the bar is drawn.
+ * @returns the row, counted from the viewport's top, or undefined while no
+ * bar is drawn.
  */
-export function pinnedPromptDrawable(geometry: PinnedPromptGeometry): boolean {
+export function pinnedPromptPlacement(geometry: PinnedPromptGeometry): number | undefined {
   const { promptEnd, transcriptEnd, viewportStart, viewportFloor } = geometry
-  return promptEnd <= viewportStart && viewportStart < transcriptEnd && viewportFloor <= PINNED_ROW
+  const shown = viewportStart + viewportFloor
+  return promptEnd <= shown && shown < transcriptEnd ? viewportFloor : undefined
 }
 
 /**
- * Where the main screen's bar floats: on the viewport's first row, across the
+ * Where the main screen's bar floats: on one viewport row, across the
  * terminal's whole width, and without taking the keyboard. The pane lays the
  * bar out inside the page margins itself, as the main screen lays out its
  * frame, so the bar lines up with the conversation at every width.
+ * @param row - the viewport row, as {@link pinnedPromptPlacement} places it.
  * @returns the overlay options the bar is shown with.
  */
-export function pinnedPromptOverlay(): OverlayOptions {
-  return { anchor: 'top-left', width: '100%', margin: { top: PINNED_ROW }, nonCapturing: true }
+export function pinnedPromptOverlay(row: number): OverlayOptions {
+  return { anchor: 'top-left', width: '100%', margin: { top: row }, nonCapturing: true }
 }
 
 /** The bar as the main screen floats it: the left page margin, then the bar across the columns between the margins. */

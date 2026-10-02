@@ -184,6 +184,35 @@ describe('GuardedMainScreen', () => {
     screen.renderNow()
     expect(tops).toEqual([22, 22])
   })
+
+  it('settles once more against the window a frame written in full left, and only then', async () => {
+    const tops: number[] = []
+    const { screen, terminal, child } = screenWith(10, (viewportTop) => {
+      tops.push(viewportTop)
+      return false
+    })
+    // The first frame, shorter than the terminal, is written in full from the
+    // top, which is the window the guard settled it against.
+    screen.renderNow()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    expect(tops).toEqual([0])
+    child.lines = Array.from({ length: 32 }, (_, index) => `line ${String(index)}`)
+    screen.renderNow()
+    child.lines = child.lines.slice(0, 30)
+    screen.renderNow()
+    // A width change makes the renderer write the next frame in full, which
+    // leaves the window at that frame's own viewport, line 20, below the top
+    // of 22 the guard settled it against.
+    terminal.columns = 60
+    screen.renderNow()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    expect(tops).toEqual([0, 22, 22, 22, 20])
+    // A frame written in full against its own viewport asks for nothing more.
+    terminal.columns = 50
+    screen.renderNow()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    expect(tops).toEqual([0, 22, 22, 22, 20, 20])
+  })
 })
 
 describe('suspending the main screen', () => {

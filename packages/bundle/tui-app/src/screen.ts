@@ -132,6 +132,12 @@ export interface MainKeyFrame {
  * already settled instead of changing in the next frame, by which time its
  * lines may sit above the window.
  *
+ * A frame the renderer writes in full instead - after a resize, or for a
+ * change above its window - leaves the window at that frame's own viewport.
+ * When the guard settled that frame against a higher `previousViewportTop`,
+ * what it decided no longer matches the terminal, so the screen renders once
+ * more and the guard settles against the window the terminal now has.
+ *
  * It can also be suspended, which stops every write to the terminal while
  * leaving the renderer's record of the main screen exactly as it was. The
  * terminal restores that same screen when the surface that took it gives it
@@ -143,6 +149,11 @@ export class GuardedMainScreen extends TuiMainScreen {
   private onSuspendedRender: (() => void) | undefined
   /** The keys the last frame drew, by frame line. */
   private keys: KeyFrame = EMPTY_KEY_FRAME
+  /**
+   * Whether the guard settled the last frame against a `previousViewportTop`
+   * above that frame's own viewport, which a frame written in full lowers.
+   */
+  private settledAboveViewport = false
   /**
    * @param terminal - the terminal the tree renders into.
    * @param showHardwareCursor - whether the terminal's own cursor is the caret.
@@ -236,13 +247,19 @@ export class GuardedMainScreen extends TuiMainScreen {
     return super.applyLineResets(marked.lines)
   }
 
-  /** Write the frame, unless another surface holds the terminal. */
+  /**
+   * Write the frame, unless another surface holds the terminal, and request
+   * one more frame when this one was written in full after the guard settled
+   * it against a window top the full write lowered.
+   */
   protected override doRender(): void {
     // A frame the renderer scheduled before the surface took the terminal
     // reaches here after it; writing it would draw the conversation over the
     // surface.
     if (this.onSuspendedRender !== undefined) return
+    const fullRedraws = this.fullRedraws
     super.doRender()
+    if (this.fullRedraws !== fullRedraws && this.settledAboveViewport) this.requestRender()
   }
 
   /**
@@ -266,6 +283,7 @@ export class GuardedMainScreen extends TuiMainScreen {
       if (!this.guard(Math.max(previousTop, lines.length - this.terminal.rows), content, lines.length)) break
       lines = indentFrame(super.render(content), margin)
     }
+    this.settledAboveViewport = previousTop > Math.max(0, lines.length - this.terminal.rows)
     return lines
   }
 }
