@@ -50,6 +50,7 @@ import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
 import type { Session, SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
+import { AppleContainerSandboxProvider } from '@deepseek-ai/dsh-sandbox-apple-container'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
@@ -117,6 +118,7 @@ import { parseUserShellLine, userShellContextText, userShellTranscriptRows } fro
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
 import { SEARCH_ROUTE_ITEMS, applySearchRoute, currentSearchRoute, type SearchRoute } from './search-route.ts'
 import { matchPermission, permissionHint, permissionItems } from './permission.ts'
+import { SandboxPrompt } from './sandbox.ts'
 import { exportSessionZip } from './export.ts'
 import { RowReveal, StreamPacer } from './pace.ts'
 import { ViewBanner } from './view-banner.ts'
@@ -3472,6 +3474,9 @@ export class TuiApp {
       case 'permission':
         await this.choosePermission(argument)
         return
+      case 'sandbox':
+        await this.chooseSandbox(argument)
+        return
       case 'search':
         await this.chooseSearchRoute(argument)
         return
@@ -3930,6 +3935,23 @@ export class TuiApp {
     } catch (error: unknown) {
       this.notice(describeFailure(error), 'error')
     }
+  }
+
+  /**
+   * Preview backend access in a picker; typed arguments retain the shared command.
+   * @param argument - a backend id, or empty for the picker.
+   */
+  private async chooseSandbox(argument: string): Promise<void> {
+    const provider = this.deps.ctx.get('sandbox')
+    const policy = this.deps.ctx.get('sandboxPolicy')
+    if (argument !== '' || !(provider instanceof AppleContainerSandboxProvider) || policy === undefined || this.deps.ctx.get('commands') === undefined) {
+      await this.runSharedCommand(argument === '' ? '/sandbox' : `/sandbox ${argument}`, 'sandbox')
+      return
+    }
+    const picked = await this.showModal(new SandboxPrompt(
+      this.deps.palette, provider, this.agent.session, policy.resolve({ session: this.agent.session }),
+    ))
+    if (picked !== undefined) await this.runSharedCommand(`/sandbox ${picked.value}`, 'sandbox')
   }
 
   /**
