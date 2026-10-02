@@ -33,7 +33,8 @@ import {
   type TurnGroup,
   type TurnMarkers,
 } from './navigation.ts'
-import { bandRow, createPalette, markdownTheme, type CodeHighlighter, type Palette, type Style } from './style.ts'
+import { PROMPT_GLYPH, pinnedPromptRow } from './pinned-prompt.ts'
+import { createPalette, markdownTheme, type CodeHighlighter, type Palette, type Style } from './style.ts'
 import { paintCodeRows, type CodeSpan } from './transcript.ts'
 
 /** Columns the reader needs before it draws the held turn beside the turn list. */
@@ -74,9 +75,6 @@ const SIDE = '│'
 
 /** Marks the listed section the keyboard holds. */
 const LIST_MARK = '▸'
-
-/** Opens the prompt band and the list's row for the turn being read, as it opens a prompt in the conversation. */
-const PROMPT_GLYPH = '❯'
 
 /** The gutter beside every row of the section the reader holds: the conversation walk's own mark. */
 const HELD_GUTTER = '┃ '
@@ -1265,7 +1263,7 @@ export function readerRows(state: ReaderState, groups: readonly TurnGroup[], ren
     .map(section => blocks[section.block]?.parts()[section.part])
     .find(part => part?.kind === 'user')
   const pinned = geometry.pane > 0 && state.offset > 0 && prompt !== undefined
-    ? bandRow(palette, truncateToWidth(` ${PROMPT_GLYPH} ${prompt.rows.join(' ').replaceAll(/\s+/gu, ' ').trim()} `, width, ELLIPSIS), width)
+    ? pinnedPromptRow(palette, prompt.rows, width)
     : undefined
   return [
     pinned ?? topRule({

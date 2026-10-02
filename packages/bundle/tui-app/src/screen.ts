@@ -75,6 +75,18 @@ export function pageContentWidth(width: number): number {
 const LEFT_MARGIN = ' '.repeat(PAGE_MARGIN_COLUMNS)
 
 /**
+ * The left page margin at a terminal width: what every drawn line, and
+ * anything floated over one, is moved right by to line up with the columns
+ * the tree lays out in.
+ * @param width - the terminal's total width.
+ * @returns the margin's spaces; empty on a terminal too narrow for the
+ * margins, as {@link pageContentWidth} decides.
+ */
+export function pageMargin(width: number): string {
+  return pageContentWidth(width) === width ? '' : LEFT_MARGIN
+}
+
+/**
  * Move every drawn line right by the left margin. A line with nothing on it
  * keeps its own emptiness rather than gaining trailing spaces, so a frame adds
  * no whitespace to what the terminal's scrollback holds.
@@ -245,7 +257,7 @@ export class GuardedMainScreen extends TuiMainScreen {
    */
   override render(width: number): string[] {
     const content = pageContentWidth(width)
-    const margin = content === width ? '' : LEFT_MARGIN
+    const margin = pageMargin(width)
     // The renderer moves `previousViewportTop` only while it writes a frame, so
     // one reading holds for every pass over this one.
     const previousTop = this.captureRenderState().previousViewportTop

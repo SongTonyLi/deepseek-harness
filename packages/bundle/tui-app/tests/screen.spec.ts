@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { Text, type Component } from '@earendil-works/pi-tui'
 import { keyAt, paintKeys } from '../src/key-chips.ts'
-import { GuardedMainScreen, PAGE_MARGIN_COLUMNS, pageContentWidth, repaintFloor } from '../src/screen.ts'
+import { GuardedMainScreen, PAGE_MARGIN_COLUMNS, pageContentWidth, pageMargin, repaintFloor } from '../src/screen.ts'
 import { createPalette } from '../src/style.ts'
 import { FakeTerminal } from './bench.ts'
 
@@ -64,6 +64,13 @@ describe('pageContentWidth', () => {
 
   it('gives the margins up rather than the text on a terminal too narrow for both', () => {
     expect(pageContentWidth(6)).toBe(6)
+  })
+})
+
+describe('pageMargin', () => {
+  it('moves a line right by the left margin, and by nothing once the margins are given up', () => {
+    expect(pageMargin(80)).toBe(MARGIN)
+    expect(pageMargin(6)).toBe('')
   })
 })
 

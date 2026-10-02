@@ -26,7 +26,7 @@ A reader is a pager. Terminals already have a screen for pagers.
 
 Keys follow the same rule. While the reader holds the terminal, `TuiApp.onKey` hands every key to the pane and consumes it, so nothing reaches the editor behind it and pi-tui is never asked for a frame of a conversation the terminal is not showing. `Ctrl+C` alone withdraws the reader.
 
-Four consequences of drawing on the conversation's screen are gone with it: `ViewportPad` and the frame-length feedback it needed, the reveal the reader grew and shrank through (six ticks and four, meaningless when the screen switches), the overlay's focus-restore dance, and `viewportFloor`'s role in deciding how tall the reader could draw. `viewportFloor` remains, for the one surface still composited into the conversation: the transient key-feedback line.
+Four consequences of drawing on the conversation's screen are gone with it: `ViewportPad` and the frame-length feedback it needed, the reveal the reader grew and shrank through (six ticks and four, meaningless when the screen switches), the overlay's focus-restore dance, and `viewportFloor`'s role in deciding how tall the reader could draw. `viewportFloor` remains, for the surfaces still composited into the conversation: the transient key-feedback line and the bar that pins the newest prompt over the viewport's first row.
 
 The line that explains why a fold key opened the reader — `above the repaint window · opened in the reader` — became a conversation notice. It is written before the reader takes the terminal, and it is read when the terminal comes back; as a floating line it would have been drawn on a screen the user was about to leave.
 
