@@ -20,7 +20,7 @@ const mode = process.env.DSH_SNAPSHOT ?? 'replay'
 if (!['replay', 'record', 'refresh'].includes(mode)) throw new Error(`unknown DSH_SNAPSHOT mode: ${mode}`)
 
 describe('TUI recorded-session replay', () => {
-  it.skipIf(process.platform === 'win32')('auto-review-temperature', async () => {
+  it.skipIf(process.platform === 'win32').each([false, true])('auto-review-temperature (malformed JSON: %s)', async (malformedJson) => {
     const manifest = parseSnapshotManifest(await readFile(join(root, 'snapshot.yml'), 'utf8'))
     expect(manifest).toMatchObject({ profile: 'tui', recording: 'authored', header: { pin: true } })
     const [name] = sessionFixtureNames(await readdir(root))
@@ -40,7 +40,8 @@ describe('TUI recorded-session replay', () => {
         { marker: 'Sandbox backend', keys: '' },
         { marker: 'Shift+↑ read · Shift+↓ status', keys: '\u001b' },
         { marker: 'Shift+↑ read · Shift+↓ status', keys: '' },
-      ], cliPatch, { LINES: '40', ...mode === 'record' ? {} : { DSH_TUI_SNAPSHOT_SESSION: join(root, name) } })
+      ], cliPatch, { LINES: '40', DSH_CLI_MOCK_MALFORMED_REVIEW_ONCE: malformedJson ? '1' : '0',
+        ...mode === 'record' ? {} : { DSH_TUI_SNAPSHOT_SESSION: join(root, name) } })
       expect(run.exitCode, `${run.stderr}\n${run.stdout}`).toBe(0)
       expect(run.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(run.stdout).toMatch(/[⠁⠈⠐⠠⢀⡀⠄⠂] calling bash/u)
@@ -50,7 +51,7 @@ describe('TUI recorded-session replay', () => {
       expect(run.stdout).toContain('Container unavailable:')
       expect(run.stdout).toContain('Access preview · Local')
       expect(run.stdout).toContain('Sandbox bypassed: commands run on the host, regardless of backend choice.')
-      expect(await readFile(join(cwd, '.auto-review-requests'), 'utf8')).toBe('reviewed\n')
+      expect(await readFile(join(cwd, '.auto-review-requests'), 'utf8')).toBe(malformedJson ? 'reviewed\nreviewed\n' : 'reviewed\n')
       const storage = join(cwd, '.sessions')
       const paths = latestPersistedSessionPaths(await readdir(storage, { recursive: true }))
       expect(paths).toHaveLength(1)

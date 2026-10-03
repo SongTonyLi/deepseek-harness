@@ -873,13 +873,15 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-auto-review`
 
 - `inject`: `approval` · `llm` · `permissionPresets` · `sessions` · `tools`
-- `source`: [`packages/experimental/auto-review/src/index.ts:130`](../packages/experimental/auto-review/src/index.ts)
+- `source`: [`packages/experimental/auto-review/src/index.ts:136`](../packages/experimental/auto-review/src/index.ts)
 
 ```ts config-catalog
-/** Sampling configuration for per-call reviewer requests. */
+/** Generation and JSON retry settings for per-call reviewer requests. */
 export interface Config {
   /** Reviewer temperature from 0 through 2; `provider-default` omits the parameter. */
   temperature: number | 'provider-default'
+  /** Additional requests after invalid JSON text; zero disables formatting retries. */
+  maxJsonRetries: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-auto-review -->
