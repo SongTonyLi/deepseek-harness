@@ -159,7 +159,7 @@ Provider selection, probing, caching, and backend-specific enforcement reports b
 
 ## Read scope
 
-`ctx.sandbox.readScope(policy)` reports what a process confined under `policy` can read on the host, or `undefined` when the backend does not confine reads; the base provider returns `undefined`. `ctx.sandboxPolicy.canRead(path, request)` resolves the calling session's policy and checks a path against that scope after canonicalizing both, so neither `..` segments nor symlinks leave the roots. The `read`, `edit`, `write`, `str_replace_editor`, `grep`, and `glob` tools refuse a path outside the scope with `FS_SANDBOX_DENIED` or `SEARCH_SANDBOX_DENIED` before observing it, and `grep` excludes hidden file names from content searches, so the model's file tools never read more than its confined commands.
+`ctx.sandbox.readScope(policy)` reports what a process confined under `policy` can read on the host, or `undefined` when the backend does not confine reads; the base provider returns `undefined`. `ctx.sandboxPolicy.canRead(path, request)` resolves the calling session's policy and checks a path against that scope after canonicalizing both, so neither `..` segments nor symlinks leave the roots. The `edit`, `write`, `str_replace_editor`, `grep`, and `glob` tools refuse a path outside the scope with `FS_SANDBOX_DENIED` or `SEARCH_SANDBOX_DENIED` before observing it, `read` and `read_image` ask the user once per call before reading a non-hidden path outside it ([tool-fs](../../packages/fs/tool-fs/README.md)), and `grep` excludes hidden file names from content searches, so the model's file tools never read more than its confined commands.
 
 ```ts type-equiv
 /**

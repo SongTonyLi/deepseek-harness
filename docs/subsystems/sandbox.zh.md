@@ -159,7 +159,7 @@ interface ConfinedArgv {
 
 ## 读取范围
 
-`ctx.sandbox.readScope(policy)` 报告在 `policy` 下受限的进程能读取宿主机上的哪些内容；后端不限制读取时返回 `undefined`，基础提供方即返回 `undefined`。`ctx.sandboxPolicy.canRead(path, request)` 解析调用会话的策略，并在将路径与范围都规范化后再做比较，因此 `..` 片段和符号链接都无法离开这些根目录。`read`、`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 工具在观察路径之前，以 `FS_SANDBOX_DENIED` 或 `SEARCH_SANDBOX_DENIED` 拒绝范围之外的路径，`grep` 还会在内容搜索中排除隐藏文件名，因此模型的文件工具读取的内容永远不会超出其受限命令。
+`ctx.sandbox.readScope(policy)` 报告在 `policy` 下受限的进程能读取宿主机上的哪些内容；后端不限制读取时返回 `undefined`，基础提供方即返回 `undefined`。`ctx.sandboxPolicy.canRead(path, request)` 解析调用会话的策略，并在将路径与范围都规范化后再做比较，因此 `..` 片段和符号链接都无法离开这些根目录。`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 工具在观察路径之前，以 `FS_SANDBOX_DENIED` 或 `SEARCH_SANDBOX_DENIED` 拒绝范围之外的路径，`read` 与 `read_image` 在读取范围之外的非隐藏路径之前，每次调用都会先征求用户同意（[tool-fs](../../packages/fs/tool-fs/README.zh.md)），`grep` 还会在内容搜索中排除隐藏文件名，因此模型的文件工具读取的内容永远不会超出其受限命令。
 
 ```ts type-equiv
 /**

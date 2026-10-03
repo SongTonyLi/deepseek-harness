@@ -197,7 +197,7 @@ describe('AppleContainerSandboxProvider', () => {
       'Commands confined by the DSH file sandbox run inside a Linux container from image "node:22-bookworm". '
       + `Only the session workspace ${JSON.stringify(h.root)} is shared with the host; `
       + 'files written elsewhere stay inside the container and are not visible to file tools. '
-      + 'File tools cannot read host paths outside the workspace, and secret files such as `.env` and private keys are hidden from commands and file tools.',
+      + 'File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.',
     )
     setSandboxMode(session, 'danger-full-access')
     expect(await backendContext(h.ctx, agent)).toBe('')

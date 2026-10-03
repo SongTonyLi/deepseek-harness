@@ -67,7 +67,7 @@ The fields of `@deepseek-ai/dsh-sandbox-local` also apply to the `local` backend
 | Threat | Behavior under the container backend |
 |---|---|
 | A command reads host files outside the workspace | The path does not exist in the guest |
-| A file tool reads outside the workspace | `read`, `edit`, `write`, `str_replace_editor`, `grep`, and `glob` refuse it through the read scope |
+| A file tool reads outside the workspace | `read` and `read_image` ask the user once per call before any host file access; `edit`, `write`, `str_replace_editor`, `grep`, and `glob` refuse it through the read scope |
 | A command or tool reads a secret file in the workspace | Masked to `/dev/null` in the guest; refused by file tools; excluded from `grep` |
 | A credential reaches the guest environment | Denied names and URLs carrying `user:password@` are never forwarded |
 | A command plants a Git hook or config the host later runs | `.git` is read-only under `workspace-write`; writes fail with `Read-only file system` and use the normal escalation |
@@ -132,7 +132,7 @@ One `sandbox:backend` contribution in the runtime-context snapshot when the sess
 ##### Container backend
 
 ```markdown
-Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. File tools cannot read host paths outside the workspace, and secret files such as `.env` and private keys are hidden from commands and file tools.
+Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
 ```
 
 #### Token effect

@@ -255,7 +255,7 @@ export function applyReadImageTool(ctx: Context): void {
       if (declared !== undefined) assertDeploymentAccepts(attachments, declared, args.file_path)
       await assertImageCapableRoute(ctx, exec, args.file_path)
 
-      const { target, info } = await resolveRegularReadTarget(ctx, exec, args.file_path)
+      const { target, info } = await resolveRegularReadTarget(ctx, exec, args.file_path, 'read_image')
 
       // The tool result is one message carrying one image, so the per-message
       // aggregate bound applies beside the per-image bound.

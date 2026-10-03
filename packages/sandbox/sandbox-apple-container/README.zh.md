@@ -67,7 +67,7 @@ kind: "package-reference"
 | 威胁 | container 后端下的行为 |
 |---|---|
 | 命令读取工作区之外的宿主机文件 | 该路径在客户机中不存在 |
-| 文件工具读取工作区之外的内容 | `read`、`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 通过读取范围拒绝 |
+| 文件工具读取工作区之外的内容 | `read` 与 `read_image` 在访问任何宿主机文件之前，每次调用都会先征求用户同意；`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 通过读取范围拒绝 |
 | 命令或工具读取工作区中的密钥文件 | 在客户机中被遮蔽为 `/dev/null`；被文件工具拒绝；从 `grep` 中排除 |
 | 凭据进入客户机环境 | 被拒绝的名称以及带有 `user:password@` 的 URL 永不转发 |
 | 命令植入宿主机之后会执行的 Git hook 或配置 | 在 `workspace-write` 下 `.git` 为只读；写入以 `Read-only file system` 失败，并走常规提权流程 |
@@ -132,7 +132,7 @@ CLI 缺失、已停止且无法启动的 API 服务器，或 `container run` 失
 ##### container 后端
 
 ```markdown
-Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. File tools cannot read host paths outside the workspace, and secret files such as `.env` and private keys are hidden from commands and file tools.
+Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
 ```
 
 #### Token 影响
