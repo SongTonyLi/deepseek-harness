@@ -113,15 +113,13 @@ import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserSh
 import {
   ACTIVITY_SPINNERS,
   COMPACTING_ACTIVITY,
-  TOOL_SPINNERS,
+  TOOL_SPINNER,
   activityStatus,
   callingActivity,
   isCallingActivity,
   shimmer,
   spinnerFrame,
   staggerPhase,
-  toolFamily,
-  type ToolFamily,
 } from './spinner.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
@@ -156,20 +154,17 @@ import {
 import {
   clampCursor,
   isSectionSource,
-  lastPrompt,
   lastSection,
   moveTranscriptCursor,
   navigableBlocks,
   partLabels,
   sectionHeading,
   type MoveTarget,
-  type PromptSection,
   type SectionPart,
   type SectionSource,
   type TranscriptAxis,
   type TranscriptCursor,
 } from './navigation.ts'
-import { PinnedPromptPane, pinnedPromptOverlay, pinnedPromptPlacement } from './pinned-prompt.ts'
 import {
   FIRST_FOOTER_SEGMENT,
   FooterBar,
@@ -391,12 +386,6 @@ interface HeldSection {
   part: number
   /** How far above its settled accent that section's mark was last drawn. */
   level: MotionLevel
-}
-
-/** The prompt the bar names, and the viewport row the bar floats on. */
-interface PromptPin {
-  prompt: PromptSection
-  row: number
 }
 
 /** What one chrome motion lifts. */
@@ -842,13 +831,6 @@ export class TuiApp {
   private readonly motions = new FadeRegistry()
   /** The transient line on screen right now, with the clock that takes it down. */
   private toast: { handle: OverlayHandle; clock: ToastClock } | undefined
-  /**
-   * The bar naming the newest prompt while it floats over the first row the
-   * terminal shows, with the prompt block it names and the viewport row it
-   * was shown on; absent while no bar is drawn, because pi-tui pads every
-   * frame to the terminal's height while any overlay is mounted, drawn or not.
-   */
-  private pinned: { block: SectionSource; row: number; handle: OverlayHandle } | undefined
   /** The chrome motion running right now, and how much of the focused surface it lifts. */
   private chrome: { motion: Motion; scope: MotionScope } | undefined
   /** The lift the subagent panel's text was last built with, which only a repaint changes. */
@@ -880,8 +862,8 @@ export class TuiApp {
   /**
    * How many of the viewport's own first lines the renderer can no longer
    * repaint, from the last frame the guard settled. The terminal's first row
-   * shows the line after them: the transient line floats only while its box
-   * stays clear of them, and the prompt bar floats on that first row.
+   * shows the line after them, and the transient line floats only while its
+   * box stays clear of them.
    */
   private viewportFloor = 0
   /** Set while {@link TuiApp.bind} replays a session's history, which draws its cards settled. */
@@ -1151,12 +1133,6 @@ export class TuiApp {
     this.modals.withdrawActive()
     this.dropReader()
     this.hideToast()
-    if (this.pinned !== undefined) {
-      // The terminal keeps the last frame once the application is gone, so
-      // one more frame writes back the conversation row the bar covers.
-      this.pinPrompt(undefined)
-      this.tui.renderNow()
-    }
     // The shell that regains the terminal keeps whatever caret shape it was
     // left with, so the application gives the terminal's own shape back.
     this.deps.terminal.write(SET_TERMINAL_DEFAULT_CURSOR)
@@ -1585,7 +1561,7 @@ export class TuiApp {
     const now = this.deps.now()
     const spinners = new Map<string, string>()
     for (const [content, phase] of this.boardSpinners) {
-      spinners.set(content, spinnerFrame(TOOL_SPINNERS.todo, now, this.deps.spinnerMs, phase))
+      spinners.set(content, spinnerFrame(TOOL_SPINNER, now, this.deps.spinnerMs, phase))
     }
     const text = renderActivityBoard(view, {
       palette: this.deps.palette,
@@ -1606,7 +1582,7 @@ export class TuiApp {
 
   /**
    * Keep the phase of each in-progress todo row that still spins, drop the
-   * rest, and stagger a row that starts spinning against every other `todo`
+   * rest, and stagger a row that starts spinning against every other tool
    * indicator on screen.
    * @param contents - the content of each in-progress row the board draws now.
    */
@@ -1616,7 +1592,7 @@ export class TuiApp {
     }
     for (const content of contents) {
       if (this.boardSpinners.has(content)) continue
-      this.boardSpinners.set(content, staggerPhase(TOOL_SPINNERS.todo, this.spinningPhases('todo')))
+      this.boardSpinners.set(content, staggerPhase(this.spinningPhases()))
     }
   }
 
@@ -4481,35 +4457,31 @@ export class TuiApp {
   }
 
   /**
-   * Spin a new card's glyph in its tool family's animation until its result
-   * lands, at a phase staggered against the other indicators of that family
-   * on screen and kept for the card's whole run. The family is read per
-   * frame, so a streamed name the logged call confirms keeps the card's
-   * animation. A card drawn from a replayed log, and every card under
-   * reduced motion, draws the static glyph.
+   * Spin a new card's glyph in the tool animation until its result lands, at
+   * a phase staggered against the other tool indicators on screen and kept
+   * for the card's whole run. A card drawn from a replayed log, and every
+   * card under reduced motion, draws the static glyph.
    * @param block - the card that was just mounted.
    */
   private spinBlock(block: ToolBlock): void {
     if (this.replaying || this.deps.reducedMotion) return
-    const family = toolFamily(block.name)
-    const phase = staggerPhase(TOOL_SPINNERS[family], this.spinningPhases(family))
-    block.setSpinner(() => spinnerFrame(TOOL_SPINNERS[toolFamily(block.name)], this.deps.now(), this.deps.spinnerMs, phase))
+    const phase = staggerPhase(this.spinningPhases())
+    block.setSpinner(() => spinnerFrame(TOOL_SPINNER, this.deps.now(), this.deps.spinnerMs, phase))
     this.spinners.set(block, phase)
     this.updateSpinTicker()
   }
 
   /**
-   * The phases of the indicators of one tool family spinning right now: its
-   * running cards and, for `todo`, the activity board's in-progress rows.
-   * @param family - the family a new indicator is about to draw.
-   * @returns one phase per spinning indicator of that family.
+   * The phases of the tool indicators spinning right now: running cards and
+   * the activity board's in-progress todo rows.
+   * @returns one phase per spinning indicator.
    */
-  private spinningPhases(family: ToolFamily): number[] {
+  private spinningPhases(): number[] {
     const phases: number[] = []
     for (const [block, phase] of this.spinners) {
-      if (block.spinning() && toolFamily(block.name) === family) phases.push(phase)
+      if (block.spinning()) phases.push(phase)
     }
-    if (family === 'todo') phases.push(...this.boardSpinners.values())
+    phases.push(...this.boardSpinners.values())
     return phases
   }
 
@@ -4696,19 +4668,14 @@ export class TuiApp {
    * running fade, which is told each block's own first repaintable line, and
    * the focus gutter, which a block gains or loses only while its first line
    * lies inside the window. A focused block above the window simply stays
-   * unmarked, and the inspector reports that instead. The same walk places
-   * the bar naming the newest prompt ({@link TuiApp.pinPrompt}) on the first
-   * row the terminal shows, which after the frame shrank lies under the
-   * lines the renderer can no longer repaint: pi-tui composites overlays into
-   * a frame after building it, so a bar shown, moved, or taken down here is
-   * drawn that way in this same frame.
+   * unmarked, and the inspector reports that instead.
    * @param viewportTop - the frame's first repaintable line.
    * @param width - the width it was built at.
    * @param frameLines - how many lines the frame has, which is what places
-   * the transient line and the prompt bar: pi-tui composites an overlay into
-   * the frame's last `rows` lines.
+   * the transient line: pi-tui composites an overlay into the frame's last
+   * `rows` lines.
    * @returns whether anything changed a line, so the frame is built again
-   * before it is written; the bar is composited afterwards and changes none.
+   * before it is written.
    */
   private settleFrame(viewportTop: number, width: number, frameLines: number): boolean {
     const rows = this.deps.terminal.rows
@@ -4719,29 +4686,18 @@ export class TuiApp {
       ? { block: section.block, part: section.cursor.part, level: this.markLift() }
       : undefined
     const fades = this.fadesMoving() || this.spinners.size > 0
-    // A stopping application draws its last frame without the bar.
-    const prompt = this.stopped ? undefined : lastPrompt(navigableBlocks(this.chat.children))
     // The walk reads the frame that was just built, so applying one change
     // cannot move the line another change is judged against.
     let start = this.header.render(width).length
     let wantedStart: number | undefined
-    let promptEnd: number | undefined
     let changed = false
     for (const child of this.chat.children) {
       if (isSectionSource(child) && child === wanted?.block) wantedStart = start
-      const isPrompt = isSectionSource(child) && child === prompt?.block
       if (fades && (child instanceof AssistantBlock || child instanceof ToolBlock)) {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
       start += child.render(width).length
-      if (isPrompt) promptEnd = start
     }
-    let pin: PromptPin | undefined
-    if (prompt !== undefined && promptEnd !== undefined) {
-      const row = pinnedPromptPlacement({ promptEnd, transcriptEnd: start, viewportStart, viewportFloor: this.viewportFloor })
-      if (row !== undefined) pin = { prompt, row }
-    }
-    this.pinPrompt(pin)
     // A block that carries the mark right now was inside the window when this
     // guard put it there, and the window the guard is handed already covers
     // what this frame will impose, so taking the mark off again is repaintable.
@@ -4754,23 +4710,6 @@ export class TuiApp {
     target?.block.setHighlight(target.part, target.level)
     this.highlighted = target
     return true
-  }
-
-  /**
-   * Float the bar naming one prompt over one viewport row, or take the bar
-   * down. The overlay is mounted only while a bar is drawn, and an overlay's
-   * row is fixed when it is shown, so a different prompt or a different row
-   * mounts the bar again.
-   * @param pin - the prompt to name and the row to draw it on, or undefined
-   * to draw no bar.
-   */
-  private pinPrompt(pin: PromptPin | undefined): void {
-    if (this.pinned?.block === pin?.prompt.block && this.pinned?.row === pin?.row) return
-    this.pinned?.handle.hide()
-    this.pinned = undefined
-    if (pin === undefined) return
-    const pane = new PinnedPromptPane(this.deps.palette, pin.prompt.part.rows)
-    this.pinned = { block: pin.prompt.block, row: pin.row, handle: this.tui.showOverlay(pane, pinnedPromptOverlay(pin.row)) }
   }
 
   /**

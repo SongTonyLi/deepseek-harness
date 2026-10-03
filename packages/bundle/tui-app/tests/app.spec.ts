@@ -18,7 +18,7 @@ import { TOOL_RUNNING_ROW } from '../src/blocks.ts'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, QUEUE_ENTRY_HINT, REGION_LABELS, entryHints, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
-import { ACTIVITY_SPINNERS, SPINNER_CYCLE, TOOL_SPINNERS, shimmer, spinnerFrame, type ActivityStatus, type ToolFamily } from '../src/spinner.ts'
+import { ACTIVITY_SPINNERS, SPINNER_CYCLE, TOOL_SPINNER, shimmer, spinnerFrame, type ActivityStatus } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
 import { TODO_GLYPH } from '../src/todos.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
@@ -49,10 +49,10 @@ function writeTodos(test: Bench, next: TodoItem[], turn = 1): void {
  * The glyph each indicator labelled `label` draws in `kind`'s animation, top to bottom.
  * @param screen - one complete frame.
  * @param label - the text after each indicator's glyph and its space.
- * @param kind - the activity status or tool family the indicators draw.
+ * @param kind - the activity status the indicators draw, or `tool` for the star of a card, subagent row, or todo row.
  * @returns one glyph per indicator.
  */
-function glyphsOf(screen: string, label: string, kind: ActivityStatus | ToolFamily): string[] {
+function glyphsOf(screen: string, label: string, kind: ActivityStatus | 'tool'): string[] {
   return Array.from(screen.matchAll(new RegExp(spinning(label, kind).source, 'gu')), match => match[0].slice(0, 1))
 }
 
@@ -450,18 +450,18 @@ describe('TuiApp', () => {
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'read', argumentsDelta: '' })
     await test.settle()
     let screen = test.terminal.text()
-    expect(screen).toMatch(spinning('read', 'search'))
+    expect(screen).toMatch(spinning('read', 'tool'))
     expect(screen).toContain(TOOL_RUNNING_ROW)
     expect(screen).not.toContain('a.ts')
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, argumentsDelta: '{"path":"a.ts"}' })
     await test.settle()
     screen = test.terminal.text()
-    expect(screen).toMatch(spinning('read a.ts', 'search'))
+    expect(screen).toMatch(spinning('read a.ts', 'tool'))
     expect(screen).toContain(TOOL_RUNNING_ROW)
     test.stream.end({ kind: 'committed', eventType: 'assistant/message', seq: 1 as never })
     test.appendToolCall('call-1', 'read', { path: 'a.ts' })
     await test.settle()
-    expect(test.terminal.text().split(spinning('read a.ts', 'search'))).toHaveLength(2)
+    expect(test.terminal.text().split(spinning('read a.ts', 'tool'))).toHaveLength(2)
     test.appendToolResult('call-1', [{ type: 'text', text: 'export const a = 1' }])
     screen = await test.screen()
     expect(screen).toContain('read a.ts')
@@ -474,11 +474,11 @@ describe('TuiApp', () => {
     test.stream.start()
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'write', argumentsDelta: '' })
     await test.settle()
-    expect(test.terminal.text()).toMatch(spinning('write', 'edit'))
+    expect(test.terminal.text()).toMatch(spinning('write', 'tool'))
     expect(test.terminal.text()).toContain(TOOL_RUNNING_ROW)
     test.stream.end({ kind: 'abandoned' })
     const screen = await test.screen()
-    expect(screen).not.toMatch(spinning('write', 'edit'))
+    expect(screen).not.toMatch(spinning('write', 'tool'))
     expect(screen.split('\n').some(line => line.trim() === `│ ${TOOL_RUNNING_ROW}`)).toBe(false)
   })
 
@@ -490,16 +490,16 @@ describe('TuiApp', () => {
     test.stream.chunk({ type: 'tool-call-delta', index: 2, id: 'call-y' as never, name: '', argumentsDelta: '' })
     await test.settle()
     expect(test.terminal.text()).toContain('calling read')
-    expect(test.terminal.text()).not.toMatch(spinning('read', 'search'))
+    expect(test.terminal.text()).not.toMatch(spinning('read', 'tool'))
     test.stream.chunk({ type: 'tool-call-delta', index: 3, id: 'call-2' as never, name: 'edit', argumentsDelta: '' })
     await test.settle()
-    expect(test.terminal.text()).toMatch(spinning('edit', 'edit'))
+    expect(test.terminal.text()).toMatch(spinning('edit', 'tool'))
     test.stream.end({ kind: 'committed', eventType: 'assistant/attempt', seq: 1 as never })
     const dropped = await test.screen()
-    expect(dropped).not.toMatch(spinning('edit', 'edit'))
+    expect(dropped).not.toMatch(spinning('edit', 'tool'))
     test.session.append('tool/call', { turn: 1, step: 1, callId: 'call-bad' as never, name: 'mystery', arguments: '{bad' })
     await test.settle()
-    expect(test.terminal.text()).toMatch(spinning('mystery', 'other'))
+    expect(test.terminal.text()).toMatch(spinning('mystery', 'tool'))
     expect(test.terminal.text()).toContain('{bad')
   })
 
@@ -1775,7 +1775,7 @@ describe('the activity board', () => {
     test.agent.ctx.emit('agent/inbox/inserted', { agent: test.agent, message: later })
     let screen = await test.screen()
     expect(screen).toContain('○ read the spec')
-    expect(screen).toMatch(spinning('write the layer', 'todo'))
+    expect(screen).toMatch(spinning('write the layer', 'tool'))
     expect(screen.indexOf('follow-ups')).toBeLessThan(screen.indexOf('○ read the spec'))
     expect(screen.indexOf('○ read the spec')).toBeLessThan(screen.indexOf('test-model'))
 
@@ -1982,22 +1982,22 @@ describe('the activity board', () => {
     writeTodos(test, todos)
     await test.settle()
     expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
-    expect((await test.screen()).match(spinning('write the layer', 'todo'))?.[0]).toBe(`${TOOL_SPINNERS.todo[0]} write the layer`)
+    expect((await test.screen()).match(spinning('write the layer', 'tool'))?.[0]).toBe(`${TOOL_SPINNER[0]} write the layer`)
     test.runTick(BENCH_SPINNER_MS)
-    expect((await test.screen()).match(spinning('write the layer', 'todo'))?.[0]).toBe(`${TOOL_SPINNERS.todo[1]} write the layer`)
+    expect((await test.screen()).match(spinning('write the layer', 'tool'))?.[0]).toBe(`${TOOL_SPINNER[1]} write the layer`)
     todos = [{ content: 'write the layer', status: 'completed' }]
     test.session.append('todo/write', { todos })
     await test.settle()
     expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
   })
 
-  it('staggers an in-progress todo against a running todo card, and parallel in-progress todos against each other', async () => {
+  it('staggers an in-progress todo against a running card, and parallel in-progress todos against each other', async () => {
     let todos: TodoItem[] = []
     const withCard = await bench({ projections: projectionsStub(() => ({ todos })) })
     withCard.appendToolCall('call-1', 'todo_write', { todos: [] })
     todos = [{ content: 'build the client', status: 'in_progress' }]
     writeTodos(withCard, todos)
-    await expectDistinctGlyphs(withCard, 2, screen => [...glyphsOf(screen, 'todo_write', 'todo'), ...glyphsOf(screen, 'build the client', 'todo')])
+    await expectDistinctGlyphs(withCard, 2, screen => [...glyphsOf(screen, 'todo_write', 'tool'), ...glyphsOf(screen, 'build the client', 'tool')])
 
     let parallelTodos: TodoItem[] = []
     const parallel = await bench({ projections: projectionsStub(() => ({ todos: parallelTodos })) })
@@ -2006,7 +2006,7 @@ describe('the activity board', () => {
       { content: 'build the server', status: 'in_progress' },
     ]
     writeTodos(parallel, parallelTodos)
-    await expectDistinctGlyphs(parallel, 2, screen => [...glyphsOf(screen, 'build the client', 'todo'), ...glyphsOf(screen, 'build the server', 'todo')])
+    await expectDistinctGlyphs(parallel, 2, screen => [...glyphsOf(screen, 'build the client', 'tool'), ...glyphsOf(screen, 'build the server', 'tool')])
   })
 })
 
@@ -2017,9 +2017,9 @@ describe('working indicators', () => {
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
     await test.settle()
     expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
-    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(`${TOOL_SPINNERS.shell[0]} bash`)
+    expect((await test.screen()).match(spinning('bash', 'tool'))?.[0]).toBe(`${TOOL_SPINNER[0]} bash`)
     test.runTick(BENCH_SPINNER_MS)
-    expect((await test.screen()).match(spinning('bash', 'shell'))?.[0]).toBe(`${TOOL_SPINNERS.shell[1]} bash`)
+    expect((await test.screen()).match(spinning('bash', 'tool'))?.[0]).toBe(`${TOOL_SPINNER[1]} bash`)
     test.appendToolResult('call-1', [{ type: 'text', text: 'ok' }])
     test.runTick(BENCH_SPINNER_MS)
     expect(await test.screen()).toContain('◆ bash')
@@ -2041,40 +2041,40 @@ describe('working indicators', () => {
     test.stream.chunk({ type: 'tool-call-delta', index: 1, id: 'call-1' as never, name: 'bash', argumentsDelta: '' })
     let screen = await test.screen()
     expect(screen).toContain(`${ACTIVITY_SPINNERS.calling[2]} calling bash`)
-    expect(screen).toContain(`${TOOL_SPINNERS.shell[2]} bash`)
+    expect(screen).toContain(`${TOOL_SPINNER[2]} bash`)
     test.runTick(BENCH_SPINNER_MS)
     screen = await test.screen()
     expect(screen).toContain(`${ACTIVITY_SPINNERS.calling[3]} calling bash`)
-    expect(screen).toContain(`${TOOL_SPINNERS.shell[3]} bash`)
+    expect(screen).toContain(`${TOOL_SPINNER[3]} bash`)
   })
 
   it('never draws the glyph of the running card the activity line names', async () => {
     const test = await bench({ running: true })
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
-    await expectDistinctGlyphs(test, 2, screen => [...glyphsOf(screen, 'calling bash', 'calling'), ...glyphsOf(screen, 'bash', 'shell')])
+    await expectDistinctGlyphs(test, 2, screen => [...glyphsOf(screen, 'calling bash', 'calling'), ...glyphsOf(screen, 'bash', 'tool')])
   })
 
-  it('staggers running cards of one family so no two draw the same glyph at any instant', async () => {
+  it('staggers running cards of every tool so no two draw the same glyph at any instant', async () => {
     const test = await bench()
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
     test.appendToolCall('call-2', 'bash', { command: 'pwd' })
     test.appendToolCall('call-3', 'edit', { path: 'a.ts' })
-    test.appendToolCall('call-4', 'edit', { path: 'b.ts' })
-    await expectDistinctGlyphs(test, 4, screen => [...glyphsOf(screen, 'bash', 'shell'), ...glyphsOf(screen, 'edit', 'edit')])
+    test.appendToolCall('call-4', 'read', { path: 'b.ts' })
+    await expectDistinctGlyphs(test, 4, screen => ['bash', 'edit', 'read'].flatMap(label => glyphsOf(screen, label, 'tool')))
   })
 
-  it('draws each running tool card in its own family animation', async () => {
+  it('draws every running tool card and folded subagent row in the one star animation', async () => {
     const test = await bench()
     await test.settle()
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
     test.appendToolCall('call-2', 'edit', { path: 'src/app.ts' })
     test.appendToolCall('call-3', 'read', { path: 'package.json' })
     test.appendToolCall('call-4', 'plugin_manager', {})
+    test.appendToolCall('call-5', 'subagent', { description: 'Explore order services', prompt: 'Read the order code.' })
     const screen = await test.screen()
-    expect(screen).toContain(`${TOOL_SPINNERS.shell[0]} bash`)
-    expect(screen).toContain(`${TOOL_SPINNERS.edit[0]} edit`)
-    expect(screen).toContain(`${TOOL_SPINNERS.search[0]} read`)
-    expect(screen).toContain(`${TOOL_SPINNERS.other[0]} plugin_manager`)
+    for (const label of ['bash', 'edit', 'read', 'plugin_manager', 'subagent']) {
+      expect(screen, label).toMatch(spinning(label, 'tool'))
+    }
   })
 
   it('runs one spinner tick for the activity line, the cards, and the board, and none once nothing animates', async () => {
@@ -2087,8 +2087,8 @@ describe('working indicators', () => {
     test.runTick(BENCH_SPINNER_MS)
     const screen = await test.screen()
     expect(screen).toContain(`${ACTIVITY_SPINNERS.calling[1]} calling bash`)
-    expect(screen).toContain(`${TOOL_SPINNERS.shell[1]} bash`)
-    expect(screen).toContain(`${TOOL_SPINNERS.todo[1]} write the layer`)
+    // The card and the todo row stagger four frames apart, in either order.
+    expect(new Set([...glyphsOf(screen, 'bash', 'tool'), ...glyphsOf(screen, 'write the layer', 'tool')])).toEqual(new Set([TOOL_SPINNER[1], TOOL_SPINNER[5]]))
     test.appendToolResult('call-1', [{ type: 'text', text: 'ok' }])
     todos = [{ content: 'write the layer', status: 'completed' }]
     test.session.append('todo/write', { todos })
@@ -2106,7 +2106,7 @@ describe('working indicators', () => {
       const now = BENCH_NOW + step * 240
       const screen = await test.screen()
       expect(screen).toContain(`${spinnerFrame(ACTIVITY_SPINNERS.calling, now, 240)} calling bash`)
-      expect(screen).toContain(`${spinnerFrame(TOOL_SPINNERS.shell, now, 240)} bash`)
+      expect(screen).toContain(`${spinnerFrame(TOOL_SPINNER, now, 240)} bash`)
       test.runTick(240)
     }
   })

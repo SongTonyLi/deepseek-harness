@@ -1,18 +1,17 @@
 /**
  * Working indicators: a braille status glyph and a shimmer on the activity
- * line above the prompt, and tool-family glyphs on running cards and on the
- * activity board's in-progress todo rows.
+ * line above the prompt, and a blooming star on running tool cards, folded
+ * subagent rows, and the activity board's in-progress todo rows.
  *
  * Pure. Every animation has {@link SPINNER_CYCLE} frames, and a frame lookup
  * reads a wall-clock instant and a frame period the caller passes in, so
  * every surface drawn at the same moment steps at the same instant and the
  * application owns the one tick that redraws them. Only the activity line
- * draws braille, so its glyph never repeats a card's; indicators of one card
- * family spin at different phases ({@link staggerPhase}).
+ * draws braille, so its glyph never repeats a card's; star indicators spin at
+ * different phases ({@link staggerPhase}).
  * @module @deepseek-ai/dsh-tui-app/spinner
  */
 
-import { isSubagentTool } from './transcript.ts'
 import type { Palette } from './style.ts'
 
 /**
@@ -47,84 +46,17 @@ export const ACTIVITY_SPINNERS = {
 export type ActivityStatus = keyof typeof ACTIVITY_SPINNERS
 
 /**
- * The animation a running tool card's glyph cycles through, by tool family;
- * the activity board's in-progress todo rows draw the `todo` family. No two
- * families share a glyph. A presentation choice of this terminal surface,
- * not a deployment setting.
+ * The animation every running tool card, folded subagent row, and in-progress
+ * todo row draws, whatever the tool: a star blooming from a thin four-pointed
+ * outline to a full asterisk. No frame is braille and no two frames match, so
+ * two indicators at different phases never draw the same glyph at the same
+ * instant. A presentation choice of this terminal surface, not a deployment
+ * setting.
  */
-export const TOOL_SPINNERS = {
-  /** Command execution: a block turning around the cell. */
-  shell: ['▖', '▌', '▘', '▀', '▝', '▐', '▗', '▄'],
-  /** File mutation: a diamond setting solid. */
-  edit: ['⋄', '◇', '◈', '◆', '❖', '◆', '◈', '◇'],
-  /** Reading and searching: a lens focusing. */
-  search: ['·', '∘', '◌', '○', '◍', '◎', '◉', '●'],
-  /** Delegation to a child agent, a folded subagent row included: a pointer turning. */
-  subagent: ['▲', '◥', '►', '◢', '▼', '◣', '◄', '◤'],
-  /** Planning and scheduling, and an in-progress todo row: a bar rising and falling. */
-  todo: ['▁', '▂', '▃', '▅', '▇', '▅', '▃', '▂'],
-  /** Waiting on a human answer: a shade breathing in and out. */
-  waiting: [' ', '░', '▒', '▓', '█', '▓', '▒', '░'],
-  /** A tool with no family of its own: a star blooming. */
-  other: ['✧', '✦', '✶', '✷', '✸', '✹', '✺', '✻'],
-} as const satisfies Record<string, SpinnerFrames>
-
-/** One tool family of {@link TOOL_SPINNERS}. */
-export type ToolFamily = keyof typeof TOOL_SPINNERS
+export const TOOL_SPINNER = ['✧', '✦', '✶', '✷', '✸', '✹', '✺', '✻'] as const satisfies SpinnerFrames
 
 /** Blank steps between two shimmer passes, so the sweep pauses past the word's end. */
 const SHIMMER_GAP = 6
-
-/** Tool names that execute commands. */
-const SHELL_TOOLS: ReadonlySet<string> = new Set(['bash', 'pwsh', 'run_code'])
-
-/** Tool names that mutate files. */
-const EDIT_TOOLS: ReadonlySet<string> = new Set(['edit', 'write', 'str_replace_editor'])
-
-/** Tool names that read or search, beyond the `TOOL_PREFIXES` below. */
-const SEARCH_TOOLS: ReadonlySet<string> = new Set([
-  'read',
-  'read_image',
-  'glob',
-  'grep',
-  'lsp',
-  'skill',
-  'web_fetch',
-  'web_search',
-  'load_workspace_dependencies',
-  'list_subagent_models',
-])
-
-/** Tool names that delegate or steer a child agent, beyond `subagent` itself. */
-const SUBAGENT_TOOLS: ReadonlySet<string> = new Set([
-  'send_message',
-  'interrupt_agent',
-  'list_agents',
-  'ralph',
-  'workflow',
-  'spawn_teammate',
-  'wait_agent',
-])
-
-/** Tool names that plan or schedule work. */
-const TODO_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'create_goal', 'get_goal', 'update_goal'])
-
-/** Tool names that wait on a human answer. */
-const WAITING_TOOLS: ReadonlySet<string> = new Set(['ask_user_question', 'exit_plan_mode'])
-
-/**
- * Tool-name prefixes per family, checked after the exact sets above. An MCP
- * or custom tool that keeps its family's prefix inherits the animation.
- */
-const TOOL_PREFIXES: ReadonlyArray<readonly [string, ToolFamily]> = [
-  ['terminal_', 'shell'],
-  ['session_', 'search'],
-  ['cordis_inspect_', 'search'],
-  ['list_mcp_', 'search'],
-  ['read_mcp_', 'search'],
-  ['team_task_', 'subagent'],
-  ['schedule_', 'todo'],
-]
 
 /** The activity line's label while a compaction condenses history. */
 export const COMPACTING_ACTIVITY = 'compacting'
@@ -164,24 +96,6 @@ export function activityStatus(activity: string): ActivityStatus {
 }
 
 /**
- * The family whose animation a running tool card draws for `name`.
- * @param name - the tool the model called.
- * @returns the tool's family, or `other` for a tool with no family.
- */
-export function toolFamily(name: string): ToolFamily {
-  if (SHELL_TOOLS.has(name)) return 'shell'
-  if (EDIT_TOOLS.has(name)) return 'edit'
-  if (SEARCH_TOOLS.has(name)) return 'search'
-  if (isSubagentTool(name) || SUBAGENT_TOOLS.has(name)) return 'subagent'
-  if (TODO_TOOLS.has(name)) return 'todo'
-  if (WAITING_TOOLS.has(name)) return 'waiting'
-  for (const [prefix, family] of TOOL_PREFIXES) {
-    if (name.startsWith(prefix)) return family
-  }
-  return 'other'
-}
-
-/**
  * The frame an indicator draws at one instant. The frame index advances
  * once per `periodMs` of wall clock, so indicators drawn at the same instant
  * step together, and a change of animation keeps the beat.
@@ -198,48 +112,30 @@ export function spinnerFrame(frames: SpinnerFrames, now: number, periodMs: numbe
 }
 
 /**
- * At how many of a cycle's instants two indicators of `frames`, `shift`
- * frames apart, draw the same glyph.
- * @param frames - the animation both indicators draw.
- * @param shift - the first indicator's phase minus the second's.
- * @returns a count from 0 to {@link SPINNER_CYCLE}.
- */
-function coincidences(frames: SpinnerFrames, shift: number): number {
-  let count = 0
-  for (const [index, frame] of frames.entries()) {
-    if (frame === frames[(((index + shift) % SPINNER_CYCLE) + SPINNER_CYCLE) % SPINNER_CYCLE]) count += 1
-  }
-  return count
-}
-
-/**
- * The phase a new indicator of `frames` spins at beside the indicators of
- * the same animation already spinning: a phase whose glyph differs from each
- * of theirs at every instant while one is left, otherwise the phase whose
- * glyph coincides with theirs at the fewest instants of a cycle. Ties go to
- * the phase farthest from its nearest neighbour, then to the lowest. An
- * animation whose frames are all distinct leaves every phase no indicator
- * holds; a palindromic one leaves only the phases an odd number of frames
- * away from each.
- * @param frames - the animation the new indicator draws.
- * @param taken - the phases of the indicators of `frames` spinning now, one per indicator.
+ * The phase a new {@link TOOL_SPINNER} indicator spins at beside the
+ * indicators already spinning. No two frames of that animation match, so two
+ * indicators at different phases never draw the same glyph at the same
+ * instant. A phase no indicator holds is taken, the one farthest from its
+ * nearest neighbour first and the lowest on a tie; once every phase is held,
+ * the lowest phase held by the fewest indicators.
+ * @param taken - the phases of the indicators spinning now, one per indicator.
  * @returns a phase from 0 to {@link SPINNER_CYCLE} - 1.
  */
-export function staggerPhase(frames: SpinnerFrames, taken: readonly number[]): number {
+export function staggerPhase(taken: readonly number[]): number {
   let best = 0
   let fewest = Number.POSITIVE_INFINITY
   let widest = -1
   for (let phase = 0; phase < SPINNER_CYCLE; phase += 1) {
-    let matches = 0
+    let holders = 0
     let gap: number = SPINNER_CYCLE
     for (const other of taken) {
-      matches += coincidences(frames, phase - other)
+      if (other === phase) holders += 1
       const distance = Math.abs(phase - other)
       gap = Math.min(gap, distance, SPINNER_CYCLE - distance)
     }
-    if (matches < fewest || (matches === fewest && gap > widest)) {
+    if (holders < fewest || (holders === fewest && gap > widest)) {
       best = phase
-      fewest = matches
+      fewest = holders
       widest = gap
     }
   }
