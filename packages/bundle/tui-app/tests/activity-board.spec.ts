@@ -112,8 +112,8 @@ describe('renderActivityBoard', () => {
   it('draws each in-progress todo on its own spinner frame and names the rows that spin', () => {
     const view = activityBoardView({ todos: mixed })
     expect(spinningTodos(view)).toEqual(['write the data layer'])
-    const shown = renderActivityBoard(view, { palette: color, spinners: new Map([['write the data layer', '▃']]) })
-    expect(shown).toContain('\u001b[33m▃\u001b[39m write the data layer')
+    const shown = renderActivityBoard(view, { palette: color, spinners: new Map([['write the data layer', '✦']]) })
+    expect(shown).toContain('\u001b[33m✦\u001b[39m write the data layer')
     expect(shown).toContain('\u001b[36m○\u001b[39m wire the picker')
     expect(spinningTodos(activityBoardView({ todos: [{ content: 'wire the picker', status: 'pending' }] }))).toEqual([])
 
@@ -126,10 +126,10 @@ describe('renderActivityBoard', () => {
       ],
     })
     expect(spinningTodos(parallel)).toEqual(['build the client', 'build the server', 'ship both'])
-    const frames = new Map([['build the client', '▂'], ['build the server', '▅'], ['wire the picker', '▇']])
+    const frames = new Map([['build the client', '✧'], ['build the server', '✶'], ['wire the picker', '✸']])
     expect(renderActivityBoard(parallel, { palette, spinners: frames }).split('\n')).toEqual([
-      '▂ build the client',
-      '▅ build the server',
+      '✧ build the client',
+      '✶ build the server',
       '▸ ship both',
       '○ wire the picker',
     ])

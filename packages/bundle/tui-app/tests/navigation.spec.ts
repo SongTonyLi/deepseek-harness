@@ -6,7 +6,6 @@ import {
   cursorAt,
   firstSection,
   isSectionSource,
-  lastPrompt,
   lastSection,
   moveBlock,
   movePart,
@@ -22,7 +21,6 @@ import {
   type AssistantSection,
   type ContextSection,
   type SectionPart,
-  type SectionSource,
   type ToolSection,
   type UserSection,
 } from '../src/navigation.ts'
@@ -351,45 +349,6 @@ describe('turnGroups', () => {
     expect(turnGroups([blank])).toEqual([])
     expect(turnGroups([assistantBlock([]), firstPrompt]).map(group => group.label)).toEqual(['read the spec'])
     expect(turnGroups([rowless]).map(group => group.label)).toEqual([''])
-  })
-})
-
-/**
- * The prompt the reader opens the newest turn with: the first `user` section
- * of the last group that has one.
- * @param transcript - the navigable blocks.
- * @returns that section, or undefined when no group has one.
- */
-function groupedPrompt(transcript: readonly SectionSource[]): SectionPart | undefined {
-  return turnGroups(transcript)
-    .map(group => group.sections.map(section => transcript[section.block]?.parts()[section.part]).find(part => part?.kind === 'user'))
-    .findLast(part => part !== undefined)
-}
-
-describe('lastPrompt', () => {
-  /** A prompt block that carries no section at all. */
-  const blank: UserSection = { blockKind: 'user', navigable: true, turn: 1, parts: () => [], setHighlight: mark }
-
-  it('names the prompt that opens the newest turn, with the block that draws it', () => {
-    const found = lastPrompt(grouped)
-    expect(found?.block).toBe(secondPrompt)
-    expect(found?.part).toEqual({ kind: 'user', rows: ['now ship it'] })
-  })
-
-  it('names the section the reader opens the newest turn with', () => {
-    const transcripts: SectionSource[][] = [
-      grouped,
-      [promptIn(3, 'first ask'), promptIn(3, 'second ask'), replyIn(4, [{ kind: 'reply', rows: ['both done'] }])],
-      [system, firstPrompt, firstReply, blank, firstCard],
-      [system, firstReply],
-    ]
-    for (const transcript of transcripts) expect(lastPrompt(transcript)?.part).toEqual(groupedPrompt(transcript))
-  })
-
-  it('reads past a prompt block with no section, and finds none in a transcript without a prompt', () => {
-    expect(lastPrompt([firstPrompt, firstReply, blank])?.block).toBe(firstPrompt)
-    expect(lastPrompt([system, firstReply, blank])).toBeUndefined()
-    expect(lastPrompt([])).toBeUndefined()
   })
 })
 

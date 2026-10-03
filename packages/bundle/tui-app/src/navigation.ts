@@ -395,33 +395,6 @@ export function turnGroups(blocks: readonly SectionSource[]): readonly TurnGroup
   return groups.filter(group => group.sections.length > 0)
 }
 
-/** One prompt, and the block that draws it. */
-export interface PromptSection {
-  /** The prompt block. */
-  readonly block: UserSection
-  /** Its `user` section, which carries the submitted text. */
-  readonly part: SectionPart
-}
-
-/**
- * The prompt that opens the newest turn: the first `user` section of the last
- * group {@link turnGroups} forms that has one. Every prompt block opens a
- * group and only a prompt block carries a `user` section, so that is the
- * newest prompt block's own, found by reading back from the newest block
- * without reading the parts of the blocks before it.
- * @param blocks - the navigable blocks.
- * @returns the prompt, or undefined while no block carries one.
- */
-export function lastPrompt(blocks: readonly SectionSource[]): PromptSection | undefined {
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index]
-    if (block?.blockKind !== 'user') continue
-    const part = block.parts().find(candidate => candidate.kind === 'user')
-    if (part !== undefined) return { block, part }
-  }
-  return undefined
-}
-
 /**
  * Which group holds one cursor.
  * @param cursor - where the focus sits.
