@@ -65,7 +65,7 @@ kind: "package-reference"
 
 ### 策略与沙箱行为
 
-`read` 与 `read_image` 的路径授权由 `ctx.fs` 负责，并受沙箱读取范围收窄：当挂载的 `ctx.sandbox` 提供方限制读取时（Apple container 后端即如此），`read`、`read_image`、`edit` 与 `write` 会在观察路径之前，以 `FS_SANDBOX_DENIED` 拒绝范围之外的路径或被隐藏的密钥文件。媒体类型声明和文件签名只决定 `read_image` 是否接受该后端返回的字节。
+`read` 与 `read_image` 的路径授权由 `ctx.fs` 负责，并受沙箱读取范围收窄：当挂载的 `ctx.sandbox` 提供方限制读取时（Apple container 后端即如此），`read`、`read_image`、`edit` 与 `write` 会在观察路径之前，以 `FS_SANDBOX_DENIED` 拒绝被隐藏的密钥文件。对于范围之外的其他路径，`read` 与 `read_image` 会通过 `ctx.approval` 询问用户，只有“仅允许一次”的答复才允许该次调用读取它；该授权既不放宽后续读取，也不放宽受限命令。拼写在范围根目录之外或包含 `..` 的路径会在任何文件系统调用之前询问；通向外部的工作区符号链接则在解析之后询问。拒绝、取消和缺少审批通道都会以 `FS_SANDBOX_DENIED` 失败。除非应用了 `danger-full-access` 升级，`edit` 与 `write` 会拒绝外部路径。媒体类型声明和文件签名只决定 `read_image` 是否接受该后端返回的字节。
 
 挂载策略插件后，`write` 与 `edit` 从 `fs/*` 意图槽位取得防护，因此未读目标或陈旧观察会以 `FS_NOT_OBSERVED` 或 `FS_STALE_VERSION` 及恢复指令失败。使用施加沙箱限制的后端（`fs-sandbox`）时，`write`/`edit` 还会公开 `sandbox_permissions` 与 `justification`；被拒绝的变更返回 `[sandbox: file access denied under <mode> mode]` 标记与同轮次升级提示，获批的重试可以在该次调用中加盖严格更宽的模式。理由字段提示模型使用用户当前提问的语言。
 

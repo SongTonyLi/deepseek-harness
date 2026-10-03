@@ -83,6 +83,18 @@ export function matchesNameGlob(name: string, glob: string): boolean {
 }
 
 /**
+ * Whether the canonical file name of `path` matches a hidden-name glob of
+ * `scope`, so a symlink cannot rename a hidden target into view.
+ * @param path - the host path a reader is about to open or search.
+ * @param scope - the read scope from `SandboxProvider.readScope`.
+ * @returns true when the path is hidden regardless of its root.
+ */
+export function isHiddenIn(path: string, scope: SandboxReadScope): boolean {
+  const name = basename(canonicalTarget(path))
+  return scope.hiddenNames.some(glob => matchesNameGlob(name, glob))
+}
+
+/**
  * Whether `path` is readable within `scope`: it lies inside a root after both
  * are canonicalized (so neither `..` nor a symlink can leave the roots), and
  * its file name matches no hidden-name glob.
@@ -91,8 +103,8 @@ export function matchesNameGlob(name: string, glob: string): boolean {
  * @returns true when the path may be read.
  */
 export function isReadableIn(path: string, scope: SandboxReadScope): boolean {
+  if (isHiddenIn(path, scope)) return false
   const target = canonicalTarget(path)
-  if (scope.hiddenNames.some(glob => matchesNameGlob(basename(target), glob))) return false
   return scope.roots.some((root) => {
     const canonicalRoot = canonicalTarget(root)
     return target === canonicalRoot || target.startsWith(canonicalRoot.endsWith(sep) ? canonicalRoot : `${canonicalRoot}${sep}`)
