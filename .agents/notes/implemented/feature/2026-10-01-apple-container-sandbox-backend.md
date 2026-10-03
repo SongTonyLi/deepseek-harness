@@ -8,7 +8,7 @@ English | [中文](2026-10-01-apple-container-sandbox-backend.zh.md)
 
 The terminal profile confined bash, terminal, and PTC subprocesses with macOS Seatbelt through `@deepseek-ai/dsh-sandbox-local`. Seatbelt shares the host kernel, the host toolchain, and every readable host file, so a confined command could read anything the user can read, including keys, other repositories, and `.env` files, and was only stopped from writing. The model's `read`, `grep`, and `glob` tools read the host without any confinement. Apple's [`container`](https://github.com/apple/container) runs each Linux container in its own lightweight VM on Apple silicon and macOS 26, which bounds both reads and writes to what is explicitly mounted.
 
-The [subprocess sandbox decision](2026-07-06-sandbox.md) rejected containers as `ctx.sandbox` backends because `confine(argv)` presupposes a shared filesystem. With the workspace bind-mounted at its own absolute host path, the shared-filesystem premise holds for every path a confined mode may write, so this note narrows that rule for a VM backend of this form.
+The [historical subprocess sandbox decision](../../archived/feature/2026-07-06-sandbox.md) rejected containers as `ctx.sandbox` backends because `confine(argv)` presupposes a shared filesystem. With the workspace bind-mounted at its own absolute host path, the shared-filesystem premise holds for every path a confined mode may write, so this note narrows that rule for a VM backend of this form.
 
 ## Decision
 

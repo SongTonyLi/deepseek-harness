@@ -16,7 +16,7 @@ Keys are write-only. The page receives a redacted descriptor after saving, never
 
 Choose **Add model provider**. The card opens on **Third-party model provider**: pick a provider dsh ships with — the list shows provider ids such as `anthropic`, `openai`, `moonshotai` for Kimi, or `zai` for GLM — enter its API key, and save. The installed catalog supplies the endpoint, protocol, and model list.
 
-For a subscription login, open the provider card in **Settings → Models** instead of adding an API-key provider. The OpenAI Codex card offers a ChatGPT subscription sign-in; Cursor offers its own subscription sign-in. Choose a sign-in method, follow the page or code shown in the dialog, and answer any prompt there. Once the card shows **Signed in**, select one of that provider's models. **Sign out** forgets the local credential but does not revoke it at the provider. See [provider sign-in](../../../packages/client/ui-settings-signin/README.md#signing-in) for the dialog and recovery behavior.
+For a subscription login, open the provider card in **Settings → Models** instead of adding an API-key provider. The OpenAI Codex card offers a ChatGPT subscription sign-in; Cursor offers its own subscription sign-in. Choose a sign-in method, follow the page or code shown in the dialog, and answer any prompt there. Once the card shows **Signed in**, select one of that provider's models. **Sign out** forgets the local credential but does not revoke it at the provider. See [provider sign-in](../../../packages/client/ui-settings-signin/README.md) for the dialog and recovery behavior.
 
 ## Add a custom model API
 

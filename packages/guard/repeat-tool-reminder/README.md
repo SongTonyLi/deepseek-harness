@@ -55,7 +55,7 @@ When you want to change when reminders fire or which tools they cover, mount the
 | `blockThreshold` | unset | Consecutive-repeat count at which an identical tracked call is denied before execute; omit to stay advisory-only |
 | `blockProviders` | `['cursor']` | Provider routes that honor `blockThreshold`; empty denies no route. Reminders still run for every provider |
 
-Invalid configuration fails at startup with a clear error — an empty `thresholds` list, a repeat count below 2, a duplicate, or an invalid `blockThreshold` — never a silent change of behavior. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-repeat-tool-reminder) documents every accepted value.
+Invalid configuration fails at startup with a clear error — an empty `thresholds` list, a repeat count below 2, a duplicate, an invalid `blockThreshold`, or an empty `blockProviders` entry — never a silent change of behavior. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-repeat-tool-reminder) documents every accepted value.
 
 ### What you get
 
@@ -93,7 +93,7 @@ Each agent's chain is keyed by `(tool name, canonical arguments)` — two calls 
 
 ### Reminder delivery
 
-Reminders ride the post-execute decision's `additionalContexts` (source `{kind: 'plugin', plugin: 'repeat-tool-reminder', form: 'notice', summary: '<tool> × <count>'}`), never a `content` replacement: the `tool/result` event stays the tool's own output for audit. The loop buffers the context and appends it as an injected `user/message` after the step's tool results, which the session renders as a plain synthetic user message — model-visible, source-attributed, and reconstructable from the session log with no new session event. The guard always delegates via `next()` and prepends its reminder to the downstream decision's context array, so both decision variants (a blocked call included) still get the nudge while every entry retains its own source and metadata.
+Reminders ride the post-execute decision's `additionalContexts` (source `{kind: 'repeat-tool-reminder', form: 'notice', summary: '<tool> × <count>'}`), never a `content` replacement: the `tool/result` event stays the tool's own output for audit. The loop buffers the context and appends it as an injected `user/message` after the step's tool results, which the session renders as a plain synthetic user message — model-visible, source-attributed, and reconstructable from the session log with no new session event. The guard always delegates via `next()` and prepends its reminder to the downstream decision's context array, so both decision variants (a blocked call included) still get the nudge while every entry retains its own source and metadata.
 
 ### Source map
 

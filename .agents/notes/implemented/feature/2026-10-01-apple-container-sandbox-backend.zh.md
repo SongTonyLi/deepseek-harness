@@ -8,7 +8,7 @@ Status: implemented
 
 终端 profile 曾通过 `@deepseek-ai/dsh-sandbox-local` 使用 macOS Seatbelt 约束 bash、终端与 PTC 子进程。Seatbelt 共享宿主机内核、宿主机工具链以及所有可读的宿主机文件，因此受限命令可以读取用户能读取的任何内容，包括密钥、其他仓库和 `.env` 文件，只是被阻止写入。模型的 `read`、`grep` 与 `glob` 工具读取宿主机时完全不受约束。Apple 的 [`container`](https://github.com/apple/container) 在 Apple 芯片和 macOS 26 上为每个 Linux 容器运行一个独立的轻量虚拟机，读写都被限制在显式挂载的范围之内。
 
-[子进程沙箱决策](2026-07-06-sandbox.zh.md)曾否决把容器作为 `ctx.sandbox` 后端，因为 `confine(argv)` 预设共享文件系统。当工作区绑定挂载在其宿主机绝对路径上时，共享文件系统这一前提对受限模式可写入的每条路径都成立，因此本笔记针对这种形式的虚拟机后端收窄了那条规则。
+[历史子进程沙箱决策](../../archived/feature/2026-07-06-sandbox.md)曾否决把容器作为 `ctx.sandbox` 后端，因为 `confine(argv)` 预设共享文件系统。当工作区绑定挂载在其宿主机绝对路径上时，共享文件系统这一前提对受限模式可写入的每条路径都成立，因此本笔记针对这种形式的虚拟机后端收窄了那条规则。
 
 ## Decision
 

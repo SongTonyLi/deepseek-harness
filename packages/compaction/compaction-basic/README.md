@@ -138,7 +138,6 @@ The transaction validates the surface span and the durable lock, appends `compac
 | [`src/work-state.ts`](src/work-state.ts) | Model-switch work-state notice admitted after a `model-selection` notice whose incoming route is `cursor` |
 | [`src/config.ts`](src/config.ts) | Load-time validation and routed-model policy resolution |
 | [`src/types.ts`](src/types.ts) | `BasicCompactionConfig` and resolved policy vocabulary |
-| — | No runtime invariant companion is published; this package exposes no independent event sequence or mutable data relation beyond contracts enforced at its owning seam. The durable bracket remains observable in the session log. |
 
 </details>
 

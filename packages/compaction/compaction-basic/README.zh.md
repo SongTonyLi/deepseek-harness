@@ -138,7 +138,6 @@ kind: "package-reference"
 | [`src/work-state.ts`](src/work-state.ts) | 在入站路由为 `cursor` 的 `model-selection` 通知之后接纳的模型切换工作状态通知 |
 | [`src/config.ts`](src/config.ts) | 加载时验证与路由模型策略解析 |
 | [`src/types.ts`](src/types.ts) | `BasicCompactionConfig` 与已解析策略词汇 |
-| — | 不发布运行时不变式配套条目；除所属 seam 强制执行的约定外，本包不公开独立事件序列或可变数据关系。持久标记对仍可在会话日志中观察。 |
 
 </details>
 

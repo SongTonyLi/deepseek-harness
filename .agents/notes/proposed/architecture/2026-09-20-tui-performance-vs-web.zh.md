@@ -47,7 +47,7 @@ tsx 源码启动（`pnpm dsh`）会同时加重两个 Host。要把构建后的 
 
 ### 测量卡片
 
-先做这些卡片，再改产品。使用普通 Node 下的已编译 JavaScript、私有 `mkdtemp` Harness 主目录，以及由已审常量生成的合成 JSONL。排除模型与网络延迟。包内 `.perf.ts` 可以持有伪 `Terminal` 上流式卡片；必跑的 `benchmarks/` 车道要等校准，见 [benchmarks/AGENTS.md](../../../../benchmarks/AGENTS.md) 与[基于证据的性能技能](../../implemented/process/2026-09-06-evidence-driven-performance-skill.zh.md)。
+先做这些卡片，再改产品。使用普通 Node 下的已编译 JavaScript、私有 `mkdtemp` Harness 主目录，以及由已审常量生成的合成 JSONL。排除模型与网络延迟。包内 `.perf.ts` 可以持有伪 `Terminal` 上流式卡片；必跑的 `benchmarks/` 车道要等校准，见 [benchmarks/AGENTS.md](../../../../benchmarks/AGENTS.md) 与[基于证据的性能技能](../../../skills/dsh-speed-up-perf/SKILL.md)。
 
 | 卡片 | 完成条件 | 工作负载 | 入口路径 | 时钟 | 内存 |
 |---|---|---|---|---|---|
@@ -129,4 +129,4 @@ tsx 源码启动（`pnpm dsh`）会同时加重两个 Host。要把构建后的 
 
 ## 相关决定
 
-终端应用及其未打补丁的 pi-tui 依赖是[随附的 `tui` profile](../../implemented/architecture/2026-09-15-terminal-surface-tui-app.zh.md)；次序 2 会改正该注记里「`--resume` 在 Agent 恢复前分页打开读句柄」那一句，而不会把它归档。已结算块的行复用、围栏备忘，以及剩下的整帧遍历是[transcript 渲染复用](../../implemented/bug-fix/2026-09-19-tui-transcript-render-reuse.zh.md)。渐变年龄、33 ms 滴答，以及被拒绝的按到达速率切断是[连续渐变](../../implemented/feature/2026-09-17-tui-continuous-fade.zh.md)。高水位重绘窗口与回滚区清除规则是[transcript 导航与检查器](../../implemented/feature/2026-09-17-tui-transcript-navigation-and-inspector.zh.md)。`Ctrl+G` 与 `/turns` 会让对话离开终端并绕过 16 ms 调度器（[备用屏幕阅读器](../../implemented/architecture/2026-09-20-tui-reader-on-the-alternate-screen.zh.md)）。延迟加载语法是[语法着色](../../implemented/feature/2026-09-19-tui-syntax-colour.zh.md)。测量程序是[基于证据的性能技能](../../implemented/process/2026-09-06-evidence-driven-performance-skill.zh.md)。本注记不得盲目对比的 Web 数字是[前端预算](../../implemented/testing/2026-09-06-frontend-performance-budgets.zh.md)与[会话打开门禁](../../implemented/testing/2026-09-04-session-open-performance-gate.zh.md)。
+终端应用及其未打补丁的 pi-tui 依赖是[随附的 `tui` profile](../../implemented/architecture/2026-09-15-terminal-surface-tui-app.zh.md)；次序 2 会改正该注记里「`--resume` 在 Agent 恢复前分页打开读句柄」那一句，而不会把它归档。已结算块的行复用、围栏备忘，以及剩下的整帧遍历是[transcript 渲染复用](../../implemented/bug-fix/2026-09-19-tui-transcript-render-reuse.zh.md)。渐变年龄、33 ms 滴答，以及被拒绝的按到达速率切断是[连续渐变](../../implemented/feature/2026-09-17-tui-continuous-fade.zh.md)。高水位重绘窗口与回滚区清除规则是[transcript 导航与检查器](../../implemented/feature/2026-09-17-tui-transcript-navigation-and-inspector.zh.md)。`Ctrl+G` 与 `/turns` 会让对话离开终端并绕过 16 ms 调度器（[备用屏幕阅读器](../../implemented/architecture/2026-09-20-tui-reader-on-the-alternate-screen.zh.md)）。延迟加载语法是[语法着色](../../implemented/feature/2026-09-19-tui-syntax-colour.zh.md)。测量程序是[基于证据的性能技能](../../../skills/dsh-speed-up-perf/SKILL.md)。本注记不得盲目对比的 Web 数字是[前端预算](../../implemented/testing/2026-09-06-frontend-performance-budgets.zh.md)与[会话打开门禁](../../implemented/testing/2026-09-04-session-open-performance-gate.zh.md)。
