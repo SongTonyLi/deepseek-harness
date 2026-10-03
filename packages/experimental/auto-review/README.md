@@ -88,7 +88,7 @@ The reviewer uses the latest `request/header.config` provider and model with the
 
 #### Token effect
 
-One additional model request per supported call, without caching, retries, truncation, compaction, or a separate small output budget. An oversized request fails the call with the provider error.
+One additional model request per supported call. When a completed text response is invalid JSON, `maxJsonRetries` permits additional requests (default `1`, non-negative safe integer; `0` disables retries). Each retry reuses the frozen action facts and appends a fixed formatting reminder to the policy without including the malformed response. Valid denials, invalid risk/decision objects, provider or stream failures, and cancelled reviews are not retried. Exhausted JSON retries fail the call without executing its body. Requests have no caching, truncation, compaction, or separate small output budget; an oversized request fails with the provider error.
 
 #### KV Cache effect
 
@@ -114,7 +114,7 @@ The denial appends an ordinary tool result; it does not rewrite earlier context 
 
 - The shipped TUI profile includes Auto review. Default Web, Headless, General settings, and new-session defaults omit it until this layer is switched on.
 - Auto provides no file sandbox. The outer `run_code` transport and direct Node effects inside a PTC program do not pass through inner-tool review.
-- Model classification can be wrong. There are no deterministic tool exemptions, persistent grants, configurable policy, or retry layer.
+- Model classification can be wrong. There are no deterministic tool exemptions, persistent grants, or configurable policy. Formatting retries cannot correct a valid but mistaken classification.
 - In-process Auto children review their own calls. Out-of-process children retain their native permission systems after the parent delegation call is allowed.
 - The reviewer reads the Session action history through the deprecated synchronous `snapshotEvents()` reader under a line-scoped waiver. Prior calls, PTC starts, and the direct parent's initial prompt have no projection or paged reader yet, so the migration stays deferred by [the synchronous-read decision](../../../.agents/notes/implemented/architecture/2026-09-09-deprecate-synchronous-session-event-reads.md).
 

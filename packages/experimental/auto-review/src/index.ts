@@ -67,6 +67,12 @@ type AutoReviewDecision =
   | { readonly risk: 'medium'; readonly decision: 'allow' }
   | { readonly risk: 'medium' | 'high'; readonly decision: 'deny'; readonly reason?: string }
 
+/** A completed reviewer text response that cannot be parsed as JSON. */
+class ReviewerJsonError extends Error {}
+
+/** Formatting correction for a fresh review of the same frozen action. */
+const JSON_RETRY_REMINDER = 'Your previous response was not valid JSON. Review the same pending action under REVIEW_POLICY. Return exactly one JSON object matching its risk/decision rules. Do not include analysis, Markdown, or surrounding prose.'
+
 type ReviewSourceRole =
   | 'human-instruction'
   | 'direct-parent-instruction'
@@ -126,13 +132,15 @@ export const name = 'experimental-auto-review'
 /** Complete host services required before Auto may be advertised. */
 export const inject = ['approval', 'llm', 'permissionPresets', 'sessions', 'tools']
 
-/** Sampling configuration for per-call reviewer requests. */
+/** Generation and JSON retry settings for per-call reviewer requests. */
 export interface Config {
   /** Reviewer temperature from 0 through 2; `provider-default` omits the parameter. */
   temperature: number | 'provider-default'
+  /** Additional requests after invalid JSON text; zero disables formatting retries. */
+  maxJsonRetries: number
 }
 
-/** Validate reviewer sampling configuration. */
+/** Validate reviewer generation and JSON retry settings. */
 export const Config: z<Config> = z.object({
   temperature: z.union([
     z.transform(z.number().min(0).max(2), (value) => {
@@ -141,6 +149,10 @@ export const Config: z<Config> = z.object({
     }),
     z.const('provider-default'),
   ]).default(0),
+  maxJsonRetries: z.transform(z.number().min(0).step(1), (value) => {
+    if (!Number.isSafeInteger(value)) throw new Error('reviewer JSON retry limit must be a non-negative safe integer')
+    return value
+  }).default(1),
 })
 
 /** Return JSON text for one immutable logged value. */
@@ -581,7 +593,12 @@ function topLevelMemberCount(text: string): number {
 
 /** Parse the closed risk/decision protocol and its fixed safety combinations. */
 function parseDecision(text: string): AutoReviewDecision {
-  const value: unknown = JSON.parse(text)
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch (error) {
+    throw new ReviewerJsonError('auto-review: reviewer output must be valid JSON', { cause: error })
+  }
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('auto-review: reviewer output must be one JSON object')
   }
@@ -635,7 +652,7 @@ async function readDecision(stream: AsyncIterable<StreamChunk>): Promise<AutoRev
   return parseDecision(final.text)
 }
 
-/** Review one frozen pending action with the fixed policy and current LLM route. */
+/** Review one frozen action; retry JSON syntax failures within the configured limit. */
 async function classifyRisk(
   ctx: Context,
   agent: Agent,
@@ -656,7 +673,17 @@ async function classifyRisk(
     ...config.temperature === 'provider-default' ? {} : { temperature: config.temperature },
     signal,
   })
-  return readDecision(ctx.llm.stream(options))
+  for (let retries = 0; ; retries += 1) {
+    const request = retries === 0 ? options : deepFreeze({
+      ...options,
+      system: `${REVIEW_POLICY}\n\n${JSON_RETRY_REMINDER}`,
+    })
+    try {
+      return await readDecision(ctx.llm.stream(request))
+    } catch (error) {
+      if (!(error instanceof ReviewerJsonError) || retries >= config.maxJsonRetries || signal.aborted) throw error
+    }
+  }
 }
 
 /** Materialize the fixed model-facing final Auto denial plus optional UI detail. */

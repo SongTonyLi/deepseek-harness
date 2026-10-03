@@ -153,7 +153,7 @@ async function mount(ctx: Context, workspace: string, dshHome: string): Promise<
   await ctx.plugin(ToolFs)
   await ctx.plugin(ToolBash)
   await ctx.plugin(NodePtcRuntime, {})
-  await ctx.plugin(AutoReview)
+  await ctx.plugin(AutoReview, { temperature: AutoReview.Config().temperature, maxJsonRetries: 0 })
   await ctx.plugin(AgentLoop, { agents: [] })
 }
 

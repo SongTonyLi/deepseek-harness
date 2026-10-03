@@ -134,7 +134,7 @@ function reasoningDecisionChunks(text: string): StreamChunk[] {
 async function harness(
   script: ReviewScript[],
   permissionConfig: NonNullable<Parameters<typeof PermissionPresetService.Config>[0]> = { presets: PRESETS, defaultPreset: 'workspace-write' },
-  reviewOptions: { temperature?: number | 'provider-default'; profile?: string } = {},
+  reviewOptions: { temperature?: number | 'provider-default'; maxJsonRetries?: number; profile?: string } = {},
 ): Promise<{ ctx: Context; adapter: RecordingAdapter; auto: PluginFiber }> {
   const ctx = new Context()
   contexts.push(ctx)
@@ -155,7 +155,8 @@ async function harness(
   ctx.llm.registerAdapter(['review'], adapter)
   let auto: PluginFiber
   if (reviewOptions.profile === undefined) {
-    auto = await ctx.plugin(AutoReview, { temperature: reviewOptions.temperature ?? 0 })
+    auto = await ctx.plugin(AutoReview, { temperature: reviewOptions.temperature ?? 0,
+      maxJsonRetries: reviewOptions.maxJsonRetries ?? AutoReview.Config().maxJsonRetries })
   } else {
     ctx.provide('profileContext', {
       name: reviewOptions.profile, dir: '/profile', patchPath: '/profile/cordis.patch.yml',
@@ -293,8 +294,92 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe('native review request', () => {
+  it.each(['allow', 'deny'] as const)('retries prose output before a valid %s decision', async (decision) => {
+    const { ctx, adapter } = await harness([
+      decisionChunks('The pending bash call only lists project files. {"risk":"low","decision":"allow"}'),
+      decisionChunks(JSON.stringify({ risk: 'medium', decision })),
+    ])
+    const bash = registerProbe(ctx, 'bash')
+    const { session, agent } = autoSession(ctx, `retry-${decision}`)
+    setApprovalPolicy(session, 'never')
+    appendHeader(session, [{ name: 'bash', description: 'List project files.', parameters: {} }])
+    const callId = ToolCallId(`retry-${decision}-call`)
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'bash', arguments: '{}' }])
+    appendNativeCall(session, callId, 'bash', '{}')
+    const before = session.seq
+    const result = await ctx.tools.execute({ signal: new AbortController().signal,
+      callId, name: 'bash', arguments: {}, agent })
+    expect(result.isError).toBe(decision === 'deny')
+    expect(bash.runs()).toBe(decision === 'allow' ? 1 : 0)
+    expect(adapter.requests).toHaveLength(2)
+    expect(adapter.requests[1]?.messages).toEqual(adapter.requests[0]?.messages)
+    expect(adapter.requests[1]?.system).toContain('Your previous response was not valid JSON.')
+    expect(JSON.stringify(adapter.requests[1])).not.toContain('only lists project files')
+    expect(session.seq).toBe(before)
+  })
+
+  it.each([0, 1, 2])('fails closed after %s JSON retries', async (maxJsonRetries) => {
+    const { ctx, adapter } = await harness(Array.from({ length: maxJsonRetries + 1 }, () =>
+      decisionChunks('The pending action is an ordinary read.')), undefined, { maxJsonRetries })
+    const probe = registerProbe(ctx)
+    const { session, agent } = autoSession(ctx, `retry-limit-${String(maxJsonRetries)}`)
+    appendHeader(session, [{ name: 'probe', description: 'Inspect the workspace.', parameters: {} }])
+    const callId = ToolCallId('retry-limit-call')
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{}' }])
+    appendNativeCall(session, callId, 'probe', '{}')
+    const result = await ctx.tools.execute({ signal: new AbortController().signal,
+      callId, name: 'probe', arguments: {}, agent })
+    expect(result).toMatchObject({ isError: true, error: {
+      message: 'Auto review of tool "probe" failed; its body was not executed: auto-review: reviewer output must be valid JSON',
+    } })
+    expect(probe.runs()).toBe(0)
+    expect(adapter.requests).toHaveLength(maxJsonRetries + 1)
+  })
+
+  it.each([-1, 0.5, NaN, Infinity])('rejects invalid JSON retry limit %s', (maxJsonRetries) => {
+    expect(() => z.resolve({ maxJsonRetries }, AutoReview.Config, {})).toThrow()
+  })
+
+  it.each([
+    decisionChunks('{"risk":"high","decision":"allow"}'),
+    decisionChunks('{"risk":"low","risk":"medium","decision":"allow"}'),
+    [{ type: 'finish', reason: { kind: 'error', failure: { code: 'SERVER', message: 'provider failure' } } }] satisfies StreamChunk[],
+  ].map(response => ({ response })))('does not retry invalid decisions or provider failures', async ({ response }) => {
+    const { ctx, adapter } = await harness([response])
+    const probe = registerProbe(ctx)
+    const { session, agent } = autoSession(ctx, 'no-retry')
+    appendHeader(session, [{ name: 'probe', description: 'Inspect the workspace.', parameters: {} }])
+    const callId = ToolCallId('no-retry-call')
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{}' }])
+    appendNativeCall(session, callId, 'probe', '{}')
+    const result = await ctx.tools.execute({ signal: new AbortController().signal,
+      callId, name: 'probe', arguments: {}, agent })
+    expect(result.isError).toBe(true)
+    expect(probe.runs()).toBe(0)
+    expect(adapter.requests).toHaveLength(1)
+  })
+
+  it('does not retry malformed JSON after caller cancellation', async () => {
+    const controller = new AbortController()
+    const { ctx, adapter } = await harness([async function* () {
+      controller.abort()
+      yield* decisionChunks('The pending call reads project files.')
+    }])
+    const probe = registerProbe(ctx)
+    const { session, agent } = autoSession(ctx, 'cancel-retry')
+    appendHeader(session, [{ name: 'probe', description: 'Inspect the workspace.', parameters: {} }])
+    const callId = ToolCallId('cancel-retry-call')
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{}' }])
+    appendNativeCall(session, callId, 'probe', '{}')
+    const result = await ctx.tools.execute({ signal: controller.signal,
+      callId, name: 'probe', arguments: {}, agent })
+    expect(result.isError).toBe(true)
+    expect(probe.runs()).toBe(0)
+    expect(adapter.requests).toHaveLength(1)
+  })
+
   it('defaults reviewer temperature to zero', () => {
-    expect(AutoReview.Config()).toEqual({ temperature: 0 })
+    expect(AutoReview.Config()).toEqual({ temperature: 0, maxJsonRetries: 1 })
   })
 
   it.each([0.5, 'provider-default'] as const)('uses explicit reviewer temperature %s', async (temperature) => {
@@ -1041,7 +1126,7 @@ describe('native review request', () => {
         { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } },
       ],
     ]
-    const { ctx, adapter } = await harness(invalidResponses)
+    const { ctx, adapter } = await harness(invalidResponses, undefined, { maxJsonRetries: 0 })
     const probe = registerProbe(ctx)
     const cases = invalidResponses.map((_, index) => `invalid-${String(index)}`)
     const messages: string[] = []
@@ -1176,8 +1261,9 @@ describe('PTC and bypass semantics', () => {
     }
   })
 
-  it('scopes reused PTC root and sub-call ids to the open step', async () => {
+  it('scopes reused PTC ids to the open step across a JSON retry', async () => {
     const { ctx, adapter } = await harness([
+      decisionChunks('The pending inner call only reads the workspace.'),
       decisionChunks('{"risk":"low","decision":"allow"}'),
     ])
     const probe = registerProbe(ctx)
@@ -1241,7 +1327,8 @@ describe('PTC and bypass semantics', () => {
 
     expect(result.isError).toBe(false)
     expect(probe.runs()).toBe(1)
-    expect(adapter.requests).toHaveLength(1)
+    expect(adapter.requests).toHaveLength(2)
+    expect(adapter.requests[1]?.messages).toEqual(adapter.requests[0]?.messages)
     const sections = requestSections(adapter.requests[0]!)
     expect((sections.FILTERED_HISTORY as Array<Record<string, unknown>>)
       .filter(entry => entry['mode'] === 'ptc-inner')).toEqual([{

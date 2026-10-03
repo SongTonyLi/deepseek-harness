@@ -25,6 +25,7 @@ const COMPACTION_SUMMARY = '## Primary Request and Intent\n- CLI_COMPACTION_SUMM
  */
 class CliMockAdapter extends LlmAdapter {
   private readonly replay: ReplayEntry[] | undefined
+  private malformedReviewSent = false
 
   constructor() {
     super()
@@ -65,7 +66,11 @@ class CliMockAdapter extends LlmAdapter {
       }
       const trace = process.env.DSH_CLI_MOCK_REVIEW_TRACE
       if (trace !== undefined) appendFileSync(trace, 'reviewed\n', { mode: 0o600 })
-      const verdict = '{"risk":"low","decision":"allow"}'
+      const malformed = process.env.DSH_CLI_MOCK_MALFORMED_REVIEW_ONCE === '1' && !this.malformedReviewSent
+      this.malformedReviewSent ||= malformed
+      const verdict = malformed
+        ? 'The pending bash call only prints a project-local marker.'
+        : '{"risk":"low","decision":"allow"}'
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: verdict }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: verdict } }

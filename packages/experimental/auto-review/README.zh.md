@@ -88,7 +88,7 @@ Reviewer 使用最新 `request/header.config` 的 provider 与模型，并沿用
 
 #### Token 影响
 
-每个受支持调用额外产生一次模型请求，不缓存、重试、截断、压缩，也不设单独的小型输出预算。超窗请求以 provider 错误使调用失败。
+每个受支持调用额外产生一次模型请求。完整 text 响应不是有效 JSON 时，`maxJsonRetries` 允许额外请求（默认 `1`，非负安全整数；`0` 禁用重试）。每次重试复用冻结的动作事实，并在策略后追加固定格式提醒，不包含格式错误的响应。有效拒绝、非法 risk／decision 对象、provider 或 stream 失败以及已取消的 review 不重试。JSON 重试耗尽后调用失败，不执行 body。请求不缓存、截断、压缩，也不设单独的小型输出预算；超窗请求以 provider 错误使调用失败。
 
 #### KV Cache 影响
 
@@ -114,7 +114,7 @@ Reviewer 使用最新 `request/header.config` 的 provider 与模型，并沿用
 
 - 随附的 TUI profile 包含 Auto review。默认 Web、Headless、通用设置与新会话默认值在开启此层之前都不包含它。
 - Auto 不提供文件沙箱。外层 `run_code` transport 及PTC 程序内直接 Node 效果不经过 inner-tool review。
-- 模型分类可能出错。不提供确定性工具豁免、持久 grant、可配置策略或重试层。
+- 模型分类可能出错。不提供确定性工具豁免、持久 grant 或可配置策略。格式重试无法纠正有效但错误的分类。
 - 进程内 Auto child 独立审查自身调用。进程外 child 在父委派调用获准后保留原生权限系统。
 - reviewer 在带行级豁免的情况下，通过已废弃的同步 `snapshotEvents()` 读取 Session 动作历史。此前的调用、PTC start 与直接父级的初始 prompt 目前都没有投影或分页读取方，因此迁移按[同步读取决策](../../../.agents/notes/implemented/architecture/2026-09-09-deprecate-synchronous-session-event-reads.zh.md)继续延期。
 

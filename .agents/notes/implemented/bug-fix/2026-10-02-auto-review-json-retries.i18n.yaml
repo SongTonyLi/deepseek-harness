@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-02-auto-review-json-retries.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-02-auto-review-json-retries.md
+/agent-note-retry-invalid-json-from-the-auto-reviewer:
+  en: a579eaa894e42c69
+  zh: 171591b33391c1e5
+/agent-note-retry-invalid-json-from-the-auto-reviewer/problem:
+  en: 831c43f19b6b4d8d
+  zh: dda5e0010b408506
+/agent-note-retry-invalid-json-from-the-auto-reviewer/decision:
+  en: 89758035130e8efe
+  zh: 44c929ada9fbd412
+/agent-note-retry-invalid-json-from-the-auto-reviewer/alternatives-considered:
+  en: 551508b24f049de6
+  zh: a853c12b923a10ee
+/agent-note-retry-invalid-json-from-the-auto-reviewer/consequences:
+  en: 6590a698f7887c89
+  zh: da53b94a22d34405
