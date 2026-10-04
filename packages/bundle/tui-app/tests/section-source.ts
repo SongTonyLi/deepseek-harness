@@ -11,17 +11,19 @@ import type { SectionPart, SectionSource, TurnGroup } from '../src/navigation.ts
  * @param blockKind - which kind of block it is.
  * @param parts - its sections in reading order.
  * @param options - the turn it was appended in, and a tool's or context block's name.
+ * @param read - answers each `parts()` read instead of `parts`, for a block whose sections change.
  * @returns the block, as the keyboard sees it.
  */
 export function source(
   blockKind: SectionSource['blockKind'],
   parts: readonly SectionPart[],
   options: { turn?: number; name?: string; title?: string } = {},
+  read: () => readonly SectionPart[] = () => parts,
 ): SectionSource {
   const base = {
     navigable: true as const,
     turn: options.turn ?? 1,
-    parts: () => parts,
+    parts: read,
     setHighlight: () => {},
   }
   switch (blockKind) {

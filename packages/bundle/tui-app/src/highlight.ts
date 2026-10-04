@@ -237,6 +237,16 @@ export interface HighlightOptions {
  * languages are asked for.
  */
 export class SyntaxHighlighter {
+  private revisionCount = 0
+
+  /**
+   * How many grammar loads may change the rows a prior code draw would produce.
+   * @returns the code-rendering revision.
+   */
+  get revision(): number {
+    return this.revisionCount
+  }
+
   /** The shiki core, once a theme and one grammar have landed. */
   private core: HighlighterCore | undefined
   /**
@@ -327,6 +337,7 @@ export class SyntaxHighlighter {
     } finally {
       this.pending.delete(id)
     }
+    this.revisionCount += 1
     this.options.changed()
   }
 

@@ -10,8 +10,9 @@
  * the screen: it is told how many rows the terminal has and returns exactly
  * that many.
  *
- * The pane holds no copy of the transcript: it re-reads the blocks and their
- * turns on every render, so a reply that is still streaming grows inside it,
+ * The pane reads current transcript blocks on every render. The reader reuses
+ * cached section rows when their content, width, and styling match, and draws
+ * only sections in view, so a streaming reply grows inside it,
  * a tool result that lands appears, and a new turn joins the list, all with
  * no push and no second clock.
  *
@@ -42,6 +43,7 @@ import {
   type ReaderIntent,
   type ReaderReveal,
   type ReaderState,
+  type ReaderTints,
 } from './reader.ts'
 import type { CodeHighlighter, Palette } from './style.ts'
 
@@ -164,6 +166,8 @@ export class ReaderPane implements Component {
   private shownTurn: number | undefined
   /** The reveal in flight, and the one section it covers when it covers no whole turn. */
   private reveal: { clock: RevealClock; section?: TranscriptCursor } | undefined
+  /** The bands last drawn with, and the settings they were mixed for. */
+  private tints: { style: FadeStyle; background: RgbColor | undefined; tints: ReaderTints | undefined } | undefined
 
   /**
    * @param options - the palette, the live transcript reads, and the section to open on.
@@ -220,10 +224,10 @@ export class ReaderPane implements Component {
       rows,
       minColumns: this.options.minColumns,
       totalTurns: groups.length,
-      tints: effects === undefined ? undefined : readerTints(effects.style(), effects.background()),
+      tints: effects === undefined ? undefined : this.tintsFor(effects.style(), effects.background()),
       reveal: this.revealNow(),
       highlight: this.options.highlight,
-    })
+    }, geometry)
   }
 
   /**
@@ -260,6 +264,21 @@ export class ReaderPane implements Component {
   /** Close the reader from outside, which is what quitting and `Ctrl+C` do. */
   withdraw(): void {
     this.close('editor')
+  }
+
+  /**
+   * The bands for the terminal's current settings, the same object for as
+   * long as they hold, so the sections drawn with them are not drawn again.
+   * @param style - the fade drawing settings.
+   * @param background - the terminal's background color.
+   * @returns the bands, or undefined where the terminal draws none.
+   */
+  private tintsFor(style: FadeStyle, background: RgbColor | undefined): ReaderTints | undefined {
+    const known = this.tints
+    if (known?.style === style && known.background === background) return known.tints
+    const tints = readerTints(style, background)
+    this.tints = { style, background, tints }
+    return tints
   }
 
   /**

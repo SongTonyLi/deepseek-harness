@@ -226,6 +226,9 @@ export function colorEnabled(env: NodeJS.ProcessEnv, isTty: boolean): boolean {
 
 /** What a Markdown theme asks of a syntax highlighter. */
 export interface CodeHighlighter {
+  /** Advance when the same code may produce different rows; omit for immutable highlighters. */
+  readonly revision?: number | undefined
+
   /**
    * Colour one fenced block, file row group, or shell command.
    * @param code - the block's source.
