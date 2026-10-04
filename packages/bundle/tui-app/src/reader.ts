@@ -11,7 +11,10 @@
  *
  * Everything in this module is plain data: it reads the transcript's own
  * blocks and one {@link ReaderState} and returns lines. No pi-tui tree, no
- * clock, and no terminal — the pane component owns those. A reveal is drawn
+ * clock, and no terminal — the pane component owns those. A WeakMap keyed by
+ * transcript block retains each section's row count and its most recent cached
+ * drawing. A drawing is reused when its content, header, width, and look match.
+ * A paint measures the held turn but draws only sections in view. A reveal is drawn
  * from the age the pane passes in, and changes only the colors of the rows it
  * covers, never how many rows anything draws.
  * @module @deepseek-ai/dsh-tui-app/reader
@@ -466,12 +469,6 @@ function rowTone(block: SectionSource, part: SectionPart, row: string): RowTone 
 /** An unstyled palette, which is all measuring needs: styling never changes a row count. */
 const MEASURING = createPalette(false)
 
-/** Replies whose measured rows {@link measuredReplies} keeps before it starts over. */
-const MEASURED_REPLIES = 256
-
-/** Measured reply rows, by width and text. */
-const measuredReplies = new Map<string, string[]>()
-
 /** A section's body rows, and the code span behind each. */
 interface BodySource {
   rows: readonly string[]
@@ -504,21 +501,10 @@ function bodySource(block: SectionSource, part: SectionPart): BodySource {
  * @returns the rows, trailing padding removed.
  */
 function replyRows(rows: readonly string[], width: number, look: SectionLook): string[] {
-  const text = rows.join('\n')
-  // Every paint measures the panel more than once, and a measure depends on
-  // the text and the width alone, so it is parsed once per reply and width.
-  const key = look.palette === MEASURING ? `${String(width)}\n${text}` : undefined
-  const known = key === undefined ? undefined : measuredReplies.get(key)
-  if (known !== undefined) return known
   const theme = markdownTheme(look.palette, look.highlight)
   const listBullet = theme.listBullet
   theme.listBullet = marker => listBullet(marker === MARKDOWN_BULLET ? BULLET : marker)
-  const lines = new Markdown(text, 0, 0, theme).render(width).map(line => line.trimEnd())
-  if (key !== undefined) {
-    if (measuredReplies.size >= MEASURED_REPLIES) measuredReplies.clear()
-    measuredReplies.set(key, lines)
-  }
-  return lines
+  return new Markdown(rows.join('\n'), 0, 0, theme).render(width).map(line => line.trimEnd())
 }
 
 /** How the rows of one section are painted. */
@@ -534,13 +520,25 @@ interface SectionLook {
 }
 
 /**
+ * Cut one styled text to at most a number of columns, as `truncateToWidth`
+ * does, without walking its graphemes when it already fits: the width of a
+ * row drawn again unchanged is answered from pi-tui's width cache.
+ * @param text - the text, already styled.
+ * @param width - the columns it may take; at least 1.
+ * @returns the text itself when it fits, and otherwise cut with an ellipsis.
+ */
+function fit(text: string, width: number): string {
+  return visibleWidth(text) <= width ? text : truncateToWidth(text, width, ELLIPSIS)
+}
+
+/**
  * Fit one styled text to an exact number of columns.
  * @param text - the text, already styled.
  * @param width - the columns the cell takes.
  * @returns the text cut and padded to exactly `width`.
  */
 function cell(text: string, width: number): string {
-  const cut = truncateToWidth(text, Math.max(1, width), ELLIPSIS)
+  const cut = fit(text, Math.max(1, width))
   return `${cut}${' '.repeat(Math.max(0, width - visibleWidth(cut)))}`
 }
 
@@ -579,7 +577,7 @@ function headerRow(block: SectionSource, part: SectionPart, width: number, look:
   const text = held
     ? palette.bold(palette.accent(`${sectionGlyph(block, part)} ${sectionName(block, part)}`))
     : restingHeader(block, part, palette)
-  return truncateToWidth(`${indent}${text}`, Math.max(1, width), ELLIPSIS)
+  return fit(`${indent}${text}`, Math.max(1, width))
 }
 
 /**
@@ -621,16 +619,14 @@ function bodyRow(line: string, tone: RowTone, indent: string, width: number, loo
  * is where the rest of the text is. How many rows come back depends on the
  * text and the width alone, never on the palette, the bands, or whether the
  * section is held.
- * @param cursor - the section.
- * @param blocks - the navigable blocks.
+ * @param block - the block the section belongs to.
+ * @param part - the section.
  * @param width - the panel's columns, the gutter included.
  * @param look - the palette, the bands, the highlighter, and whether the reader holds the section.
- * @returns the rows, or none for a section the transcript no longer carries.
+ * @param header - the section's header row, unused for a prompt.
+ * @returns the rows.
  */
-function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[], width: number, look: SectionLook): string[] {
-  const found = sectionAt(cursor, blocks)
-  if (found === undefined) return []
-  const { block, part } = found
+function drawSection(block: SectionSource, part: SectionPart, width: number, look: SectionLook, header: string): string[] {
   const content = Math.max(1, width - visibleWidth(GUTTER))
   let rows: string[]
   if (block.blockKind === 'user') {
@@ -638,7 +634,6 @@ function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[],
   } else {
     const indent = part.kind === 'result' ? `${RESULT_INDENT}${BODY_INDENT}` : BODY_INDENT
     const room = Math.max(1, content - visibleWidth(indent))
-    const header = headerRow(block, part, content, look)
     if (block.blockKind === 'assistant' && part.kind === 'reply') {
       rows = [header, ...replyRows(part.rows, room, look).map(line => `${indent}${line}`)]
     } else {
@@ -655,42 +650,186 @@ function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[],
   return rows.map(row => `${gutter}${row}`)
 }
 
-/**
- * Lay out every section of one turn, a blank row between each two.
- * @param group - the turn the panel shows.
- * @param blocks - the navigable blocks.
- * @param width - the panel's columns.
- * @param look - the palette and bands, and which section the reader holds.
- * @returns each section's rows, the blank row after it included, in reading order.
- */
-function turnLayout(
-  group: TurnGroup,
-  blocks: readonly SectionSource[],
-  width: number,
-  look: { palette: Palette; tints?: ReaderTints | undefined; highlight?: CodeHighlighter | undefined; cursor?: TranscriptCursor },
-): string[][] {
-  const last = group.sections.length - 1
-  return group.sections.map((section, index) => {
-    const held = look.cursor !== undefined && sameSection(section, look.cursor)
-    const rows = sectionRows(section, blocks, width, { palette: look.palette, tints: look.tints, highlight: look.highlight, held })
-    return index === last || rows.length === 0 ? rows : [...rows, '']
-  })
+/** One section as it was last drawn, with everything its rows were drawn from. */
+interface DrawnSection {
+  width: number
+  kind: SectionPart['kind']
+  look: SectionLook
+  highlightRevision: number | undefined
+  header: string
+  rows: readonly string[]
+  code: readonly (CodeSpan | undefined)[] | undefined
+  lines: string[]
 }
 
+/** A measured section keeps its row count, not the expanded rows themselves. */
+interface MeasuredSection {
+  width: number
+  kind: SectionPart['kind']
+  rows: readonly string[]
+  code: readonly (CodeSpan | undefined)[] | undefined
+  count: number
+}
+
+/** The reusable measurements and most recent drawing of one section. */
+interface SectionRowsCache {
+  measured?: MeasuredSection | undefined
+  drawn?: DrawnSection | undefined
+}
+
+/**
+ * Measurement keeps row counts instead of expanded output. Drawn rows use a
+ * bounded LRU, so reading a long turn does not retain a second full rendering.
+ */
+const MAX_CACHED_DRAWN_ROWS = 4096
+const MAX_CACHED_DRAWN_SECTIONS = 256
+
+/** Each block's measurements, indexed by its part number. */
+const sectionRowsCaches = new WeakMap<SectionSource, Map<number, SectionRowsCache>>()
+
+/** A bounded LRU; values contain no reference to their source block. */
+const drawnSections = new Map<DrawnSection, SectionRowsCache>()
+let cachedDrawnRows = 0
+
+/**
+ * Whether two lists hold the same entries in the same order.
+ * @param left - one list.
+ * @param right - the other.
+ * @returns true when every entry is identical to its counterpart.
+ */
+function sameEntries<T>(left: readonly T[] | undefined, right: readonly T[] | undefined): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined || left.length !== right.length) return false
+  return left.every((entry, index) => entry === right[index])
+}
+
+/**
+ * The cache for one section of a block.
+ * @param block - the transcript block.
+ * @param part - the section's index in the block.
+ * @returns the cache, creating it when this section has not been read before.
+ */
+function sectionRowsCache(block: SectionSource, part: number): SectionRowsCache {
+  let parts = sectionRowsCaches.get(block)
+  if (parts === undefined) {
+    parts = new Map()
+    sectionRowsCaches.set(block, parts)
+  }
+  let cache = parts.get(part)
+  if (cache === undefined) {
+    cache = {}
+    parts.set(part, cache)
+  }
+  return cache
+}
+
+/** Remove one section's rendered rows from the shared LRU. */
+function forgetDrawn(cache: SectionRowsCache): void {
+  const drawn = cache.drawn
+  if (drawn === undefined) return
+  drawnSections.delete(drawn)
+  cachedDrawnRows -= drawn.lines.length
+  cache.drawn = undefined
+}
+
+/** Retain one drawn section within both LRU limits. */
+function rememberDrawn(cache: SectionRowsCache, drawn: DrawnSection): void {
+  forgetDrawn(cache)
+  if (drawn.lines.length > MAX_CACHED_DRAWN_ROWS) return
+  cache.drawn = drawn
+  drawnSections.set(drawn, cache)
+  cachedDrawnRows += drawn.lines.length
+  while (drawnSections.size > MAX_CACHED_DRAWN_SECTIONS || cachedDrawnRows > MAX_CACHED_DRAWN_ROWS) {
+    for (const [expired, owner] of drawnSections) {
+      drawnSections.delete(expired)
+      cachedDrawnRows -= expired.lines.length
+      owner.drawn = undefined
+      break
+    }
+  }
+}
+
+/** Measure a section and retain only the row count needed by geometry. */
+function sectionRowCount(cursor: TranscriptCursor, blocks: readonly SectionSource[], width: number): number {
+  const found = sectionAt(cursor, blocks)
+  if (found === undefined) return 0
+  const { block, part } = found
+  const cache = sectionRowsCache(block, cursor.part)
+  const known = cache.measured
+  if (
+    known !== undefined
+    && known.width === width
+    && known.kind === part.kind
+    && sameEntries(known.rows, part.rows)
+    && sameEntries(known.code, part.code)
+  ) return known.count
+  const lines = drawSection(block, part, width, { palette: MEASURING, held: false }, '')
+  cache.measured = { width, kind: part.kind, rows: part.rows, code: part.code, count: lines.length }
+  return lines.length
+}
+
+/**
+ * Draw one section, reusing cached rows when its content and presentation match.
+ * @param cursor - the section to draw.
+ * @param blocks - the current navigable blocks.
+ * @param width - the panel's columns, gutter included.
+ * @param look - the palette, tint, highlighter, and held section.
+ * @returns its drawn rows, or none when the transcript no longer carries it.
+ */
+function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[], width: number, look: SectionLook): readonly string[] {
+  const found = sectionAt(cursor, blocks)
+  if (found === undefined) return []
+  const { block, part } = found
+  const header = block.blockKind === 'user' ? '' : headerRow(block, part, Math.max(1, width - visibleWidth(GUTTER)), look)
+  const cache = sectionRowsCache(block, cursor.part)
+  const known = cache.drawn
+  if (
+    known !== undefined
+    && known.width === width
+    && known.kind === part.kind
+    && known.header === header
+    && known.look.palette === look.palette
+    && known.look.tints === look.tints
+    && known.look.highlight === look.highlight
+    && known.highlightRevision === look.highlight?.revision
+    && known.look.held === look.held
+    && sameEntries(known.rows, part.rows)
+    && sameEntries(known.code, part.code)
+  ) {
+    drawnSections.delete(known)
+    drawnSections.set(known, cache)
+    return known.lines
+  }
+  const lines = drawSection(block, part, width, look, header)
+  rememberDrawn(cache, {
+    width,
+    kind: part.kind,
+    look,
+    highlightRevision: look.highlight?.revision,
+    header,
+    rows: part.rows,
+    code: part.code,
+    lines,
+  })
+  return lines
+}
 
 /**
  * Measure the turn panel, which is what the scroll keys move over.
  * @param group - the turn the panel shows.
  * @param blocks - the navigable blocks.
  * @param width - the panel's columns.
- * @returns where each section's first row lands and how many rows the panel has.
+ * @returns where each section's first row lands and how many rows the panel
+ * has, a blank row between each two sections.
  */
 export function measurePane(group: TurnGroup, blocks: readonly SectionSource[], width: number): PaneMeasure {
   const headers: number[] = []
   let total = 0
-  for (const rows of turnLayout(group, blocks, width, { palette: MEASURING })) {
+  const last = group.sections.length - 1
+  for (const [index, section] of group.sections.entries()) {
     headers.push(total)
-    total += rows.length
+    const count = sectionRowCount(section, blocks, width)
+    total += index === last || count === 0 ? count : count + 1
   }
   return { headers, total }
 }
@@ -1114,31 +1253,42 @@ function listColumn(rows: readonly OutlineRow[], blocks: readonly SectionSource[
 }
 
 /**
- * The turn panel's rows: every section of the held turn, in reading order,
- * the prompt on its band and every other section under its own header, with a
- * reveal in flight floating out the rows it covers.
+ * The turn panel's rows in view: the sections of the held turn that reach
+ * the scroll window, in reading order, the prompt on its band and every other
+ * section under its own header, with a reveal in flight floating out the rows
+ * it covers. Sections outside the window are not drawn.
  * @param group - the turn the panel shows.
  * @param blocks - the navigable blocks.
- * @param cursor - the section the reader holds.
+ * @param state - where the reader is: the section it holds and the first visible row.
  * @param render - the palette, the bands, and the reveal.
- * @param width - the panel's columns.
- * @returns the rows, before the scroll window is applied.
+ * @param geometry - the panel's columns and rows, and where each section starts.
+ * @returns at most `geometry.body` rows, from the first visible one.
  */
 function paneColumn(
   group: TurnGroup,
   blocks: readonly SectionSource[],
-  cursor: TranscriptCursor,
+  state: ReaderState,
   render: ReaderRender,
-  width: number,
+  geometry: ReaderGeometry,
 ): string[] {
   const { palette, tints, reveal, highlight } = render
-  const sections = turnLayout(group, blocks, width, { palette, tints, highlight, cursor })
-  return sections.flatMap((rows, index) => {
-    const section = group.sections[index]
-    const covered = reveal !== undefined
-      && (reveal.section === undefined || (section !== undefined && sameSection(section, reveal.section)))
-    return covered ? recolorLines(rows, reveal.age, reveal.style) : rows
-  })
+  const { headers, total } = geometry.measure
+  const top = state.offset
+  const bottom = top + geometry.body
+  const rows: string[] = []
+  for (const [index, section] of group.sections.entries()) {
+    const start = headers[index] as number
+    const end = headers[index + 1] ?? total
+    if (end <= top) continue
+    if (start >= bottom) break
+    const held = sameSection(section, state.cursor)
+    const drawn = sectionRows(section, blocks, geometry.pane, { palette, tints, highlight, held })
+    const spaced = index === group.sections.length - 1 || drawn.length === 0 ? drawn : [...drawn, '']
+    const shown = spaced.slice(Math.max(0, top - start), bottom - start)
+    const covered = reveal !== undefined && (reveal.section === undefined || sameSection(section, reveal.section))
+    rows.push(...covered ? recolorLines(shown, reveal.age, reveal.style) : shown)
+  }
+  return rows
 }
 
 /** One column of the reader's body: the turn list, or the turn beside it. */
@@ -1154,13 +1304,15 @@ interface BodyColumn {
  * @param columns - the columns in drawing order.
  * @param row - which of their rows to draw.
  * @param palette - the palette the borders are styled with.
- * @param width - the frame's columns.
- * @returns the row, no wider than `width`.
+ * @returns the row, exactly as wide as the frame.
  */
-function frameRow(columns: readonly BodyColumn[], row: number, palette: Palette, width: number): string {
+function frameRow(columns: readonly BodyColumn[], row: number, palette: Palette): string {
   // The border between the two panels is recessed, so the turn reads as one page.
   const inner = columns.map(column => cell(column.rows[row] ?? '', column.width)).join(`${palette.dim(SIDE)} `)
-  return truncateToWidth(`${palette.accent(SIDE)} ${inner} ${palette.accent(SIDE)}`, Math.max(1, width), ELLIPSIS)
+  // Every cell is exactly its column's width, and {@link readerGeometry} sizes
+  // the columns so they and the borders fill the terminal's width exactly, so the row is
+  // not measured again.
+  return `${palette.accent(SIDE)} ${inner} ${palette.accent(SIDE)}`
 }
 
 /**
@@ -1219,12 +1371,19 @@ function readout(state: ReaderState, groups: readonly TurnGroup[], geometry: Rea
  * @param groups - the turns the list names, already narrowed by the query.
  * @param render - the palette, the blocks, the geometry inputs, the turn
  * total, and the bands and reveal the turn panel is drawn with.
+ * @param measured - the geometry {@link readerGeometryFor} already returned
+ * for this state, groups, and render; measured afresh when omitted.
  * @returns exactly `render.rows` lines, none wider than `render.width`.
  */
-export function readerRows(state: ReaderState, groups: readonly TurnGroup[], render: ReaderRender): string[] {
+export function readerRows(
+  state: ReaderState,
+  groups: readonly TurnGroup[],
+  render: ReaderRender,
+  measured?: ReaderGeometry,
+): string[] {
   const { palette, blocks, width, totalTurns } = render
   const rows = Math.max(1, render.rows)
-  const geometry = readerGeometryFor(state, groups, blocks, width, rows, render.minColumns)
+  const geometry = measured ?? readerGeometryFor(state, groups, blocks, width, rows, render.minColumns)
   if (geometry.tiny) {
     const lines = Array.from({ length: rows }, () => '')
     lines[0] = truncateToWidth(palette.dim(TOO_SMALL), Math.max(1, width), ELLIPSIS)
@@ -1250,11 +1409,11 @@ export function readerRows(state: ReaderState, groups: readonly TurnGroup[], ren
   if (geometry.pane > 0) {
     columns.push({
       width: geometry.pane,
-      rows: group === undefined ? [] : paneColumn(group, blocks, state.cursor, render, geometry.pane).slice(state.offset),
+      rows: group === undefined ? [] : paneColumn(group, blocks, state, render, geometry),
     })
   }
   const body: string[] = []
-  for (let row = 0; row < geometry.body; row += 1) body.push(frameRow(columns, row, palette, width))
+  for (let row = 0; row < geometry.body; row += 1) body.push(frameRow(columns, row, palette))
   // The readout is reserved before the legend is chosen: how far the read has
   // come must not be what a narrow terminal drops.
   const report = readout(state, groups, geometry, totalTurns)

@@ -361,6 +361,31 @@ describe('blocks', () => {
 })
 
 describe('navigable sections', () => {
+  it('reuses sections until their block content changes', () => {
+    const user = new UserBlock(theme, 'prompt', 1)
+    expect(user.parts()).toBe(user.parts())
+
+    const assistant = new AssistantBlock(theme, 1)
+    const initial = assistant.parts()
+    expect(assistant.parts()).toBe(initial)
+    assistant.appendText('reply')
+    const streamed = assistant.parts()
+    expect(streamed).not.toBe(initial)
+    expect(assistant.parts()).toBe(streamed)
+
+    const tool = new ToolBlock(theme, 'read', { title: '', lines: [] }, 1)
+    const call = tool.parts()
+    expect(tool.parts()).toBe(call)
+    tool.setCall('read', { title: 'file.ts', lines: [] })
+    const changedCall = tool.parts()
+    expect(changedCall).not.toBe(call)
+    expect(tool.parts()).toBe(changedCall)
+    tool.setResult(['contents'], false)
+    const result = tool.parts()
+    expect(result).not.toBe(changedCall)
+    expect(tool.parts()).toBe(result)
+  })
+
   it('reports a prompt as one section, split at its own newlines', () => {
     const block = new UserBlock(theme, 'read the spec\nthen fix it', 4)
     expect(block.turn).toBe(4)

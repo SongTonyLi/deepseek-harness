@@ -1239,6 +1239,7 @@ describe('the chrome motions', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
+  // The 80 deliberate 60 ms settles need 4.8 s before renderer work; leave room for concurrent specs.
   it('walks, reads, and settles every motion on a tall transcript without clearing the scrollback', async () => {
     const test = await tallConversation({ color: true })
     test.runTick(FADE_TICK_MS, 5_000)
@@ -1275,7 +1276,7 @@ describe('the chrome motions', () => {
     // Every lift was written differentially, and the reader in the middle of
     // the walk drew on the terminal's other screen entirely.
     expect(test.terminal.written.slice(before)).not.toContain(CLEAR_SCROLLBACK)
-  })
+  }, 10_000)
 
   it('hands the keyboard straight back, so the next key types at the caret', async () => {
     const test = await moving()

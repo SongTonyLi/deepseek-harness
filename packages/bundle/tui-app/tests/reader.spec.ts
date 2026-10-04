@@ -2,7 +2,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
-import { turnGroups, type SectionSource, type TranscriptCursor } from '../src/navigation.ts'
+import { turnGroups, type SectionPart, type SectionSource, type TranscriptCursor } from '../src/navigation.ts'
+import type { CodeSpan } from '../src/transcript.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import {
   READER_MIN_COLUMNS,
@@ -89,11 +90,11 @@ describe('measurePane', () => {
     expect(measurePane(group!, blocks, 60)).toEqual({ headers: [0, 2, 5, 47, 50], total: 52 })
   })
 
-  it('measures the same after its memo of measured replies starts over', () => {
+  it('measures the same at one width after measuring at many others', () => {
     const blocks = transcript()
     const group = turnGroups(blocks)[1]!
     const first = measurePane(group, blocks, 60)
-    // Every width is a reply the memo has not measured, which overflows it.
+    // Every other width draws every section of the turn again at that width.
     for (let width = 40; width < 340; width += 1) measurePane(group, blocks, width)
     expect(measurePane(group, blocks, 60)).toEqual(first)
   })
@@ -447,6 +448,21 @@ describe('readerRows', () => {
     // The turn row stands, and the section row under it names nothing.
     expect(lines.join('\n')).toContain('❯ 9  gone')
     expect(lines[2]).toBe(`│   ▸${' '.repeat(20)}│ ${' '.repeat(66)} │`)
+
+    const current = source('user', [{ kind: 'user', rows: ['current prompt'] }])
+    const groups = turnGroups([current]).map(group => ({
+      ...group,
+      sections: [...group.sections, { block: 99, part: 0 }],
+    }))
+    const mixed = readerRows({ cursor: { block: 0, part: 0 }, column: 'pane', offset: 0 }, groups, {
+      palette: PLAIN,
+      blocks: [current],
+      width: 95,
+      rows: 40,
+      minColumns: READER_MIN_COLUMNS,
+      totalTurns: groups.length,
+    })
+    expect(mixed.join('\n')).toContain('current prompt')
   })
 
   it('refuses a terminal the frame does not fit in', () => {
@@ -618,6 +634,77 @@ describe('the turn panel\'s styling', () => {
     expect(asked).toEqual(['ts', 'ts'])
     // Colour never moves a row: the plain drawing has the same text in every row.
     expect(render(COLOR, true).map(stripTerminalSequences)).toEqual(render(PLAIN, false))
+  })
+
+  it('draws only visible sections, reuses cached rows, and refreshes when highlighting changes', () => {
+    const asked: string[] = []
+    let colored = false
+    let highlightRevision = 0
+    const highlight: CodeHighlighter = {
+      get revision() { return highlightRevision },
+      lines: (code) => {
+        asked.push(code)
+        return code.split('\n').map(line => colored ? `\u001b[35m${line}\u001b[39m` : line)
+      },
+    }
+    const span = (text: string): CodeSpan => ({ lang: 'ts', prefix: '   1│ ', source: text })
+    let first: SectionPart = { kind: 'result', rows: ['   1│ let first'], code: [span('let first')] }
+    const tools = Array.from({ length: 200 }, (_, index) => {
+      const result: SectionPart = { kind: 'result', rows: [`   1│ let v${String(index)}`], code: [span(`let v${String(index)}`)] }
+      // Fresh arrays with unchanged values exercise cache reuse across parts() reads.
+      return source('tool', [], { turn: 1, name: 'read', title: `file${String(index)}.ts` }, () => [
+        { kind: 'call', rows: [`file${String(index)}.ts`] },
+        index === 0 ? { ...first, rows: [...first.rows] } : { ...result, rows: [...result.rows], code: [...result.code!] },
+      ])
+    })
+    const blocks = [source('user', [{ kind: 'user', rows: ['read them all'] }], { turn: 0 }), ...tools]
+    const groups = turnGroups(blocks)
+    const draw = (offset = 0): string[] => readerRows({ cursor: { block: 0, part: 0 }, column: 'pane', offset }, groups, {
+      palette: PLAIN,
+      blocks,
+      width: 95,
+      rows: 30,
+      minColumns: READER_MIN_COLUMNS,
+      totalTurns: groups.length,
+      highlight,
+    })
+    const drawn = draw()
+    expect(drawn.join('\n')).toContain('let first')
+    // Each tool takes five rows; a 27-row body reaches five tools.
+    expect(asked.length).toBeLessThanOrEqual(6)
+    asked.length = 0
+    expect(draw()).toEqual(drawn)
+    expect(asked).toEqual([])
+    colored = true
+    highlightRevision += 1
+    const recolored = draw()
+    expect(recolored).not.toEqual(drawn)
+    expect(asked.length).toBeGreaterThan(0)
+    asked.length = 0
+    first = { kind: 'result', rows: ['   1│ let changed'], code: [span('let changed')] }
+    expect(draw().join('\n')).toContain('let changed')
+    expect(asked).toEqual(['let changed'])
+    asked.length = 0
+    first = { kind: 'result', rows: ['   1│ let changed', 'plain tail'] }
+    expect(draw().join('\n')).toContain('plain tail')
+    expect(asked).toEqual([])
+    for (let offset = 0; offset < 1_200; offset += 1) draw(offset)
+    expect(asked.length).toBeGreaterThan(128)
+  })
+
+  it('draws a section larger than the row cache without changing its visible lines', () => {
+    const blocks = [source('user', [{ kind: 'user', rows: Array.from({ length: 4_100 }, () => 'large section') }])]
+    const groups = turnGroups(blocks)
+    const state: ReaderState = { cursor: { block: 0, part: 0 }, column: 'pane', offset: 0 }
+    const render: ReaderRender = {
+      palette: PLAIN,
+      blocks,
+      width: 95,
+      rows: 30,
+      minColumns: READER_MIN_COLUMNS,
+      totalTurns: groups.length,
+    }
+    expect(readerRows(state, groups, render)).toEqual(readerRows(state, groups, render))
   })
 
   it('accents the section the reader holds and draws the rest the way the conversation does', () => {

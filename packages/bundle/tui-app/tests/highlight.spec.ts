@@ -1,7 +1,13 @@
 /** Syntax colour: the depth a terminal takes, the theme its background picks, and the lazily loaded grammars. */
 
 import { describe, expect, it, vi } from 'vitest'
+import type { HighlighterCore } from 'shiki/core'
 import { GRAMMARS, SyntaxHighlighter, THEMES, backgroundIsLight, resolveColorDepth, tokenSgr } from '../src/highlight.ts'
+
+/** Whether the imported default is a list of language registrations. */
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value)
+}
 
 /** A highlighter over a dark terminal that encodes 24-bit colour. */
 function highlighter(overrides: Partial<ConstructorParameters<typeof SyntaxHighlighter>[0]> = {}): {
@@ -72,10 +78,12 @@ describe('the highlighter', () => {
     const code = 'const rows = 42\n'
     // The first block of a language has no grammar yet, so it draws plain and
     // the frame is asked for again once the grammar is there.
+    expect(test.code.revision).toBe(0)
     expect(test.code.lines(code, 'ts')).toBeUndefined()
     expect(test.changed).not.toHaveBeenCalled()
     await test.settle()
     expect(test.changed).toHaveBeenCalled()
+    expect(test.code.revision).toBe(1)
     const lines = test.code.lines(code, 'ts')
     expect(lines).toBeDefined()
     expect(lines?.join('\n')).toContain('const')
@@ -83,6 +91,19 @@ describe('the highlighter', () => {
     // One styled line per source line, so the fence keeps the height the
     // renderer would have drawn it at.
     expect(lines).toHaveLength(code.split('\n').length)
+  })
+
+  it('draws a loaded grammar plain if tokenization fails', async () => {
+    const test = highlighter()
+    test.code.lines('const rows = 42', 'ts')
+    await test.settle()
+    const revision = test.code.revision
+    const core = Reflect.get(test.code, 'core') as HighlighterCore
+    vi.spyOn(core, 'codeToTokens').mockImplementation(() => { throw new Error('tokenization failed') })
+
+    expect(test.code.lines('const rows = 42', 'ts')).toBeUndefined()
+    expect(test.code.revision).toBe(revision)
+    expect(test.changed).toHaveBeenCalledTimes(1)
   })
 
   it('answers a language it has no grammar for, and a bare fence, with nothing', () => {
@@ -142,6 +163,18 @@ describe('the highlighter', () => {
     }
     expect(test.code.lines('const rows = 42', 'ts')).toBeDefined()
     expect(test.code.lines('rows: 42', 'yaml')).toBeDefined()
+  })
+
+  it('loads a language registration used directly as the module default', async () => {
+    const test = highlighter({
+      import: async (load) => {
+        const module = await load() as { default: unknown }
+        return { default: isUnknownArray(module.default) ? module.default[0] : module.default }
+      },
+    })
+    test.code.lines('const rows = 42', 'ts')
+    await test.settle()
+    expect(test.code.lines('const rows = 42', 'ts')).toBeDefined()
   })
 
   it('unwraps a grammar module a bundle wrapped again', async () => {

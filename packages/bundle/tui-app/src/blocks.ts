@@ -332,6 +332,8 @@ export class UserBlock implements Component, UserSection {
   private highlightLevel: MotionLevel = 0
   /** The wrapped prompt, by width and whether the gutter narrowed it. */
   private readonly drawn = new LastDrawn<string[]>()
+  /** The prompt's one section, built on the first read; the text never changes. */
+  private sections: readonly SectionPart[] | undefined
 
   constructor(
     private readonly theme: BlockTheme,
@@ -345,7 +347,8 @@ export class UserBlock implements Component, UserSection {
    * @returns the single `user` part, carrying the submitted text.
    */
   parts(): readonly SectionPart[] {
-    return [{ kind: 'user', rows: this.text.split('\n') }]
+    this.sections ??= [{ kind: 'user', rows: this.text.split('\n') }]
+    return this.sections
   }
 
   /**
@@ -703,6 +706,8 @@ export class AssistantBlock implements Component, AssistantSection {
   private readonly drawn = new LastDrawn<AssistantLayout>()
   /** Counts every change to the text, the reasoning, or the committed state. */
   private revision = 0
+  /** The sections last read, and the revision they were built at. */
+  private sections: { revision: number; parts: readonly SectionPart[] } | undefined
 
   constructor(private readonly theme: BlockTheme, readonly turn: number) {
     const palette = theme.palette
@@ -722,9 +727,11 @@ export class AssistantBlock implements Component, AssistantSection {
    * message has no reasoning, so a tool-call step does not add a blank section.
    */
   parts(): readonly SectionPart[] {
+    if (this.sections?.revision === this.revision) return this.sections.parts
     const parts: SectionPart[] = []
     if (this.reasoning.trim() !== '') parts.push({ kind: 'reasoning', rows: this.reasoning.split('\n') })
     if (this.text !== '' || parts.length === 0) parts.push({ kind: 'reply', rows: this.text.split('\n') })
+    this.sections = { revision: this.revision, parts }
     return parts
   }
 
@@ -1003,6 +1010,8 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private readonly drawn = new LastDrawn<ToolLayout>()
   /** Counts every call or result the card was given. */
   private revision = 0
+  /** The sections last read, and the revision they were built at. */
+  private sections: { revision: number; parts: readonly SectionPart[] } | undefined
   /** How many of the card's rows are drawn while it unrolls; absent draws every row. */
   private reveal: RowReveal | undefined
   /** The card's full row count, the leading blank line excluded, at its last render. */
@@ -1038,6 +1047,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    * @returns the call section, then the result section once the tool answered.
    */
   parts(): readonly SectionPart[] {
+    if (this.sections?.revision === this.revision) return this.sections.parts
     const title = this.call.title === '' ? [] : [this.call.title]
     const call = [...title, ...this.call.lines]
     const parts: SectionPart[] = [call.length === 0
@@ -1048,6 +1058,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
         ? { kind: 'result', rows: [NO_OUTPUT] }
         : { kind: 'result', rows: this.resultLines, ...this.resultCode === undefined ? {} : { code: this.resultCode } })
     }
+    this.sections = { revision: this.revision, parts }
     return parts
   }
 
