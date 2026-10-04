@@ -5,7 +5,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, AssistantStreamFrame, CreateAgentOptions, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, AssistantStreamFrame, CreateAgentOptions, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage, type StreamChunk, type ContentBlock, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
@@ -387,7 +387,7 @@ export async function bench(options: {
   /** Omit the model selection and the Agent's model options. */
   unselected?: boolean
   /** The model selection the session starts with; defaults to `test-provider/test-model`. */
-  selected?: { provider: string; model: string }
+  selected?: ModelSelection
   /** Make every host operation fail with this message. */
   hostFailure?: string
   /** Hold every host operation until the returned release is called. */
@@ -508,15 +508,26 @@ export async function bench(options: {
   const hostCalls: string[] = []
   const opened: { bound: BoundSession; disposed: number }[] = []
   let openedCount = 0
-  const open = async (call: string, id: SessionId): Promise<BoundSession> => {
+  const open = async (
+    call: string,
+    id: SessionId,
+    modelSelection?: ModelSelection,
+  ): Promise<BoundSession> => {
     hostCalls.push(call)
     if (options.hostFailure !== undefined) throw new Error(options.hostFailure)
     if (options.hostGate !== undefined) await new Promise<void>((resolve) => { options.hostGate!.release = resolve })
-    const handle = await ctx.agents.create({ sessionId: id, meta: { cwd: '/work' } })
+    const handle = await ctx.agents.create({
+      sessionId: id,
+      meta: { cwd: '/work' },
+      ...modelSelection === undefined ? {} : { agentOptions: modelSelection },
+    })
     const entry = {
       bound: {
         agent: handle.agent,
-        selection: { current: { provider: 'test-provider', model: 'opened-model' }, assembled: undefined },
+        selection: {
+          current: modelSelection ?? { provider: 'test-provider', model: 'opened-model' },
+          assembled: undefined,
+        },
         history: options.openedHistory ?? [],
         dispose: () => {
           entry.disposed += 1
@@ -529,7 +540,7 @@ export async function bench(options: {
     return entry.bound
   }
   const host: SessionHost = {
-    create: () => open('create', `session-opened-${String(++openedCount)}` as SessionId),
+    create: selection => open('create', `session-opened-${String(++openedCount)}` as SessionId, selection),
     resume: id => open(`resume:${id}`, id),
     fork: (id, turn) => open(`fork:${id}${turn === undefined ? '' : `@${String(turn)}`}`, `session-fork-of-${id}` as SessionId),
     aside: parent => open(`aside:${parent.agent.session.id}`, `session-btw-${String(++openedCount)}` as SessionId),

@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { AuthorizationDeclinedError, type AuthorizationNotice, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { KEY, bench, exportStubs } from './bench.ts'
 
@@ -240,8 +240,9 @@ describe('session commands', () => {
     expect(test.terminal.text()).toContain('stop the running turn (Esc twice) before switching')
   })
 
-  it('starts an empty session through /clear and leaves the previous one resumable', async () => {
+  it('starts an empty session through /clear on the active model and effort, and leaves the previous one resumable', async () => {
     const test = await bench({
+      selected: { provider: 'active', model: 'think', reasoningEffort: ReasoningEffortId('high') },
       history: [{
         type: 'user/message',
         seq: 0,
@@ -249,18 +250,20 @@ describe('session commands', () => {
         data: createUserMessage({ content: [{ type: 'text', text: 'keep this prompt' }], source: { kind: 'user' } }),
       }] as never[],
     })
-    await test.settle()
-    expect(test.terminal.text()).toContain('❯ keep this prompt')
+    await expect.poll(() => test.terminal.text()).toContain('❯ keep this prompt')
     typeLine(test.terminal, '/clear')
-    await test.settle()
+    await expect.poll(() => test.opened[0]?.disposed).toBe(1)
     expect(test.hostCalls).toEqual(['create'])
-    expect(test.opened[0]?.disposed).toBe(1)
+    expect(test.opened[1]?.bound.selection.current).toEqual({
+      provider: 'active',
+      model: 'think',
+      reasoningEffort: ReasoningEffortId('high'),
+    })
     expect(test.terminal.text()).toContain('new session: session session-opened-1')
     expect(await test.screen()).not.toContain('❯ keep this prompt')
     typeLine(test.terminal, '/help')
-    await test.settle()
+    await expect.poll(() => test.terminal.text()).toContain('previous session stays on disk')
     expect(test.terminal.text()).toContain('/clear')
-    expect(test.terminal.text()).toContain('previous session stays on disk')
   })
 
   it('refuses input and a second switch while the host opens, and releases a session opened after quit', async () => {
