@@ -20,7 +20,7 @@ import { CONTEXT_PREVIEW_LINES } from '../src/blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
 import { FOCUS_PREVIEW_LINES } from '../src/inspector.ts'
 import { READER_MIN_COLUMNS } from '../src/reader.ts'
-import { ACTIVITY_SPINNERS, TOOL_SPINNER, type ActivityStatus } from '../src/spinner.ts'
+import { ACTIVITY_SPINNERS, TOOL_SPINNERS, type ActivityStatus } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
 import { TOAST_MS } from '../src/toast.ts'
 
@@ -204,18 +204,16 @@ export class FakeTerminal implements Terminal {
   }
 }
 
-/** Every animation by name: the activity statuses, and `tool` for the star every card and todo row draws. */
-const SPINNERS = { ...ACTIVITY_SPINNERS, tool: TOOL_SPINNER }
-
 /**
  * Match `label` led by a frame of `kind`, as the activity line, a running
  * tool card, or an in-progress todo draws it whatever frame the clock is on.
+ * `tool` matches every tool family's frames.
  * @param label - the text after the glyph and its space.
- * @param kind - the activity status whose animation is drawn, or `tool` for the star of a card, subagent row, or todo row.
+ * @param kind - the activity status whose animation is drawn, or `tool` for a card, subagent row, or todo row.
  * @returns the pattern.
  */
 export function spinning(label: string, kind: ActivityStatus | 'tool'): RegExp {
-  const frames = [...SPINNERS[kind]]
+  const frames = (kind === 'tool' ? Object.values(TOOL_SPINNERS).flat() : [...ACTIVITY_SPINNERS[kind]])
     .map(frame => frame.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'))
     .join('')
   return new RegExp(`[${frames}] ${label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u')

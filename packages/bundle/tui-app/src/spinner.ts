@@ -1,17 +1,18 @@
 /**
  * Working indicators: a braille status glyph and a shimmer on the activity
- * line above the prompt, and a blooming star on running tool cards, folded
- * subagent rows, and the activity board's in-progress todo rows.
+ * line above the prompt, and flower, bloom, and star glyphs on running tool
+ * cards, folded subagent rows, and the activity board's in-progress todo rows.
  *
  * Pure. Every animation has {@link SPINNER_CYCLE} frames, and a frame lookup
  * reads a wall-clock instant and a frame period the caller passes in, so
  * every surface drawn at the same moment steps at the same instant and the
  * application owns the one tick that redraws them. Only the activity line
- * draws braille, so its glyph never repeats a card's; star indicators spin at
- * different phases ({@link staggerPhase}).
+ * draws braille, so its glyph never repeats a card's; indicators of one card
+ * family spin at different phases ({@link staggerPhase}).
  * @module @deepseek-ai/dsh-tui-app/spinner
  */
 
+import { isSubagentTool } from './transcript.ts'
 import type { Palette } from './style.ts'
 
 /**
@@ -46,17 +47,82 @@ export const ACTIVITY_SPINNERS = {
 export type ActivityStatus = keyof typeof ACTIVITY_SPINNERS
 
 /**
- * The animation every running tool card, folded subagent row, and in-progress
- * todo row draws, whatever the tool: a star blooming from a thin four-pointed
- * outline to a full asterisk. No frame is braille and no two frames match, so
- * two indicators at different phases never draw the same glyph at the same
- * instant. A presentation choice of this terminal surface, not a deployment
- * setting.
+ * The animation a running tool card draws, by tool family; a folded subagent
+ * row draws `subagent`, and the activity board's in-progress todo rows draw
+ * `todo`. Each cycle mixes flowers, blooms, and stars. No frame is braille,
+ * no two families share a glyph, and the eight frames of one family all
+ * differ, so two indicators of that family at different phases never draw the
+ * same glyph at the same instant. A presentation choice of this terminal
+ * surface, not a deployment setting.
  */
-export const TOOL_SPINNER = ['✧', '✦', '✶', '✷', '✸', '✹', '✺', '✻'] as const satisfies SpinnerFrames
+export const TOOL_SPINNERS = {
+  /** Command execution: four-pointed stars, teardrop blooms, and florettes. */
+  shell: ['✧', '✢', '✽', '✿', '❋', '✸', '❀', '✹'],
+  /** File mutation: florettes between outlined stars and an open bloom. */
+  edit: ['✩', '✤', '✾', '❁', '✭', '✮', '❂', '✲'],
+  /** Reading and searching: flowers and an open bloom among stars. */
+  search: ['⋆', '✱', '✵', '⚘', '❃', '✶', '⁕', '✷'],
+  /** Delegation, a folded subagent row included: floral hearts, pinwheel blooms, and stars. */
+  subagent: ['✦', '✣', '❊', '❦', '❉', '✪', '✫', '❧'],
+  /** Planning and scheduling, and an in-progress todo row: a florette, teardrop blooms, and stars. */
+  todo: ['☆', '✥', '✼', '❅', '✻', '✬', '★', '✰'],
+  /** A tool with no family of its own: a sparkle and a florette among stars. */
+  other: ['∗', '❈', '⁎', '❆', '⚝', '✺', '⚹', '✯'],
+} as const satisfies Record<string, SpinnerFrames>
+
+/** One tool family of {@link TOOL_SPINNERS}. */
+export type ToolFamily = keyof typeof TOOL_SPINNERS
 
 /** Blank steps between two shimmer passes, so the sweep pauses past the word's end. */
 const SHIMMER_GAP = 6
+
+/** Tool names that execute commands. */
+const SHELL_TOOLS: ReadonlySet<string> = new Set(['bash', 'pwsh', 'run_code'])
+
+/** Tool names that mutate files. */
+const EDIT_TOOLS: ReadonlySet<string> = new Set(['edit', 'write', 'str_replace_editor'])
+
+/** Tool names that read or search, beyond the `TOOL_PREFIXES` below. */
+const SEARCH_TOOLS: ReadonlySet<string> = new Set([
+  'read',
+  'read_image',
+  'glob',
+  'grep',
+  'lsp',
+  'skill',
+  'web_fetch',
+  'web_search',
+  'load_workspace_dependencies',
+  'list_subagent_models',
+])
+
+/** Tool names that delegate or steer a child agent, beyond `subagent` itself. */
+const SUBAGENT_TOOLS: ReadonlySet<string> = new Set([
+  'send_message',
+  'interrupt_agent',
+  'list_agents',
+  'ralph',
+  'workflow',
+  'spawn_teammate',
+  'wait_agent',
+])
+
+/** Tool names that plan or schedule work. */
+const TODO_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'create_goal', 'get_goal', 'update_goal'])
+
+/**
+ * Tool-name prefixes per family, checked after the exact sets above. An MCP
+ * or custom tool that keeps its family's prefix inherits the animation.
+ */
+const TOOL_PREFIXES: ReadonlyArray<readonly [string, ToolFamily]> = [
+  ['terminal_', 'shell'],
+  ['session_', 'search'],
+  ['cordis_inspect_', 'search'],
+  ['list_mcp_', 'search'],
+  ['read_mcp_', 'search'],
+  ['team_task_', 'subagent'],
+  ['schedule_', 'todo'],
+]
 
 /** The activity line's label while a compaction condenses history. */
 export const COMPACTING_ACTIVITY = 'compacting'
@@ -96,6 +162,23 @@ export function activityStatus(activity: string): ActivityStatus {
 }
 
 /**
+ * The family whose animation a running tool card draws for `name`.
+ * @param name - the tool the model called.
+ * @returns the tool's family, or `other` for a tool with no family.
+ */
+export function toolFamily(name: string): ToolFamily {
+  if (SHELL_TOOLS.has(name)) return 'shell'
+  if (EDIT_TOOLS.has(name)) return 'edit'
+  if (SEARCH_TOOLS.has(name)) return 'search'
+  if (isSubagentTool(name) || SUBAGENT_TOOLS.has(name)) return 'subagent'
+  if (TODO_TOOLS.has(name)) return 'todo'
+  for (const [prefix, family] of TOOL_PREFIXES) {
+    if (name.startsWith(prefix)) return family
+  }
+  return 'other'
+}
+
+/**
  * The frame an indicator draws at one instant. The frame index advances
  * once per `periodMs` of wall clock, so indicators drawn at the same instant
  * step together, and a change of animation keeps the beat.
@@ -112,13 +195,13 @@ export function spinnerFrame(frames: SpinnerFrames, now: number, periodMs: numbe
 }
 
 /**
- * The phase a new {@link TOOL_SPINNER} indicator spins at beside the
- * indicators already spinning. No two frames of that animation match, so two
- * indicators at different phases never draw the same glyph at the same
- * instant. A phase no indicator holds is taken, the one farthest from its
- * nearest neighbour first and the lowest on a tie; once every phase is held,
- * the lowest phase held by the fewest indicators.
- * @param taken - the phases of the indicators spinning now, one per indicator.
+ * The phase a new indicator spins at beside the indicators of the same
+ * animation already spinning. Every {@link TOOL_SPINNERS} animation uses
+ * eight different frames, so two indicators of one family at different phases
+ * never draw the same glyph. A phase no indicator holds is taken, the one
+ * farthest from its nearest neighbour first and the lowest on a tie; once
+ * every phase is held, the lowest phase held by the fewest indicators.
+ * @param taken - the phases of the indicators of that animation spinning now, one per indicator.
  * @returns a phase from 0 to {@link SPINNER_CYCLE} - 1.
  */
 export function staggerPhase(taken: readonly number[]): number {

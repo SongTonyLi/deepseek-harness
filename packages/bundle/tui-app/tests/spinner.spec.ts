@@ -1,4 +1,4 @@
-/** Working-indicator frames, activity label mapping, wall-clock steps, the tool star's phase stagger, and the activity-word shimmer. */
+/** Working-indicator frames, activity and tool-family mapping, wall-clock steps, phase stagger, and the activity-word shimmer. */
 
 import { describe, expect, it } from 'vitest'
 import { visibleWidth } from '@earendil-works/pi-tui'
@@ -6,35 +6,47 @@ import {
   ACTIVITY_SPINNERS,
   COMPACTING_ACTIVITY,
   SPINNER_CYCLE,
-  TOOL_SPINNER,
+  TOOL_SPINNERS,
   activityStatus,
   callingActivity,
   isCallingActivity,
   shimmer,
   spinnerFrame,
   staggerPhase,
+  toolFamily,
   type ActivityStatus,
   type SpinnerFrames,
+  type ToolFamily,
 } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
 import { TODO_GLYPH } from '../src/todos.ts'
 
-/** Every animation the terminal draws: the activity statuses and the tool star. */
+/** Every animation the terminal draws: the activity statuses and the tool families. */
 const ALL_SPINNERS: ReadonlyArray<readonly [string, SpinnerFrames]> = [
   ...Object.entries(ACTIVITY_SPINNERS),
-  ['tool', TOOL_SPINNER],
+  ...Object.entries(TOOL_SPINNERS),
 ]
 
+/** Flower glyphs used by the tool-family animations. */
+const FLOWERS = new Set(['✾', '✿', '❀', '❁', '⚘', '⁕', '❦', '❧', '❅', '❆'])
+
+/** Bloom glyphs: teardrop, pinwheel, and asterisk forms. */
+const BLOOMS = new Set(['✢', '✽', '❋', '✤', '✲', '✱', '❃', '✣', '❊', '❉', '✥', '✼', '✻', '❈', '✺'])
+
+/** Star glyphs used by the tool-family animations. */
+const STARS = new Set(['✧', '✸', '✹', '✩', '✭', '✮', '❂', '⋆', '✵', '✶', '✷', '✦', '✪', '✫', '☆', '✬', '★', '✰', '∗', '⁎', '⚝', '⚹', '✯'])
+
 /**
- * The instants of one cycle at which two tool indicators draw the same glyph.
+ * The instants of one cycle at which two indicators of `frames` draw the same glyph.
+ * @param frames - the animation both draw.
  * @param phase - the first indicator's phase.
  * @param other - the second indicator's phase.
  * @returns how many of the cycle's frame periods they coincide in.
  */
-function sharedInstants(phase: number, other: number): number {
+function sharedInstants(frames: SpinnerFrames, phase: number, other: number): number {
   let count = 0
   for (let step = 0; step < SPINNER_CYCLE; step += 1) {
-    if (spinnerFrame(TOOL_SPINNER, step * 100, 100, phase) === spinnerFrame(TOOL_SPINNER, step * 100, 100, other)) count += 1
+    if (spinnerFrame(frames, step * 100, 100, phase) === spinnerFrame(frames, step * 100, 100, other)) count += 1
   }
   return count
 }
@@ -57,12 +69,34 @@ describe('spinner frames', () => {
     for (const frames of Object.values(ACTIVITY_SPINNERS)) {
       for (const frame of frames) expect(frame).toMatch(braille)
     }
-    const cardAndBoard = [...TOOL_SPINNER, ...Object.values(TODO_GLYPH)]
+    const cardAndBoard = [...Object.values(TOOL_SPINNERS).flat(), ...Object.values(TODO_GLYPH)]
     for (const glyph of cardAndBoard) expect(glyph).not.toMatch(braille)
   })
 
-  it('draws a different glyph on every frame of the tool star', () => {
-    expect(new Set(TOOL_SPINNER).size).toBe(SPINNER_CYCLE)
+  it('gives every tool family eight different frames and no glyph another family draws', () => {
+    const seen = new Set<string>()
+    for (const [name, frames] of Object.entries(TOOL_SPINNERS)) {
+      expect(new Set(frames).size, name).toBe(SPINNER_CYCLE)
+      for (const frame of frames) {
+        expect(seen.has(frame), `${name} ${frame}`).toBe(false)
+        seen.add(frame)
+      }
+    }
+  })
+
+  it('mixes a flower, a bloom, and a star in every tool family', () => {
+    for (const [name, frames] of Object.entries(TOOL_SPINNERS)) {
+      const kinds = { flower: 0, bloom: 0, star: 0 }
+      for (const frame of frames) {
+        if (FLOWERS.has(frame)) kinds.flower += 1
+        else if (BLOOMS.has(frame)) kinds.bloom += 1
+        else if (STARS.has(frame)) kinds.star += 1
+        else expect(frame, `${name} has a frame outside the flower, bloom, and star glyphs`).toBe('')
+      }
+      expect(kinds.flower, name).toBeGreaterThan(0)
+      expect(kinds.bloom, name).toBeGreaterThan(0)
+      expect(kinds.star, name).toBeGreaterThan(0)
+    }
   })
 
   it('steps one frame per period of wall clock and wraps after the last', () => {
@@ -77,9 +111,9 @@ describe('spinner frames', () => {
   })
 
   it('runs a phase that many frames ahead of the clock', () => {
-    expect(spinnerFrame(TOOL_SPINNER, 0, 100, 3)).toBe(TOOL_SPINNER[3])
-    expect(spinnerFrame(TOOL_SPINNER, 400, 100, 3)).toBe(TOOL_SPINNER[7])
-    expect(spinnerFrame(TOOL_SPINNER, 500, 100, 3)).toBe(TOOL_SPINNER[0])
+    expect(spinnerFrame(TOOL_SPINNERS.shell, 0, 100, 3)).toBe(TOOL_SPINNERS.shell[3])
+    expect(spinnerFrame(TOOL_SPINNERS.shell, 400, 100, 3)).toBe(TOOL_SPINNERS.shell[7])
+    expect(spinnerFrame(TOOL_SPINNERS.shell, 500, 100, 3)).toBe(TOOL_SPINNERS.shell[0])
   })
 
   it('keeps the beat when the activity changes animation', () => {
@@ -121,6 +155,55 @@ describe('spinner mapping', () => {
       expect(activityStatus(label), label).toBe(status)
     }
   })
+
+  it('maps each tool to its family, and a tool with none to other', () => {
+    const cases: ReadonlyArray<readonly [string, ToolFamily]> = [
+      ['bash', 'shell'],
+      ['pwsh', 'shell'],
+      ['run_code', 'shell'],
+      ['terminal_send', 'shell'],
+      ['edit', 'edit'],
+      ['write', 'edit'],
+      ['str_replace_editor', 'edit'],
+      ['read', 'search'],
+      ['read_image', 'search'],
+      ['glob', 'search'],
+      ['grep', 'search'],
+      ['lsp', 'search'],
+      ['skill', 'search'],
+      ['web_fetch', 'search'],
+      ['web_search', 'search'],
+      ['load_workspace_dependencies', 'search'],
+      ['list_subagent_models', 'search'],
+      ['session_search', 'search'],
+      ['cordis_inspect_query', 'search'],
+      ['list_mcp_resources', 'search'],
+      ['read_mcp_resource', 'search'],
+      ['subagent', 'subagent'],
+      ['subagent_fork', 'subagent'],
+      ['send_message', 'subagent'],
+      ['interrupt_agent', 'subagent'],
+      ['list_agents', 'subagent'],
+      ['ralph', 'subagent'],
+      ['workflow', 'subagent'],
+      ['spawn_teammate', 'subagent'],
+      ['wait_agent', 'subagent'],
+      ['team_task_create', 'subagent'],
+      ['todo_write', 'todo'],
+      ['create_goal', 'todo'],
+      ['get_goal', 'todo'],
+      ['update_goal', 'todo'],
+      ['schedule_create', 'todo'],
+      ['ask_user_question', 'other'],
+      ['exit_plan_mode', 'other'],
+      ['plugin_manager', 'other'],
+      ['present', 'other'],
+      ['job_output', 'other'],
+    ]
+    for (const [name, family] of cases) {
+      expect(toolFamily(name), name).toBe(family)
+    }
+  })
 })
 
 describe('staggerPhase', () => {
@@ -139,9 +222,11 @@ describe('staggerPhase', () => {
     const phases: number[] = []
     for (let count = 0; count < SPINNER_CYCLE; count += 1) phases.push(staggerPhase(phases))
     expect(new Set(phases).size).toBe(SPINNER_CYCLE)
-    for (let phase = 0; phase < SPINNER_CYCLE; phase += 1) {
-      for (let other = 0; other < SPINNER_CYCLE; other += 1) {
-        expect(sharedInstants(phase, other), `${String(phase)} beside ${String(other)}`).toBe(phase === other ? SPINNER_CYCLE : 0)
+    for (const [name, frames] of Object.entries(TOOL_SPINNERS)) {
+      for (let phase = 0; phase < SPINNER_CYCLE; phase += 1) {
+        for (let other = 0; other < SPINNER_CYCLE; other += 1) {
+          expect(sharedInstants(frames, phase, other), `${name} ${String(phase)} beside ${String(other)}`).toBe(phase === other ? SPINNER_CYCLE : 0)
+        }
       }
     }
   })

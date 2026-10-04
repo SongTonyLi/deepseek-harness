@@ -113,13 +113,15 @@ import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserSh
 import {
   ACTIVITY_SPINNERS,
   COMPACTING_ACTIVITY,
-  TOOL_SPINNER,
+  TOOL_SPINNERS,
   activityStatus,
   callingActivity,
   isCallingActivity,
   shimmer,
   spinnerFrame,
   staggerPhase,
+  toolFamily,
+  type ToolFamily,
 } from './spinner.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
 import { injectedContextView, systemPromptView } from './context.ts'
@@ -1561,7 +1563,7 @@ export class TuiApp {
     const now = this.deps.now()
     const spinners = new Map<string, string>()
     for (const [content, phase] of this.boardSpinners) {
-      spinners.set(content, spinnerFrame(TOOL_SPINNER, now, this.deps.spinnerMs, phase))
+      spinners.set(content, spinnerFrame(TOOL_SPINNERS.todo, now, this.deps.spinnerMs, phase))
     }
     const text = renderActivityBoard(view, {
       palette: this.deps.palette,
@@ -1592,7 +1594,7 @@ export class TuiApp {
     }
     for (const content of contents) {
       if (this.boardSpinners.has(content)) continue
-      this.boardSpinners.set(content, staggerPhase(this.spinningPhases()))
+      this.boardSpinners.set(content, staggerPhase(this.spinningPhases('todo')))
     }
   }
 
@@ -4457,31 +4459,34 @@ export class TuiApp {
   }
 
   /**
-   * Spin a new card's glyph in the tool animation until its result lands, at
-   * a phase staggered against the other tool indicators on screen and kept
-   * for the card's whole run. A card drawn from a replayed log, and every
-   * card under reduced motion, draws the static glyph.
+   * Spin a new card's glyph in its tool family's animation until its result
+   * lands, at a phase staggered against the other indicators of that family
+   * and kept for the card's whole run. A card drawn from a replayed log, and
+   * every card under reduced motion, draws the static glyph.
    * @param block - the card that was just mounted.
    */
   private spinBlock(block: ToolBlock): void {
     if (this.replaying || this.deps.reducedMotion) return
-    const phase = staggerPhase(this.spinningPhases())
-    block.setSpinner(() => spinnerFrame(TOOL_SPINNER, this.deps.now(), this.deps.spinnerMs, phase))
+    const family = toolFamily(block.name)
+    const phase = staggerPhase(this.spinningPhases(family))
+    block.setSpinner(() => spinnerFrame(TOOL_SPINNERS[family], this.deps.now(), this.deps.spinnerMs, phase))
     this.spinners.set(block, phase)
     this.updateSpinTicker()
   }
 
   /**
-   * The phases of the tool indicators spinning right now: running cards and
-   * the activity board's in-progress todo rows.
-   * @returns one phase per spinning indicator.
+   * The phases of the indicators of `family` spinning right now: running
+   * cards of that family, and the activity board's in-progress todo rows
+   * when `family` is `todo`.
+   * @param family - the animation those indicators draw.
+   * @returns one phase per spinning indicator of that family.
    */
-  private spinningPhases(): number[] {
+  private spinningPhases(family: ToolFamily): number[] {
     const phases: number[] = []
     for (const [block, phase] of this.spinners) {
-      if (block.spinning()) phases.push(phase)
+      if (block.spinning() && toolFamily(block.name) === family) phases.push(phase)
     }
-    phases.push(...this.boardSpinners.values())
+    if (family === 'todo') phases.push(...this.boardSpinners.values())
     return phases
   }
 
