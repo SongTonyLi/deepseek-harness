@@ -14,7 +14,7 @@ import { ProcessTerminal, type Terminal } from '@earendil-works/pi-tui'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { AgentSetup, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { resumeModelSelection } from './resume-model.ts'
 import { BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwSeed, restrictBtwAgent } from './btw.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -341,14 +341,22 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
     await handle.agent.whenIdle()
     return { agent: handle.agent, selection, history, dispose: () => handle.dispose() }
   }
-  const create = (seed: SessionEvent[] | undefined, parent: SessionId | undefined): Promise<BoundSession> => bind((selection, setup) => {
-    const model = defaultModel.currentSelection()
+  const create = (
+    seed: SessionEvent[] | undefined,
+    parent: SessionId | undefined,
+    initialSelection?: ModelSelection,
+  ): Promise<BoundSession> => bind((selection, setup) => {
+    const model = initialSelection ?? defaultModel.currentSelection()
     selection.current = model
     return agents.create({
       sessionId: brandString<SessionId>(`session-${randomUUID()}`),
       ...seed === undefined ? {} : { seed, inheritedEventCount: SessionLogOffset(seed.length) },
       meta: { cwd, ...parent === undefined ? {} : { parentSession: parent, isSeeded: true } },
-      agentOptions: { provider: model.provider, model: model.model },
+      agentOptions: {
+        provider: model.provider,
+        model: model.model,
+        ...model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort },
+      },
       setup,
     })
   }, seed ?? [])
@@ -372,7 +380,7 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
     }
   }
   return {
-    create: () => create(undefined, undefined),
+    create: selection => create(undefined, undefined, selection),
     resume,
     fork: async (id, turn) => create(await forkSeed(ctx, id, turn), id),
     aside: async (parent) => {

@@ -79,6 +79,7 @@ async function bench(
       options: {
         provider: agentOptions?.provider ?? 'test-provider',
         model: agentOptions?.model ?? 'test-model',
+        ...agentOptions?.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
       },
       session,
       inbox: createInboxStub(),
@@ -362,6 +363,37 @@ describe('tui runner', () => {
     await settled()
     expect(observed.err).toContain('session session-old saved')
     expect(observed.exits).toEqual([0])
+  })
+
+  it('clears into a fresh session on the active model and reasoning effort', async () => {
+    const { ctx, observed } = await bench()
+    ctx.provide('llm', {
+      resolveModelInfo: () => Promise.resolve({
+        reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
+      }),
+    } as never)
+    apply(ctx, config())
+    await expect.poll(() => observed.terminal.started).toBe(true)
+    typeLine(observed.terminal, '/model current/think')
+    await expect.poll(() => observed.terminal.text()).toContain('Reasoning effort · current/think')
+    observed.terminal.type(KEY.down)
+    observed.terminal.type(KEY.down)
+    observed.terminal.type(KEY.enter)
+    await expect.poll(() => observed.terminal.text()).toContain('effort high from the next request')
+    typeLine(observed.terminal, '/clear')
+    await expect.poll(() => observed.created.length).toBe(2)
+    expect(observed.created[1]?.agentOptions).toEqual({
+      provider: 'current',
+      model: 'think',
+      reasoningEffort: 'high',
+    })
+    await expect.poll(() => observed.order.filter(entry => entry === 'dispose').length).toBe(1)
+    typeLine(observed.terminal, '/new')
+    await expect.poll(() => observed.created.length).toBe(3)
+    expect(observed.created[2]?.agentOptions).toEqual({
+      provider: 'test-provider',
+      model: 'test-model',
+    })
   })
 
   it('views a resident subagent without resuming it, and resumes and releases one that is not resident', async () => {

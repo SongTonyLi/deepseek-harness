@@ -425,8 +425,11 @@ export interface BoundSession {
 
 /** The host's session operations; each returns a session the terminal can bind. */
 export interface SessionHost {
-  /** Start a fresh session. */
-  create(): Promise<BoundSession>
+  /**
+   * Start a fresh session.
+   * @param selection - the model selection for its next request, or the launch default when omitted.
+   */
+  create(selection?: ModelSelection): Promise<BoundSession>
   /** Resume a persisted session. */
   resume(id: SessionId): Promise<BoundSession>
   /**
@@ -3514,8 +3517,10 @@ export class TuiApp {
         await this.openSessionPicker()
         return
       case 'new':
-      case 'clear':
         await this.switchSession(() => this.deps.host.create(), 'new session')
+        return
+      case 'clear':
+        await this.switchSession(() => this.deps.host.create(this.currentSelection()), 'new session')
         return
       case 'fork': {
         const turn = argument === '' ? undefined : Number(argument)
