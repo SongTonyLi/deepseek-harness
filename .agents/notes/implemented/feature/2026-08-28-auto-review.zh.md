@@ -10,7 +10,7 @@ Full access 让有用的项目工作无需反复审批即可继续，但也允�
 
 ## 决策
 
-[`dsh-experimental-auto-review`](../../../../packages/experimental/auto-review/README.zh.md)是显式安装的实验性 Web 层，按[实验包发布策略](../../../../packages/experimental/README.zh.md)参与发布。默认 Web 保持 Read Only、Workspace Write 与 Full access。此层贡献仅限当前会话的 `auto`，唯一持久身份为 `permission/preset:auto`；它使用 Full access 的 `danger-full-access` 沙箱与工具定义，审批策略由[用户审批兜底决策](2026-09-24-auto-review-user-approval-fallback.zh.md)决定。Headless、通用设置与新会话默认值都排除此 integration。随附的 TUI profile 包含它（[TUI profile](2026-09-24-tui-auto-review.zh.md)）。
+[`dsh-experimental-auto-review`](../../../../packages/experimental/auto-review/README.zh.md)是显式安装的实验性 Web 层，按[实验包发布策略](../../../../packages/experimental/README.zh.md)参与发布。默认 Web 保持 Read Only、Workspace Write 与 Full access。此层贡献仅限当前会话的 `auto`，唯一持久身份为 `permission/preset:auto`；它使用 Full access 的 `danger-full-access` 沙箱与工具定义，但在限制读取的后端上例外，此时它[保留沙箱](../bug-fix/2026-10-04-auto-keeps-container-sandbox.zh.md)，审批策略由[用户审批兜底决策](2026-09-24-auto-review-user-approval-fallback.zh.md)决定。Headless、通用设置与新会话默认值都排除此 integration。随附的 TUI profile 包含它（[TUI profile](2026-09-24-tui-auto-review.zh.md)）。
 
 每个原生调用与已开始的 PTC `tools.*` inner call 都在 body 前接受一次审查。外层 `run_code` transport 与 PTC 程序内直接 Node 效果不在保证范围内。不提供按工具名豁免、缓存 grant、可配置策略或第二授权检查；[JSON 格式恢复](../bug-fix/2026-10-02-auto-review-json-retries.zh.md)负责决定产生前的有界重试；拒绝之后的行为由[用户审批兜底决策](2026-09-24-auto-review-user-approval-fallback.zh.md)负责。重复调用也重新审查。
 
@@ -50,7 +50,7 @@ Reviewer 可以输出 reasoning blocks，随后恰好一个 JSON text block 和�
 
 最终拒绝（[用户审批兜底决策](2026-09-24-auto-review-user-approval-fallback.zh.md)将其限定在 `never` 审批策略下）让原生结果与 PTC 结算事件携带同形结构化 `AutoReviewDeniedError`／`AUTO_REVIEW_DENIED` 及可选原始理由。对最终拒绝，主 agent 通过普通失败渲染只收到 `Auto review rejected tool "<name>"; its body was not executed`。PTC 保留既有程序异常／catch 行为；捕获拒绝不会将其提升为外层失败。通用 Web 工具卡片为折叠行提供拒绝身份，为展开行提供一行未执行输出，不提供输入正文。只有该显示过程会 trim、折叠行分隔符，或提供本地化空理由 fallback；持久化与两套 SDK 保留完整原始理由，不增加长度或脱敏规则。
 
-准入与在途 review 登记在首次 await 前同步完成。Integration 拥有一个生命周期 controller 和一个在途操作集合。卸载先关闭新选择／review admission，经由既有 preset writer 把存活 Auto Session 切为 Full access，该 writer 写入 `never` 审批策略，不改变沙箱值、不关闭终端，然后中止并等待 review 结清，最后移除 listener 与 contribution。Provider 结算后，lifecycle abort 始终形成规范的 dispatch 前取消，包括晚到 allow、deny 或 failure。Caller 取消保留 ToolRuntime 优先级：晚到 allow 在 dispatch 前取消；晚到 failure 或最终拒绝保留原结果，`ask` 下晚到的拒绝产生已取消的审批与规范的 dispatch 前取消。被取消的 review 不启动工具 body。
+准入与在途 review 登记在首次 await 前同步完成。Integration 拥有一个生命周期 controller 和一个在途操作集合。卸载先关闭新选择／review admission，经由既有 preset writer 把存活 Auto Session 切为 Full access（受限的 Session 则切为 Workspace Write），该 writer 为 Full access 写入 `never` 审批策略，不改变沙箱值、不关闭终端，然后中止并等待 review 结清，最后移除 listener 与 contribution。Provider 结算后，lifecycle abort 始终形成规范的 dispatch 前取消，包括晚到 allow、deny 或 failure。Caller 取消保留 ToolRuntime 优先级：晚到 allow 在 dispatch 前取消；晚到 failure 或最终拒绝保留原结果，`ask` 下晚到的拒绝产生已取消的审批与规范的 dispatch 前取消。被取消的 review 不启动工具 body。
 
 完整 integration 缺失或失败时，持久 Auto Session 不能发布。日志不改写，也不后台重试。重装后用户可以重新打开它；已经迁移为 Full access 的存活 Session 保持原状，直到显式切换。
 

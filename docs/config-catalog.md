@@ -875,7 +875,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-auto-review`
 
 - `inject`: `approval` · `llm` · `permissionPresets` · `sessions` · `tools`
-- `source`: [`packages/experimental/auto-review/src/index.ts:136`](../packages/experimental/auto-review/src/index.ts)
+- `source`: [`packages/experimental/auto-review/src/index.ts:143`](../packages/experimental/auto-review/src/index.ts)
 
 ```ts config-catalog
 /** Generation and JSON retry settings for per-call reviewer requests. */
@@ -2265,7 +2265,7 @@ export interface Config {
 
 - `inject`: `shell` · `approval` · `sessions` · `sessionProjections`
 - `refs`: [`ApprovalPolicy`](subsystems/approval.md) · [`SandboxMode`](subsystems/sandbox.md) · `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/interaction/permission-presets/src/index.ts:159`](../packages/interaction/permission-presets/src/index.ts)
+- `source`: [`packages/interaction/permission-presets/src/index.ts:171`](../packages/interaction/permission-presets/src/index.ts)
 
 ```ts config-catalog
 /** The {@link PermissionPresetService} config: preset table and composition default. */

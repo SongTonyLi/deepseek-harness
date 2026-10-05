@@ -73,7 +73,7 @@ kind: "package-reference"
 | 命令植入宿主机之后会执行的 Git hook 或配置 | 在 `workspace-write` 下 `.git` 为只读；写入以 `Read-only file system` 失败，并走常规提权流程 |
 | 命令写入工作区之外 | 写入落在容器自己的磁盘上，永远不会到达宿主机 |
 
-`danger-full-access` 绕过 `confine`，因此在任一后端下都在宿主机上运行。
+`danger-full-access` 绕过 `confine`，因此在任一后端下都在宿主机上运行。会话运行在此后端时，Auto 权限不会写入它：而是写入 `workspace-write`，并由 reviewer 而不是提示批准离开容器的一次性提权（[Auto review](../../experimental/auto-review/README.zh.md)）。在 `local` 后端上，Auto 仍写入 `danger-full-access`。
 
 ### 失败与恢复
 

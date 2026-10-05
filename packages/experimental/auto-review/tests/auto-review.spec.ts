@@ -24,10 +24,12 @@ import PermissionPresetService, {
   AUTO_PRESET,
   type Config as PermissionConfig,
 } from '@deepseek-ai/dsh-permission-presets'
+import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SessionStore, {
   SessionId,
   SessionLogOffset,
   type Session,
+  type SessionEvent,
 } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SubagentRuntime, {
@@ -48,6 +50,7 @@ import ToolRuntime, {
 } from '@deepseek-ai/dsh-tools'
 import ApprovalService, { setApprovalPolicy, type ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import * as AutoReview from '@deepseek-ai/dsh-experimental-auto-review'
+import { WorkspaceReadSandbox } from '../../../sandbox/sandbox/tests/read-scope-sandbox.ts'
 
 const EXPECTED_REVIEW_POLICY = `REVIEW_POLICY
 You are the final authorization reviewer for exactly one pending tool call. Your decision replaces human approval for this call. If you allow it, the call executes immediately with full host access and no later confirmation.
@@ -134,7 +137,13 @@ function reasoningDecisionChunks(text: string): StreamChunk[] {
 async function harness(
   script: ReviewScript[],
   permissionConfig: NonNullable<Parameters<typeof PermissionPresetService.Config>[0]> = { presets: PRESETS, defaultPreset: 'workspace-write' },
-  reviewOptions: { temperature?: number | 'provider-default'; maxJsonRetries?: number; profile?: string } = {},
+  reviewOptions: {
+    temperature?: number | 'provider-default'
+    maxJsonRetries?: number
+    profile?: string
+    /** Mount the policy service over a provider that does or does not confine reads; absent mounts neither. */
+    sandbox?: { confinesReads: boolean }
+  } = {},
 ): Promise<{ ctx: Context; adapter: RecordingAdapter; auto: PluginFiber }> {
   const ctx = new Context()
   contexts.push(ctx)
@@ -150,6 +159,12 @@ async function harness(
     start() { throw new Error('auto-review tests do not execute shell requests') },
   })
   await ctx.plugin(ApprovalService, { policy: 'ask' })
+  if (reviewOptions.sandbox !== undefined) {
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace' })
+    await ctx.plugin(WorkspaceReadSandbox)
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    provider.confinesReads = reviewOptions.sandbox.confinesReads
+  }
   await ctx.plugin(PermissionPresetService, permissionConfig)
   const adapter = new RecordingAdapter(script)
   ctx.llm.registerAdapter(['review'], adapter)
@@ -1722,6 +1737,305 @@ describe('cancellation and integration teardown', () => {
     const auto = await invalid.plugin(AutoReview)
     expect(invalid.permissionPresets.names).toContain(AUTO_PRESET)
     await auto.dispose()
+  })
+})
+
+describe('Auto on a backend that confines reads', () => {
+  type ExecuteResult = Awaited<ReturnType<Context['tools']['execute']>>
+  const ALLOW = '{"risk":"low","decision":"allow"}'
+
+  /** Log one native call of `name` by the session and run it through the tool runtime. */
+  function runCall(ctx: Context, auto: { session: Session; agent: Agent }, name: string, id: string): Promise<ExecuteResult> {
+    appendHeader(auto.session, [{ name, description: name, parameters: { type: 'object' } }])
+    auto.session.append('turn/start', { turn: 1 })
+    const callId = ToolCallId(id)
+    appendAssistant(auto.session, [{ type: 'tool-call', id: callId, name, arguments: '{}' }])
+    appendNativeCall(auto.session, callId, name, '{}')
+    return ctx.tools.execute({ signal: new AbortController().signal, callId, name, arguments: {}, agent: auto.agent })
+  }
+
+  /** A tool whose body asks for approval under its own call id and reports the outcome as its text. */
+  function registerAsking(ctx: Context, before?: (agent: Agent) => void): void {
+    ctx.tools.register(defineContentToolFixture({
+      name: 'asker',
+      description: 'raises one approval',
+      parameters: {},
+      async execute(_args, exec) {
+        const agent = exec.agent!
+        before?.(agent)
+        const outcome = await ctx.approval.request({
+          agent,
+          toolName: 'asker',
+          callId: exec.callId,
+          reason: 'escalate sandbox to danger-full-access: test',
+        })
+        return [{ type: 'text', text: outcome }]
+      },
+    }))
+  }
+
+  /** Record every approval that reaches the user and answer with `outcome` or one outcome per ask. */
+  function userAnswers(ctx: Context, outcome: ApprovalOutcome | ((count: number) => ApprovalOutcome)): Array<string | undefined> {
+    const asked: Array<string | undefined> = []
+    ctx.on('approval/request', (request) => {
+      asked.push(request.reason)
+      return Promise.resolve<ApprovalOutcome>(typeof outcome === 'function' ? outcome(asked.length) : outcome)
+    })
+    return asked
+  }
+
+  const sandboxModes = (session: Session, from = 0): unknown[] =>
+    session.snapshotEvents().slice(from).filter(event => event.type === 'sandbox/mode').map(event => event.data)
+
+  it('tightens a full-access Auto session before the call body runs once its backend confines reads', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: false } })
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    const auto = autoSession(ctx, 'tighten-gate')
+    expect(ctx.sandboxPolicy.resolve({ session: auto.session }).mode).toBe('danger-full-access')
+    provider.confinesReads = true
+
+    const modes: string[] = []
+    ctx.tools.register(defineContentToolFixture({
+      name: 'probe',
+      description: 'records the mode it runs under',
+      parameters: {},
+      async execute(_args, exec) {
+        modes.push(ctx.sandboxPolicy.resolve({ session: exec.agent!.session }).mode)
+        return [{ type: 'text', text: 'ran' }]
+      },
+    }))
+    const before = auto.session.snapshotEvents().length
+    await expect(runCall(ctx, auto, 'probe', 'tighten-gate-call')).resolves.toMatchObject({ isError: false })
+
+    expect(modes).toEqual(['workspace-write'])
+    expect(sandboxModes(auto.session, before)).toEqual([{ mode: 'workspace-write' }])
+    expect(ctx.permissionPresets.current(auto.session)).toBe(AUTO_PRESET)
+  })
+
+  it('tightens before an outer run_code call, which is not reviewed but confines its process under the same mode', async () => {
+    const { ctx, adapter } = await harness([], undefined, { sandbox: { confinesReads: false } })
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    const auto = autoSession(ctx, 'tighten-transport')
+    provider.confinesReads = true
+    const before = auto.session.snapshotEvents().length
+
+    await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: ToolCallId('tighten-transport-call'),
+      name: RUN_CODE_NAME,
+      arguments: { code: 'return 1' },
+      agent: auto.agent,
+    })
+
+    expect(sandboxModes(auto.session, before)).toEqual([{ mode: 'workspace-write' }])
+    expect(adapter.requests).toHaveLength(0)
+  })
+
+  it('leaves a full-access Auto session alone while its backend confines no reads', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: false } })
+    registerProbe(ctx)
+    const auto = autoSession(ctx, 'full-no-reads')
+    const before = auto.session.snapshotEvents().length
+
+    await expect(runCall(ctx, auto, 'probe', 'full-no-reads-call')).resolves.toMatchObject({ isError: false })
+    expect(sandboxModes(auto.session, before)).toEqual([])
+    expect(ctx.sandboxPolicy.resolve({ session: auto.session }).mode).toBe('danger-full-access')
+  })
+
+  it('never widens a confined Auto session when its backend stops confining reads', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: true } })
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    registerProbe(ctx)
+    const auto = autoSession(ctx, 'confined-no-widen')
+    provider.confinesReads = false
+    const before = auto.session.snapshotEvents().length
+
+    await expect(runCall(ctx, auto, 'probe', 'confined-no-widen-call')).resolves.toMatchObject({ isError: false })
+    expect(sandboxModes(auto.session, before)).toEqual([])
+    expect(ctx.sandboxPolicy.resolve({ session: auto.session }).mode).toBe('workspace-write')
+  })
+
+  it('fails the call instead of running it under a stale full-access mode when tightening is rejected', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: false } })
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    const probe = registerProbe(ctx)
+    const auto = autoSession(ctx, 'tighten-fenced')
+    provider.confinesReads = true
+    // The persistent-terminal mode fence rejects a mode change from this dispatch hook.
+    ctx.on('internal/dispatch', (_mode, eventName, args) => {
+      const [, event] = args as [Session, SessionEvent]
+      if (eventName === 'session/event' && event.type === 'sandbox/mode') {
+        throw new Error('cannot change sandbox mode while persistent terminal sessions are open')
+      }
+    }, { global: true })
+
+    const result = await runCall(ctx, auto, 'probe', 'tighten-fenced-call')
+
+    expect(result).toMatchObject({ isError: true, error: { message: 'cannot change sandbox mode while persistent terminal sessions are open' } })
+    expect(probe.runs()).toBe(0)
+    expect(ctx.sandboxPolicy.resolve({ session: auto.session }).mode).toBe('danger-full-access')
+  })
+
+  it('confines a delegated child without unpinning its never approval policy, so its escalation is still rejected', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: false } })
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    registerAsking(ctx)
+    const asked = userAnswers(ctx, 'allowed-once')
+    // A child inherits its parent's full-access Auto bundle with the approval policy pinned to never.
+    const auto = autoSession(ctx, 'tighten-child')
+    setApprovalPolicy(auto.session, 'never')
+    provider.confinesReads = true
+    const before = auto.session.snapshotEvents().length
+
+    const result = await runCall(ctx, auto, 'asker', 'tighten-child-call')
+
+    expect(sandboxModes(auto.session, before)).toEqual([{ mode: 'workspace-write' }])
+    expect(auto.session.snapshotEvents().slice(before).filter(event => event.type === 'approval/policy')).toEqual([])
+    expect(ctx.approval.overrideOf(auto.session)).toBe('never')
+    expect(ctx.permissionPresets.current(auto.session)).toBe(AUTO_PRESET)
+    // The pinned policy rejects the escalation before the reviewer or the user can answer it.
+    expect(result).toMatchObject({ content: [{ type: 'text', text: 'rejected' }] })
+    expect(asked).toEqual([])
+  })
+
+  it('answers the approvals an allowed call raises instead of asking the user', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: true } })
+    registerAsking(ctx)
+    const asked = userAnswers(ctx, 'rejected')
+    const auto = autoSession(ctx, 'answer-allowed')
+
+    const result = await runCall(ctx, auto, 'asker', 'answer-allowed-call')
+
+    expect(result).toMatchObject({ isError: false, content: [{ type: 'text', text: 'allowed-once' }] })
+    expect(asked).toEqual([])
+    const events = auto.session.snapshotEvents()
+    expect(events.filter(event => event.type === 'approval/asked').map(event => event.data)).toEqual([
+      expect.objectContaining({ toolName: 'asker', reason: 'escalate sandbox to danger-full-access: test' }),
+    ])
+    expect(events.filter(event => event.type === 'approval/decided').map(event => event.data)).toEqual([
+      expect.objectContaining({ outcome: 'allowed-once' }),
+    ])
+  })
+
+  it('still asks the user about an approval raised by a call the reviewer denied and the user allowed', async () => {
+    const { ctx } = await harness(
+      [decisionChunks('{"risk":"medium","decision":"deny","reason":"not authorized"}')],
+      undefined,
+      { sandbox: { confinesReads: true } },
+    )
+    registerAsking(ctx)
+    const asked = userAnswers(ctx, count => (count === 1 ? 'allowed-once' : 'rejected'))
+    const auto = autoSession(ctx, 'answer-denied')
+
+    const result = await runCall(ctx, auto, 'asker', 'answer-denied-call')
+
+    expect(asked).toEqual([
+      'Auto review denied tool "asker": not authorized',
+      'escalate sandbox to danger-full-access: test',
+    ])
+    expect(result).toMatchObject({ content: [{ type: 'text', text: 'rejected' }] })
+  })
+
+  it("does not answer a downstream listener's own ask for an allowed call", async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: true } })
+    const probe = registerProbe(ctx)
+    ctx.on('tools/pre-execute', (exec, next) => (
+      exec.name === 'probe' ? Promise.resolve<PreToolDecision>({ kind: 'ask', reason: 'hook wants approval' }) : next()
+    ))
+    const asked = userAnswers(ctx, 'allowed-once')
+    const auto = autoSession(ctx, 'answer-downstream')
+
+    await expect(runCall(ctx, auto, 'probe', 'answer-downstream-call')).resolves.toMatchObject({ isError: false })
+
+    expect(asked).toEqual(['hook wants approval'])
+    expect(probe.runs()).toBe(1)
+  })
+
+  it('stops answering once the session leaves Auto while the call runs', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: true } })
+    registerAsking(ctx, (agent) => { ctx.permissionPresets.set(agent.session, 'workspace-write') })
+    const asked = userAnswers(ctx, 'rejected')
+    const auto = autoSession(ctx, 'answer-left-auto')
+
+    const result = await runCall(ctx, auto, 'asker', 'answer-left-auto-call')
+
+    expect(ctx.permissionPresets.current(auto.session)).toBe('workspace-write')
+    expect(asked).toEqual(['escalate sandbox to danger-full-access: test'])
+    expect(result).toMatchObject({ content: [{ type: 'text', text: 'rejected' }] })
+  })
+
+  it('asks the user about approvals that carry no call id or name a call nobody reviewed', async () => {
+    const { ctx } = await harness([], undefined, { sandbox: { confinesReads: true } })
+    const asked = userAnswers(ctx, 'rejected')
+    const auto = autoSession(ctx, 'answer-unreviewed')
+    auto.session.append('turn/start', { turn: 1 })
+
+    await ctx.approval.request({ agent: auto.agent, toolName: 'x', reason: 'no call id' })
+    await ctx.approval.request({ agent: auto.agent, toolName: 'x', callId: ToolCallId('never-reviewed'), reason: 'unreviewed call' })
+
+    expect(asked).toEqual(['no call id', 'unreviewed call'])
+  })
+
+  it('forgets an allowed call once it finishes', async () => {
+    const { ctx } = await harness([decisionChunks(ALLOW)], undefined, { sandbox: { confinesReads: true } })
+    registerAsking(ctx)
+    const asked = userAnswers(ctx, 'rejected')
+    const auto = autoSession(ctx, 'answer-finished')
+
+    await runCall(ctx, auto, 'asker', 'answer-finished-call')
+    expect(asked).toEqual([])
+    const outcome = await ctx.approval.request({
+      agent: auto.agent, toolName: 'asker', callId: ToolCallId('answer-finished-call'), reason: 'late ask',
+    })
+
+    expect(outcome).toBe('rejected')
+    expect(asked).toEqual(['late ask'])
+  })
+
+  it('does not narrow a session while the integration is closing, so unloading keeps its sandbox value', async () => {
+    const { ctx, auto: integration } = await harness([], undefined, { sandbox: { confinesReads: false } })
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    registerProbe(ctx)
+    const first = autoSession(ctx, 'close-narrow-first')
+    const second = autoSession(ctx, 'close-narrow-second')
+    provider.confinesReads = true
+    appendHeader(second.session, [{ name: 'probe', description: 'probe', parameters: { type: 'object' } }])
+    const callId = ToolCallId('close-narrow-call')
+    appendAssistant(second.session, [{ type: 'tool-call', id: callId, name: 'probe', arguments: '{}' }])
+    appendNativeCall(second.session, callId, 'probe', '{}')
+    const before = sandboxModes(second.session)
+    let competing: ReturnType<typeof ctx.tools.execute> | undefined
+    // The first session's migration runs while the second is still Auto and the integration is closing.
+    ctx.on('session/event', (session, event) => {
+      if (session !== first.session || event.type !== 'permission/preset' || event.data.preset !== 'danger-full-access') return
+      competing = ctx.tools.execute({ signal: new AbortController().signal, callId, name: 'probe', arguments: {}, agent: second.agent })
+    })
+
+    await integration.dispose()
+
+    await expect(competing).resolves.toMatchObject({
+      isError: true,
+      error: { info: { name: 'AbortError', code: TOOL_ABORTED_BEFORE_DISPATCH } },
+    })
+    expect(sandboxModes(second.session)).toEqual(before)
+    expect(ctx.permissionPresets.current(second.session)).toBe('danger-full-access')
+  })
+
+  it('migrates a confined Auto session to Workspace Write without touching its sandbox mode', async () => {
+    const { ctx, auto: integration } = await harness([], undefined, { sandbox: { confinesReads: false } })
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    const full = autoSession(ctx, 'dispose-full')
+    provider.confinesReads = true
+    const confined = autoSession(ctx, 'dispose-confined')
+    const before = confined.session.snapshotEvents().length
+    expect(ctx.permissionPresets.current(confined.session)).toBe(AUTO_PRESET)
+
+    await integration.dispose()
+
+    expect(ctx.permissionPresets.current(confined.session)).toBe('workspace-write')
+    expect(sandboxModes(confined.session, before)).toEqual([])
+    expect(ctx.sandboxPolicy.resolve({ session: confined.session }).mode).toBe('workspace-write')
+    expect(ctx.permissionPresets.current(full.session)).toBe('danger-full-access')
   })
 })
 

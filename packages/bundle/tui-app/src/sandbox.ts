@@ -11,11 +11,20 @@ import type { Palette } from './style.ts'
  * the choice through the caller; Escape keeps the recorded backend.
  */
 export class SandboxPrompt extends PickPrompt {
+  /**
+   * @param palette - the terminal palette.
+   * @param provider - the sandbox provider whose backends the picker offers.
+   * @param session - the session whose current backend is marked.
+   * @param policy - the session's resolved file policy.
+   * @param autoConfines - whether the session's Auto selection narrows a full-access
+   *   session to the container on its next call once the container is its backend.
+   */
   constructor(
     palette: Palette,
     provider: Pick<AppleContainerSandboxProvider, 'backendFor' | 'containerSupported'>,
     session: Session,
     private readonly policy: Parameters<AppleContainerSandboxProvider['readScope']>[0],
+    private readonly autoConfines = false,
   ) {
     const current = provider.backendFor(session)
     super(palette, 'Sandbox backend', [
@@ -35,10 +44,14 @@ export class SandboxPrompt extends PickPrompt {
     const selected = this.selected()
     if (selected === null) return lines
     const container = selected.value === 'container'
-    const unrestricted = this.policy.mode === 'danger-full-access'
-    const writes = this.policy.mode === 'read-only'
+    // Auto narrows a full-access session to the container on its next call, so the
+    // container row previews the confined mode that call will run under.
+    const narrowed = this.autoConfines && container && this.policy.mode === 'danger-full-access'
+    const mode = narrowed ? 'workspace-write' : this.policy.mode
+    const unrestricted = mode === 'danger-full-access'
+    const writes = mode === 'read-only'
       ? 'BLOCKED · file modifications'
-      : this.policy.mode === 'workspace-write'
+      : mode === 'workspace-write'
         ? 'ALLOWED · workspace writes except provider-protected paths; temporary areas may be writable'
         : 'UNRESTRICTED · host file modifications'
     const preview = [
@@ -47,7 +60,7 @@ export class SandboxPrompt extends PickPrompt {
       unrestricted
         ? this.palette.warning('! Sandbox bypassed: commands run on the host, regardless of backend choice.')
         : `Commands → ${container ? 'Linux container → shared workspace' : 'host → native file sandbox'}`,
-      `${this.policy.mode === 'read-only' ? '−' : '+'} ${writes}`,
+      `${mode === 'read-only' ? '−' : '+'} ${writes}`,
       ...container && !unrestricted ? [
         '+ READ · workspace and configured read-only mounts',
         '− HOST ACCESS · other host paths and configured secret-file patterns hidden',
@@ -56,7 +69,9 @@ export class SandboxPrompt extends PickPrompt {
         '+ READ · host paths (subject to OS permissions)',
         ...unrestricted ? [] : ['− WRITE · outside permitted paths; provider-protected paths remain blocked'],
       ],
-      'Backend changes do not change file policy or approval settings: use /permission.',
+      narrowed
+        ? 'Auto confines itself to the container from its next call; approval settings do not change.'
+        : 'Backend changes do not change file policy or approval settings: use /permission.',
       'Wider access requires approved one-shot escalation when approvals are enabled.',
     ]
     const inner = Math.max(1, width - 2)

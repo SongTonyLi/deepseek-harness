@@ -65,4 +65,45 @@ describe('/sandbox in the terminal', () => {
       await test.ctx.fiber.dispose()
     }
   })
+
+  it.each([
+    { preset: 'auto', narrows: true },
+    { preset: 'danger-full-access', narrows: false },
+  ])('previews the container for a full-access session under the $preset preset', async ({ preset, narrows }) => {
+    const host = { platform: process.platform, arch: process.arch }
+    const test = await bench({
+      before: async (ctx) => {
+        await ctx.plugin(CommandRuntime)
+        await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access' })
+        // The provider decides once, at load, whether this host offers the container.
+        try {
+          Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+          Object.defineProperty(process, 'arch', { value: 'arm64', configurable: true })
+          await ctx.plugin(AppleContainerSandboxProvider, { backend: 'local', executable: process.execPath })
+        } finally {
+          Object.defineProperty(process, 'platform', { value: host.platform, configurable: true })
+          Object.defineProperty(process, 'arch', { value: host.arch, configurable: true })
+        }
+        ctx.provide('permissionPresets', { current: () => preset } as never)
+      },
+    })
+    try {
+      expect({ platform: process.platform, arch: process.arch }).toEqual(host)
+      typeLine(test.terminal, '/sandbox')
+      await test.settle()
+      expect(await test.screen()).toContain('Access preview · Local')
+      expect(await test.screen()).toContain('Sandbox bypassed:')
+
+      test.terminal.type(KEY.up)
+      await test.settle()
+      const picker = await test.screen()
+      expect(picker).toContain('Access preview · Container')
+      expect(picker).toContain('file policy: danger-full-access')
+      expect(picker.includes('Auto confines itself to the container from its next call')).toBe(narrows)
+      expect(picker.includes('Sandbox bypassed:')).toBe(!narrows)
+    } finally {
+      test.app.stop()
+      await test.ctx.fiber.dispose()
+    }
+  })
 })

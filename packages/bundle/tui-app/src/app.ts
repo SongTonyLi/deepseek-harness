@@ -61,7 +61,7 @@ import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-commands'
-import type {} from '@deepseek-ai/dsh-permission-presets'
+import type { AUTO_PRESET } from '@deepseek-ai/dsh-permission-presets'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-shell'
@@ -628,6 +628,12 @@ const SHELL_MISSING = '! needs a shell executor in this composition'
 
 /** Shown when a second `!` is submitted while one is still running. */
 const SHELL_BUSY = 'A shell command is already running. Press Esc to cancel it first.'
+
+/**
+ * The Auto preset id. Its type comes from the permission owner's constant, so a
+ * rename fails to compile, while the optional service stays a type-only import.
+ */
+const AUTO: typeof AUTO_PRESET = 'auto'
 
 /** One cancellable asynchronous operation and its shared settlement. */
 interface CancellableOperation {
@@ -3984,6 +3990,7 @@ export class TuiApp {
     }
     const picked = await this.showModal(new SandboxPrompt(
       this.deps.palette, provider, this.agent.session, policy.resolve({ session: this.agent.session }),
+      this.deps.ctx.get('permissionPresets')?.current(this.agent.session) === AUTO,
     ))
     if (picked !== undefined) await this.runSharedCommand(`/sandbox ${picked.value}`, 'sandbox')
   }

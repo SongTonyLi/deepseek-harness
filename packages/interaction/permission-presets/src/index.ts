@@ -5,9 +5,11 @@
  * and replay keep reading their knob folds. The preset event preserves user
  * intent when two presets share a bundle. The Auto review integration may
  * publish one fixed, current-session-only preset with a synchronous admission
- * check; settings defaults remain limited to the configured table. The read
- * side exposes a process catalog plus the current-value-only `permissions`
- * Session projection; the write side ships as the `/permission` command.
+ * check; Auto writes full access, or the confined mode while the session's
+ * sandbox backend also confines reads. Settings defaults remain limited to the
+ * configured table. The read side exposes a process catalog plus the
+ * current-value-only `permissions` Session projection; the write side ships as
+ * the `/permission` command.
  *
  * @module dsh-permission-presets
  */
@@ -84,12 +86,22 @@ export const AUTO_PRESET = 'auto'
 /**
  * Fixed execution bundle for the live Auto integration. `ask` routes reviewer
  * denials to the user; a stored Auto identity also matches `never`, which a
- * delegated child pins so its reviewer denials stay final.
+ * delegated child pins so its reviewer denials stay final. `sandbox` applies
+ * unless the session's backend confines reads, which keeps
+ * {@link CONFINED_AUTO_SANDBOX}.
  */
 const AUTO_PRESET_SPEC: PresetSpec = {
   sandbox: 'danger-full-access',
   approval: 'ask',
 }
+
+/**
+ * The sandbox mode Auto writes while the session's backend also confines
+ * reads (see `SandboxPolicyService.confinesReads`): the backend keeps
+ * confining commands and the review gate replaces the approval prompts for
+ * leaving it.
+ */
+const CONFINED_AUTO_SANDBOX: SandboxMode = 'workspace-write'
 
 /**
  * The projection unit's knob state: the last seen value of each knob event,
@@ -352,7 +364,11 @@ export class PermissionPresetService extends TypertRemoteService {
     if (state.preset !== null) {
       const spec = this.specOf(state.preset)
       if (spec !== undefined && matches(spec)) return state.preset
-      if (state.preset === AUTO_PRESET && spec?.sandbox === sandbox && approval === 'never') return AUTO_PRESET
+      // A stored Auto selection keeps its identity under either approval policy
+      // and either sandbox mode it can write, so a session recorded before Auto
+      // kept the container still resolves to Auto and its review gate.
+      if (state.preset === AUTO_PRESET && spec !== undefined
+        && (sandbox === AUTO_PRESET_SPEC.sandbox || sandbox === CONFINED_AUTO_SANDBOX)) return AUTO_PRESET
     }
     for (const [name, spec] of Object.entries(this.presets)) {
       if (matches(spec)) return name
@@ -363,7 +379,9 @@ export class PermissionPresetService extends TypertRemoteService {
   /**
    * Resolve an available preset's knob bundle.
    * @param name - the preset name to resolve.
-   * @returns the configured bundle.
+   * @returns the configured bundle; for Auto, the bundle of a session whose
+   *   backend does not confine reads. `set` writes `workspace-write` instead
+   *   for a session whose backend confines reads.
    * @throws when `name` is neither configured nor the currently live Auto preset.
    */
   resolve(name: string): PresetSpec {
@@ -399,9 +417,38 @@ export class PermissionPresetService extends TypertRemoteService {
     this.apply(session, name, (policy) => { setApprovalPolicy(session, policy) })
   }
 
+  /**
+   * Narrow an Auto session that still has full access to the confined mode its
+   * backend keeps: a Session recorded before Auto kept the container, or one
+   * whose backend switched to it afterwards. Writes only the sandbox mode, so
+   * the preset identity and the approval policy a delegated child pins stay as
+   * they are. Never widens a confined session.
+   * @param session - the session to narrow.
+   * @returns whether the session's sandbox mode changed.
+   */
+  confineAuto(session: Session): boolean {
+    if (this.current(session) !== AUTO_PRESET) return false
+    const standing = this.permissionState(session).sandbox ?? this.ctx.shell.sandboxMode
+    if (standing !== AUTO_PRESET_SPEC.sandbox || this.autoSandbox(session) !== CONFINED_AUTO_SANDBOX) return false
+    setSandboxMode(session, CONFINED_AUTO_SANDBOX)
+    return true
+  }
+
+  /**
+   * The sandbox mode an Auto selection writes for `session`: the confined mode
+   * while its backend also confines reads, otherwise full access. The mode is
+   * logged like any preset knob, so a later backend switch never rewrites it.
+   */
+  private autoSandbox(session: Session): SandboxMode {
+    return this.ctx.get('sandboxPolicy')?.confinesReads(session) === true
+      ? CONFINED_AUTO_SANDBOX
+      : AUTO_PRESET_SPEC.sandbox
+  }
+
   /** Apply one preset through its durable identity and canonical knob setters. */
   private apply(session: Session, name: string, setApproval: (policy: ApprovalPolicy) => void): void {
-    const spec = this.resolve(name)
+    const resolved = this.resolve(name)
+    const spec = name === AUTO_PRESET ? { ...resolved, sandbox: this.autoSandbox(session) } : resolved
     if (name === AUTO_PRESET) this.autoAdmit?.()
     const current = this.current(session)
     const knobs = this.permissionState(session)

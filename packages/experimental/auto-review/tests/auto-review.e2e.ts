@@ -17,6 +17,7 @@ import {
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek-api-key'
 import PermissionPresetService, { AUTO_PRESET } from '@deepseek-ai/dsh-permission-presets'
 import SandboxProvider, { type ConfinedArgv, type SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
+import AppleContainerSandboxProvider from '@deepseek-ai/dsh-sandbox-apple-container'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
@@ -24,9 +25,10 @@ import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import { RUN_CODE_NAME } from '@deepseek-ai/dsh-tools'
-import ApprovalService, { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
+import ApprovalService, { setApprovalPolicy, type ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { expect, it, vi } from 'vitest'
 import * as AutoReview from '@deepseek-ai/dsh-experimental-auto-review'
+import { fakeContainer } from '../../../sandbox/sandbox-apple-container/tests/fake-container.ts'
 
 const PROVIDER = 'deepseek-official'
 const FLASH = 'deepseek-v4-flash'
@@ -128,14 +130,30 @@ async function* observe(
   observations.push(observation)
 }
 
-async function mount(ctx: Context, workspace: string, dshHome: string): Promise<void> {
+/**
+ * The real container provider with its backend routing and read scope intact,
+ * except that a confined command runs on the host instead of in a VM: each
+ * confinement request is recorded, and the argv is returned unwrapped.
+ */
+class RecordingContainerSandbox extends AppleContainerSandboxProvider {
+  readonly confined: SandboxPolicy[] = []
+
+  override confine(argv: readonly string[], policy: SandboxPolicy): Promise<ConfinedArgv> {
+    this.confined.push(policy)
+    return Promise.resolve({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] })
+  }
+}
+
+/** Mount the shipped stack; `container` selects the container-backed provider over the unused full-access one. */
+async function mount(ctx: Context, workspace: string, dshHome: string, container?: { executable: string }): Promise<void> {
   await mountAgentLoopTestDependencies(ctx, {
     systemPrompt: {}, tools: { mode: 'both' },
   })
   // No reasoning or output-budget override: use each shipped model's defaults.
   await ctx.plugin(LlmDeepSeek, { retryPolicy: { mode: 'normal', maxRetries: 0 } })
   await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace })
-  await ctx.plugin(UnusedSandbox)
+  if (container === undefined) await ctx.plugin(UnusedSandbox)
+  else await ctx.plugin(RecordingContainerSandbox, { backend: 'container', executable: container.executable })
   await ctx.plugin(SandboxedFileSystem, { cwd: workspace })
   await ctx.plugin(FsObservationPolicy)
   await ctx.plugin(LocalSubprocessRuntime)
@@ -401,6 +419,92 @@ it.each(['native', 'ptc-inner'] as const)('feeds denial back, re-reviews a new c
     try {
       await ctx.fiber.dispose()
     } finally {
+      vi.unstubAllEnvs()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+})
+
+it('keeps the container under Auto and lets the reviewer approve a one-shot escalation instead of the user', {
+  retry: 0,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-auto-review-container-'))
+  const ctx = new Context()
+  const fake = fakeContainer()
+  fake.answer('inspect', { code: 1 })
+  try {
+    const dshHome = join(root, 'home')
+    await mkdir(dshHome)
+    vi.stubEnv('DSH_HOME', dshHome)
+    await mount(ctx, root, dshHome, { executable: fake.executable })
+    const container = ctx.sandbox as RecordingContainerSandbox
+    const runner = orchestrate(ctx, false)
+    const asked: Array<string | undefined> = []
+    ctx.on('approval/request', (request) => {
+      asked.push(request.reason)
+      return Promise.resolve<ApprovalOutcome>('rejected')
+    })
+    const handle = await ctx.agents.create({
+      sessionId: SessionId(randomUUID()), meta: { cwd: root }, agentOptions: { provider: PROVIDER, model: FLASH },
+    })
+    try {
+      const { session } = handle.agent
+      const modes = (): unknown[] => session.snapshotEvents().filter(event => event.type === 'sandbox/mode').map(event => event.data)
+      // The session starts under Full access; Auto replaces that standing mode with the confined one.
+      expect(modes()).toEqual([{ mode: 'danger-full-access' }])
+      ctx.permissionPresets.set(session, AUTO_PRESET)
+      expect(modes()).toEqual([{ mode: 'danger-full-access' }, { mode: 'workspace-write' }])
+      expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+
+      const inside = join(root, 'inside.txt')
+      const confined = await runner.action(handle.agent, 'bash',
+        { command: `printf confined > ${quote(inside)}`, description: 'Write inside the workspace.' }, 'native',
+        'Write the file.', { risk: 'low', decision: 'allow' })
+      expect(confined.bodies).toBe(1)
+      expect(outcome(confined.events, 'native').success).toBe(true)
+      expect(await readFile(inside, 'utf8')).toBe('confined')
+      expect(container.confined).toEqual([{ mode: 'workspace-write', workspaceRoot: root, sessionId: session.id }])
+      // The model is told its commands run confined in the container, not under full access.
+      expect(runner.postToolInputs.at(-1)).toContain('Current DSH file policy: workspace-write')
+      expect(runner.postToolInputs.at(-1)).toContain('run inside a Linux container')
+      expect(runner.postToolInputs.at(-1)).not.toContain('Current DSH file policy: danger-full-access')
+
+      const host = join(root, 'host.txt')
+      const escalated = await runner.action(handle.agent, 'bash', {
+        command: `printf host > ${quote(host)}`,
+        description: 'Write on the host.',
+        sandbox_permissions: 'danger-full-access',
+        justification: 'The file must be created by the host process.',
+      }, 'native', 'Create that file on the host.', { risk: 'low', decision: 'allow' })
+      expect(escalated.bodies).toBe(1)
+      expect(outcome(escalated.events, 'native').success).toBe(true)
+      expect(await readFile(host, 'utf8')).toBe('host')
+      // The reviewer's allow answered the escalation, which ran outside the container for this call only.
+      expect(asked).toEqual([])
+      expect(container.confined).toHaveLength(1)
+      expect(escalated.events.filter(event => event.type === 'approval/decided').map(event => event.data.outcome)).toEqual(['allowed-once'])
+      expect(modes()).toEqual([{ mode: 'danger-full-access' }, { mode: 'workspace-write' }])
+
+      const refused = join(root, 'refused.txt')
+      const denied = await runner.action(handle.agent, 'bash', {
+        command: `printf refused > ${quote(refused)}`,
+        description: 'Write on the host.',
+        sandbox_permissions: 'danger-full-access',
+        justification: 'The file must be created by the host process.',
+      }, 'native', 'Create that file on the host.', { risk: 'medium', decision: 'deny', reason: 'not authorized' })
+      // A reviewer denial still reaches the user, who rejects it; nothing ran.
+      expect(asked).toEqual(['Auto review denied tool "bash": not authorized'])
+      expect(denied.bodies).toBe(0)
+      expect(await missing(refused)).toBe(true)
+      expect(runner.calls()).toBe(3)
+    } finally {
+      await handle.dispose()
+    }
+  } finally {
+    try {
+      await ctx.fiber.dispose()
+    } finally {
+      fake.dispose()
       vi.unstubAllEnvs()
       await rm(root, { recursive: true, force: true })
     }

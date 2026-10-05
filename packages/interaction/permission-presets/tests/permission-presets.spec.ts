@@ -6,11 +6,13 @@ import SessionStore, {
 } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
+import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import type { ApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import PermissionPresetService, {
   AUTO_PRESET, CUSTOM_PRESET,
 } from '@deepseek-ai/dsh-permission-presets'
 import { liveConfig } from '../../../settings/settings/tests/live-config.ts'
+import { WorkspaceReadSandbox } from '../../../sandbox/sandbox/tests/read-scope-sandbox.ts'
 
 const configurations = new WeakMap<Context, Awaited<ReturnType<typeof liveConfig>>>()
 
@@ -19,6 +21,8 @@ async function mounted(options: {
   bashDefault?: SandboxMode | undefined
   approvalDefault?: ApprovalPolicy | undefined
   projection?: boolean
+  /** Mount the policy service over a provider that does (true) or does not (false) confine reads. */
+  reads?: boolean
 } = {}): Promise<Context> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
@@ -30,6 +34,12 @@ async function mounted(options: {
     start() { throw new Error('permission tests do not execute bash') },
   })
   ctx.provide('approval', { config: { policy: 'approvalDefault' in options ? options.approvalDefault : 'ask' } })
+  if (options.reads !== undefined) {
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/ws' })
+    await ctx.plugin(WorkspaceReadSandbox)
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    provider.confinesReads = options.reads
+  }
   await ctx.plugin(PermissionPresetService, options.config ?? {})
   return ctx
 }
@@ -292,6 +302,191 @@ describe('PermissionPresetService', () => {
     const session = freshSession('sess-standin')
     ctx.permissionPresets.set(session, 'workspace-write')
     expect(session.snapshotEvents()).toHaveLength(0)
+    expect(ctx.permissionPresets.current(session)).toBe('workspace-write')
+  })
+})
+
+describe('Auto and the sandbox backend', () => {
+  function written(session: Session, from: number): [string, unknown][] {
+    return session.snapshotEvents().slice(from).map(event => [event.type, event.data])
+  }
+
+  it('keeps the confined mode instead of switching to full access while the backend confines reads', async () => {
+    const ctx = await mounted({ reads: true })
+    await mountAuto(ctx)
+    const session = ctx.sessions.create(SessionId('auto-confined'))
+    ctx.permissionPresets.set(session, 'danger-full-access')
+    const baseline = session.snapshotEvents().length
+
+    ctx.permissionPresets.set(session, AUTO_PRESET)
+    expect(written(session, baseline)).toEqual([
+      ['permission/preset', { preset: AUTO_PRESET }],
+      ['sandbox/mode', { mode: 'workspace-write' }],
+      ['approval/policy', { policy: 'ask' }],
+    ])
+    expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('workspace-write')
+    expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+  })
+
+  it('writes full access when the backend confines no reads', async () => {
+    const ctx = await mounted({ reads: false })
+    await mountAuto(ctx)
+    const session = ctx.sessions.create(SessionId('auto-full'))
+    const baseline = session.snapshotEvents().length
+
+    ctx.permissionPresets.set(session, AUTO_PRESET)
+    expect(written(session, baseline)).toEqual([
+      ['permission/preset', { preset: AUTO_PRESET }],
+      ['sandbox/mode', { mode: 'danger-full-access' }],
+    ])
+    expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('danger-full-access')
+  })
+
+  it('does not rewrite the logged mode when the backend switches, and an explicit selection follows the new backend', async () => {
+    const ctx = await mounted({ reads: true })
+    await mountAuto(ctx)
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    const session = ctx.sessions.create(SessionId('auto-switched'))
+    ctx.permissionPresets.set(session, AUTO_PRESET)
+    const baseline = session.snapshotEvents().length
+
+    provider.confinesReads = false
+    expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('workspace-write')
+    expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+    expect(written(session, baseline)).toEqual([])
+
+    ctx.permissionPresets.set(session, AUTO_PRESET)
+    expect(written(session, baseline)).toEqual([['sandbox/mode', { mode: 'danger-full-access' }]])
+    expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+  })
+
+  describe('confineAuto', () => {
+    /** An Auto session recorded at full access with `approval`, as an earlier build or a delegation left it. */
+    function fullAccessAuto(ctx: Context, id: string, approval: ApprovalPolicy): Session {
+      const session = ctx.sessions.create(SessionId(id))
+      session.append('permission/preset', { preset: AUTO_PRESET })
+      session.append('sandbox/mode', { mode: 'danger-full-access' })
+      session.append('approval/policy', { policy: approval })
+      return session
+    }
+
+    it('writes only the sandbox mode, so the approval policy a delegated child pins is untouched', async () => {
+      const ctx = await mounted({ reads: true })
+      await mountAuto(ctx)
+      for (const approval of ['ask', 'never'] as const) {
+        const session = fullAccessAuto(ctx, `confine-${approval}`, approval)
+        const baseline = session.snapshotEvents().length
+
+        expect(ctx.permissionPresets.confineAuto(session)).toBe(true)
+        expect(written(session, baseline)).toEqual([['sandbox/mode', { mode: 'workspace-write' }]])
+        expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+        expect(ctx.approval.config.policy).toBe('ask')
+        expect(session.snapshotEvents().filter(event => event.type === 'approval/policy').at(-1)?.data).toEqual({ policy: approval })
+      }
+    })
+
+    it('does nothing for a session outside Auto', async () => {
+      const ctx = await mounted({ reads: true })
+      await mountAuto(ctx)
+      const session = ctx.sessions.create(SessionId('confine-not-auto'))
+      ctx.permissionPresets.set(session, 'danger-full-access')
+      const baseline = session.snapshotEvents().length
+
+      expect(ctx.permissionPresets.confineAuto(session)).toBe(false)
+      expect(written(session, baseline)).toEqual([])
+      expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('danger-full-access')
+    })
+
+    it('appends nothing for a session that is already confined, however often the gate asks', async () => {
+      const ctx = await mounted({ reads: true })
+      await mountAuto(ctx)
+      const session = ctx.sessions.create(SessionId('confine-idempotent'))
+      ctx.permissionPresets.set(session, AUTO_PRESET)
+      const baseline = session.snapshotEvents().length
+
+      for (let call = 0; call < 3; call += 1) expect(ctx.permissionPresets.confineAuto(session)).toBe(false)
+      expect(written(session, baseline)).toEqual([])
+    })
+
+    it('never widens a confined session, even after its backend stops confining reads', async () => {
+      const ctx = await mounted({ reads: true })
+      await mountAuto(ctx)
+      const provider = ctx.sandbox as WorkspaceReadSandbox
+      const session = ctx.sessions.create(SessionId('confine-no-widen'))
+      ctx.permissionPresets.set(session, AUTO_PRESET)
+      provider.confinesReads = false
+      const baseline = session.snapshotEvents().length
+
+      expect(ctx.permissionPresets.confineAuto(session)).toBe(false)
+      expect(written(session, baseline)).toEqual([])
+      expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('workspace-write')
+    })
+
+    it('reads the deployment default for a session that logged no sandbox mode', async () => {
+      const full = await mounted({ reads: true, bashDefault: 'danger-full-access', config: { defaultPreset: 'workspace-write' } })
+      await mountAuto(full)
+      const session = freshSession('confine-default-full')
+      session.append('permission/preset', { preset: AUTO_PRESET })
+      expect(full.permissionPresets.confineAuto(session)).toBe(true)
+      expect(written(session, 1)).toEqual([['sandbox/mode', { mode: 'workspace-write' }]])
+
+      const confined = await mounted({ reads: true })
+      await mountAuto(confined)
+      const other = freshSession('confine-default-confined')
+      other.append('permission/preset', { preset: AUTO_PRESET })
+      expect(confined.permissionPresets.confineAuto(other)).toBe(false)
+      expect(written(other, 1)).toEqual([])
+    })
+
+    it('leaves a full-access session alone while its backend confines no reads', async () => {
+      const ctx = await mounted({ reads: false })
+      await mountAuto(ctx)
+      const session = fullAccessAuto(ctx, 'confine-writes-only', 'ask')
+      const baseline = session.snapshotEvents().length
+
+      expect(ctx.permissionPresets.confineAuto(session)).toBe(false)
+      expect(written(session, baseline)).toEqual([])
+      expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('danger-full-access')
+    })
+  })
+
+  it('tightens a session recorded with full access when Auto is selected again on a confining backend', async () => {
+    const ctx = await mounted({ reads: true })
+    await mountAuto(ctx)
+    const session = ctx.sessions.create(SessionId('auto-legacy'))
+    session.append('permission/preset', { preset: AUTO_PRESET })
+    session.append('sandbox/mode', { mode: 'danger-full-access' })
+    const baseline = session.snapshotEvents().length
+    expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+
+    ctx.permissionPresets.set(session, AUTO_PRESET)
+    expect(written(session, baseline)).toEqual([['sandbox/mode', { mode: 'workspace-write' }]])
+    expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+  })
+
+  it('keeps a stored Auto selection under either sandbox mode it can write and either approval policy', async () => {
+    const ctx = await mounted()
+    await mountAuto(ctx)
+    const stored = (sandbox: SandboxMode, approval: ApprovalPolicy): string => {
+      const session = freshSession(`stored-${sandbox}-${approval}`)
+      session.append('permission/preset', { preset: AUTO_PRESET })
+      session.append('sandbox/mode', { mode: sandbox })
+      session.append('approval/policy', { policy: approval })
+      return ctx.permissionPresets.current(session)
+    }
+    expect(stored('danger-full-access', 'ask')).toBe(AUTO_PRESET)
+    expect(stored('danger-full-access', 'never')).toBe(AUTO_PRESET)
+    expect(stored('workspace-write', 'ask')).toBe(AUTO_PRESET)
+    expect(stored('workspace-write', 'never')).toBe(AUTO_PRESET)
+    expect(stored('read-only', 'ask')).toBe(CUSTOM_PRESET)
+  })
+
+  it('resolves a stored confined Auto selection from the table when its integration is absent', async () => {
+    const ctx = await mounted()
+    const session = freshSession('stored-confined-auto-absent')
+    session.append('permission/preset', { preset: AUTO_PRESET })
+    session.append('sandbox/mode', { mode: 'workspace-write' })
+    session.append('approval/policy', { policy: 'ask' })
     expect(ctx.permissionPresets.current(session)).toBe('workspace-write')
   })
 })

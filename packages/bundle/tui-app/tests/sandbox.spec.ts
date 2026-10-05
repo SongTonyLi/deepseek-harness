@@ -48,6 +48,36 @@ describe('sandbox backend picker', () => {
     expect(text(full)).toContain('Sandbox bypassed:')
   })
 
+  it('previews the container as confining an Auto session that still has full access, but not other full-access sessions', () => {
+    const onLocal = { containerSupported: true, backendFor: () => 'local' as const }
+    const full = { ...policy, mode: 'danger-full-access' as const }
+
+    const auto = new SandboxPrompt(palette, onLocal, session, full, true)
+    expect(text(auto)).toContain('current: local · file policy: danger-full-access')
+    expect(text(auto)).toContain('Access preview · Local')
+    expect(text(auto)).toContain('Sandbox bypassed:')
+    auto.handleInput('\u001b[A')
+    expect(text(auto)).toContain('Access preview · Container')
+    expect(text(auto)).not.toContain('Sandbox bypassed:')
+    expect(text(auto)).toContain('Commands → Linux container → shared workspace')
+    expect(text(auto)).toContain('ALLOWED · workspace writes')
+    expect(text(auto)).toContain('other host paths and configured secret-file patterns hidden')
+    expect(text(auto)).toContain('Auto confines itself to the container from its next call; approval settings do not change.')
+    expect(text(auto)).not.toContain('Backend changes do not change file policy')
+
+    const plain = new SandboxPrompt(palette, onLocal, session, full)
+    plain.handleInput('\u001b[A')
+    expect(text(plain)).toContain('Access preview · Container')
+    expect(text(plain)).toContain('Sandbox bypassed:')
+    expect(text(plain)).toContain('Backend changes do not change file policy')
+    expect(text(plain)).not.toContain('Auto confines itself')
+
+    const confined = new SandboxPrompt(palette, onLocal, session, policy, true)
+    confined.handleInput('\u001b[A')
+    expect(text(confined)).toContain('Backend changes do not change file policy')
+    expect(text(confined)).not.toContain('Auto confines itself')
+  })
+
   it('filters choices, hides unmatched previews, and wraps at narrow widths', () => {
     const prompt = new SandboxPrompt(palette, provider, session, policy)
     prompt.handleInput('local')
