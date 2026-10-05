@@ -161,6 +161,8 @@ interface ConfinedArgv {
 
 `ctx.sandbox.readScope(policy)` 报告在 `policy` 下受限的进程能读取宿主机上的哪些内容；后端不限制读取时返回 `undefined`，基础提供方即返回 `undefined`。`ctx.sandboxPolicy.canRead(path, request)` 解析调用会话的策略，并在将路径与范围都规范化后再做比较，因此 `..` 片段和符号链接都无法离开这些根目录。`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 工具在观察路径之前，以 `FS_SANDBOX_DENIED` 或 `SEARCH_SANDBOX_DENIED` 拒绝范围之外的路径，`read` 与 `read_image` 在读取范围之外的非隐藏路径之前，每次调用都会先征求用户同意（[tool-fs](../../packages/fs/tool-fs/README.zh.md)），`grep` 还会在内容搜索中排除隐藏文件名，因此模型的文件工具读取的内容永远不会超出其受限命令。
 
+`ctx.sandboxPolicy.confinesReads(session)` 报告已挂载的提供方在 `workspace-write` 下是否不仅限制会话的写入，也限制其读取；会话运行在 Apple container 后端时即是如此，而宿主机内核提供方并非如此。原本会绕过沙箱的权限策略在决定是否保留沙箱之前会先查询它：对于后端限制读取的会话，[Auto](permission-presets.zh.md) 权限写入 `workspace-write` 而不是 `danger-full-access`。
+
 ```ts type-equiv
 /**
  * The host paths confined processes can read: everything under `roots`
@@ -253,6 +255,18 @@ readScope(request: SandboxPolicyRequest = {}): SandboxReadScope | undefined
  * @returns true when the read is allowed.
  */
 canRead(path: string, request: SandboxPolicyRequest = {}): boolean
+
+/**
+ * Whether the mounted provider confines a session's host reads as well as
+ * its writes under `workspace-write`, as the Apple container backend does
+ * while the session runs on it. Commands of such a session cannot read or
+ * change host files outside the workspace, so a policy that would otherwise
+ * bypass the sandbox can keep it at the cost of workspace-bound work only.
+ * Providers that confine writes alone report false.
+ * @param session - the session whose backend applies.
+ * @returns true when confined commands of `session` cannot read host files outside the read scope.
+ */
+confinesReads(session: Session): boolean
 
 /**
  * Read the session override without applying the deployment default.

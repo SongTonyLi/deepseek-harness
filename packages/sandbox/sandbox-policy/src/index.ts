@@ -196,6 +196,20 @@ export class SandboxPolicyService extends Service {
   }
 
   /**
+   * Whether the mounted provider confines a session's host reads as well as
+   * its writes under `workspace-write`, as the Apple container backend does
+   * while the session runs on it. Commands of such a session cannot read or
+   * change host files outside the workspace, so a policy that would otherwise
+   * bypass the sandbox can keep it at the cost of workspace-bound work only.
+   * Providers that confine writes alone report false.
+   * @param session - the session whose backend applies.
+   * @returns true when confined commands of `session` cannot read host files outside the read scope.
+   */
+  confinesReads(session: Session): boolean {
+    return this.readScope({ session, mode: 'workspace-write' }) !== undefined
+  }
+
+  /**
    * Read the session override without applying the deployment default.
    * @param session - session whose log supplies the override.
    * @returns the last logged mode, or `undefined` without one.

@@ -69,7 +69,7 @@ kind: "package-reference"
 
 ### 解析优先级
 
-`readScope(request)` 询问已挂载的 `ctx.sandbox` 提供方在解析出的策略下受限进程能读取什么，`canRead(path, request)` 用规范化后的路径对照该范围检查；面向模型的文件工具在读取前调用 `canRead`。`resolve({ session, mode })` 返回一份完整的逐调用策略：已批准的显式模式优先于会话最后一条 `sandbox/mode` 事件，后者又优先于部署默认值。会话的不可变 `cwd` 提供工作区根目录；否则使用配置的回退值。执行环境中的绝对路径写法保持不变。执行限制的提供方在自己的文件系统上规范化根目录，因此远端 `symlink/..` 路径绝不会在 Harness 主机上解析。
+`readScope(request)` 询问已挂载的 `ctx.sandbox` 提供方在解析出的策略下受限进程能读取什么，`canRead(path, request)` 用规范化后的路径对照该范围检查；面向模型的文件工具在读取前调用 `canRead`。`confinesReads(session)` 报告在 `workspace-write` 下该范围是否存在，也就是会话的后端是否不仅限制写入、也限制读取；Auto 权限据此在这类后端上保留沙箱。`resolve({ session, mode })` 返回一份完整的逐调用策略：已批准的显式模式优先于会话最后一条 `sandbox/mode` 事件，后者又优先于部署默认值。会话的不可变 `cwd` 提供工作区根目录；否则使用配置的回退值。执行环境中的绝对路径写法保持不变。执行限制的提供方在自己的文件系统上规范化根目录，因此远端 `symlink/..` 路径绝不会在 Harness 主机上解析。
 
 ### 逐会话存储
 

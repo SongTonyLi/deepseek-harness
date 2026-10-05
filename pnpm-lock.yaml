@@ -7683,6 +7683,9 @@ importers:
       '@deepseek-ai/dsh-sandbox':
         specifier: workspace:*
         version: link:../../sandbox/sandbox
+      '@deepseek-ai/dsh-sandbox-apple-container':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-apple-container
       '@deepseek-ai/dsh-sandbox-policy':
         specifier: workspace:*
         version: link:../../sandbox/sandbox-policy

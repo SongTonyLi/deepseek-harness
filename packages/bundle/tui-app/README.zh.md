@@ -174,8 +174,8 @@ follow-ups 面板持有键盘时：
 | `/help` | 列出命令，以及每个焦点状态所应答的按键；输入为空时按 `?` 效果相同 |
 | `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认，在模型列表中按 `Ctrl+S` 则把高亮的模型存为下次启动的默认而不关闭列表 |
 | `/effort [id]` | 不带参数时为下一次请求打开当前模型的推理强度选择器，与编辑器中的 `Shift+Tab` 打开的是同一个；id 直接选择，`/effort default` 恢复提供方默认值 |
-| `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它 |
-| `/sandbox [container\|local]` | 已组合 Apple container 提供方时，打开带有实时访问预览的后端选择器；带参数时通过共享命令直接切换。选择器标记当前后端，隐藏不可用的容器选项并说明原因，显示 workspace、读写限制，以及 `danger-full-access` 绕过任一后端时的警告。`Enter` 应用，`Esc` 保留当前后端。文件策略与审批设置不变；使用 `/permission` 控制它们 |
+| `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它，在 Apple container 后端上它保留容器（`workspace-write`），而不是切换到完全访问 |
+| `/sandbox [container\|local]` | 已组合 Apple container 提供方时，打开带有实时访问预览的后端选择器；带参数时通过共享命令直接切换。选择器标记当前后端，隐藏不可用的容器选项并说明原因，显示 workspace、读写限制，以及 `danger-full-access` 绕过任一后端时的警告。`Enter` 应用，`Esc` 保留当前后端。文件策略与审批设置不变；使用 `/permission` 控制它们，但仍处于完全访问的 Auto 会话除外：选择器把容器预览为受限，因为 Auto 会从下一次调用起把自己限制在容器内 |
 | `/search [deepseek\|openrouter [model]]` | 不带参数时打开网页搜索路由选择器；`deepseek` 恢复默认路由，`openrouter` 通过 OpenRouter 路由 `web_search`，使用 `OPENROUTER_API_KEY` 与所输入的模型（默认：`/model` 所选模型属于 OpenRouter 时使用该模型，否则为 `deepseek/deepseek-v4-flash-0731`）。它写入 `web-search-deepseek` 设置命名空间，下一次搜索即读取 |
 | `/resume` | 打开与 `/sessions` 相同的持久化会话选择器，并恢复选中的先前会话 |
 | `/sessions` | 打开持久化会话选择器，并切换到选中的会话 |

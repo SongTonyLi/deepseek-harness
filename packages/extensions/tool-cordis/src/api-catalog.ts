@@ -1655,7 +1655,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'resolve(name: string): PresetSpec',
         description: 'Resolve an available preset\'s knob bundle.',
         parameters: [{ name: 'name', description: 'the preset name to resolve.' }],
-        returns: 'the configured bundle.',
+        returns: 'the configured bundle; for Auto, the bundle of a session whose backend does not confine reads. `set` writes `workspace-write` instead for a session whose backend confines reads.',
         throws: ['when `name` is neither configured nor the currently live Auto preset.'],
       },
       {
@@ -1669,6 +1669,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'set(session: Session, name: string): void',
         description: 'Record a changed preset, then update each changed knob through its own setter. Selecting the effective preset again appends nothing.',
         parameters: [{ name: 'session', description: 'the session the switch belongs to.' }, { name: 'name', description: 'the preset to switch to; unknown names throw.' }],
+      },
+      {
+        signature: 'confineAuto(session: Session): boolean',
+        description: 'Narrow an Auto session that still has full access to the confined mode its backend keeps: a Session recorded before Auto kept the container, or one whose backend switched to it afterwards. Writes only the sandbox mode, so the preset identity and the approval policy a delegated child pins stay as they are. Never widens a confined session.',
+        parameters: [{ name: 'session', description: 'the session to narrow.' }],
+        returns: 'whether the session\'s sandbox mode changed.',
       },
     ],
   },
@@ -1929,6 +1935,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Whether a model-facing tool may read `path` on the host: true when reads are unconfined, otherwise only inside the readScope. Tools that read file contents or search them call this before reading, so their view never exceeds the confined processes\'.',
         parameters: [{ name: 'path', description: 'the host path about to be opened or searched.' }, { name: 'request', description: 'optional session and approved mode override, as for {@link resolve}.' }],
         returns: 'true when the read is allowed.',
+      },
+      {
+        signature: 'confinesReads(session: Session): boolean',
+        description: 'Whether the mounted provider confines a session\'s host reads as well as its writes under `workspace-write`, as the Apple container backend does while the session runs on it. Commands of such a session cannot read or change host files outside the workspace, so a policy that would otherwise bypass the sandbox can keep it at the cost of workspace-bound work only. Providers that confine writes alone report false.',
+        parameters: [{ name: 'session', description: 'the session whose backend applies.' }],
+        returns: 'true when confined commands of `session` cannot read host files outside the read scope.',
       },
       {
         signature: 'overrideOf(session: Session): SandboxMode | undefined',

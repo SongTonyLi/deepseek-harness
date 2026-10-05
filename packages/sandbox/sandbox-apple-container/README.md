@@ -73,7 +73,7 @@ The fields of `@deepseek-ai/dsh-sandbox-local` also apply to the `local` backend
 | A command plants a Git hook or config the host later runs | `.git` is read-only under `workspace-write`; writes fail with `Read-only file system` and use the normal escalation |
 | A command writes outside the workspace | The write lands in the container's own disk and never reaches the host |
 
-`danger-full-access` bypasses `confine`, so it runs on the host under either backend.
+`danger-full-access` bypasses `confine`, so it runs on the host under either backend. The Auto permission does not write it while a session runs on this backend: it writes `workspace-write`, and the reviewer, not a prompt, approves a one-shot escalation that leaves the container ([Auto review](../../experimental/auto-review/README.md)). On the `local` backend Auto still writes `danger-full-access`.
 
 ### Failures and recovery
 

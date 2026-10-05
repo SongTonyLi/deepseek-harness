@@ -53,11 +53,11 @@ kind: "package-reference"
 
 ### 切换预设
 
-切换到 Auto 时，服务先同步执行其准入检查；每次预设切换随后只改变实际值不同的旋钮，再次选择当前已生效的预设不会产生任何变化。当前值解析顺序为：仍匹配的最近一次记录选择（已记录的 Auto 选择在 `never` 审批策略下也匹配），其次是配置表中的第一个匹配项，否则为 `custom`。用户通过 `/permission` 命令切换：不带参数调用时报告当前预设与所有可用条目，带预设参数时切换过去。
+切换到 Auto 时，服务先同步执行其准入检查；每次预设切换随后只改变实际值不同的旋钮，再次选择当前已生效的预设不会产生任何变化。当前值解析顺序为：仍匹配的最近一次记录选择（已记录的 Auto 选择在任一审批策略、且沙箱值为 Auto 会写入的两种之一时也匹配），其次是配置表中的第一个匹配项，否则为 `custom`。用户通过 `/permission` 命令切换：不带参数调用时报告当前预设与所有可用条目，带预设参数时切换过去。
 
 ### 用户看到什么
 
-客户端从进程级目录渲染可选条目：先按表顺序列出配置预设，再在 Auto integration 存活时列出 Auto。客户端把这份快照与 Session 当前值合并；不匹配的 `custom` 值可以标记当前控件，但绝不会成为可选目录行。Auto 的身份与旋钮组合（Full access 沙箱加 `ask` 审批策略）固定在本服务内部；已记录的 Auto 选择也匹配委派子会话固定的 `never` 策略。shipped 客户端的 locale 字典拥有 Auto 的 label 与 description，而配置预设保留 Host 提供的展示信息。调用方不能通过通用 contribution API 发布其他预设；他们可以从 `custom` 切换出去，但不能通过此服务选中或持久化一个具名 custom 预设。
+客户端从进程级目录渲染可选条目：先按表顺序列出配置预设，再在 Auto integration 存活时列出 Auto。客户端把这份快照与 Session 当前值合并；不匹配的 `custom` 值可以标记当前控件，但绝不会成为可选目录行。Auto 的身份与旋钮组合固定在本服务内部：`ask` 审批策略搭配 Full access 沙箱，当会话的沙箱后端同时限制读取时则搭配 `workspace-write`，因此 Auto 会保留 Apple container。已记录的 Auto 选择也匹配这两种沙箱值，以及委派子会话固定的 `never` 策略。shipped 客户端的 locale 字典拥有 Auto 的 label 与 description，而配置预设保留 Host 提供的展示信息。调用方不能通过通用 contribution API 发布其他预设；他们可以从 `custom` 切换出去，但不能通过此服务选中或持久化一个具名 custom 预设。
 
 ### 会话默认值
 
@@ -82,11 +82,11 @@ kind: "package-reference"
 
 ### 写入路径
 
-`set()` 解析预设，并在适用时同步执行 Auto 准入检查。切换仅在有效预设变化时追加 `permission/preset`，再通过各自的权威 setter——`dsh-sandbox-policy` 的 `setSandboxMode` 与 `dsh-user-approval` 的 `setApprovalPolicy`——写入每个变化的旋钮。因此，两个预设共享同一组取值时，选择事件仍会保留用户意图。Auto 与 Full access 之间切换时，记录新的身份与变化的审批策略。净变化为零的选择不追加任何内容。
+`set()` 解析预设，并在适用时同步执行 Auto 准入检查。对于 Auto，它根据 `ctx.sandboxPolicy.confinesReads(session)` 解析沙箱值：后端限制读取时为 `workspace-write`，否则为 `danger-full-access`。该值像任何旋钮一样写入日志，因此切换后端不会改写它，再次选择 Auto 会重新解析。切换仅在有效预设变化时追加 `permission/preset`，再通过各自的权威 setter——`dsh-sandbox-policy` 的 `setSandboxMode` 与 `dsh-user-approval` 的 `setApprovalPolicy`——写入每个变化的旋钮。因此，两个预设共享同一组取值时，选择事件仍会保留用户意图。Auto 与 Full access 之间切换时，记录新的身份与变化的审批策略，会话的后端限制读取时还会记录沙箱模式。净变化为零的选择不追加任何内容。`confineAuto(session)` 是另一个写入入口：当后端限制读取时，它把仍为 `danger-full-access` 的 Auto 会话收窄为 `workspace-write`，只追加 `sandbox/mode`。它绝不放宽已受限的会话，并保持身份以及委派子会话所固定的审批策略不变。
 
 ### 读取侧与 `custom`
 
-`current(session)` 读取必需的 `permissions` 投影；该单元在组合默认值（`ctx.shell.sandboxMode` 与审批配置）之上折叠三个全量值旋钮事件。host 状态还会保留 `session/end-seed` 是否已经出现，使会话固定无需重扫日志即可区分显式为空的恢复 seed 与真正的新会话。仍匹配的最近选择在共享捆绑时胜出，已记录的 Auto 选择在 `never` 审批策略下也匹配；否则配置表中的第一个匹配项胜出；否则返回推导出的 `CUSTOM_PRESET`。投影 key 缺失时会显式失败。
+`current(session)` 读取必需的 `permissions` 投影；该单元在组合默认值（`ctx.shell.sandboxMode` 与审批配置）之上折叠三个全量值旋钮事件。host 状态还会保留 `session/end-seed` 是否已经出现，使会话固定无需重扫日志即可区分显式为空的恢复 seed 与真正的新会话。仍匹配的最近选择在共享捆绑时胜出，已记录的 Auto 选择在任一审批策略、且沙箱值为 Auto 会写入的两种之一时也匹配；否则配置表中的第一个匹配项胜出；否则返回推导出的 `CUSTOM_PRESET`。投影 key 缺失时会显式失败。
 
 `optionOf(name)` 返回配置条目、存活的 Auto 条目或仅供显示的 `custom` 条目。只有名称不匹配这三者时才抛错；已撤回的 Auto 条目不可用。
 

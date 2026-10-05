@@ -14,6 +14,7 @@ import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-ses
 import SandboxPolicyService, { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt, { renderContextSnapshot, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { WorkspaceReadSandbox } from '../../sandbox/tests/read-scope-sandbox.ts'
 
 async function mounted(config: { mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; workspaceRoot?: string } = {}) {
   const ctx = new Context()
@@ -145,6 +146,27 @@ describe('SandboxPolicyService', () => {
     await ctx.plugin(SessionProjectionRegistry)
     // schemastery rejects the union violation when the plugin loads.
     await expect(ctx.plugin(SandboxPolicyService, { mode: 'yolo' as never })).rejects.toThrow()
+  })
+
+  it('reports read confinement from the mounted provider under workspace-write, whatever mode the session logged', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/ws' })
+    const active = session('sess-reads', '/ws')
+    expect(ctx.sandboxPolicy.confinesReads(active)).toBe(false)
+
+    await ctx.plugin(WorkspaceReadSandbox)
+    expect(ctx.sandboxPolicy.confinesReads(active)).toBe(true)
+    // Full access hides nothing, but the question is what the confined mode would hide.
+    setSandboxMode(active, 'danger-full-access')
+    expect(ctx.sandboxPolicy.readScope({ session: active })).toBeUndefined()
+    expect(ctx.sandboxPolicy.confinesReads(active)).toBe(true)
+  })
+
+  it('reports no read confinement for a provider that confines writes alone', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/ws' })
+    await ctx.plugin(WorkspaceReadSandbox)
+    const provider = ctx.sandbox as WorkspaceReadSandbox
+    provider.confinesReads = false
+    expect(ctx.sandboxPolicy.confinesReads(session('sess-writes', '/ws'))).toBe(false)
   })
 
   it('disposes the service and context contribution from a child fiber (HMR safety)', async () => {

@@ -46,13 +46,13 @@ The service requires a confining `ctx.shell` executor and `ctx.approval`, and mi
 
 ## Fixed current-session Auto registration
 
-The Auto integration calls `registerAuto(admit)` for its effect lifetime. This service fixes the `auto` identity and its `danger-full-access` plus `ask` bundle, and a recorded Auto selection also matches the `never` policy that delegated children pin; the shipped client locale dictionaries own Auto's label and description, while configured preset presentation remains Host-owned. Callers cannot publish another preset through a generic contribution API. Auto appears after configured presets, never enters the `permission.defaultPreset` settings schema, and disappears when the effect is disposed. The synchronous `admit` callback runs before Auto selection mutates the Session and before a stored Auto Session publishes, so a missing or closing integration does not rewrite the durable identity.
+The Auto integration calls `registerAuto(admit)` for its effect lifetime. This service fixes the `auto` identity and its bundle: the `ask` approval policy with `danger-full-access`, or with `workspace-write` when the session's sandbox backend also confines reads (`confinesReads`, documented with the [sandbox subsystem](sandbox.md)). Selecting Auto resolves that sandbox value for the session and logs it like any other knob, so a later backend switch never rewrites it, and selecting Auto again resolves it anew. A recorded Auto selection also matches either sandbox value and the `never` policy that delegated children pin, so a Session recorded while Auto always wrote `danger-full-access` still resolves to Auto; the shipped client locale dictionaries own Auto's label and description, while configured preset presentation remains Host-owned. Callers cannot publish another preset through a generic contribution API. Auto appears after configured presets, never enters the `permission.defaultPreset` settings schema, and disappears when the effect is disposed. The synchronous `admit` callback runs before Auto selection mutates the Session and before a stored Auto Session publishes, so a missing or closing integration does not rewrite the durable identity.
 
 Registering or removing Auto emits the payload-free `permission-presets/catalog-changed` notification. Process consumers subscribe before calling `catalog()`, then re-read the complete selectable catalog after each notification. The `permissions` Session projection contains only `currentValue`, so catalog changes append no Session event, publish no Session projection frame, and leave the Session sequence unchanged.
 
 ## Current preset and the derived `custom`
 
-`current(session)` derives the effective preset from the required `permissions` projection. The unit folds the session's sandbox mode, approval policy, and recorded selection; values absent within that state fall back to the executor's configured mode and the approval service config, then `ask`. A missing projection key fails explicitly. The service prefers a still-matching selection, including a recorded Auto selection under the `never` approval policy, then the first matching configured entry, and otherwise returns `CUSTOM_PRESET` (`'custom'`). `custom` is derived-only: clients may display it as the current value, but it is never a switch target or an event payload.
+`current(session)` derives the effective preset from the required `permissions` projection. The unit folds the session's sandbox mode, approval policy, and recorded selection; values absent within that state fall back to the executor's configured mode and the approval service config, then `ask`. A missing projection key fails explicitly. The service prefers a still-matching selection, including a recorded Auto selection under either approval policy and either sandbox value Auto writes, then the first matching configured entry, and otherwise returns `CUSTOM_PRESET` (`'custom'`). `custom` is derived-only: clients may display it as the current value, but it is never a switch target or an event payload.
 
 `names` lists configured presets in declaration order followed by Auto while its integration is live. `catalog()` returns those selectable entries as one process-level snapshot. `optionOf(name)` builds an available entry (its label falls back to the key) or the derived `custom` presentation, and throws for any other name. Clients join the catalog with the Session projection; `custom` may label the current value but never becomes a catalog entry.
 
@@ -70,7 +70,7 @@ interface PresetOption {
 
 ## Switching and the `permission/preset` event
 
-`set(session, name)` resolves the preset (unknown names throw), runs Auto admission when applicable, appends a log-only `permission/preset` event unless `name` is already the effective preset, then writes each knob through its own setter — `setSandboxMode` from [dsh-sandbox-policy](../../packages/sandbox/sandbox-policy) and `setApprovalPolicy` from [dsh-user-approval](../../packages/interaction/user-approval) — only when that knob's effective value changes. The selection event precedes the knob events in the same turn, and re-selecting the effective preset appends nothing.
+`set(session, name)` resolves the preset (unknown names throw), runs Auto admission when applicable, resolves Auto's sandbox value for the session, appends a log-only `permission/preset` event unless `name` is already the effective preset, then writes each knob through its own setter — `setSandboxMode` from [dsh-sandbox-policy](../../packages/sandbox/sandbox-policy) and `setApprovalPolicy` from [dsh-user-approval](../../packages/interaction/user-approval) — only when that knob's effective value changes. The selection event precedes the knob events in the same turn, and re-selecting the effective preset appends nothing. `confineAuto(session)` narrows an Auto session that still has `danger-full-access` while its backend confines reads by appending only `sandbox/mode`; it never widens a confined session and leaves the preset identity and the approval policy unchanged, so a delegated child keeps its pinned `never`.
 
 `permission/preset` is durable, log-only user intent: it stays out of the model transcript (the knob events own the model-visible consequences through their consumers), and it exists so `current()` can preserve which preset the user chose when two presets share a bundle. The `permissions` projection folds that selection with both knob events and retains the `session/end-seed` boundary used to distinguish a restored empty seed from a fresh session; replay needs no catch-up state or raw-log rescan. A restored `auto` selection requires the live Auto registration before Agent publication. The complete event declaration is in the [persistence log event catalog](../persistence-catalog.md); the method signatures are in the generated [service catalog](#ctxpermissionpresets--permissionpresetservice).
 
@@ -117,7 +117,9 @@ current(session: Session): string
 /**
  * Resolve an available preset's knob bundle.
  * @param name - the preset name to resolve.
- * @returns the configured bundle.
+ * @returns the configured bundle; for Auto, the bundle of a session whose
+ *   backend does not confine reads. `set` writes `workspace-write` instead
+ *   for a session whose backend confines reads.
  * @throws when `name` is neither configured nor the currently live Auto preset.
  */
 resolve(name: string): PresetSpec
@@ -138,6 +140,17 @@ optionOf(name: string): PresetOption
  * @param name - the preset to switch to; unknown names throw.
  */
 set(session: Session, name: string): void
+
+/**
+ * Narrow an Auto session that still has full access to the confined mode its
+ * backend keeps: a Session recorded before Auto kept the container, or one
+ * whose backend switched to it afterwards. Writes only the sandbox mode, so
+ * the preset identity and the approval policy a delegated child pins stay as
+ * they are. Never widens a confined session.
+ * @param session - the session to narrow.
+ * @returns whether the session's sandbox mode changed.
+ */
+confineAuto(session: Session): boolean
 ```
 
 Types: [Session](session.md)

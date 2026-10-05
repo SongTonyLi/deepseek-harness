@@ -161,6 +161,8 @@ Provider selection, probing, caching, and backend-specific enforcement reports b
 
 `ctx.sandbox.readScope(policy)` reports what a process confined under `policy` can read on the host, or `undefined` when the backend does not confine reads; the base provider returns `undefined`. `ctx.sandboxPolicy.canRead(path, request)` resolves the calling session's policy and checks a path against that scope after canonicalizing both, so neither `..` segments nor symlinks leave the roots. The `edit`, `write`, `str_replace_editor`, `grep`, and `glob` tools refuse a path outside the scope with `FS_SANDBOX_DENIED` or `SEARCH_SANDBOX_DENIED` before observing it, `read` and `read_image` ask the user once per call before reading a non-hidden path outside it ([tool-fs](../../packages/fs/tool-fs/README.md)), and `grep` excludes hidden file names from content searches, so the model's file tools never read more than its confined commands.
 
+`ctx.sandboxPolicy.confinesReads(session)` reports whether the mounted provider confines the session's reads under `workspace-write` as well as its writes, which the Apple container backend does while a session runs on it and a host-kernel provider does not. A permission policy that would otherwise bypass the sandbox asks it before deciding to keep the sandbox: the [Auto](permission-presets.md) permission writes `workspace-write` instead of `danger-full-access` for a session whose backend confines reads.
+
 ```ts type-equiv
 /**
  * The host paths confined processes can read: everything under `roots`
@@ -253,6 +255,18 @@ readScope(request: SandboxPolicyRequest = {}): SandboxReadScope | undefined
  * @returns true when the read is allowed.
  */
 canRead(path: string, request: SandboxPolicyRequest = {}): boolean
+
+/**
+ * Whether the mounted provider confines a session's host reads as well as
+ * its writes under `workspace-write`, as the Apple container backend does
+ * while the session runs on it. Commands of such a session cannot read or
+ * change host files outside the workspace, so a policy that would otherwise
+ * bypass the sandbox can keep it at the cost of workspace-bound work only.
+ * Providers that confine writes alone report false.
+ * @param session - the session whose backend applies.
+ * @returns true when confined commands of `session` cannot read host files outside the read scope.
+ */
+confinesReads(session: Session): boolean
 
 /**
  * Read the session override without applying the deployment default.

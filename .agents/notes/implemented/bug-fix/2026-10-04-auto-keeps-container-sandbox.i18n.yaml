@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-04-auto-keeps-container-sandbox.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-04-auto-keeps-container-sandbox.md
+/agent-note-auto-keeps-the-sandbox-on-a-backend-that-confines-reads:
+  en: 5f9a856372a9baf4
+  zh: b14511bb19eff85d
+/agent-note-auto-keeps-the-sandbox-on-a-backend-that-confines-reads/problem:
+  en: c060aa009ad38ecd
+  zh: 59d5e4c4fe91c0e7
+/agent-note-auto-keeps-the-sandbox-on-a-backend-that-confines-reads/decision:
+  en: 58e340b4f29192b8
+  zh: f751beb77b3560f5
+/agent-note-auto-keeps-the-sandbox-on-a-backend-that-confines-reads/alternatives-considered:
+  en: 1d6dcbf0898e0f31
+  zh: f9021f831d56f4cc
+/agent-note-auto-keeps-the-sandbox-on-a-backend-that-confines-reads/consequences:
+  en: b0e9dc12ad3ec6d3
+  zh: f81a740215f6486b
+/agent-note-auto-keeps-the-sandbox-on-a-backend-that-confines-reads/related-decisions:
+  en: 4f4f6a431a61f322
+  zh: 7c037a57829d8d76

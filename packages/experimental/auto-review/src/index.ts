@@ -5,6 +5,11 @@
  * Under the `ask` approval policy a reviewer denial asks the user; under
  * `never` it is final.
  *
+ * An allowed call also answers the approvals it raises while it runs, such as a
+ * one-shot sandbox escalation, so the reviewer decides instead of the user. On a
+ * backend that confines reads, Auto keeps the sandbox: its mode is
+ * `workspace-write`, and only such an escalation leaves it.
+ *
  * @module @deepseek-ai/dsh-experimental-auto-review
  */
 
@@ -23,11 +28,13 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { deepFreeze } from '@deepseek-ai/dsh-util-values'
 import { AUTO_PRESET } from '@deepseek-ai/dsh-permission-presets'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-subagent'
-import type {} from '@deepseek-ai/dsh-user-approval'
+import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import {
   RUN_CODE_NAME,
+  type PostToolDecision,
   type PreToolDecision,
   type ToolExecution,
 } from '@deepseek-ai/dsh-tools'
@@ -723,6 +730,15 @@ function failed(exec: ToolExecution, error: unknown): PreToolDecision {
   }
 }
 
+/**
+ * The preset a live Auto session migrates to when the integration unloads: it
+ * keeps the session's sandbox mode, so migration neither widens it nor trips the
+ * persistent-terminal mode fence.
+ */
+function migrationPreset(ctx: Context, session: Session): 'workspace-write' | 'danger-full-access' {
+  return ctx.get('sandboxPolicy')?.overrideOf(session) === 'workspace-write' ? 'workspace-write' : 'danger-full-access'
+}
+
 /** Install the Auto preset and its prepended per-call review gate. */
 export function apply(ctx: Context, config: Config): void {
   // Retain the injected service while this context drains on disposal.
@@ -730,14 +746,25 @@ export function apply(ctx: Context, config: Config): void {
   let accepting = true
   const active = new Set<Promise<void>>()
   const lifecycle = new AbortController()
+  // Calls the reviewer allowed that are still running. The allow stands in for
+  // the user on every approval such a call raises while its body runs.
+  const allowedCalls = new WeakMap<Agent, Set<ToolCallId>>()
+  const allowCall = (agent: Agent, callId: ToolCallId): void => {
+    const calls = allowedCalls.get(agent) ?? new Set<ToolCallId>()
+    calls.add(callId)
+    allowedCalls.set(agent, calls)
+  }
 
   ctx.effect(function* () {
     const stopListener = ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
       const agent = exec.agent
-      if (agent === undefined || (exec.parent === undefined && exec.name === RUN_CODE_NAME)) {
+      if (agent === undefined) return next()
+      if (permissionPresets.current(agent.session) !== AUTO_PRESET) {
         return next()
       }
-      if (permissionPresets.current(agent.session) !== AUTO_PRESET) {
+      // Narrow before the transport check below: the unreviewed `run_code` process confines under the same mode.
+      if (accepting) permissionPresets.confineAuto(agent.session)
+      if (exec.parent === undefined && exec.name === RUN_CODE_NAME) {
         return next()
       }
       if (!accepting || lifecycle.signal.aborted) {
@@ -761,7 +788,12 @@ export function apply(ctx: Context, config: Config): void {
         }
         const downstream = await next()
         if (isAborted(lifecycle.signal)) return { kind: 'cancel' }
-        if (decision.decision === 'allow' || downstream.kind !== 'allow') return downstream
+        if (decision.decision === 'allow') {
+          // A downstream ask is that listener's own decision; only a call that will run is covered.
+          if (downstream.kind === 'allow') allowCall(agent, exec.callId)
+          return downstream
+        }
+        if (downstream.kind !== 'allow') return downstream
         return askUser(exec, decision.reason)
       } finally {
         active.delete(completed.promise)
@@ -769,6 +801,17 @@ export function apply(ctx: Context, config: Config): void {
       }
     }, { prepend: true })
     yield stopListener
+    // The allow answers approvals raised inside the body, such as a sandbox escalation. An
+    // approval for a call the reviewer denied, or that nobody reviewed, still reaches the user.
+    yield ctx.on('approval/request', (request, next): Promise<ApprovalOutcome> => {
+      if (request.callId === undefined || allowedCalls.get(request.agent)?.has(request.callId) !== true) return next()
+      if (permissionPresets.current(request.agent.session) !== AUTO_PRESET) return next()
+      return Promise.resolve('allowed-once')
+    }, { prepend: true })
+    yield ctx.on('tools/post-execute', (exec, _result, next): Promise<PostToolDecision> => {
+      if (exec.agent !== undefined) allowedCalls.get(exec.agent)?.delete(exec.callId)
+      return next()
+    }, { prepend: true })
     const stopContribution = permissionPresets.registerAuto(() => {
       if (!accepting) throw new Error('auto-review: integration is closing')
     })
@@ -778,7 +821,7 @@ export function apply(ctx: Context, config: Config): void {
       try {
         for (const session of ctx.sessions.list()) {
           if (permissionPresets.current(session) !== AUTO_PRESET) continue
-          permissionPresets.set(session, 'danger-full-access')
+          permissionPresets.set(session, migrationPreset(ctx, session))
         }
       } finally {
         lifecycle.abort(new Error('auto-review integration disposed'))
