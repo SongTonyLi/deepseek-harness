@@ -753,7 +753,7 @@ describe('sandbox escalation through the generic task producer', () => {
       }
       await ctx.plugin(NotingProvider)
       const reasons: string[] = []
-      ctx.on('approval/request', (request) => { reasons.push(request.reason); return Promise.resolve<ApprovalOutcome>('allowed-once') })
+      ctx.on('approval/request', (request) => { reasons.push(request.reason ?? ''); return Promise.resolve<ApprovalOutcome>('allowed-once') })
       const result = await call(ctx, 'bash', escalate, sandboxAgent('read-only'))
       expect(result.isError, text(result)).toBe(false)
       expect(reasons).toEqual(['escalate sandbox to workspace-write: the command needs workspace writes (It runs on the host.)'])
