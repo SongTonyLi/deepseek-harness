@@ -73,7 +73,7 @@ The fields of `@deepseek-ai/dsh-sandbox-local` also apply to the `local` backend
 | A command plants a Git hook or config the host later runs | `.git` is read-only under `workspace-write`; writes fail with `Read-only file system` and use the normal escalation |
 | A command writes outside the workspace | The write lands in the container's own disk and never reaches the host |
 
-`danger-full-access` bypasses `confine`, so it runs on the host under either backend. The Auto permission does not write it while a session runs on this backend: it writes `workspace-write`, and the reviewer, not a prompt, approves a one-shot escalation that leaves the container ([Auto review](../../experimental/auto-review/README.md)). On the `local` backend Auto still writes `danger-full-access`.
+`danger-full-access` bypasses `confine`, so it runs on the host under either backend. The approval prompt for an escalation to `danger-full-access` from a container session adds that the command runs directly on the Mac, outside the container. The Auto permission does not write it while a session runs on this backend: it writes `workspace-write`, and the reviewer, not a prompt, approves a one-shot escalation that leaves the container ([Auto review](../../experimental/auto-review/README.md)). On the `local` backend Auto still writes `danger-full-access`.
 
 ### Failures and recovery
 
@@ -132,7 +132,7 @@ One `sandbox:backend` contribution in the runtime-context snapshot when the sess
 ##### Container backend
 
 ```markdown
-Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
+Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
 ```
 
 #### Token effect

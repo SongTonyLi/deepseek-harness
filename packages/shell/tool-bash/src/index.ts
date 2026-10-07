@@ -244,8 +244,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing executor to escalate)')
     }
     const effectiveMode = (standingPolicy as SandboxExecutionPolicy).mode
+    const note = ctx.get('sandbox')?.escalationNote(standingPolicy as SandboxExecutionPolicy, mode as SandboxMode)
     return approveEscalation(
-      { requestedMode: mode, justification, effectiveMode, subject: 'command' },
+      { requestedMode: mode, justification, effectiveMode, subject: 'command', ...note === undefined ? {} : { note } },
       {
         approver: ctx.get('approval'),
         agent: exec.agent,

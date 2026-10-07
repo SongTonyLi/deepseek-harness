@@ -23,7 +23,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
 import { SandboxUnavailableError, canonicalPath } from '@deepseek-ai/dsh-sandbox'
-import type { ConfinedArgv, RunnerFailureRule, SandboxExecutionPolicy, SandboxPolicy, SandboxReadScope } from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, RunnerFailureRule, SandboxExecutionPolicy, SandboxMode, SandboxPolicy, SandboxReadScope } from '@deepseek-ai/dsh-sandbox'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import type { Config as LocalConfig } from '@deepseek-ai/dsh-sandbox-local'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
@@ -254,6 +254,8 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
           return `Commands confined by the DSH file sandbox run inside a Linux container from image ${JSON.stringify(this.image)}. `
             + `Only the session workspace ${JSON.stringify(policy.workspaceRoot)} is shared with the host; `
             + 'files written elsewhere stay inside the container and are not visible to file tools. '
+            + 'Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; '
+            + 'when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. '
             + 'File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.'
         },
       })
@@ -313,6 +315,20 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       enforcement: 'full',
       denialSignatures: CONTAINER_DENIAL_SIGNATURES,
       runnerFailureRules: CONTAINER_RUNNER_FAILURE_RULES,
+    }
+  }
+
+  /**
+   * Tells the user that `danger-full-access` leaves the container.
+   * @param policy - the calling session's resolved policy.
+   * @param target - the wider mode the call asks for.
+   * @returns the localized sentence for a container-backed call escalating to `danger-full-access`, otherwise `undefined`.
+   */
+  override escalationNote(policy: SandboxExecutionPolicy, target: SandboxMode): { en: string; zh: string } | undefined {
+    if (target !== 'danger-full-access' || this.policyBackend(policy) !== 'container') return undefined
+    return {
+      en: 'It will run directly on your Mac, outside the Linux container.',
+      zh: '它将直接在你的 Mac 上运行，而不是在 Linux 容器内。',
     }
   }
 

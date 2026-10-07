@@ -197,6 +197,8 @@ describe('AppleContainerSandboxProvider', () => {
       'Commands confined by the DSH file sandbox run inside a Linux container from image "node:22-bookworm". '
       + `Only the session workspace ${JSON.stringify(h.root)} is shared with the host; `
       + 'files written elsewhere stay inside the container and are not visible to file tools. '
+      + 'Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; '
+      + 'when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. '
       + 'File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.',
     )
     setSandboxMode(session, 'danger-full-access')
@@ -267,6 +269,16 @@ describe('AppleContainerSandboxProvider', () => {
     setSandboxBackend(session, 'local')
     expect(h.sandbox.readScope(policy)).toBeUndefined()
     expect(h.ctx.sandboxPolicy.canRead('/etc/passwd', { session })).toBe(true)
+  })
+
+  it('tells the user that escalating to full access leaves the container', async () => {
+    const h = await mounted({ policy: 'workspace-write' })
+    const session = h.session('s-note')
+    const policy = { mode: 'workspace-write' as const, workspaceRoot: h.root, sessionId: session.id }
+    expect(h.sandbox.escalationNote(policy, 'danger-full-access')?.en).toBe('It will run directly on your Mac, outside the Linux container.')
+    expect(h.sandbox.escalationNote(policy, 'workspace-write')).toBeUndefined()
+    setSandboxBackend(session, 'local')
+    expect(h.sandbox.escalationNote(policy, 'danger-full-access')).toBeUndefined()
   })
 
   it('mounts extra read-only directories and masks hidden files in new containers', async () => {
