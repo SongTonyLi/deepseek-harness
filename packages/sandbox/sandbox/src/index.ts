@@ -164,6 +164,12 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** Localized sentence a provider adds to an escalation approval prompt; `en` is required. */
+export interface EscalationNote {
+  readonly en: string
+  readonly [locale: string]: string
+}
+
 /**
  * Abstract process-sandbox service. {@link confine} must return enforcing argv
  * or fail closed at wrap or runner-execution time; silent unconfined passthrough
@@ -200,6 +206,18 @@ export abstract class SandboxProvider extends Service {
    * @returns the read scope, or `undefined` for unconfined reads.
    */
   readScope(_policy: SandboxExecutionPolicy): SandboxReadScope | undefined {
+    return undefined
+  }
+
+  /**
+   * A user-facing sentence to add to the approval prompt for escalating one
+   * call to `target`, for backends where the wider mode changes where the
+   * command runs. The base implementation adds nothing.
+   * @param _policy - the file-effect policy the call currently runs under.
+   * @param _target - the wider mode the call asks for.
+   * @returns the localized sentence, or `undefined` when the prompt needs no addition.
+   */
+  escalationNote(_policy: SandboxExecutionPolicy, _target: SandboxMode): EscalationNote | undefined {
     return undefined
   }
 }

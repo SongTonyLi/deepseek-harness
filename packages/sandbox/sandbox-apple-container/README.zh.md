@@ -73,7 +73,7 @@ kind: "package-reference"
 | 命令植入宿主机之后会执行的 Git hook 或配置 | 在 `workspace-write` 下 `.git` 为只读；写入以 `Read-only file system` 失败，并走常规提权流程 |
 | 命令写入工作区之外 | 写入落在容器自己的磁盘上，永远不会到达宿主机 |
 
-`danger-full-access` 绕过 `confine`，因此在任一后端下都在宿主机上运行。会话运行在此后端时，Auto 权限不会写入它：而是写入 `workspace-write`，并由 reviewer 而不是提示批准离开容器的一次性提权（[Auto review](../../experimental/auto-review/README.zh.md)）。在 `local` 后端上，Auto 仍写入 `danger-full-access`。
+`danger-full-access` 绕过 `confine`，因此在任一后端下都在宿主机上运行。从容器会话升权到 `danger-full-access` 时，审批提示会补充说明该命令将直接在 Mac 上运行，而不是在容器内。会话运行在此后端时，Auto 权限不会写入它：而是写入 `workspace-write`，并由 reviewer 而不是提示批准离开容器的一次性提权（[Auto review](../../experimental/auto-review/README.zh.md)）。在 `local` 后端上，Auto 仍写入 `danger-full-access`。
 
 ### 失败与恢复
 
@@ -132,7 +132,7 @@ CLI 缺失、已停止且无法启动的 API 服务器，或 `container run` 失
 ##### container 后端
 
 ```markdown
-Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
+Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
 ```
 
 #### Token 影响

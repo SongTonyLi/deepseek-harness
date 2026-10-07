@@ -19,7 +19,8 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
-import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+import { SandboxProvider, escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv } from '@deepseek-ai/dsh-sandbox'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as BashEnvPlugin from '@deepseek-ai/dsh-shell-env'
@@ -733,6 +734,29 @@ describe('sandbox escalation through the generic task producer', () => {
       expect(text(result)).toBe('ok')
       expect(bash.modes).toEqual(['workspace-write'])
       expect(prompted).not.toHaveBeenCalled()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('adds the sandbox provider note to the approval prompt', async () => {
+    const { ctx } = await setupSandboxed(true)
+    try {
+      class NotingProvider extends SandboxProvider {
+        confine(argv: readonly string[]): Promise<ConfinedArgv> {
+          return Promise.resolve({ argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] })
+        }
+
+        override escalationNote() {
+          return { en: 'It runs on the host.' }
+        }
+      }
+      await ctx.plugin(NotingProvider)
+      const reasons: string[] = []
+      ctx.on('approval/request', (request) => { reasons.push(request.reason ?? ''); return Promise.resolve<ApprovalOutcome>('allowed-once') })
+      const result = await call(ctx, 'bash', escalate, sandboxAgent('read-only'))
+      expect(result.isError, text(result)).toBe(false)
+      expect(reasons).toEqual(['escalate sandbox to workspace-write: the command needs workspace writes (It runs on the host.)'])
     } finally {
       await ctx.fiber.dispose()
     }

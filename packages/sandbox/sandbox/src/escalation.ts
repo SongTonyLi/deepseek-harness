@@ -156,6 +156,8 @@ export interface EscalationRequest {
   effectiveMode: SandboxMode
   /** The family's noun for the escalated action in user-facing texts (`command` for bash, `operation` for fs). */
   subject: string
+  /** Localized sentence appended to the approval prompt, such as where the escalated call runs. */
+  note?: { readonly en: string; readonly [locale: string]: string }
 }
 
 /**
@@ -169,7 +171,7 @@ export interface EscalationRequest {
  * @returns the granted mode, consumed by the one call that asked.
  */
 export async function approveEscalation<A, C>(request: EscalationRequest, approval: EscalationApproval<A, C>): Promise<SandboxMode> {
-  const { requestedMode: mode, effectiveMode, justification, subject } = request
+  const { requestedMode: mode, effectiveMode, justification, subject, note } = request
   if (mode === effectiveMode) return effectiveMode
   // Strict widening is an EXECUTION check against the call's effective mode —
   // deliberately not a schema constraint (the enum is the closed target
@@ -189,10 +191,10 @@ export async function approveEscalation<A, C>(request: EscalationRequest, approv
     agent: approval.agent,
     toolName: approval.toolName,
     callId: approval.callId,
-    reason: `escalate sandbox to ${mode}: ${justification}`,
+    reason: `escalate sandbox to ${mode}: ${justification}${note === undefined ? '' : ` (${note.en})`}`,
     displayReason: {
-      en: `Allow this operation with ${mode} permissions: ${justification}`,
-      zh: `允许本次操作使用 ${mode} 权限：${justification}`,
+      en: `Allow this operation with ${mode} permissions: ${justification}${note === undefined ? '' : ` ${note.en}`}`,
+      zh: `允许本次操作使用 ${mode} 权限：${justification}${note === undefined ? '' : ` ${note.zh ?? note.en}`}`,
     },
     ...approval.signal ? { signal: approval.signal } : {},
   })

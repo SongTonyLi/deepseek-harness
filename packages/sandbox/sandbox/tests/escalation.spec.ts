@@ -80,6 +80,21 @@ describe('approveEscalation', () => {
     ...over,
   })
 
+  it('appends the provider note to the approval prompt and audit reason', async () => {
+    const seen: { reason?: string }[] = []
+    await approveEscalation(
+      req({ note: { en: 'It runs on the host.', zh: '它在主机上运行。' } }),
+      ingredients({ approver: approver('allowed-once', r => seen.push(r as { reason?: string })) }),
+    )
+    expect(seen[0]?.reason).toBe('escalate sandbox to workspace-write: the user asked to write in the workspace (It runs on the host.)')
+    expect(seen[0]).toMatchObject({
+      displayReason: {
+        en: 'Allow this operation with workspace-write permissions: the user asked to write in the workspace It runs on the host.',
+        zh: '允许本次操作使用 workspace-write 权限：the user asked to write in the workspace 它在主机上运行。',
+      },
+    })
+  })
+
   it('grants: returns the requested mode, asking through the approver with the audit reason', async () => {
     const seen: { reason?: string }[] = []
     const granted = await approveEscalation(req(), ingredients({ approver: approver('allowed-once', r => seen.push(r as { reason?: string })) }))
