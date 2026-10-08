@@ -288,11 +288,11 @@ export class WorkflowBlock implements Component, WorkflowSection, Foldable {
    * @returns terminal rows, including its separating leading blank line.
    */
   render(width: number): string[] {
-    const marked = this.highlight !== undefined
-    const content = Math.max(1, width - (marked ? GUTTER_WIDTH : 0))
+    const highlight = this.highlight
+    const content = Math.max(1, width - (highlight === undefined ? 0 : GUTTER_WIDTH))
     const layout = this.layout(content)
-    if (!marked) return [...layout.lines]
-    const focused = layout.ranges[this.highlight] ?? layout.fallbacks[this.highlight] ?? layout.ranges[0]
+    if (highlight === undefined) return [...layout.lines]
+    const focused = layout.ranges[highlight] ?? layout.fallbacks[highlight] ?? layout.ranges[0]
     /* v8 ignore next -- buildLayout always records a range for the run header, and highlight falls back to it. */
     if (focused === undefined) return [...layout.lines]
     const marker = pulse(this.theme.palette, this.theme.palette.accent(PART_GUTTER), this.highlightLevel)

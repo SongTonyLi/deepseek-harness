@@ -352,7 +352,7 @@ describe('workflow runs in the terminal', () => {
         }),
       }, 18),
       recorded('tool-workflow/agent-start', { runId: 'run-plain' as ToolWorkflowRunStartData['runId'], seq: 1, label: 'plain-member', phase: 'scan', childId: 'session-plain' as ToolWorkflowAgentStartData['childId'] }, 19),
-      recorded('tool-workflow/agent-end', { runId: 'run-missing', seq: 1, outcome: 'failed' }, 20),
+      recorded('tool-workflow/agent-end', { runId: 'run-missing' as ToolWorkflowRunStartData['runId'], seq: 1, outcome: 'failed' }, 20),
       recorded('tool-workflow/run-start', { runId: 'run-shared-a' as ToolWorkflowRunStartData['runId'], name: 'shared' }, 24),
       recorded('tool/result', {
         turn: 1,
