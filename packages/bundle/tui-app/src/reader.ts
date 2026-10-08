@@ -382,6 +382,9 @@ function sectionGlyph(block: SectionSource, part: SectionPart): string {
       return part.kind === 'reasoning' ? '✻' : '¶'
     case 'tool':
       return part.kind === 'result' ? '⎿' : '◆'
+    case 'workflow':
+      if (part.kind === 'workflow-run') return '◇'
+      return part.kind === 'workflow-phase' ? '▸' : '○'
     /* v8 ignore next 2 -- closed-union exhaustiveness guard */
     default:
       return assertNever(block, 'tui reader block kind')
@@ -419,6 +422,8 @@ function sectionName(block: SectionSource, part: SectionPart): string {
       const card = block.title === '' ? block.name : `${block.name} ${block.title}`
       return settledTool(block) ? card : `${card} · running`
     }
+    case 'workflow':
+      return sectionLabel(block, part)
     /* v8 ignore next 2 -- closed-union exhaustiveness guard */
     default:
       return assertNever(block, 'tui reader block kind')

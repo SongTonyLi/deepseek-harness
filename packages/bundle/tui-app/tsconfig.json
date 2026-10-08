@@ -129,6 +129,9 @@
       "path": "../../todo/tool-todo"
     },
     {
+      "path": "../../workflow/tool-workflow"
+    },
+    {
       "path": "../../util/brand"
     },
     {

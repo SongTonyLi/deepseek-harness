@@ -417,17 +417,21 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
         })
       }, [])
     },
-    observe: async (id) => {
+    observe: async (id, options) => {
       const resident = agents.get(id)
-      if (resident === undefined) return resume(id)
-      // A resident subagent is owned by the run that started it; the view
-      // reads it live and releases nothing.
-      return {
-        agent: resident,
-        selection: { current: undefined, assembled: undefined },
-        history: await observeBoundHistory(ctx, id),
-        dispose: () => Promise.resolve(),
+      if (resident !== undefined && (options?.liveOnly !== true || resident.status === 'running')) {
+        // A resident subagent is owned by the run that started it; the view
+        // reads it live and releases nothing. liveOnly never resumes a child
+        // that has already left this process.
+        return {
+          agent: resident,
+          selection: { current: undefined, assembled: undefined },
+          history: await observeBoundHistory(ctx, id),
+          dispose: () => Promise.resolve(),
+        }
       }
+      if (options?.liveOnly === true) throw new Error('that session is not running in this process')
+      return resume(id)
     },
   }
 }

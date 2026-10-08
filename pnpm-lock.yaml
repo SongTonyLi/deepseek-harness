@@ -2617,6 +2617,9 @@ importers:
       '@deepseek-ai/dsh-tool-todo':
         specifier: workspace:*
         version: link:../../todo/tool-todo
+      '@deepseek-ai/dsh-tool-workflow':
+        specifier: workspace:*
+        version: link:../../workflow/tool-workflow
       '@deepseek-ai/dsh-tools':
         specifier: workspace:*
         version: link:../../core/tools

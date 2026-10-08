@@ -5,7 +5,9 @@
  * seams for that Agent, and switches between sessions through its host. Above
  * the editor it draws an activity board of the open turn's todos and the
  * latest descendant line, and a live line while background jobs run; `Ctrl+B`
- * moves the running tool calls to those jobs (`./background.ts`). Under the
+ * moves the running tool calls to those jobs (`./background.ts`). A top-level
+ * workflow call draws a run beside its tool card: the name, member count,
+ * status, phases, and started members (`./workflow-block.ts`). Under the
  * editor it keeps two docked regions the keyboard can take over — the
  * subagent panel and the status bar — and one repeating tick advances their
  * elapsed counters and the jobs line's, and re-reads a stale subagent
@@ -52,9 +54,10 @@ import type { Session, SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
 import { AppleContainerSandboxProvider } from '@deepseek-ai/dsh-sandbox-apple-container'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
+import type { ToolWorkflowRunStartData } from '@deepseek-ai/dsh-tool-workflow/types'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
-import type { JobEvent, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
+import { JobId, type JobEvent, type JobRegistry, type JobView } from '@deepseek-ai/dsh-jobs'
 import type { AskUserQuestionAnswer, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 // Empty type imports carry the Context merges for the services this app reads through `ctx.get`.
@@ -110,6 +113,8 @@ import {
   type SubagentChoice,
 } from './catalog.ts'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
+import { WorkflowBlock } from './workflow-block.ts'
+import { foldWorkflowRun, projectWorkflowRun, type WorkflowRunEvent, type WorkflowRunState } from './workflow.ts'
 import {
   ACTIVITY_SPINNERS,
   COMPACTING_ACTIVITY,
@@ -409,6 +414,42 @@ interface FocusedSection {
   part: SectionPart
 }
 
+/** A workflow-shaped tool call waiting to be associated with its durable run-start record. */
+interface WorkflowCallRecord {
+  /** Workflow meta name, used because durable run records carry no call id. */
+  readonly name: string
+  /** Whether the tool asked the workflow runtime to create an owned job. */
+  readonly background: boolean
+  /** Durable run identity once its run-start record arrived. */
+  runId?: WorkflowRunState['runId']
+  /** Background job id once the tool result names one. */
+  jobId?: JobId
+}
+
+/** Process-local ownership used only to interpret unfinished replay safely. */
+interface WorkflowOwnership {
+  /** A background workflow must remain running past its launch turn. */
+  readonly background: boolean
+  /** Job that currently owns a background run when the local registry exposed one. */
+  readonly jobId?: JobId
+}
+
+/**
+ * Read a workflow tool call's name and background flag.
+ * @param value - parsed tool arguments.
+ * @returns the association facts, or undefined when the arguments are not a workflow call.
+ */
+function workflowCallArgs(value: unknown): { readonly name: string; readonly background: boolean } | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const meta = (value as { meta?: unknown }).meta
+  if (typeof meta !== 'object' || meta === null) return undefined
+  const name = (meta as { name?: unknown }).name
+  if (typeof name !== 'string') return undefined
+  const background = (value as { run_in_background?: unknown }).run_in_background
+  if (background !== undefined && typeof background !== 'boolean') return undefined
+  return { name, background: background === true }
+}
+
 /** One Agent the terminal drives, with the facts the host resolved for it. */
 export interface BoundSession {
   agent: Agent
@@ -444,9 +485,12 @@ export interface SessionHost {
    * and its `dispose` releases nothing, and any other session is resumed and
    * released by `dispose`. The history is read at the call, so a session
    * returned to later is observed again rather than drawn from a stale copy.
+   * `liveOnly` refuses when no running Agent for `id` is resident, so a
+   * workflow member cannot resume a child that already finished.
    * @param id - the session to view.
+   * @param options - `liveOnly` views a resident running Agent and never resumes.
    */
-  observe(id: SessionId): Promise<BoundSession>
+  observe(id: SessionId, options?: { readonly liveOnly?: boolean }): Promise<BoundSession>
   /**
    * Open a temporary side agent for `/btw`, seeded with every event `parent`
    * has logged so far, an unfinished turn included. It runs on the parent's
@@ -746,6 +790,16 @@ export class TuiApp {
   private readonly modals: ModalQueue
   private readonly theme: BlockTheme
   private readonly toolBlocks = new Map<ToolCallId, ToolBlock>()
+  /** Durable workflow blocks keyed by their run record. */
+  private readonly workflowBlocks = new Map<WorkflowRunState['runId'], WorkflowBlock>()
+  /** Reducer state behind {@link workflowBlocks}, replayed from durable events. */
+  private readonly workflowStates = new Map<WorkflowRunState['runId'], WorkflowRunState>()
+  /** Workflow-shaped calls awaiting their durable run-start record. */
+  private readonly workflowCalls = new Map<ToolCallId, WorkflowCallRecord>()
+  /** Process-local ownership for unfinished-run interpretation after replay. */
+  private readonly workflowOwners = new Map<WorkflowRunState['runId'], WorkflowOwnership>()
+  /** The global fold action has not chosen a workflow default until the first `Ctrl+O`. */
+  private workflowExpanded: boolean | undefined
   private readonly toolArguments = new Map<ToolCallId, unknown>()
   /** Raw argument text accumulated from `tool-call-delta` chunks, keyed by call id. */
   private readonly toolStreamArgs = new Map<ToolCallId, string>()
@@ -1039,6 +1093,7 @@ export class TuiApp {
           // Every Agent of this process reaches here, the subagent children
           // included; one of them changing state can add or drop a panel row.
           this.markSubagentsStale()
+          this.refreshWorkflowChildLinks()
           return
         }
         this.setWorking(status === 'running')
@@ -1048,12 +1103,14 @@ export class TuiApp {
       // header decide whether the activity board may show the status word.
       ctx.on('subagent/start', (info) => {
         this.markSubagentsStale()
+        this.refreshWorkflowChildLinks()
         if (this.isBoundDescendantId(info.id)) {
           this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: 'running' })
         }
       }),
       ctx.on('subagent/end', (info) => {
         this.markSubagentsStale()
+        this.refreshWorkflowChildLinks()
         if (this.isBoundDescendantId(info.id)) {
           this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: info.stopReason })
         }
@@ -1187,6 +1244,10 @@ export class TuiApp {
     this.cursor = undefined
     this.chat.clear()
     this.toolBlocks.clear()
+    this.workflowBlocks.clear()
+    this.workflowStates.clear()
+    this.workflowCalls.clear()
+    this.workflowOwners.clear()
     this.toolArguments.clear()
     this.toolStreamArgs.clear()
     this.unconfirmedTools.clear()
@@ -1223,6 +1284,8 @@ export class TuiApp {
     this.replaying = true
     for (const event of next.history) this.onSessionEvent(next.agent.session, event)
     this.replaying = false
+    this.finishWorkflowReplay()
+    this.refreshWorkflowChildLinks()
     if (reading) this.notice(READER_GONE)
     this.refreshHeader()
     this.banner.setViews(this.viewLabels, this.asides.has(next) ? BTW_VIEW_TITLE : undefined)
@@ -1290,8 +1353,9 @@ export class TuiApp {
    * follow the entry notice.
    * @param id - the subagent session.
    * @param row - the listing entry, for its label and detail rows.
+   * @param options - `liveOnly` refuses to resume a child that is not running here.
    */
-  private async enterSubagent(id: SessionId, row: BrowseRow): Promise<void> {
+  private async enterSubagent(id: SessionId, row: BrowseRow, options?: { readonly liveOnly?: boolean }): Promise<void> {
     if (this.switching) {
       this.notice('wait for the session switch to finish', 'error')
       return
@@ -1299,7 +1363,7 @@ export class TuiApp {
     this.switching = true
     let next: BoundSession
     try {
-      next = await this.deps.host.observe(id)
+      next = await this.deps.host.observe(id, options)
     } catch (error: unknown) {
       this.switching = false
       this.notice(`opening subagent ${id} failed: ${describeFailure(error)}`, 'error')
@@ -1876,7 +1940,10 @@ export class TuiApp {
       this.reportListingFailure(describeFailure(error))
     } finally {
       this.listing = false
-      if (!this.stopped) this.refreshSubagentPanel()
+      if (!this.stopped) {
+        this.refreshSubagentPanel()
+        this.refreshWorkflowChildLinks()
+      }
     }
   }
 
@@ -2998,6 +3065,17 @@ export class TuiApp {
     const section = this.focusedSection()
     /* v8 ignore next -- the transcript answers Enter only while it holds a section */
     if (section === undefined) return
+    if (section.block.blockKind === 'workflow') {
+      const target = section.block.memberTarget(section.cursor.part)
+      if (target !== undefined) {
+        this.navigate('workflow member', () => this.openWorkflowMember(target))
+        return
+      }
+      if (section.part.kind !== 'workflow-member') {
+        this.foldFocused()
+        return
+      }
+    }
     this.openReader(section.cursor)
   }
 
@@ -3268,6 +3346,7 @@ export class TuiApp {
    */
   private toggleFolding(): void {
     this.toolsExpanded = !this.toolsExpanded
+    this.workflowExpanded = this.toolsExpanded
     for (const child of this.chat.children) {
       if (isFoldable(child)) child.setExpanded(this.toolsExpanded)
     }
@@ -3298,6 +3377,11 @@ export class TuiApp {
       // reader gives the screen back.
       this.notice(ABOVE_WINDOW_NOTICE)
       this.openReader(section.cursor)
+      return
+    }
+    if (block instanceof WorkflowBlock) {
+      block.togglePart(section.cursor.part)
+      this.tui.requestRender()
       return
     }
     block.setExpanded(!block.isExpanded())
@@ -4710,6 +4794,9 @@ export class TuiApp {
     let changed = false
     for (const child of this.chat.children) {
       if (isSectionSource(child) && child === wanted?.block) wantedStart = start
+      if (child instanceof WorkflowBlock) {
+        if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
+      }
       if (fades && (child instanceof AssistantBlock || child instanceof ToolBlock)) {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
@@ -4894,10 +4981,12 @@ export class TuiApp {
         this.pendingToolNames.set(callId, name)
         this.setLoaderActivity(callingActivity(name))
         this.upsertToolCard(callId, name, argumentsJson, 'log')
+        this.rememberWorkflowCall(callId, this.toolArguments.get(callId))
         break
       }
       case 'tool/result': {
         const result = event.data.message
+        this.noteWorkflowJob(result.toolCallId, result.content, result.isError === true)
         const block = this.toolBlocks.get(result.toolCallId)
         if (block === undefined) break
         const isError = result.isError === true
@@ -4917,6 +5006,18 @@ export class TuiApp {
         this.syncLoaderFromPendingTools()
         break
       }
+      case 'tool-workflow/run-start':
+        this.startWorkflowRun(event.data)
+        break
+      case 'tool-workflow/agent-start':
+        this.updateWorkflowRun({ type: event.type, data: event.data })
+        break
+      case 'tool-workflow/agent-end':
+        this.updateWorkflowRun({ type: event.type, data: event.data })
+        break
+      case 'tool-workflow/run-end':
+        this.updateWorkflowRun({ type: event.type, data: event.data })
+        break
       case 'turn/end': {
         this.turnStartedAt = undefined
         this.updateTicker()
@@ -4961,6 +5062,189 @@ export class TuiApp {
     // Paint the running card before the loop continues into prepare/execute,
     // so a fast tool does not land its result in the same unread frame.
     if (event.type === 'tool/call' && !this.replaying) this.tui.renderNow()
+  }
+
+  /**
+   * Remember a logged workflow call until its durable run-start can claim it.
+   * Durable records carry the run name and no tool-call id.
+   * @param callId - the logged tool call.
+   * @param args - arguments stored for that call.
+   */
+  private rememberWorkflowCall(callId: ToolCallId, args: unknown): void {
+    if (this.pendingToolNames.get(callId) !== 'workflow') return
+    const parsed = workflowCallArgs(args)
+    if (parsed === undefined) return
+    this.workflowCalls.set(callId, parsed)
+  }
+
+  /**
+   * Claim the oldest unmatched workflow call with this run's name.
+   * @param name - the durable run name.
+   * @returns the call record, still stored so a later result can name its job.
+   */
+  private claimWorkflowCall(name: string): WorkflowCallRecord | undefined {
+    for (const record of this.workflowCalls.values()) {
+      if (record.runId === undefined && record.name === name) return record
+    }
+    return undefined
+  }
+
+  /**
+   * Fold a run-start into the session's workflow map and draw it.
+   * @param data - the durable run-start payload.
+   */
+  private startWorkflowRun(data: ToolWorkflowRunStartData): void {
+    const current = this.workflowStates.get(data.runId)
+    const next = foldWorkflowRun(current, { type: 'tool-workflow/run-start', data })
+    // A run-start always creates a state or returns the one already stored.
+    /* v8 ignore next -- foldWorkflowRun never returns undefined for run-start */
+    if (next === undefined) return
+    this.workflowStates.set(data.runId, next)
+    if (current === undefined) {
+      const call = this.claimWorkflowCall(data.name)
+      if (call !== undefined) {
+        call.runId = data.runId
+        this.workflowOwners.set(data.runId, {
+          background: call.background,
+          ...call.jobId === undefined ? {} : { jobId: call.jobId },
+        })
+      }
+    }
+    this.projectWorkflow(data.runId)
+  }
+
+  /**
+   * Fold one durable workflow update and redraw that run when the record changed.
+   * @param event - an agent-start, agent-end, or run-end record.
+   */
+  private updateWorkflowRun(event: Exclude<WorkflowRunEvent, { type: 'tool-workflow/run-start' }>): void {
+    const current = this.workflowStates.get(event.data.runId)
+    const next = foldWorkflowRun(current, event)
+    if (next === undefined || next === current) return
+    this.workflowStates.set(event.data.runId, next)
+    this.projectWorkflow(event.data.runId)
+  }
+
+  /**
+   * Draw one run from its durable state. Live events stay running until a
+   * terminal record arrives; replay interruption is applied later.
+   * @param runId - the run to project.
+   */
+  private projectWorkflow(runId: WorkflowRunState['runId']): void {
+    const state = this.workflowStates.get(runId)
+    // Callers store the state before projecting it.
+    /* v8 ignore next -- projectWorkflow is only called after the state is stored */
+    if (state === undefined) return
+    const view = projectWorkflowRun(state)
+    const existing = this.workflowBlocks.get(runId)
+    if (existing === undefined) {
+      const block = new WorkflowBlock(this.theme, view, this.turn)
+      if (this.workflowExpanded !== undefined) block.setExpanded(this.workflowExpanded)
+      block.setOpenableChildren(this.liveDirectChildren())
+      this.workflowBlocks.set(runId, block)
+      this.chat.addChild(block)
+      return
+    }
+    existing.setOpenableChildren(this.liveDirectChildren())
+    existing.setData(view)
+  }
+
+  /**
+   * After history replay, unfinished runs with no live background job are
+   * interrupted. A launch turn ending is not itself an interruption.
+   */
+  private finishWorkflowReplay(): void {
+    for (const [runId, state] of this.workflowStates) {
+      if (state.stopReason !== undefined || this.workflowOwnedLive(runId)) continue
+      this.workflowBlocks.get(runId)?.setData(projectWorkflowRun(state, { markUnfinishedInterrupted: true }))
+    }
+  }
+
+  /**
+   * Whether a background workflow is still owned by a live job in this process.
+   * @param runId - the durable run.
+   * @returns true while that job is running or stopping.
+   */
+  private workflowOwnedLive(runId: WorkflowRunState['runId']): boolean {
+    const owner = this.workflowOwners.get(runId)
+    if (owner?.background !== true || owner.jobId === undefined) return false
+    const jobs = this.deps.ctx.get('jobs')
+    if (jobs === undefined) return false
+    try {
+      return isLive(jobs.get(owner.jobId, this.agent.session.id))
+    } catch (error: unknown) {
+      // The registry throws when this session cannot see the job, so it is not a live owner.
+      void describeFailure(error)
+      return false
+    }
+  }
+
+  /**
+   * Attach a background job id from the workflow tool result, then drop the
+   * call record once its run is known. An error before run-start drops the
+   * record so a later run of the same name cannot claim it.
+   * @param callId - the tool result's call.
+   * @param content - the result body, which names the job when launch succeeded.
+   * @param isError - whether the tool result failed.
+   */
+  private noteWorkflowJob(callId: ToolCallId, content: ToolResultMessage['content'], isError: boolean): void {
+    const call = this.workflowCalls.get(callId)
+    if (call === undefined) return
+    if (call.background && !isError) {
+      const match = /started in the background as job (\S+?)\./u.exec(contentText(content))
+      const rawId = match?.[1]
+      if (rawId !== undefined) {
+        call.jobId = JobId(rawId)
+        if (call.runId !== undefined) {
+          this.workflowOwners.set(call.runId, {
+            background: call.background,
+            jobId: call.jobId,
+          })
+        }
+      }
+    }
+    if (call.runId !== undefined || isError) this.workflowCalls.delete(callId)
+  }
+
+  /** Direct children of the bound session that are running in this process. */
+  private liveDirectChildren(): ReadonlySet<SessionId> {
+    const ids = new Set<SessionId>()
+    const parentId = this.agent.session.id
+    const agents = this.deps.ctx.get('agents')
+    for (const entry of this.subagentEntries) {
+      if (entry.kind !== 'child' || entry.depth !== 1) continue
+      const child = agents?.get(entry.id)
+      if (child?.status === 'running' && child.session.header.parentSession === parentId) ids.add(entry.id)
+    }
+    return ids
+  }
+
+  /** Give every workflow block the current set of openable member sessions. */
+  private refreshWorkflowChildLinks(): void {
+    if (this.workflowBlocks.size === 0) return
+    const ids = this.liveDirectChildren()
+    for (const block of this.workflowBlocks.values()) block.setOpenableChildren(ids)
+  }
+
+  /**
+   * Open a running workflow member without resuming a child that has finished.
+   * @param target - the member row's child session and label.
+   */
+  private async openWorkflowMember(target: { readonly childId: SessionId; readonly label: string }): Promise<void> {
+    const entry = this.subagentEntries.find((candidate): candidate is Extract<SubagentDescendantListEntry, { kind: 'child' }> =>
+      candidate.kind === 'child' && candidate.id === target.childId)
+    const child = entry === undefined ? undefined : this.deps.ctx.get('agents')?.get(entry.id)
+    if (
+      entry === undefined
+      || entry.depth !== 1
+      || child?.status !== 'running'
+      || child.session.header.parentSession !== this.agent.session.id
+    ) {
+      this.notice('that workflow member is no longer running here')
+      this.refreshWorkflowChildLinks()
+      return
+    }
+    await this.enterSubagent(entry.id, this.subagentBrowseRow(subagentChoice(entry)), { liveOnly: true })
   }
 
   /**
