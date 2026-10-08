@@ -13,6 +13,7 @@ import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ToolWorkflowAgentStartData, ToolWorkflowRunStartData } from '@deepseek-ai/dsh-tool-workflow/types'
 import SessionStore from '@deepseek-ai/dsh-session'
 import { SessionLogOffset, type EpochHeader, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -427,6 +428,100 @@ describe('tui runner', () => {
     typeLine(observed.terminal, '/parent')
     await settled()
     expect(observed.order.at(-1)).toBe('dispose')
+  })
+
+  it('opens a running workflow member through a live view and does not resume one that has stopped', async () => {
+    const memberId = 'session-member' as SessionId
+    const { ctx, observed } = await bench({ observed: [] })
+    ctx.provide('subagents', {
+      listDescendants: () => Promise.resolve([{
+        kind: 'child',
+        id: memberId,
+        activity: 'running',
+        mode: 'one-shot',
+        hasChildren: false,
+        parentId: 'root',
+        depth: 1,
+        label: 'scan-reader',
+      }]),
+    } as never)
+    apply(ctx, config())
+    await settled()
+    const root = observed.created[0]?.sessionId
+    const parent = root === undefined ? undefined : ctx.agents.get(root)
+    if (parent === undefined || root === undefined) throw new Error('the runner published no agent')
+    const handle = await ctx.agents.create({
+      sessionId: memberId,
+      meta: { cwd: process.cwd(), parentSession: root, origin: 'subagent', delegationDepth: 1 },
+    })
+    Object.defineProperty(handle.agent, 'status', { configurable: true, get: () => 'running' })
+    const runId = 'run-1' as ToolWorkflowRunStartData['runId']
+    parent.session.append('tool-workflow/run-start', { runId, name: 'audit' })
+    parent.session.append('tool-workflow/agent-start', {
+      runId,
+      seq: 1,
+      label: 'scan-reader',
+      phase: 'scan',
+      childId: memberId as ToolWorkflowAgentStartData['childId'],
+    })
+    await settled()
+    observed.terminal.type(KEY.shiftUp)
+    await settled()
+    expect(observed.terminal.text()).toContain('workflow audit · member scan-reader')
+    const mark = observed.order.length
+    observed.terminal.type(KEY.enter)
+    await settled()
+    expect(observed.order.slice(mark)).toContain(`observe:${memberId}`)
+    expect(observed.resumed).toEqual([])
+
+    const stopped = await bench({ observed: [] })
+    stopped.ctx.provide('subagents', {
+      listDescendants: () => Promise.resolve([{
+        kind: 'child',
+        id: memberId,
+        activity: 'inactive',
+        mode: 'one-shot',
+        hasChildren: false,
+        parentId: 'root',
+        depth: 1,
+        label: 'scan-reader',
+      }]),
+    } as never)
+    apply(stopped.ctx, config())
+    await settled()
+    const stoppedRoot = stopped.observed.created[0]?.sessionId
+    const stoppedParent = stoppedRoot === undefined ? undefined : stopped.ctx.agents.get(stoppedRoot)
+    if (stoppedParent === undefined || stoppedRoot === undefined) throw new Error('the runner published no agent')
+    const stoppedChild = await stopped.ctx.agents.create({
+      sessionId: memberId,
+      meta: { cwd: process.cwd(), parentSession: stoppedRoot, origin: 'subagent', delegationDepth: 1 },
+    })
+    Object.defineProperty(stoppedChild.agent, 'status', { configurable: true, get: () => 'running' })
+    stoppedParent.session.append('tool-workflow/run-start', { runId, name: 'audit' })
+    stoppedParent.session.append('tool-workflow/agent-start', {
+      runId,
+      seq: 1,
+      label: 'scan-reader',
+      phase: 'scan',
+      childId: memberId as ToolWorkflowAgentStartData['childId'],
+    })
+    await settled()
+    stopped.observed.terminal.type(KEY.shiftUp)
+    await settled()
+    let reads = 0
+    Object.defineProperty(stoppedChild.agent, 'status', {
+      configurable: true,
+      get() {
+        reads += 1
+        return reads === 1 ? 'running' : 'idle'
+      },
+    })
+    const resumedBefore = stopped.observed.resumed.length
+    stopped.observed.terminal.type(KEY.enter)
+    await settled()
+    expect(stopped.observed.resumed.length).toBe(resumedBefore)
+    expect(stopped.observed.order.some(entry => entry === `resume:${memberId}`)).toBe(false)
+    expect(stopped.observed.terminal.text()).toContain('that session is not running in this process')
   })
 
   it('opens a /btw side agent from the whole live log on the logged model, and ends it on return', async () => {

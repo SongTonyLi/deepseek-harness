@@ -544,17 +544,23 @@ export async function bench(options: {
     resume: id => open(`resume:${id}`, id),
     fork: (id, turn) => open(`fork:${id}${turn === undefined ? '' : `@${String(turn)}`}`, `session-fork-of-${id}` as SessionId),
     aside: parent => open(`aside:${parent.agent.session.id}`, `session-btw-${String(++openedCount)}` as SessionId),
-    observe: async (id) => {
+    observe: async (id, observeOptions) => {
       const resident = ctx.agents.get(id)
-      if (resident === undefined) return open(`observe:${id}`, id)
-      hostCalls.push(`observe-resident:${id}`)
-      if (options.hostFailure !== undefined) throw new Error(options.hostFailure)
-      return {
-        agent: resident,
-        selection: { current: undefined, assembled: undefined },
-        history: resident.session.ownEvents(),
-        dispose: () => Promise.resolve(),
+      if (resident !== undefined && (observeOptions?.liveOnly !== true || resident.status === 'running')) {
+        hostCalls.push(`observe-resident:${id}`)
+        if (options.hostFailure !== undefined) throw new Error(options.hostFailure)
+        return {
+          agent: resident,
+          selection: { current: undefined, assembled: undefined },
+          history: resident.session.ownEvents(),
+          dispose: () => Promise.resolve(),
+        }
       }
+      if (observeOptions?.liveOnly === true) {
+        hostCalls.push(`observe-live-refused:${id}`)
+        throw new Error('that session is not running in this process')
+      }
+      return open(`observe:${id}`, id)
     },
   }
   let disposed = 0

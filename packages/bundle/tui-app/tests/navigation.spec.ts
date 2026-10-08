@@ -23,6 +23,7 @@ import {
   type SectionPart,
   type ToolSection,
   type UserSection,
+  type WorkflowSection,
 } from '../src/navigation.ts'
 
 /** Every mark a fake block was told to draw, in the order it was told. */
@@ -236,6 +237,28 @@ describe('sectionHeading', () => {
     expect(sectionHeading({ block: 0, part: 0 }, context)).toBe('1/2 · turn 0 · system prompt')
     expect(sectionHeading({ block: 1, part: 0 }, context)).toBe('2/2 · turn 0 · snapshot · workspace · sandbox')
     expect(sectionHeading({ block: 1, part: 1 }, context)).toBe('2/2 · turn 0 · snapshot · workspace · git')
+  })
+
+  it('names a workflow run, and the part kind when a part has no label', () => {
+    const workflow: WorkflowSection = {
+      blockKind: 'workflow',
+      name: 'audit',
+      navigable: true,
+      turn: 3,
+      parts: () => [
+        { kind: 'workflow-run', rows: ['audit'] },
+        { kind: 'workflow-phase', label: 'phase scan', rows: ['scan'] },
+      ],
+      setHighlight: mark,
+      togglePart: () => false,
+      memberTarget: () => undefined,
+    }
+    const parts = workflow.parts()
+    const run = parts[0]
+    const phase = parts[1]
+    if (run === undefined || phase === undefined) throw new Error('the workflow fixture has both parts')
+    expect(sectionLabel(workflow, run)).toBe('workflow audit · workflow-run')
+    expect(sectionLabel(workflow, phase)).toBe('workflow audit · phase scan')
   })
 })
 

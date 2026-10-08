@@ -17,6 +17,7 @@
  * @module @deepseek-ai/dsh-tui-app/navigation
  */
 
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { MotionLevel } from './motion.ts'
 import type { CodeSpan } from './transcript.ts'
@@ -39,6 +40,9 @@ export type SectionKind =
   | 'relay'
   | 'recall'
   | 'context'
+  | 'workflow-run'
+  | 'workflow-phase'
+  | 'workflow-member'
 
 /** One navigable section of a block. */
 export interface SectionPart {
@@ -99,13 +103,25 @@ export interface ContextSection extends SectionSourceBase {
   readonly title: string
 }
 
+/** A durable workflow run, its phase disclosures, and its started members. */
+export interface WorkflowSection extends SectionSourceBase {
+  readonly blockKind: 'workflow'
+  /** Durable run name. */
+  readonly name: string
+  /** Toggle the run or phase the named part represents. Members do not toggle. */
+  togglePart(part: number): boolean
+  /** The direct child a currently openable member part names, if any. */
+  memberTarget(part: number): { readonly childId: SessionId; readonly label: string } | undefined
+}
+
 /**
  * A navigable transcript block: the sections the keyboard walks and the focus
  * mark it draws while one of them is held. `UserBlock`, `AssistantBlock`,
- * `ToolBlock`, and `ContextBlock` implement it; turn-end notices and printed
- * rows do not, which is how {@link navigableBlocks} tells them apart.
+ * `ToolBlock`, `ContextBlock`, and `WorkflowBlock` implement it; turn-end
+ * notices and printed rows do not, which is how {@link navigableBlocks} tells
+ * them apart.
  */
-export type SectionSource = UserSection | AssistantSection | ToolSection | ContextSection
+export type SectionSource = UserSection | AssistantSection | ToolSection | ContextSection | WorkflowSection
 
 /** Where the transcript focus sits: one block, and one part inside it. */
 export interface TranscriptCursor {
@@ -355,7 +371,7 @@ function promptLabel(parts: readonly SectionPart[]): string {
  */
 function countMarkers(markers: TurnMarkers, block: SectionSource, parts: readonly SectionPart[]): void {
   if (block.blockKind === 'context') markers.context += 1
-  if (block.blockKind === 'tool') markers.tools += 1
+  if (block.blockKind === 'tool' || block.blockKind === 'workflow') markers.tools += 1
   for (const part of parts) {
     if (part.kind === 'reasoning') markers.reasoning = true
     if (part.kind === 'reply') markers.reply = true
@@ -535,6 +551,8 @@ function subjectOf(block: SectionSource, part: SectionPart): string[] {
       return part.label === undefined || part.label === block.title
         ? [block.title]
         : [block.title, part.label]
+    case 'workflow':
+      return [`workflow ${block.name}`, part.label ?? partLabel(part.kind)]
     /* v8 ignore next -- closed-union exhaustiveness guard */
     default:
       return assertNever(block, 'tui transcript block kind')

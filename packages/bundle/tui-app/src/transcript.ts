@@ -10,6 +10,7 @@ import type { TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { diffLines, hunks, type DiffLine, type DiffMark } from './diff.ts'
+import { rawInputLines } from './stream-args.ts'
 
 /** Unchanged rows shown around each diff hunk. */
 const DIFF_CONTEXT_LINES = 2
@@ -464,8 +465,9 @@ export function toolCallText(argumentsJson: string, view: ToolCallView | undefin
   }
   switch (view.card) {
     case 'generic': {
-      const lines: string[] = []
-      if (view.content !== undefined) lines.push(...contentText(view.content).split('\n'))
+      const lines = view.content === undefined
+        ? rawInputLines(view.rawInput)
+        : contentText(view.content).split('\n')
       return { title: cardHeadline(toolName, view.title), lines }
     }
     case 'terminal': {

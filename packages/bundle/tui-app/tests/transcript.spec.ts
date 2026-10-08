@@ -168,15 +168,11 @@ describe('transcript', () => {
     expect(parseArguments('{oops')).toBeUndefined()
   })
 
-  it('renders call text from each view and from raw arguments', () => {
+  it('renders raw arguments, terminal, and diff call text', () => {
     expect(toolCallText('{}', undefined, 'read')).toEqual({ title: '', lines: [] })
     expect(toolCallText('', undefined, 'read')).toEqual({ title: '', lines: [] })
     expect(toolCallText('{"a": 1}', undefined, 'read')).toEqual({ title: '', lines: ['{"a":1}'] })
     expect(toolCallText('{bad', undefined, 'read')).toEqual({ title: '', lines: ['{bad'] })
-    // The headline drops the tool name the card's header already draws.
-    expect(toolCallText('{}', { card: 'generic', title: 'Read x', content: [{ type: 'text', text: 'a\nb' }] }, 'read'))
-      .toEqual({ title: 'x', lines: ['a', 'b'] })
-    expect(toolCallText('{}', { card: 'generic', title: 'Read x' }, 'grep')).toEqual({ title: 'Read x', lines: [] })
     // The command is the card's `$` row alone: the headline carries the
     // call's summary, so the header never repeats the command.
     expect(toolCallText('{}', { card: 'terminal', title: 'ls', description: 'list', cwd: '/w' }, 'bash'))
@@ -202,6 +198,27 @@ describe('transcript', () => {
         diff: [undefined, 'removed', 'added'],
       })
     expect(() => toolCallText('{}', { card: 'other' } as never, 'read')).toThrow()
+  })
+
+  it('uses generic raw input when content is absent', () => {
+    const workflowScript = [
+      'const reports = await parallel([',
+      "  () => agent('Inspect the transcript'),",
+      '])',
+      'return reports',
+    ].join('\n')
+    expect(toolCallText('{}', {
+      card: 'generic', title: 'workflow: audit', rawInput: workflowScript,
+    }, 'workflow')).toEqual({ title: 'workflow: audit', lines: workflowScript.split('\n') })
+    expect(toolCallText('{}', {
+      card: 'generic', title: 'Read x', rawInput: 'ignored', content: [{ type: 'text', text: 'a\nb' }],
+    }, 'read')).toEqual({ title: 'x', lines: ['a', 'b'] })
+    expect(toolCallText('{}', { card: 'generic', title: 'Read x', rawInput: undefined }, 'grep'))
+      .toEqual({ title: 'Read x', lines: [] })
+    expect(toolCallText('{}', { card: 'generic', title: 'Workflow', rawInput: null }, 'workflow'))
+      .toEqual({ title: '', lines: ['null'] })
+    expect(toolCallText('{}', { card: 'generic', title: 'Workflow', rawInput: { script: 'return 1' } }, 'workflow'))
+      .toEqual({ title: '', lines: ['{"script":"return 1"}'] })
   })
 
   it('drops a tool name the headline repeats, and only a whole one', () => {
