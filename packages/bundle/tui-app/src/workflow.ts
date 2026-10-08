@@ -178,6 +178,52 @@ export function projectWorkflowRun(
   }
 }
 
+/**
+ * Readable terminal label for an exact phase identity.
+ * @param phase - phase title, or null when the member event omitted it.
+ * @returns the title, or a placeholder for an empty or omitted one.
+ */
+export function workflowPhaseName(phase: string | null): string {
+  if (phase === null) return 'unassigned'
+  return phase === '' ? '(empty phase)' : phase
+}
+
+/**
+ * Readable terminal label for a workflow member label.
+ * @param label - the label the member started with.
+ * @returns the label, or a placeholder for an empty one.
+ */
+export function workflowMemberName(label: string): string {
+  return label === '' ? '(unnamed member)' : label
+}
+
+/** Member counts of one workflow run, by derived status. */
+export interface WorkflowRunProgress {
+  /** Members that started, in every phase. */
+  readonly total: number
+  /** Members that reached any status other than running. */
+  readonly settled: number
+  /** Started members per derived status; a status no member holds counts 0. */
+  readonly counts: Readonly<Record<WorkflowRunStatus, number>>
+}
+
+/**
+ * Count the started members of one run by status.
+ * @param view - projected workflow run.
+ * @returns totals over every phase.
+ */
+export function workflowProgress(view: WorkflowRunView): WorkflowRunProgress {
+  const counts: Record<WorkflowRunStatus, number> = { running: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0 }
+  let total = 0
+  for (const phase of view.phases) {
+    for (const member of phase.members) {
+      counts[member.status] += 1
+      total += 1
+    }
+  }
+  return { total, settled: total - counts.running, counts }
+}
+
 function settleMember(state: WorkflowRunState, data: ToolWorkflowAgentEndData): WorkflowRunState {
   const index = state.members.findIndex(member => member.seq === data.seq)
   if (index === -1) return state

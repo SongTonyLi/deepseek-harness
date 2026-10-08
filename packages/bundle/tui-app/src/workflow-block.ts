@@ -1,7 +1,8 @@
 /**
- * Foldable terminal rendering for one durable workflow run. It keeps run and
- * phase disclosure choices local while the application owns durable replay and
- * child-session liveness.
+ * Foldable terminal rendering for one durable workflow run: a run header with
+ * a member progress bar, phase headers, and member rows. It keeps run and
+ * phase disclosure choices and the last drawn spinner frame local while the
+ * application owns durable replay, child-session liveness, and the spinner tick.
  * @module @deepseek-ai/dsh-tui-app/workflow-block
  */
 
@@ -10,11 +11,15 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { BlockTheme, Foldable } from './blocks.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { SectionPart, WorkflowSection } from './navigation.ts'
-import type {
-  WorkflowRunMemberView,
-  WorkflowRunPhaseView,
-  WorkflowRunStatus,
-  WorkflowRunView,
+import { SPINNER_CYCLE, TOOL_SPINNERS, WORKFLOW_SPINNER, type SpinnerFrames } from './spinner.ts'
+import {
+  workflowMemberName as memberName,
+  workflowPhaseName as phaseName,
+  workflowProgress,
+  type WorkflowRunMemberView,
+  type WorkflowRunPhaseView,
+  type WorkflowRunStatus,
+  type WorkflowRunView,
 } from './workflow.ts'
 
 /** Columns the focus gutter takes from this block's content. */
@@ -23,6 +28,22 @@ const GUTTER_WIDTH = 2
 const BLOCK_GUTTER = '│ '
 /** Gutter beside the focused workflow section. */
 const PART_GUTTER = '┃ '
+
+/** Cells of the member progress bar on a run header. */
+const PROGRESS_CELLS = 10
+/** Order the progress bar fills its cells in, settled statuses first. */
+const PROGRESS_ORDER: readonly WorkflowRunStatus[] = ['completed', 'failed', 'cancelled', 'interrupted', 'running']
+
+/** Glyphs one animated frame draws in place of the static running glyphs. */
+interface SpinGlyphs {
+  /** The run header's glyph. */
+  readonly run: string
+  /**
+   * A running member's glyph.
+   * @param seq - the member's sequence number, which staggers its phase.
+   */
+  readonly member: (seq: number) => string
+}
 
 /** Disclosure mode shared by a run and each of its phase groups. */
 type DisclosureMode = 'clean' | 'running' | 'abnormal'
@@ -85,6 +106,12 @@ export class WorkflowBlock implements Component, WorkflowSection, Foldable {
   private pendingHighlight: { readonly part: number | undefined; readonly level: MotionLevel } | undefined
   private revision = 0
   private drawn: { key: string; layout: WorkflowLayout } | undefined
+  /** Reads the current spinner frame number; undefined draws the static glyphs. */
+  private spinClock: (() => number) | undefined
+  /** Frame number last drawn; a block under the repaint floor keeps it. */
+  private spinIndex = 0
+  /** Whether a spinner frame was drawn inside the repaint window, so a locked block keeps drawing it. */
+  private spinStarted = false
 
   /**
    * @param theme - terminal palette shared with transcript blocks.
@@ -105,6 +132,29 @@ export class WorkflowBlock implements Component, WorkflowSection, Foldable {
   /** Durable name read by transcript navigation. */
   get name(): string {
     return this.source.name
+  }
+
+  /** Newest durable projection, including updates not yet drawn. */
+  get view(): WorkflowRunView {
+    return this.source
+  }
+
+  /**
+   * Spin the run header and running member glyphs while the run runs. A block
+   * above the repaint window keeps the frame it last drew.
+   * @param clock - reads the current spinner frame number; undefined draws the static glyphs.
+   */
+  setSpinner(clock: (() => number) | undefined): void {
+    this.spinClock = clock
+    this.changed()
+  }
+
+  /**
+   * Whether the block still animates on the spinner tick.
+   * @returns true while a spinner is set and the newest projection runs.
+   */
+  spinning(): boolean {
+    return this.spinClock !== undefined && this.source.status === 'running'
   }
 
   /**
@@ -391,15 +441,21 @@ export class WorkflowBlock implements Component, WorkflowSection, Foldable {
 
   /** Cached layout for unchanged width and visible state. */
   private layout(width: number): WorkflowLayout {
-    const key = `${String(width)}:${String(this.revision)}`
+    const clock = this.displayed.status === 'running' ? this.spinClock : undefined
+    if (clock !== undefined && !this.repaintLocked) {
+      this.spinIndex = clock()
+      this.spinStarted = true
+    }
+    const animated = clock !== undefined && this.spinStarted
+    const key = `${String(width)}:${String(this.revision)}:${animated ? String(this.spinIndex) : '-'}`
     if (this.drawn?.key === key) return this.drawn.layout
-    const layout = this.buildLayout(width)
+    const layout = this.buildLayout(width, animated ? spinGlyphs(this.spinIndex) : undefined)
     this.drawn = { key, layout }
     return layout
   }
 
   /** Build visible rows and hidden-part fallback ranges from the displayed projection. */
-  private buildLayout(width: number): WorkflowLayout {
+  private buildLayout(width: number, spin: SpinGlyphs | undefined): WorkflowLayout {
     const lines: string[] = ['']
     const refs = workflowParts(this.displayed)
     const ranges: (LineRange | undefined)[] = Array.from({ length: refs.length })
@@ -413,7 +469,7 @@ export class WorkflowBlock implements Component, WorkflowSection, Foldable {
       return range
     }
     let part = 0
-    const runRange = append(part, runRow(this.theme, this.displayed))
+    const runRange = append(part, runRow(this.theme, this.displayed, spin))
     part += 1
     if (!this.runDisclosure.open) {
       for (; part < refs.length; part += 1) fallbacks[part] = runRange
@@ -433,7 +489,7 @@ export class WorkflowBlock implements Component, WorkflowSection, Foldable {
         continue
       }
       for (const member of phase.members) {
-        append(part, memberRow(this.theme, member, this.openableChildren.has(member.childId)))
+        append(part, memberRow(this.theme, member, this.openableChildren.has(member.childId), spin))
         part += 1
       }
     }
@@ -511,17 +567,6 @@ function memberCount(data: WorkflowRunView): number {
   return data.phases.reduce((count, phase) => count + phase.members.length, 0)
 }
 
-/** Readable terminal label for an exact phase identity. */
-function phaseName(phase: string | null): string {
-  if (phase === null) return 'unassigned'
-  return phase === '' ? '(empty phase)' : phase
-}
-
-/** Readable terminal label for an optional workflow member label. */
-function memberName(label: string): string {
-  return label === '' ? '(unnamed member)' : label
-}
-
 /** Compact status count summary matching a phase disclosure's tail. */
 function phaseSummary(phase: WorkflowRunPhaseView): string {
   const counts = new Map<WorkflowRunStatus, number>()
@@ -539,11 +584,62 @@ function statusText(status: WorkflowRunStatus): string {
   return status
 }
 
+/**
+ * The glyphs of one spinner frame.
+ * @param index - the frame number the clock reads.
+ * @returns the run glyph and a member glyph staggered by sequence number.
+ */
+function spinGlyphs(index: number): SpinGlyphs {
+  const at = (frames: SpinnerFrames, phase: number): string => {
+    /* v8 ignore next -- the modulo keeps the index inside the frame list */
+    return frames[(index + phase) % SPINNER_CYCLE] ?? frames[0]
+  }
+  return {
+    run: at(WORKFLOW_SPINNER, 0),
+    member: seq => at(TOOL_SPINNERS.subagent, Math.abs(seq) % SPINNER_CYCLE),
+  }
+}
+
 /** One run header in transcript colors. */
-function runRow(theme: BlockTheme, run: WorkflowRunView): string {
+function runRow(theme: BlockTheme, run: WorkflowRunView, spin: SpinGlyphs | undefined): string {
   const { palette } = theme
   const count = memberCount(run)
-  return `${statusStyle(palette, run.status)('◇')} ${palette.bold('workflow')} ${palette.link(run.name)} ${palette.dim(`· ${String(count)} member${count === 1 ? '' : 's'} · `)}${statusStyle(palette, run.status)(statusText(run.status))}`
+  const glyph = spin === undefined ? '◇' : spin.run
+  const bar = count === 0 ? '' : ` ${progressBar(palette, run)}`
+  return `${statusStyle(palette, run.status)(glyph)} ${palette.bold('workflow')} ${palette.link(run.name)} ${palette.dim(`· ${String(count)} member${count === 1 ? '' : 's'} · `)}${statusStyle(palette, run.status)(statusText(run.status))}${bar}`
+}
+
+/**
+ * A bar of {@link PROGRESS_CELLS} cells over the started members, settled
+ * members first in their status colors and running members dim, followed by
+ * the settled count.
+ * @param palette - transcript colors.
+ * @param run - the run drawn.
+ * @returns the bar and `settled/total`.
+ */
+export function progressBar(palette: BlockTheme['palette'], run: WorkflowRunView): string {
+  const progress = workflowProgress(run)
+  const ordered = PROGRESS_ORDER.flatMap(status => Array.from({ length: progress.counts[status] }, () => status))
+  let bar = ''
+  let pending: { status: WorkflowRunStatus; width: number } | undefined
+  const flush = (): void => {
+    if (pending === undefined) return
+    bar += pending.status === 'running'
+      ? palette.dim('─'.repeat(pending.width))
+      : statusStyle(palette, pending.status)('━'.repeat(pending.width))
+  }
+  for (let cell = 0; cell < PROGRESS_CELLS; cell += 1) {
+    /* v8 ignore next -- the cell position stays inside the ordered members */
+    const status = ordered[Math.floor((cell + 0.5) * progress.total / PROGRESS_CELLS)] ?? 'running'
+    if (pending?.status === status) {
+      pending.width += 1
+      continue
+    }
+    flush()
+    pending = { status, width: 1 }
+  }
+  flush()
+  return `${bar} ${palette.dim(`${String(progress.settled)}/${String(progress.total)}`)}`
 }
 
 /** One phase header in transcript colors. */
@@ -557,11 +653,12 @@ function phaseRow(theme: BlockTheme, phase: WorkflowRunPhaseView): string {
 }
 
 /** One member row in transcript colors. */
-function memberRow(theme: BlockTheme, member: WorkflowRunMemberView, openable: boolean): string {
+function memberRow(theme: BlockTheme, member: WorkflowRunMemberView, openable: boolean, spin: SpinGlyphs | undefined): string {
   const { palette } = theme
   const label = memberName(member.label)
   const name = openable ? palette.link(label) : label
-  return `    ${statusStyle(palette, member.status)('○')} ${name} ${statusStyle(palette, member.status)(`[${statusText(member.status)}]`)}`
+  const glyph = spin !== undefined && member.status === 'running' ? spin.member(member.seq) : '○'
+  return `    ${statusStyle(palette, member.status)(glyph)} ${name} ${statusStyle(palette, member.status)(`[${statusText(member.status)}]`)}`
 }
 
 /** Palette role for one workflow status. */

@@ -9,7 +9,8 @@ import type {
   ToolWorkflowRunStartData,
 } from '@deepseek-ai/dsh-tool-workflow/types'
 import { createPalette } from '../src/style.ts'
-import { WorkflowBlock } from '../src/workflow-block.ts'
+import { WorkflowBlock, progressBar } from '../src/workflow-block.ts'
+import { TOOL_SPINNERS, WORKFLOW_SPINNER } from '../src/spinner.ts'
 import { foldWorkflowRun, projectWorkflowRun, type WorkflowRunEvent, type WorkflowRunView } from '../src/workflow.ts'
 import type { BlockTheme } from '../src/blocks.ts'
 
@@ -303,5 +304,64 @@ describe('workflow block', () => {
     expect(forced.isExpanded()).toBe(true)
     expect(drawn(forced)).toContain('scan-reader')
     expect(drawn(forced)).toContain('added')
+  })
+
+  it('draws a member progress bar on the run header, settled members first', () => {
+    const empty = new WorkflowBlock(plain, view([started()]), 1)
+    expect(drawn(empty)).toContain('workflow audit · 0 members · running')
+    expect(drawn(empty)).not.toContain('0/0')
+
+    const mixed = view([
+      started(),
+      member(1, 'a', 'scan'),
+      member(2, 'b', 'scan'),
+      member(3, 'c', 'scan'),
+      member(4, 'd', 'scan'),
+      member(5, 'e', 'scan'),
+      ended(1, 'completed'),
+      ended(2, 'completed'),
+      ended(3, 'failed'),
+    ])
+    expect(progressBar(plain.palette, mixed)).toBe('━━━━━━──── 3/5')
+    expect(drawn(new WorkflowBlock(plain, mixed, 1))).toContain('workflow audit · 5 members · running ━━━━━━──── 3/5')
+    const settled = view([started(), member(1, 'a', 'scan'), ended(1, 'completed'), stopped('completed')])
+    expect(progressBar(plain.palette, settled)).toBe('━━━━━━━━━━ 1/1')
+    expect(progressBar(colored.palette, mixed)).toContain('━━━━')
+  })
+
+  it('spins the run and its running members on the clock, and freezes above the repaint window', () => {
+    let frame = 0
+    const block = new WorkflowBlock(plain, view([started(), member(1, 'a', 'scan'), member(2, 'b', 'scan'), ended(2, 'completed')]), 1)
+    expect(block.spinning()).toBe(false)
+    block.setSpinner(() => frame)
+    expect(block.spinning()).toBe(true)
+    expect(drawn(block)).toContain(`${WORKFLOW_SPINNER[0]} workflow audit`)
+    expect(drawn(block)).toContain(`${TOOL_SPINNERS.subagent[1]} a [running]`)
+    expect(drawn(block)).toContain('○ b [completed]')
+    frame = 1
+    expect(drawn(block)).toContain(`${WORKFLOW_SPINNER[1]} workflow audit`)
+    expect(drawn(block)).toContain(`${TOOL_SPINNERS.subagent[2]} a [running]`)
+
+    block.setRepaintFloor(3)
+    frame = 2
+    expect(drawn(block)).toContain(`${WORKFLOW_SPINNER[1]} workflow audit`)
+    block.setRepaintFloor(0)
+    expect(drawn(block)).toContain(`${WORKFLOW_SPINNER[2]} workflow audit`)
+
+    block.setData(view([started(), member(1, 'a', 'scan'), ended(1, 'completed'), stopped('completed')]))
+    expect(block.spinning()).toBe(false)
+    expect(drawn(block)).toContain('◇ workflow audit')
+    expect(block.view.status).toBe('completed')
+  })
+
+  it('draws the static glyphs when a spinner is first set above the repaint window', () => {
+    const block = new WorkflowBlock(plain, view([started(), member(1, 'a', 'scan')]), 1)
+    block.setRepaintFloor(2)
+    block.setSpinner(() => 5)
+    expect(drawn(block)).toContain('◇ workflow audit')
+    expect(drawn(block)).toContain('○ a [running]')
+    block.setSpinner(undefined)
+    block.setRepaintFloor(0)
+    expect(drawn(block)).toContain('◇ workflow audit')
   })
 })
