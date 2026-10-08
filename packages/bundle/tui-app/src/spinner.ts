@@ -1,7 +1,8 @@
 /**
  * Working indicators: a braille status glyph and a shimmer on the activity
- * line above the prompt, and flower, bloom, and star glyphs on running tool
- * cards, folded subagent rows, and the activity board's in-progress todo rows.
+ * line above the prompt, flower, bloom, and star glyphs on running tool
+ * cards, folded subagent rows, running workflow members, and the activity
+ * board's in-progress todo rows, and a pulsing diamond on running workflow runs.
  *
  * Pure. Every animation has {@link SPINNER_CYCLE} frames, and a frame lookup
  * reads a wall-clock instant and a frame period the caller passes in, so
@@ -69,6 +70,15 @@ export const TOOL_SPINNERS = {
   /** A tool with no family of its own: a sparkle and a florette among stars. */
   other: ['∗', '❈', '⁎', '❆', '⚝', '✺', '⚹', '✯'],
 } as const satisfies Record<string, SpinnerFrames>
+
+/**
+ * The animation a running workflow run's header draws in place of its static
+ * `◇`: a diamond filling, blooming, and emptying again. Its running members
+ * spin in the `subagent` family of {@link TOOL_SPINNERS}, each a phase ahead
+ * of the member before it. A presentation choice of this terminal surface,
+ * not a deployment setting.
+ */
+export const WORKFLOW_SPINNER: SpinnerFrames = ['◇', '◈', '◆', '❖', '◆', '◈', '◇', '◊']
 
 /** One tool family of {@link TOOL_SPINNERS}. */
 export type ToolFamily = keyof typeof TOOL_SPINNERS

@@ -1,4 +1,4 @@
-/** Workflow runs in the terminal: live drawing, replay, and opening a member. */
+/** Workflow runs in the terminal: live drawing, animation, replay, `/workflows`, and opening a member. */
 
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
@@ -6,7 +6,9 @@ import { createToolResultMessage, createUserMessage, type ToolCallId } from '@de
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { ToolWorkflowAgentStartData, ToolWorkflowRunStartData } from '@deepseek-ai/dsh-tool-workflow/types'
-import { KEY, bench, type Bench } from './bench.ts'
+import { spinnerFrame, WORKFLOW_SPINNER } from '../src/spinner.ts'
+import { WORKFLOWS_PICKER_HINT } from '../src/workflow-panel.ts'
+import { BENCH_NOW, BENCH_SPINNER_MS, KEY, bench, type Bench } from './bench.ts'
 
 const PARENT = 'session-tui-test' as SessionId
 const LIVE = 'session-live' as SessionId
@@ -68,6 +70,39 @@ function jobsStub(status: 'running' | 'completed' | 'throw'): (ctx: Context) => 
       },
     } as never)
   }
+}
+
+/** A jobs registry whose live jobs record each kill and answer one outcome. */
+function killableJobs(kills: string[], outcome: 'requested' | 'already-finished' | 'throw'): (ctx: Context) => void {
+  return (ctx) => {
+    ctx.provide('jobs', {
+      events: { subscribe: () => () => {} },
+      list: () => [],
+      get: () => ({ status: 'running' }),
+      kill: (id: string, caller: string, reason: string) => {
+        if (outcome === 'throw') throw new Error('job is gone')
+        kills.push(`${id}:${caller}:${reason}`)
+        return outcome
+      },
+    } as never)
+  }
+}
+
+/** Type one editor line and submit it. */
+function typeLine(test: Bench, text: string): void {
+  for (const char of text) test.terminal.type(char)
+  test.terminal.type(KEY.enter)
+}
+
+/** Draw one live background run owned by job `jobId`. */
+function showBackgroundRun(test: Bench, name: string, jobId: string): void {
+  test.appendToolCall(`call-${name}`, 'workflow', {
+    script: 'x',
+    meta: { name, description: 'check' },
+    run_in_background: true,
+  })
+  showRun(test, `run-${name}` as ToolWorkflowRunStartData['runId'], name, 'scan-reader', LIVE)
+  test.appendToolResult(`call-${name}`, [{ type: 'text', text: backgroundResult(name, jobId) }])
 }
 
 /** A presenter that puts the script on the generic card. */
@@ -135,7 +170,7 @@ describe('workflow runs in the terminal', () => {
     await test.settle()
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(await test.screen()).not.toContain('○ scan-reader')
+    expect(await test.screen()).not.toContain('scan-reader [running]')
   })
 
   it('opens a live direct child and refuses one that is not running here', async () => {
@@ -410,5 +445,186 @@ describe('workflow runs in the terminal', () => {
     showRun(test, 'run-later' as ToolWorkflowRunStartData['runId'], 'later', 'later-member', 'session-later')
     expect(await test.screen()).toContain('workflow later')
     expect(await test.screen()).not.toContain('later-member')
+  })
+
+  it('spins a live run on the spinner tick and disarms the tick once it settles', async () => {
+    const test = await bench()
+    await test.settle()
+    showRun(test, runId, 'audit', 'scan-reader', LIVE)
+    await test.settle()
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    expect(await test.screen()).toContain(`${spinnerFrame(WORKFLOW_SPINNER, BENCH_NOW, BENCH_SPINNER_MS)} workflow audit`)
+    test.runTick(BENCH_SPINNER_MS)
+    expect(await test.screen()).toContain(`${spinnerFrame(WORKFLOW_SPINNER, BENCH_NOW + BENCH_SPINNER_MS, BENCH_SPINNER_MS)} workflow audit`)
+    expect(await test.screen()).toContain('running ────────── 0/1')
+    test.session.append('tool-workflow/agent-end', { runId, seq: 1, outcome: 'completed' })
+    test.session.append('tool-workflow/run-end', { runId, stopReason: 'completed' })
+    test.runTick(BENCH_SPINNER_MS)
+    expect(await test.screen()).toContain('◇ workflow audit · 1 member · completed ━━━━━━━━━━ 1/1')
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+  })
+
+  it('draws a live run still under reduced motion', async () => {
+    const test = await bench({ reducedMotion: true })
+    await test.settle()
+    showRun(test, runId, 'audit', 'scan-reader', LIVE)
+    await test.settle()
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+    expect(await test.screen()).toContain('◇ workflow audit · 1 member · running')
+    expect(await test.screen()).toContain('○ scan-reader [running]')
+  })
+
+  it('spins a replayed run its live background job still owns', async () => {
+    const history: SessionEvent[] = [
+      recorded('turn/start', { turn: 1 }, 0),
+      recorded('tool/call', { turn: 1, step: 1, callId: 'call-kept' as ToolCallId, name: 'workflow', arguments: workflowArgs('kept', true) }, 1),
+      recorded('tool-workflow/run-start', { runId, name: 'kept' }, 2),
+      recorded('tool/result', {
+        turn: 1,
+        step: 1,
+        message: createToolResultMessage({
+          callId: 'call-kept' as ToolCallId,
+          content: [{ type: 'text', text: backgroundResult('kept', 'workflow-1') }],
+          isError: false,
+        }),
+      }, 3),
+      recorded('turn/end', { turn: 1, reason: { kind: 'completed' } }, 4),
+    ]
+    const live = await bench({ history, before: jobsStub('running') })
+    expect(live.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    const settled = await bench({ history, before: jobsStub('completed') })
+    expect(settled.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+  })
+
+  it('says when /workflows has no run to list or no run of that name', async () => {
+    const test = await bench()
+    typeLine(test, '/workflows')
+    await test.settle()
+    expect(await test.screen()).toContain('no workflow runs in this session')
+    typeLine(test, '/workflows missing')
+    await test.settle()
+    expect(await test.screen()).toContain('no workflow run named missing in this session')
+  })
+
+  it('lists runs in /workflows, walks a run\'s members, and stops a background run with Ctrl+K', async () => {
+    const kills: string[] = []
+    const test = await bench({ before: killableJobs(kills, 'requested') })
+    await test.settle()
+    showBackgroundRun(test, 'audit', 'workflow-1')
+    await test.settle()
+
+    typeLine(test, '/workflows')
+    await test.settle()
+    let screen = await test.screen()
+    expect(screen).toContain('Workflow runs')
+    expect(screen).toContain(WORKFLOWS_PICKER_HINT)
+    expect(screen).toContain('◇ audit')
+    expect(screen).toContain('running · 0/1 members settled · 1 phase · job workflow-1')
+
+    test.terminal.type(KEY.ctrlK)
+    await test.settle()
+    expect(kills).toEqual([`workflow-1:${PARENT}:stopped by the user`])
+    expect(test.terminal.text()).toContain('stopping workflow audit')
+
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    screen = await test.screen()
+    expect(screen).toContain('Workflow audit')
+    expect(screen).toContain('scan · running')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    screen = await test.screen()
+    expect(screen).toContain('Member scan-reader')
+    expect(screen).toContain('child     session-live')
+
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(await test.screen()).toContain('Workflow runs')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(await test.screen()).not.toContain('Workflow runs')
+  })
+
+  it('refuses Ctrl+K on a run inside the turn, a finished run, and a job the registry refuses', async () => {
+    const kills: string[] = []
+    const test = await bench({ before: killableJobs(kills, 'throw') })
+    await test.settle()
+    showRun(test, runId, 'inline', 'scan-reader', LIVE)
+    const done = 'run-done' as ToolWorkflowRunStartData['runId']
+    showRun(test, done, 'done', 'finished', 'session-done')
+    test.session.append('tool-workflow/run-end', { runId: done, stopReason: 'cancelled' })
+    showBackgroundRun(test, 'gone', 'workflow-2')
+    await test.settle()
+
+    typeLine(test, '/workflows')
+    await test.settle()
+    expect(await test.screen()).toContain('⊘ done')
+    test.terminal.type(KEY.ctrlK)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workflow inline runs inside the turn · Esc twice stops the turn')
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.ctrlK)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workflow done already finished')
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.ctrlK)
+    await test.settle()
+    expect(test.terminal.text()).toContain('could not stop workflow gone: job is gone')
+    expect(kills).toEqual([])
+  })
+
+  it('answers an already-finished kill', async () => {
+    const kills: string[] = []
+    const test = await bench({ before: killableJobs(kills, 'already-finished') })
+    await test.settle()
+    showBackgroundRun(test, 'audit', 'workflow-1')
+    await test.settle()
+    typeLine(test, '/workflows')
+    await test.settle()
+    test.terminal.type(KEY.ctrlK)
+    await test.settle()
+    expect(test.terminal.text()).toContain('workflow audit already finished')
+  })
+
+  it('opens a running member from /workflows <name> and shows a run with no member yet', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([childRow(LIVE)]) })
+    const live = await test.createChild({ id: LIVE })
+    live.setStatus('running')
+    await test.settle()
+    test.session.append('tool-workflow/run-start', { runId: 'run-empty' as ToolWorkflowRunStartData['runId'], name: 'empty' })
+    showRun(test, runId, 'audit', 'scan-reader', LIVE)
+    await test.settle()
+
+    typeLine(test, '/workflows empty')
+    await test.settle()
+    expect(await test.screen()).toContain('no member has started yet')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+
+    typeLine(test, '/workflows audit')
+    await test.settle()
+    expect(await test.screen()).toContain('scan · running · Enter opens')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.hostCalls).toContain(`observe-resident:${LIVE}`)
+  })
+
+  it('leaves every picker once a member opens from the run list', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([childRow(LIVE)]) })
+    const live = await test.createChild({ id: LIVE })
+    live.setStatus('running')
+    await test.settle()
+    showRun(test, runId, 'audit', 'scan-reader', LIVE)
+    await test.settle()
+    typeLine(test, '/workflows')
+    await test.settle()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.hostCalls).toContain(`observe-resident:${LIVE}`)
+    expect(await test.screen()).not.toContain('Workflow runs')
   })
 })

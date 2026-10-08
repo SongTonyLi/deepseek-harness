@@ -7,7 +7,10 @@
  * latest descendant line, and a live line while background jobs run; `Ctrl+B`
  * moves the running tool calls to those jobs (`./background.ts`). A top-level
  * workflow call draws a run beside its tool card: the name, member count,
- * status, phases, and started members (`./workflow-block.ts`). Under the
+ * status, a member progress bar, phases, and started members, with running
+ * glyphs stepping on the spinner tick (`./workflow-block.ts`); `/workflows`
+ * walks the runs and their members and stops a background run
+ * (`./workflow-panel.ts`). Under the
  * editor it keeps two docked regions the keyboard can take over — the
  * subagent panel and the status bar — and one repeating tick advances their
  * elapsed counters and the jobs line's, and re-reads a stale subagent
@@ -114,6 +117,16 @@ import {
 } from './catalog.ts'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
 import { WorkflowBlock } from './workflow-block.ts'
+import {
+  WORKFLOW_MEMBERS_HINT,
+  WORKFLOWS_PICKER_HINT,
+  findWorkflowMember,
+  memberOpenable,
+  workflowMemberChoices,
+  workflowMemberDetail,
+  workflowRunChoice,
+  workflowRunSummary,
+} from './workflow-panel.ts'
 import { foldWorkflowRun, projectWorkflowRun, type WorkflowRunEvent, type WorkflowRunState } from './workflow.ts'
 import {
   ACTIVITY_SPINNERS,
@@ -621,6 +634,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'changes', description: 'Browse the files the last turn changed (/changes <turn> for an earlier one; Enter shows a file\'s diff)' },
   { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter opens one as a live session view)' },
   { name: 'jobs', description: 'Browse this session\'s background jobs (Enter shows the output, Ctrl+K stops one; Ctrl+B moves running tool calls here)' },
+  { name: 'workflows', description: 'Browse this session\'s workflow runs (Enter lists a run\'s members and opens a running one, Ctrl+K stops a background run; /workflows <name> opens that run)', hint: '[name]' },
   { name: 'parent', description: 'Return from a subagent view or a /btw side agent to the session it was opened from' },
   { name: 'btw', description: 'Open a temporary side agent with this session\'s context to ask questions while the agent works (/btw <question>)', hint: '<question>' },
   { name: 'settings', description: 'Inspect or change settings (/settings, /settings <ns>, /settings <ns> <path> <value>, /settings reset <ns>)' },
@@ -798,6 +812,8 @@ export class TuiApp {
   private readonly workflowCalls = new Map<ToolCallId, WorkflowCallRecord>()
   /** Process-local ownership for unfinished-run interpretation after replay. */
   private readonly workflowOwners = new Map<WorkflowRunState['runId'], WorkflowOwnership>()
+  /** Workflow blocks whose running glyphs step on the spinner tick. */
+  private readonly workflowSpinners = new Set<WorkflowBlock>()
   /** The global fold action has not chosen a workflow default until the first `Ctrl+O`. */
   private workflowExpanded: boolean | undefined
   private readonly toolArguments = new Map<ToolCallId, unknown>()
@@ -1248,6 +1264,7 @@ export class TuiApp {
     this.workflowStates.clear()
     this.workflowCalls.clear()
     this.workflowOwners.clear()
+    this.workflowSpinners.clear()
     this.toolArguments.clear()
     this.toolStreamArgs.clear()
     this.unconfirmedTools.clear()
@@ -2258,6 +2275,113 @@ export class TuiApp {
     // A listed job is owned and never removed, so the kill cannot be refused.
     const outcome = jobs.kill(view.id, this.agent.session.id, USER_STOP_REASON)
     this.showToast(outcome === 'requested' ? `stopping ${view.id}` : `${view.id} already finished`)
+  }
+
+  /**
+   * Walk the bound session's workflow runs, newest last: `Enter` lists a
+   * run's members and `Ctrl+K` stops a background run. The rows are read
+   * again each time the list opens, so a return from the members shows the
+   * statuses as they are now.
+   * @param name - a run name to open directly; empty opens the run list.
+   */
+  private async browseWorkflows(name: string): Promise<void> {
+    if (name !== '') {
+      const match = [...this.workflowBlocks].findLast(([, block]) => block.view.name === name)
+      if (match === undefined) {
+        this.notice(`no workflow run named ${name} in this session`, 'error')
+        return
+      }
+      await this.browseWorkflowMembers(match[0])
+      return
+    }
+    let visited: string | undefined
+    for (;;) {
+      const runs = [...this.workflowBlocks]
+      if (runs.length === 0) {
+        this.notice('no workflow runs in this session')
+        return
+      }
+      const choices = runs.map(([runId, block], index) =>
+        workflowRunChoice(String(index), block.view, this.workflowOwners.get(runId)?.jobId))
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Workflow runs', choices, {
+        body: [WORKFLOWS_PICKER_HINT],
+        ...visited === undefined ? {} : { current: visited },
+        onStop: (item) => {
+          const run = runs[Number(item.value)]
+          /* v8 ignore next -- the picker answers with one of the rows it was handed */
+          if (run !== undefined) this.stopWorkflow(run[0])
+        },
+      }))
+      const run = picked === undefined ? undefined : runs[Number(picked.value)]
+      if (picked === undefined || run === undefined) return
+      visited = picked.value
+      if (await this.browseWorkflowMembers(run[0])) return
+    }
+  }
+
+  /**
+   * Walk one run's started members: `Enter` on a running member whose child
+   * runs here opens it as a live view, and on any other member shows its
+   * detail page.
+   * @param runId - the run to walk.
+   * @returns true when a member opened, which leaves every picker.
+   */
+  private async browseWorkflowMembers(runId: WorkflowRunState['runId']): Promise<boolean> {
+    let visited: string | undefined
+    for (;;) {
+      const block = this.workflowBlocks.get(runId)
+      /* v8 ignore next -- a session switch closes the pickers before it clears the blocks */
+      if (block === undefined) return false
+      const view = block.view
+      const heading = `Workflow ${view.name}`
+      const openable = this.liveDirectChildren()
+      const choices = workflowMemberChoices(view, openable)
+      if (choices.length === 0) {
+        await this.showModal(new DetailPrompt(this.deps.palette, heading, [workflowRunSummary(view), '', 'no member has started yet']))
+        return false
+      }
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, heading, choices, {
+        body: [workflowRunSummary(view), WORKFLOW_MEMBERS_HINT],
+        ...visited === undefined ? {} : { current: visited },
+      }))
+      const found = picked === undefined ? undefined : findWorkflowMember(view, picked.value)
+      if (picked === undefined || found === undefined) return false
+      visited = picked.value
+      if (memberOpenable(found.member, openable)) {
+        await this.openWorkflowMember({ childId: found.member.childId, label: found.member.label })
+        return true
+      }
+      await this.showModal(new DetailPrompt(this.deps.palette, `Member ${found.member.label}`, workflowMemberDetail(view, found.member, found.phase)))
+    }
+  }
+
+  /**
+   * Stop one workflow run from `/workflows`: a background run stops through
+   * its job, and a run inside the turn names the key that stops the turn.
+   * @param runId - the highlighted run.
+   */
+  private stopWorkflow(runId: WorkflowRunState['runId']): void {
+    const view = this.workflowBlocks.get(runId)?.view
+    /* v8 ignore next -- the picker lists only drawn runs */
+    if (view === undefined) return
+    if (view.status !== 'running') {
+      this.showToast(`workflow ${view.name} already finished`)
+      return
+    }
+    const owner = this.workflowOwners.get(runId)
+    const jobs = this.deps.ctx.get('jobs')
+    if (owner?.background !== true || owner.jobId === undefined || jobs === undefined) {
+      this.showToast(`workflow ${view.name} runs inside the turn · Esc twice stops the turn`)
+      return
+    }
+    let outcome: ReturnType<JobRegistry['kill']>
+    try {
+      outcome = jobs.kill(owner.jobId, this.agent.session.id, USER_STOP_REASON)
+    } catch (error: unknown) {
+      this.showToast(`could not stop workflow ${view.name}: ${describeFailure(error)}`)
+      return
+    }
+    this.showToast(outcome === 'requested' ? `stopping workflow ${view.name}` : `workflow ${view.name} already finished`)
   }
 
   /**
@@ -3678,6 +3802,9 @@ export class TuiApp {
       case 'jobs':
         await this.browseJobs()
         return
+      case 'workflows':
+        await this.browseWorkflows(argument)
+        return
       case 'settings':
         await this.settings(argument)
         return
@@ -4601,7 +4728,8 @@ export class TuiApp {
    * stopped app runs none.
    */
   private updateSpinTicker(): void {
-    if (!this.stopped && (this.loaderAnimates() || this.spinners.size > 0 || this.boardSpinners.size > 0)) {
+    const spinning = this.spinners.size > 0 || this.boardSpinners.size > 0 || this.workflowSpinners.size > 0
+    if (!this.stopped && (this.loaderAnimates() || spinning)) {
       this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, this.deps.spinnerMs)
       return
     }
@@ -4621,9 +4749,12 @@ export class TuiApp {
     for (const block of this.spinners.keys()) {
       if (!block.spinning()) this.spinners.delete(block)
     }
+    for (const block of this.workflowSpinners) {
+      if (!block.spinning()) this.workflowSpinners.delete(block)
+    }
     if (this.loaderAnimates()) this.refreshLoader()
     if (this.boardSpinners.size > 0) this.refreshActivityBoard()
-    else if (this.spinners.size > 0) this.tui.requestRender()
+    else if (this.spinners.size > 0 || this.workflowSpinners.size > 0) this.tui.requestRender()
     this.updateSpinTicker()
   }
 
@@ -5143,6 +5274,7 @@ export class TuiApp {
       block.setOpenableChildren(this.liveDirectChildren())
       this.workflowBlocks.set(runId, block)
       this.chat.addChild(block)
+      if (!this.replaying) this.spinWorkflow(block)
       return
     }
     existing.setOpenableChildren(this.liveDirectChildren())
@@ -5155,9 +5287,26 @@ export class TuiApp {
    */
   private finishWorkflowReplay(): void {
     for (const [runId, state] of this.workflowStates) {
-      if (state.stopReason !== undefined || this.workflowOwnedLive(runId)) continue
-      this.workflowBlocks.get(runId)?.setData(projectWorkflowRun(state, { markUnfinishedInterrupted: true }))
+      if (state.stopReason !== undefined) continue
+      const block = this.workflowBlocks.get(runId)
+      if (this.workflowOwnedLive(runId)) {
+        if (block !== undefined) this.spinWorkflow(block)
+        continue
+      }
+      block?.setData(projectWorkflowRun(state, { markUnfinishedInterrupted: true }))
     }
+  }
+
+  /**
+   * Step a running workflow block's glyphs on the spinner tick until its run
+   * settles. Every block under reduced motion draws the static glyphs.
+   * @param block - a block whose run is running.
+   */
+  private spinWorkflow(block: WorkflowBlock): void {
+    if (this.deps.reducedMotion || block.view.status !== 'running') return
+    block.setSpinner(() => Math.floor(this.deps.now() / this.deps.spinnerMs))
+    this.workflowSpinners.add(block)
+    this.updateSpinTicker()
   }
 
   /**
