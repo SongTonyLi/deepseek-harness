@@ -20,7 +20,7 @@ Status: implemented
 
 ### 执行 shim
 
-`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <denylist>, '--', ...argv]`。宿主机上的 shim 携带 spawn 的工作目录，把去除形似凭据的变量名以及内嵌凭据的 URL 之后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 运行 argv。`container` 1.5.0 不会通过 `container exec` 转发信号，因此 shim 自行向记录下的客户机进程组发送信号。启动哨兵文件用于区分运行时失败（退出码 125 并输出 `dsh-container-exec: ` 行，由运行器失败规则匹配）与已运行但失败的命令。构建后的 shim 只依赖 Node 内置模块，因此可从打包的 npm 包中以纯 Node 运行。
+`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`。宿主机上的 shim 携带 spawn 的工作目录，把去除形似凭据的变量名以及内嵌凭据的 URL 之后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 运行 argv。`container` 1.5.0 不会通过 `container exec` 转发信号，因此 shim 自行向记录下的客户机进程组发送信号。启动哨兵文件用于区分运行时失败（退出码 125 并输出 `dsh-container-exec: ` 行，由运行器失败规则匹配）与已运行但失败的命令。客户机把哨兵写入以可写方式挂载到 `/run/dsh` 的私有宿主机运行目录，因此 shim 在宿主机上检查它，而不必在每次非零退出后再付出一次 `container exec`（约 60 ms）；代价是客户机命令即使在 `read-only` 下也能写入这一个宿主机目录，而 DSH 只会删除其中内容，从不执行或读取它们。构建后的 shim 只依赖 Node 内置模块，因此可从打包的 npm 包中以纯 Node 运行。
 
 ### 读取范围
 

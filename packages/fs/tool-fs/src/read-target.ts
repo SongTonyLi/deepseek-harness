@@ -8,7 +8,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { FsError } from '@deepseek-ai/dsh-fs'
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs'
-import { isHiddenIn, isReadableIn, matchesNameGlob } from '@deepseek-ai/dsh-sandbox'
+import { isHiddenIn, isReadableIn, nameGlobMatcher } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
@@ -135,7 +135,7 @@ export async function resolveAuthorizedReadTarget(
     && scope.roots.some(root => isLexicallyUnder(spelled, root))
   let approved = false
   if (!spelledInside) {
-    if (scope.hiddenNames.some(glob => matchesNameGlob(basename(spelled), glob))) {
+    if (nameGlobMatcher(scope.hiddenNames)(basename(spelled))) {
       throw new FsError(hiddenMessage(requestedPath), 'FS_SANDBOX_DENIED')
     }
     await approveOutsideRead(ctx, exec, spelled, requestedPath, toolName)

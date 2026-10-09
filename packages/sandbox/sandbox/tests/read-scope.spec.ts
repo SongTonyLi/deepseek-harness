@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { SandboxProvider, isReadableIn, matchesNameGlob } from '@deepseek-ai/dsh-sandbox'
+import { SandboxProvider, isReadableIn, nameGlobMatcher } from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedArgv } from '@deepseek-ai/dsh-sandbox'
 
 const dirs: string[] = []
@@ -13,13 +13,27 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-describe('matchesNameGlob', () => {
+describe('nameGlobMatcher', () => {
   it('matches whole names with star wildcards, ignoring case', () => {
-    expect(matchesNameGlob('.env', '.env')).toBe(true)
-    expect(matchesNameGlob('.env.local', '.env.*')).toBe(true)
-    expect(matchesNameGlob('ID_RSA.pub', 'id_rsa*')).toBe(true)
-    expect(matchesNameGlob('xenv', '.env')).toBe(false)
-    expect(matchesNameGlob('a+b(1)', 'a+b(1)')).toBe(true)
+    expect(nameGlobMatcher(['.env'])('.env')).toBe(true)
+    expect(nameGlobMatcher(['.env.*'])('.env.local')).toBe(true)
+    expect(nameGlobMatcher(['id_rsa*'])('ID_RSA.pub')).toBe(true)
+    expect(nameGlobMatcher(['.env'])('xenv')).toBe(false)
+    expect(nameGlobMatcher(['a+b(1)'])('a+b(1)')).toBe(true)
+  })
+
+  it('matches any of several globs without one glob leaking into another', () => {
+    const matches = nameGlobMatcher(['.env', '*.pem', 'a|b'])
+    expect(matches('cert.PEM')).toBe(true)
+    expect(matches('.env')).toBe(true)
+    expect(matches('a|b')).toBe(true)
+    expect(matches('.env.pem.x')).toBe(false)
+    expect(matches('a')).toBe(false)
+  })
+
+  it('matches nothing without globs', () => {
+    expect(nameGlobMatcher([])('')).toBe(false)
+    expect(nameGlobMatcher([])('.env')).toBe(false)
   })
 })
 

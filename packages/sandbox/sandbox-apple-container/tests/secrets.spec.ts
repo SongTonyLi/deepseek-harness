@@ -33,9 +33,9 @@ function tree(): string {
 const SCAN = { names: ['.env', '.env.*', '*.pem', '*.key', 'id_rsa*'], skipDirs: ['node_modules'] }
 
 describe('findHiddenFiles', () => {
-  it('finds matching files and symlinks without entering skipped or symlinked directories', () => {
+  it('finds matching files and symlinks without entering skipped or symlinked directories', async () => {
     const root = tree()
-    expect(findHiddenFiles(root, { ...SCAN, maxDepth: 8 }).sort()).toEqual([
+    expect(await findHiddenFiles(root, { ...SCAN, maxDepth: 8 })).toEqual([
       join(root, '.env'),
       join(root, 'a', 'b', '.env.local'),
       join(root, 'a', 'b', 'c', 'id_rsa'),
@@ -44,20 +44,20 @@ describe('findHiddenFiles', () => {
     ])
   })
 
-  it('stops at the configured depth', () => {
+  it('stops at the configured depth', async () => {
     const root = tree()
-    expect(findHiddenFiles(root, { ...SCAN, maxDepth: 1 }).sort()).toEqual([
+    expect(await findHiddenFiles(root, { ...SCAN, maxDepth: 1 })).toEqual([
       join(root, '.env'),
       join(root, 'a', 'server.PEM'),
       join(root, 'linked.key'),
     ])
   })
 
-  it('skips an unreadable directory', () => {
+  it('skips an unreadable directory', async () => {
     const root = tree()
     chmodSync(join(root, 'a'), 0o000)
     try {
-      expect(findHiddenFiles(root, { ...SCAN, maxDepth: 8 }).sort()).toEqual([join(root, '.env'), join(root, 'linked.key')])
+      expect(await findHiddenFiles(root, { ...SCAN, maxDepth: 8 })).toEqual([join(root, '.env'), join(root, 'linked.key')])
     } finally {
       chmodSync(join(root, 'a'), 0o755)
     }

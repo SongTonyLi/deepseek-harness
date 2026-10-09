@@ -109,8 +109,10 @@ describe('AppleContainerSandboxProvider', () => {
     const name = run?.[run.indexOf('--name') + 1]
     expect(name).toMatch(/^dsh-[0-9a-f]{12}-\d+$/u)
     expect(run).toContain(`type=bind,source=${h.root},target=${h.root}`)
+    const runDir = join(realpathSync(tmpdir()), 'dsh-container-run', name as string)
+    expect(run).toContain(`type=bind,source=${runDir},target=/run/dsh`)
     expect(confined).toEqual({
-      argv: [...shimInvocation(new URL('../src/index.ts', import.meta.url).href), h.fake.executable, name, DEFAULT_ENV_DENYLIST.join(','), '--', 'bash', '-c', 'true'],
+      argv: [...shimInvocation(new URL('../src/index.ts', import.meta.url).href), h.fake.executable, name, runDir, DEFAULT_ENV_DENYLIST.join(','), '--', 'bash', '-c', 'true'],
       enforcement: 'full',
       denialSignatures: ['read-only file system'],
       runnerFailureRules: [{ allowedExitCodes: [SHIM_FAILURE_EXIT], fatalSignatures: [SHIM_FAILURE_PREFIX] }],

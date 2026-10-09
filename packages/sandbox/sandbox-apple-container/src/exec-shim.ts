@@ -8,7 +8,7 @@
 
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SHIM_FAILURE_EXIT, SHIM_FAILURE_PREFIX, parseShimArgs, runShim } from './shim.ts'
@@ -28,6 +28,16 @@ try {
         resolve(error === null ? 0 : typeof error.code === 'number' ? error.code : SHIM_FAILURE_EXIT)
       })
     }),
+    consumeFile: (path) => {
+      try {
+        unlinkSync(path)
+        return true
+      } catch (error: unknown) {
+        // ENOENT means the guest wrapper never wrote the file; any other failure must surface.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+        throw error
+      }
+    },
     writeEnvFile: (text) => {
       const path = join(mkdtempSync(join(tmpdir(), 'dsh-container-env-')), 'env')
       writeFileSync(path, text, { mode: 0o600 })

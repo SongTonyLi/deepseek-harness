@@ -1,11 +1,11 @@
 /** ContainerPool over a scripted runtime double. */
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContainerPool, PID_LABEL } from '../src/pool.ts'
-import type { PoolOptions } from '../src/pool.ts'
+import type { PoolEntry, PoolOptions } from '../src/pool.ts'
 import type { ContainerSpec, ContainerState, ListedContainer } from '../src/runtime.ts'
 
 const dirs: string[] = []
@@ -54,12 +54,18 @@ class RuntimeDouble {
   }
 }
 
+/** The writable run-directory mount every owned container ends with. */
+function runMount(entry: PoolEntry): { source: string; target: string; readonly: boolean } {
+  return { source: entry.runDir, target: '/run/dsh', readonly: false }
+}
+
 function setup(
   recheckMs = 1000,
-  layout: Partial<Pick<PoolOptions, 'protectedPaths' | 'readOnlyMounts' | 'hidden'>> = {},
-): { runtime: RuntimeDouble; pool: ContainerPool; clock: { now: number } } {
+  layout: Partial<Pick<PoolOptions, 'protectedPaths' | 'readOnlyMounts' | 'hidden' | 'runRoot'>> = {},
+): { runtime: RuntimeDouble; pool: ContainerPool; clock: { now: number }; runRoot: string } {
   const runtime = new RuntimeDouble()
   const clock = { now: 0 }
+  const runRoot = join(workspace(), 'run')
   const pool = new ContainerPool(runtime, {
     pid: 42,
     recheckMs,
@@ -67,31 +73,33 @@ function setup(
     protectedPaths: ['.git'],
     readOnlyMounts: [],
     hidden: { names: ['.env'], maxDepth: 4, skipDirs: ['node_modules'] },
+    runRoot,
     ...layout,
   })
-  return { runtime, pool, clock }
+  return { runtime, pool, clock, runRoot }
 }
 
 describe('ContainerPool', () => {
   it('starts one labelled container per workspace and mode', async () => {
-    const { runtime, pool } = setup()
+    const { runtime, pool, runRoot } = setup()
     const root = workspace()
-    const name = await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    const entry = await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    const { name } = entry
     expect(name).toMatch(/^dsh-[0-9a-f]{12}-42$/u)
+    expect(entry).toEqual({ mode: 'workspace-write', root, name, runDir: join(runRoot, name) })
+    expect(statSync(entry.runDir).mode & 0o777).toBe(0o700)
     expect(runtime.calls).toEqual(['ensureService', `state ${name}`, `run ${name}`])
     expect(runtime.runs[0]).toEqual({
       name,
       labels: { [PID_LABEL]: '42', 'dsh.workspace': root, 'dsh.mode': 'workspace-write' },
-      mounts: [{ source: root, target: root, readonly: false }],
+      mounts: [{ source: root, target: root, readonly: false }, runMount(entry)],
       maskedPaths: [],
     })
     const readOnly = await pool.ensure({ mode: 'read-only', workspaceRoot: root })
-    expect(readOnly).not.toBe(name)
-    expect(runtime.runs[1]?.mounts).toEqual([{ source: root, target: root, readonly: true }])
-    expect(pool.entries()).toEqual([
-      { mode: 'workspace-write', root, name },
-      { mode: 'read-only', root, name: readOnly },
-    ])
+    expect(readOnly.name).not.toBe(name)
+    expect(readOnly.runDir).not.toBe(entry.runDir)
+    expect(runtime.runs[1]?.mounts).toEqual([{ source: root, target: root, readonly: true }, runMount(readOnly)])
+    expect(pool.entries()).toEqual([entry, readOnly])
   })
 
   it('also mounts the lexical path of a symlinked workspace', async () => {
@@ -99,10 +107,11 @@ describe('ContainerPool', () => {
     const root = workspace()
     const link = join(workspace(), 'link')
     symlinkSync(root, link)
-    await pool.ensure({ mode: 'workspace-write', workspaceRoot: link })
+    const entry = await pool.ensure({ mode: 'workspace-write', workspaceRoot: link })
     expect(runtime.runs[0]?.mounts).toEqual([
       { source: root, target: root, readonly: false },
       { source: root, target: link, readonly: false },
+      runMount(entry),
     ])
   })
 
@@ -115,16 +124,17 @@ describe('ContainerPool', () => {
     mkdirSync(join(root, 'node_modules'))
     writeFileSync(join(root, '.env'), 'KEY=1')
     writeFileSync(join(root, 'node_modules', '.env'), 'KEY=2')
-    await pool.ensure({ mode: 'workspace-write', workspaceRoot: link })
+    const entry = await pool.ensure({ mode: 'workspace-write', workspaceRoot: link })
     expect(runtime.runs[0]?.mounts).toEqual([
       { source: root, target: root, readonly: false },
       { source: root, target: link, readonly: false },
       { source: join(root, '.git'), target: join(root, '.git'), readonly: true },
       { source: join(root, '.git'), target: join(link, '.git'), readonly: true },
+      runMount(entry),
     ])
     expect(runtime.runs[0]?.maskedPaths).toEqual([join(root, '.env'), join(link, '.env')])
-    await pool.ensure({ mode: 'read-only', workspaceRoot: root })
-    expect(runtime.runs[1]?.mounts).toEqual([{ source: root, target: root, readonly: true }])
+    const readOnly = await pool.ensure({ mode: 'read-only', workspaceRoot: root })
+    expect(runtime.runs[1]?.mounts).toEqual([{ source: root, target: root, readonly: true }, runMount(readOnly)])
   })
 
   it('mounts existing extra directories read-only at their own and canonical paths', async () => {
@@ -134,7 +144,7 @@ describe('ContainerPool', () => {
     const { runtime, pool } = setup(1000, { readOnlyMounts: [real, alias, join(real, 'missing')] })
     const root = workspace()
     await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
-    expect(runtime.runs[0]?.mounts.slice(1)).toEqual([
+    expect(runtime.runs[0]?.mounts.slice(1, -1)).toEqual([
       { source: real, target: real, readonly: true },
       { source: real, target: real, readonly: true },
       { source: real, target: alias, readonly: true },
@@ -148,7 +158,7 @@ describe('ContainerPool', () => {
       pool.ensure({ mode: 'workspace-write', workspaceRoot: root }),
       pool.ensure({ mode: 'workspace-write', workspaceRoot: root }),
     ])
-    expect(a).toBe(b)
+    expect(a).toEqual(b)
     clock.now = 999
     await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
     expect(runtime.calls.filter(call => call.startsWith('run'))).toHaveLength(1)
@@ -158,20 +168,34 @@ describe('ContainerPool', () => {
   it('rechecks after the interval and recreates a vanished container', async () => {
     const { runtime, pool, clock } = setup()
     const root = workspace()
-    const name = await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    const { name } = await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    runtime.calls = []
     clock.now = 1000
     await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
-    expect(runtime.calls.filter(call => call.startsWith('run'))).toHaveLength(1)
+    expect(runtime.calls).toEqual([`state ${name}`])
+    runtime.calls = []
     clock.now = 2000
     runtime.states.delete(name)
-    await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: root })).resolves.toBe(name)
-    expect(runtime.calls.filter(call => call.startsWith('run'))).toHaveLength(2)
+    await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: root })).resolves.toMatchObject({ name })
+    expect(runtime.calls).toEqual([`state ${name}`, 'ensureService', `state ${name}`, `run ${name}`])
+  })
+
+  it('replaces a running container whose run directory was deleted', async () => {
+    const { runtime, pool, clock } = setup()
+    const root = workspace()
+    const { name, runDir } = await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    rmSync(runDir, { recursive: true })
+    runtime.calls = []
+    clock.now = 1000
+    await pool.ensure({ mode: 'workspace-write', workspaceRoot: root })
+    expect(runtime.calls).toEqual(['ensureService', `state ${name}`, `remove ${name}`, `run ${name}`])
+    expect(existsSync(runDir)).toBe(true)
   })
 
   it('replaces a stopped container and adopts a running one', async () => {
     const { runtime, pool } = setup()
     const root = workspace()
-    const probe = await pool.ensure({ mode: 'read-only', workspaceRoot: root })
+    const { name: probe, runDir } = await pool.ensure({ mode: 'read-only', workspaceRoot: root })
     await pool.dispose()
     runtime.calls = []
     runtime.states.set(probe, 'stopped')
@@ -180,6 +204,7 @@ describe('ContainerPool', () => {
     await pool.dispose()
     runtime.calls = []
     runtime.states.set(probe, 'running')
+    mkdirSync(runDir)
     await pool.ensure({ mode: 'read-only', workspaceRoot: root })
     expect(runtime.calls).toEqual(['ensureService', `state ${probe}`])
   })
@@ -190,7 +215,7 @@ describe('ContainerPool', () => {
     runtime.failRun = new Error('container run failed: no image')
     await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: root })).rejects.toThrow('no image')
     runtime.failRun = undefined
-    await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: root })).resolves.toMatch(/^dsh-/u)
+    await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: root })).resolves.toMatchObject({ name: expect.stringMatching(/^dsh-/u) as string })
   })
 
   it('keeps a slot cleared by dispose while its start fails', async () => {
@@ -215,8 +240,16 @@ describe('ContainerPool', () => {
     await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: '/no,such' })).rejects.toThrow('contains a comma')
   })
 
-  it('sweeps containers left by dead DSH processes', async () => {
-    const { runtime, pool } = setup()
+  it('rejects a run root containing a comma before starting anything', async () => {
+    const { runtime, pool } = setup(1000, { runRoot: '/tmp/a,b' })
+    await expect(pool.ensure({ mode: 'workspace-write', workspaceRoot: workspace() })).rejects.toThrow('container run directory "/tmp/a,b" contains a comma')
+    expect(runtime.calls).toEqual([])
+  })
+
+  it('sweeps containers and run directories left by dead DSH processes', async () => {
+    const { runtime, pool, runRoot } = setup()
+    const dirs = ['dsh-0123456789ab-7', 'dsh-0123456789ab-8', 'dsh-0123456789ab-42', 'dsh-other-7']
+    for (const dir of dirs) mkdirSync(join(runRoot, dir), { recursive: true })
     runtime.listed = [
       { id: 'dead', labels: { [PID_LABEL]: '7' } },
       { id: 'alive', labels: { [PID_LABEL]: '8' } },
@@ -225,6 +258,14 @@ describe('ContainerPool', () => {
       { id: 'garbled', labels: { [PID_LABEL]: 'x' } },
     ]
     await pool.sweep(pid => pid === 8)
+    expect(runtime.calls).toEqual(['remove dead'])
+    expect(dirs.filter(dir => existsSync(join(runRoot, dir)))).toEqual(['dsh-0123456789ab-8', 'dsh-0123456789ab-42', 'dsh-other-7'])
+  })
+
+  it('sweeps before any run directory exists', async () => {
+    const { runtime, pool } = setup()
+    runtime.listed = [{ id: 'dead', labels: { [PID_LABEL]: '7' } }]
+    await pool.sweep(() => false)
     expect(runtime.calls).toEqual(['remove dead'])
   })
 
@@ -235,7 +276,8 @@ describe('ContainerPool', () => {
     const b = await pool.ensure({ mode: 'read-only', workspaceRoot: root })
     runtime.calls = []
     await pool.dispose()
-    expect(runtime.calls).toEqual([`remove ${a}`, `remove ${b}`])
+    expect(runtime.calls).toEqual([`remove ${a.name}`, `remove ${b.name}`])
+    expect([existsSync(a.runDir), existsSync(b.runDir)]).toEqual([false, false])
     expect(pool.entries()).toEqual([])
   })
 })

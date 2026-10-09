@@ -71,7 +71,7 @@ kind: "package-reference"
 | 命令或工具读取工作区中的密钥文件 | 在客户机中被遮蔽为 `/dev/null`；被文件工具拒绝；从 `grep` 中排除 |
 | 凭据进入客户机环境 | 被拒绝的名称以及带有 `user:password@` 的 URL 永不转发 |
 | 命令植入宿主机之后会执行的 Git hook 或配置 | 在 `workspace-write` 下 `.git` 为只读；写入以 `Read-only file system` 失败，并走常规提权流程 |
-| 命令写入工作区之外 | 写入落在容器自己的磁盘上，永远不会到达宿主机 |
+| 命令写入工作区之外 | 写入落在容器自己的磁盘上，不会到达宿主机；唯一例外是 `/run/dsh`，即容器存放启动哨兵的私有运行目录，它随容器一起删除 |
 
 `danger-full-access` 绕过 `confine`，因此在任一后端下都在宿主机上运行。从容器会话升权到 `danger-full-access` 时，审批提示会补充说明该命令将直接在 Mac 上运行，而不是在容器内。会话运行在此后端时，Auto 权限不会写入它：而是写入 `workspace-write`，并由 reviewer 而不是提示批准离开容器的一次性提权（[Auto review](../../experimental/auto-review/README.zh.md)）。在 `local` 后端上，Auto 仍写入 `danger-full-access`。
 
@@ -89,11 +89,11 @@ CLI 缺失、已停止且无法启动的 API 服务器，或 `container run` 失
 
 ### 容器
 
-提供方为每个规范化的工作区根目录与受限模式各持有一个容器，由该工作区与模式下的所有会话和子智能体共享。容器以 `container run --detach --init --rm` 启动，带有所属进程 id 的标签，使用 `--mount type=bind,…` 绑定挂载（不使用 `-v src:dst:ro` 形式，因为 `container` 1.5.0 会错误解析它），并以 `sleep infinity` 空转。缓存的容器每 `recheckMs` 至多重新检查一次，消失时重新启动；销毁时删除所有自有容器，加载时删除其标签进程已退出的容器。当默认后端为 `container` 且部署默认模式为受限模式时，默认模式的容器会在加载时于后台启动。
+提供方为每个规范化的工作区根目录与受限模式各持有一个容器，由该工作区与模式下的所有会话和子智能体共享。容器以 `container run --detach --init --rm` 启动，带有所属进程 id 的标签，使用 `--mount type=bind,…` 绑定挂载（不使用 `-v src:dst:ro` 形式，因为 `container` 1.5.0 会错误解析它），并以 `sleep infinity` 空转。每个容器还挂载一个私有的宿主机运行目录 `<os tmpdir>/dsh-container-run/<container name>`，在所有受限模式下都以可写方式挂载到 `/run/dsh`。缓存的容器每 `recheckMs` 至多以一次 `container inspect` 重新检查，在容器消失或其运行目录被删除时重新启动；销毁时删除所有自有容器及其运行目录，加载时删除所属进程已退出的容器与运行目录。当默认后端为 `container` 且部署默认模式为受限模式时，默认模式的容器会在加载时于后台启动。
 
 ### 执行 shim
 
-`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <denylist>, '--', ...argv]`。shim 以调用方的工作目录与环境在宿主机上运行，将过滤后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 以 `container exec -i [-t] -w <cwd>` 运行 argv。由于 `container exec` 不转发信号，shim 记录客户机的进程组 id 并自行向该进程组发送信号；被转发的信号以 `128 + n` 退出。启动哨兵文件用于区分运行时失败（以 `dsh-container-exec: …` 报告、退出码 125，并由运行器失败规则分类）与已运行但失败的命令。构建后的 `lib/exec-shim.js` 只依赖 Node 内置模块，可在 npm 安装的 CLI 中以纯 Node 运行；源码检出则通过 tsx 启动 `src/exec-shim.ts`。
+`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`。shim 以调用方的工作目录与环境在宿主机上运行，将过滤后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 以 `container exec -i [-t] -w <cwd>` 运行 argv。argv 启动前，客户机包装脚本将其进程组 id 写入 `/run/dsh/<token>.pid`；写入失败时 argv 不会运行。由于 `container exec` 不转发信号，shim 自行向该进程组发送信号；被转发的信号以 `128 + n` 退出。该 pid 文件同时充当启动哨兵：`container exec` 退出后，shim 从宿主机运行目录中删除它，文件缺失即表示运行时失败（以 `dsh-container-exec: …` 报告、退出码 125，并由运行器失败规则分类），而非已运行但失败的命令。因此每条命令只需一次 `container exec`。构建后的 `lib/exec-shim.js` 只依赖 Node 内置模块，可在 npm 安装的 CLI 中以纯 Node 运行；源码检出则通过 tsx 启动 `src/exec-shim.ts`。
 
 ### 源码地图
 

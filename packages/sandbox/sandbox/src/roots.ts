@@ -71,15 +71,17 @@ function canonicalTarget(path: string): string {
 }
 
 /**
- * Whether a file name matches a hidden-name glob, where `*` matches any run
- * of characters and matching ignores case.
- * @param name - a single path component.
- * @param glob - a pattern such as `.env.*` or `id_rsa*`.
- * @returns true when `name` matches the whole pattern.
+ * Compile file-name globs, where `*` matches any run of characters and
+ * matching ignores case, into one predicate. Compile once and reuse the
+ * predicate when testing many names.
+ * @param globs - patterns such as `.env.*` or `id_rsa*`.
+ * @returns whether a single path component matches any whole pattern; always false for no globs.
  */
-export function matchesNameGlob(name: string, glob: string): boolean {
-  const pattern = glob.split('*').map(part => part.replaceAll(/[.+?^${}()|[\]\\]/gu, String.raw`\$&`)).join('.*')
-  return new RegExp(`^${pattern}$`, 'iu').test(name)
+export function nameGlobMatcher(globs: readonly string[]): (name: string) => boolean {
+  if (globs.length === 0) return () => false
+  const patterns = globs.map(glob => glob.split('*').map(part => part.replaceAll(/[.+?^${}()|[\]\\]/gu, String.raw`\$&`)).join('.*'))
+  const regex = new RegExp(`^(?:${patterns.join('|')})$`, 'iu')
+  return name => regex.test(name)
 }
 
 /**
@@ -90,8 +92,7 @@ export function matchesNameGlob(name: string, glob: string): boolean {
  * @returns true when the path is hidden regardless of its root.
  */
 export function isHiddenIn(path: string, scope: SandboxReadScope): boolean {
-  const name = basename(canonicalTarget(path))
-  return scope.hiddenNames.some(glob => matchesNameGlob(name, glob))
+  return nameGlobMatcher(scope.hiddenNames)(basename(canonicalTarget(path)))
 }
 
 /**

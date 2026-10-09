@@ -14,7 +14,8 @@
  */
 
 import { existsSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -31,6 +32,7 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { ContainerPool } from './pool.ts'
+import type { PoolEntry } from './pool.ts'
 import { ContainerRuntime } from './runtime.ts'
 import { containerSupported, resolveBackend } from './host.ts'
 import type { ConfiguredBackend } from './host.ts'
@@ -216,6 +218,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       protectedPaths,
       readOnlyMounts: this.readOnlyMounts,
       hidden: { names: this.hiddenFiles, maxDepth: config.hiddenFilesMaxDepth as number, skipDirs: config.hiddenFilesSkipDirs as string[] },
+      runRoot: join(canonicalPath(tmpdir()), 'dsh-container-run'),
     })
 
     ctx.sessionProjections.register({
@@ -300,17 +303,18 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   override async confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
     if (this.policyBackend(policy) === 'local') return super.confine(argv, policy, signal)
     signal?.throwIfAborted()
-    let container: string
+    let container: PoolEntry
     try {
       container = await this.pool.ensure(policy)
     } catch (error: unknown) {
       throw new SandboxUnavailableError(policy.mode, `${messageOf(error)}; run /sandbox local to confine commands on this host instead`)
     }
     signal?.throwIfAborted()
+    const { name, runDir } = container
     return {
       argv: [
         ...shimInvocation(import.meta.url),
-        ...encodeShimArgs({ executable: this.executable, container, denylist: this.envDenylist, argv }),
+        ...encodeShimArgs({ executable: this.executable, container: name, runDir, denylist: this.envDenylist, argv }),
       ],
       enforcement: 'full',
       denialSignatures: CONTAINER_DENIAL_SIGNATURES,
