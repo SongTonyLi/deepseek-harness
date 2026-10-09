@@ -4,14 +4,15 @@
  * is Linux, workspace writes reach the host, writes elsewhere stay in the VM,
  * unmounted host files and credential environment variables are absent,
  * secret files are masked, `.git` is read-only, read-only denials classify,
- * and cancellation kills the guest process. Skips unless `container system
+ * failing commands keep their status without leaving start sentinels, and
+ * cancellation kills the guest process. Skips unless `container system
  * status` succeeds.
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -91,6 +92,16 @@ describe.skipIf(!runtimeUp)('sandbox-apple-container: real container confinement
     expect(result.exitCode).not.toBe(0)
     expect(result.sandbox).toEqual({ mode: 'read-only', denied: true, enforcement: 'full' })
     expect(existsSync(join(workspace, 'denied.txt'))).toBe(false)
+  }, 600_000)
+
+  it('reports a failing command\'s own status and leaves no start sentinel behind', async () => {
+    const result = await run('echo failing >&2; exit 3', 'read-only')
+    expect(result.exitCode).toBe(3)
+    expect(result.stderr.text).toBe('failing\n')
+    const runRoot = join(realpathSync(tmpdir()), 'dsh-container-run')
+    const owned = readdirSync(runRoot).filter(name => name.endsWith(`-${process.pid}`))
+    expect(owned.length).toBeGreaterThan(0)
+    expect(owned.flatMap(name => readdirSync(join(runRoot, name)))).toEqual([])
   }, 600_000)
 
   it('kills the guest process when the call is cancelled', async () => {

@@ -4,12 +4,15 @@
  * `container exec`, carrying the host spawn's working directory and filtered
  * environment. `container` 1.5.0 does not forward signals through
  * `container exec`, so the shim records the guest process-group id and
- * signals that group itself. A start sentinel distinguishes a runtime failure
- * (exit {@link SHIM_FAILURE_EXIT} with a {@link SHIM_FAILURE_PREFIX} line)
- * from a command that ran and failed.
+ * signals that group itself. The guest wrapper writes a process-group-id file
+ * into a host directory mounted at {@link GUEST_RUN_DIR} before the command
+ * starts, so the shim tells a runtime failure (exit {@link SHIM_FAILURE_EXIT}
+ * with a {@link SHIM_FAILURE_PREFIX} line) from a command that ran and failed
+ * by checking that file on the host, without another `container exec`.
  * @module @deepseek-ai/dsh-sandbox-apple-container/shim
  */
 
+import { join } from 'node:path'
 import { constants } from 'node:os'
 
 /** Exit status of a shim or container-runtime failure that happened before the command started. */
@@ -18,12 +21,17 @@ export const SHIM_FAILURE_EXIT = 125
 /** Prefix of the single stderr line the shim writes for {@link SHIM_FAILURE_EXIT}. */
 export const SHIM_FAILURE_PREFIX = 'dsh-container-exec: '
 
+/** Guest path of each container's run directory, a writable bind mount of a host directory. */
+export const GUEST_RUN_DIR = '/run/dsh'
+
 /** The decoded shim invocation. */
 export interface ShimArgs {
   /** The `container` CLI executable. */
   executable: string
   /** Name of the running container the argv executes in. */
   container: string
+  /** Host directory mounted at {@link GUEST_RUN_DIR} in that container. */
+  runDir: string
   /** Environment keys not forwarded to the guest; a trailing `*` matches a prefix. */
   denylist: readonly string[]
   /** The caller's exact argv. */
@@ -33,10 +41,10 @@ export interface ShimArgs {
 /**
  * Encode a shim invocation as the argument list that follows the shim entry.
  * @param args - the invocation; denylist entries are environment names and never contain commas.
- * @returns `[executable, container, denylist, '--', ...argv]`.
+ * @returns `[executable, container, runDir, denylist, '--', ...argv]`.
  */
 export function encodeShimArgs(args: ShimArgs): string[] {
-  return [args.executable, args.container, args.denylist.join(','), '--', ...args.argv]
+  return [args.executable, args.container, args.runDir, args.denylist.join(','), '--', ...args.argv]
 }
 
 /**
@@ -46,11 +54,11 @@ export function encodeShimArgs(args: ShimArgs): string[] {
  * @throws {Error} when the list is malformed or the argv is empty.
  */
 export function parseShimArgs(args: readonly string[]): ShimArgs {
-  const [executable, container, denylist, separator, ...argv] = args
-  if (executable === undefined || container === undefined || denylist === undefined || separator !== '--' || argv.length === 0) {
-    throw new Error('usage: exec-shim <executable> <container> <denylist> -- <argv...>')
+  const [executable, container, runDir, denylist, separator, ...argv] = args
+  if (executable === undefined || container === undefined || runDir === undefined || denylist === undefined || separator !== '--' || argv.length === 0) {
+    throw new Error('usage: exec-shim <executable> <container> <run-dir> <denylist> -- <argv...>')
   }
-  return { executable, container, denylist: denylist === '' ? [] : denylist.split(','), argv }
+  return { executable, container, runDir, denylist: denylist === '' ? [] : denylist.split(','), argv }
 }
 
 /**
@@ -85,20 +93,21 @@ export function envFileText(env: NodeJS.ProcessEnv, denylist: readonly string[])
   return text
 }
 
-/** Guest paths of one run's process-group id file and start sentinel. */
-function tokenPaths(token: string): { pid: string; started: string } {
-  return { pid: `/run/dsh-${token}.pid`, started: `/run/dsh-${token}.started` }
+/** File name of one run's process-group-id file in the run directory. */
+function pidFileName(token: string): string {
+  return `${token}.pid`
 }
 
 /**
- * The guest `sh -c` wrapper: records its process-group id and a start
- * sentinel, runs the argv, and removes both files after a zero exit.
+ * The guest `sh -c` wrapper: records its process-group id, which doubles as
+ * the start sentinel, then runs the argv and exits with its status. When the
+ * file cannot be written, the argv never runs and the wrapper exits
+ * {@link SHIM_FAILURE_EXIT}.
  * @param token - the run's unique token.
  * @returns the script text.
  */
 export function wrapperScript(token: string): string {
-  const { pid, started } = tokenPaths(token)
-  return `echo $$ > ${pid}; : > ${started}; "$@"; s=$?; if [ $s -eq 0 ]; then rm -f ${pid} ${started}; fi; exit $s`
+  return `echo $$ > ${GUEST_RUN_DIR}/${pidFileName(token)} || exit ${SHIM_FAILURE_EXIT}; "$@"`
 }
 
 /**
@@ -122,19 +131,7 @@ export function execArgs(args: ShimArgs, run: { cwd: string; envFile: string; tt
  * @returns the arguments after the `container` executable.
  */
 export function killArgs(container: string, token: string, signal: NodeJS.Signals): string[] {
-  return ['exec', container, 'sh', '-c', `kill -${signal.slice(3)} -$(cat ${tokenPaths(token).pid}) 2>/dev/null; true`]
-}
-
-/**
- * The `container exec` arguments that remove the run's token files and exit
- * zero only when the start sentinel existed.
- * @param container - the container name.
- * @param token - the run's token.
- * @returns the arguments after the `container` executable.
- */
-export function settleArgs(container: string, token: string): string[] {
-  const { pid, started } = tokenPaths(token)
-  return ['exec', container, 'sh', '-c', `test -e ${started}; s=$?; rm -f ${pid} ${started}; exit $s`]
+  return ['exec', container, 'sh', '-c', `kill -${signal.slice(3)} -$(cat ${GUEST_RUN_DIR}/${pidFileName(token)}) 2>/dev/null; true`]
 }
 
 /** The child-process events the shim consumes. */
@@ -157,6 +154,8 @@ export interface ShimDeps {
   spawn(executable: string, args: readonly string[]): ShimChild
   /** Run a control command to completion and return its exit status. */
   run(executable: string, args: readonly string[]): Promise<number>
+  /** Remove a host file and return whether it existed. */
+  consumeFile(path: string): boolean
   /** Write a private environment file and return its path. */
   writeEnvFile(text: string): string
   /** Remove the environment file. */
@@ -193,14 +192,13 @@ export async function runShim(args: ShimArgs, deps: ShimDeps): Promise<number> {
       child.once('error', reject)
       child.once('close', (code, signal) => { resolve(code ?? signalExit(signal as NodeJS.Signals)) })
     })
-    if (exit === 0 && forwarded === undefined) return 0
-    const started = await deps.run(args.executable, settleArgs(args.container, deps.token))
+    const started = deps.consumeFile(join(args.runDir, pidFileName(deps.token)))
     if (forwarded !== undefined) return signalExit(forwarded)
-    if (started === 0) return exit
+    if (exit === 0 || started) return exit
     deps.stderr(`${SHIM_FAILURE_PREFIX}the container runtime failed before the command started (container exec exited ${exit})\n`)
     return SHIM_FAILURE_EXIT
   } catch (error: unknown) {
-    // The only rejection is the child's `error` event, which carries an Error.
+    // The child's `error` event and a failed run-directory cleanup both carry an Error.
     deps.stderr(`${SHIM_FAILURE_PREFIX}${(error as Error).message}\n`)
     return SHIM_FAILURE_EXIT
   } finally {

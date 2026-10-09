@@ -22,7 +22,7 @@ export {
   validateEscalationArgs,
 } from './escalation.ts'
 export type { EscalationApproval, EscalationApprover, EscalationOutcome, EscalationRequest } from './escalation.ts'
-export { canonicalPath, isHiddenIn, isReadableIn, matchesNameGlob, writableRoots } from './roots.ts'
+export { canonicalPath, isHiddenIn, isReadableIn, nameGlobMatcher, writableRoots } from './roots.ts'
 
 /**
  * File-effect policy for confined processes. `read-only` permits only required
