@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可以在搭载 Apple 芯片的 macOS 上，于 [Apple `container`](https://github.com/apple/container) Linux 虚拟机中运行受限的 bash、终端与 PTC 命令。虚拟机只在宿主机路径处挂载会话工作区，因此命令无法读取或修改其他宿主机文件，模型的文件工具也受同一读取范围约束。`.env` 等密钥文件被遮蔽，形似凭据的环境变量永远不会进入客户机，`.git` 保持只读。在其他所有主机上，以及通过 `/sandbox local` 切换的会话中，本包通过继承的本地沙箱链进行限制。
+使用本包可在搭载 Apple 芯片、运行 Apple `container` CLI 1.5.0 或更高版本的 macOS 上，将 bash、终端和 PTC 命令限制在 [Apple `container`](https://github.com/apple/container) Linux 虚拟机中。虚拟机只挂载会话工作区，模型文件工具也受相同读取范围限制；`.env` 文件会被遮蔽，类似凭据的环境变量不会传入客户机，`.git` 保持只读。其他主机和通过 `/sandbox local` 切换的会话使用继承的本地沙箱链。
 
 ## 目录
 

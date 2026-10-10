@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to run confined bash, terminal, and PTC commands inside an [Apple `container`](https://github.com/apple/container) Linux VM on macOS on Apple silicon. The VM mounts only the session workspace at its host path, so commands cannot read or change other host files, and the model's file tools are held to the same read scope. Secret files such as `.env` are masked, credential-shaped environment variables never reach the guest, and `.git` stays read-only. On every other host, and for sessions switched with `/sandbox local`, the package confines through the inherited local sandbox chain.
+Use this package to confine bash, terminal, and PTC commands in an [Apple `container`](https://github.com/apple/container) Linux VM on macOS with Apple silicon and CLI 1.5.0 or newer. The VM mounts only the session workspace, limits model file tools to the same read scope, masks `.env` files, excludes credential-shaped environment variables, and makes `.git` read-only. Other hosts and sessions switched with `/sandbox local` use the inherited local sandbox chain.
 
 ## Table of Contents
 

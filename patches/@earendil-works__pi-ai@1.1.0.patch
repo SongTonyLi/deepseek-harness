@@ -1,0 +1,35 @@
+diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
+--- a/dist/api/anthropic-messages.js
++++ b/dist/api/anthropic-messages.js
+@@ -553,1 +553,0 @@
+-                            block.arguments = parseStreamingJson(block.partialJson);
+diff --git a/dist/api/bedrock-converse-stream.js b/dist/api/bedrock-converse-stream.js
+--- a/dist/api/bedrock-converse-stream.js
++++ b/dist/api/bedrock-converse-stream.js
+@@ -461,1 +461,0 @@
+-        block.arguments = parseStreamingJson(block.partialJson);
+diff --git a/dist/api/mistral-conversations.js b/dist/api/mistral-conversations.js
+--- a/dist/api/mistral-conversations.js
++++ b/dist/api/mistral-conversations.js
+@@ -554,1 +554,0 @@
+-                block.arguments = parseStreamingJson(block.partialArgs);
+diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+--- a/dist/api/openai-completions.js
++++ b/dist/api/openai-completions.js
+@@ -438,1 +438,0 @@
+-                                block.arguments = parseStreamingJson(block.partialArgs);
+@@ -452,1 +451,0 @@
+-                        block.arguments = parseStreamingJson(block.partialArgs);
+diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
+--- a/dist/api/openai-responses-shared.js
++++ b/dist/api/openai-responses-shared.js
+@@ -548,1 +548,0 @@
+-            slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+@@ -580,1 +579,0 @@
+-            slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+diff --git a/dist/api/pi-messages.js b/dist/api/pi-messages.js
+--- a/dist/api/pi-messages.js
++++ b/dist/api/pi-messages.js
+@@ -155,2 +155,0 @@
+-                partial.content[event.contentIndex].arguments =
+-                    parseStreamingJson(json);
