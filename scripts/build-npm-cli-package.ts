@@ -300,7 +300,7 @@ class NpmPackageBuild {
   }
 
   /**
-   * Deploy the closure into the staging directory.
+   * Deploy the production closure without hoisting unrelated workspace packages.
    * @param staging - the deploy target.
    */
   private async runDeploy(staging: string): Promise<void> {
@@ -320,6 +320,7 @@ class NpmPackageBuild {
       // the payload installs every peer it declares.
       '--config.auto-install-peers=true',
       '--config.link-workspace-packages=true',
+      '--config.hoist-workspace-packages=false',
       staging,
     ], root)
   }
