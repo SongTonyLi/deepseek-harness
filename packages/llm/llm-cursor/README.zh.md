@@ -68,7 +68,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 
 新的 Run 由 harness 历史、系统提示和 MCP 工具定义重建（`providerIdentifier: dsh`，`clientName: dsh`）。Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示，从不把 `conversation_state.turns` 渲染进去，并且会丢弃其中的 `{"role":"system"}` 条目而使用自己的提示。因此适配器把系统提示作为 `<rules>` user 提示消息发布，并把每个先前轮次重放为 `user`、`assistant` 和 `tool` 提示消息，把每个历史 harness 工具调用写成 Cursor 为 MCP 工具记录的 `CallDynamicTool` 调用；轮次结构一同发送，供服务端记账。Cursor CLI 的 Run 只通过 `GetDynamicTools` 和 `CallDynamicTool` 向模型暴露 MCP 工具，因此请求上下文的应答额外带一条全局 Cursor 规则，告知模型 Cursor 内建工具在这里会返回拒绝、harness 工具以命名空间 `dsh` 中的 `CallDynamicTool` 调用，以及有哪些工具名。
 
-文本、thinking、用量与 MCP 工具调用变成 `StreamChunk`。当 Cursor 发出模型最后一个并行调用之后的检查点，或 `toolCallSettleMs` 内没有新帧时，MCP 工具调用结束该步。若请求带有 Session 且不是压缩或标题请求，该 Run 随后挂起：适配器每五秒发送一次 `clientHeartbeat` 保持流开启。该 Session 的下一次请求在以下条件成立时恢复它：最后一条 assistant 消息之前的历史不变，且该消息之后只有待处理调用的结果以及 harness 注入的 user 角色上下文；适配器在同一条流上以 `mcpResult` 应答每个调用，把这类上下文追加到最后一个结果之后，并继续读取。任何其他请求、挂起期间死亡的 Run，或超过 `parkedRunTimeoutMs` 的 Run，都回退为新的 Run：它重放该进行中的轮次及其结果，并把一条固定的继续提示作为 Run 必需的用户消息发送；不使用 `resumeAction`，因为服务端会从该轮的用户消息重新开始而不是继续。Cursor 原生或 CLI Pi 工作区 exec（`read`、`shell`、`piRead` 及同类）以其类型化的拒绝应答，并指出应通过 `CallDynamicTool` 调用的 harness 工具，因此 Run 继续进行，模型把该拒绝当作工具结果读取；被拒绝的 exec 之后的文本开启新的文本块。Cursor 原生提问会收到类型化的拒绝：若 harness 提供 `ask_user_question` MCP 工具，拒绝会引导模型调用该工具；否则会引导模型在回复中提问。Run 随后继续。网页搜索的批准查询会被批准，因为该搜索由 Cursor 在自己那一侧执行；网页抓取的批准查询会被拒绝，并带上 `fetch` exec 所携带的原因，因为获批的抓取会作为那个被拒绝的 exec 回到这里。CLI 钩子以空的匹配响应应答。MCP-state exec 返回已通告的 `dsh` 工具。本构建无法类型化的其他 exec 以 ExecClientThrow 应答，以便 Run 继续。没有 payload 的 exec 仍使该步失败。
+文本、thinking、用量与 MCP 工具调用变成 `StreamChunk`。当 Cursor 发出模型最后一个并行调用之后的检查点，或 `toolCallSettleMs` 内没有新帧时，MCP 工具调用结束该步。若请求带有 Session 且不是压缩或标题请求，该 Run 随后挂起：适配器每五秒发送一次 `clientHeartbeat` 保持流开启。该 Session 的下一次请求在以下条件成立时恢复它：最后一条 assistant 消息之前的历史不变，且该消息之后只有待处理调用的结果以及 harness 注入的 user 角色上下文；适配器在同一条流上以 `mcpResult` 应答每个调用，把这类上下文追加到最后一个结果之后，并继续读取。任何其他请求、挂起期间死亡的 Run，或超过 `parkedRunTimeoutMs` 的 Run，都回退为新的 Run：它重放该进行中的轮次及其结果，并把一条固定的继续提示作为 Run 必需的用户消息发送；不使用 `resumeAction`，因为服务端会从该轮的用户消息重新开始而不是继续。Cursor 原生或 CLI Pi 工作区 exec（`read`、`shell`、`piRead` 及同类）以其类型化的拒绝应答，并指出应通过 `CallDynamicTool` 调用的 harness 工具，因此 Run 继续进行，模型把该拒绝当作工具结果读取；被拒绝的 exec 之后的文本开启新的文本块。Cursor 原生提问会收到类型化的拒绝：若 harness 提供 `ask_user_question` MCP 工具，拒绝会引导模型调用该工具；否则会引导模型在回复中提问。Run 随后继续。网页搜索的批准查询会被批准，因为该搜索由 Cursor 在自己那一侧执行；网页抓取的批准查询会被拒绝，并带上 `fetch` exec 所携带的原因，因为获批的抓取会作为那个被拒绝的 exec 回到这里。CLI 钩子以空的匹配响应应答。MCP-state exec 返回已通告的 `dsh` 工具。本构建无法类型化的其他 exec 以 ExecClientThrow 应答，以便 Run 继续。没有 payload 的 exec 仍使该步失败。Cursor 上的 Kimi 模型有时把其原生工具调用标记（`<|open|>toolscall tool="CallDynamicTool" …<|close|>tools<|sep|>`）作为文本写出，Cursor 服务端不解析它，于是该轮在没有 exec 的情况下结束。适配器从第一个 `<|open|>tools` 起暂扣文本，直到其文本块结束。若该轮结束时暂扣的尾部能完整解析为命名空间 `dsh` 中、指向已通告 harness 工具的 `CallDynamicTool` 调用，该尾部就变成工具调用块并以 `tool-calls` 结束该步，下一步打开一个由历史重建的新 Run；其他暂扣文本原样流出。
 
 `LlmAdapter` 要求的归属头出现在每一次 HTTP/2 请求上，并带有 Cursor 客户端头 `x-ghost-mode`、`x-cursor-client-version` 和 `x-cursor-client-type`。
 
@@ -101,7 +101,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 
 #### 模型看见什么
 
-文本增量、thinking 增量、token 用量和 MCP 工具调用变成 harness 分片。模型的并行调用到齐之后，MCP 工具调用以 `tool-calls` 结束该步。原生或 CLI Pi 工作区 exec 以拒绝应答且流继续。CLI 钩子或 MCP-state exec 被应答以保持 Run 开启。本构建无法类型化的其他 exec 以 ExecClientThrow 应答且流继续。没有 payload 的 exec 使该轮失败。
+文本增量、thinking 增量、token 用量和 MCP 工具调用变成 harness 分片。模型的并行调用到齐之后，MCP 工具调用以 `tool-calls` 结束该步。结束一轮的泄漏 `CallDynamicTool` 标记被记录为它所指定的工具调用而非文本，因此后续请求把它当作普通调用重放。原生或 CLI Pi 工作区 exec 以拒绝应答且流继续。CLI 钩子或 MCP-state exec 被应答以保持 Run 开启。本构建无法类型化的其他 exec 以 ExecClientThrow 应答且流继续。没有 payload 的 exec 使该轮失败。
 
 #### Token 影响
 
@@ -122,6 +122,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 - **CLI 控制 exec 不运行 Cursor 钩子** — 钩子帧得到空的匹配响应，MCP-state 帧列出已通告的 `dsh` 工具，其他未命名 exec 以 ExecClientThrow 应答以使 Run 继续；它们都不执行工作区工作。
 - **挂起的 Run 只存在于一个进程中** — 它没有 journal，因此进程重启、工具结果之后的人类消息或任何历史变化都会回退为由历史重建的新 Run。
 - **回退的 Run 以重放的提示消息加一条固定继续提示交付工具结果** — 该提示是适配器自有的文本，人类从未输入过；恢复的 Run 把注入上下文放在最后一个工具结果内部交付，而不是作为独立消息。
+- **泄漏工具调用的恢复只匹配一种已观察到的标记** — 只恢复位于轮次末尾的 Kimi `<|open|>tools` 形式；从该标记起的文本要到其文本块结束才流出，而以完整引用某个已通告工具的标记结束的回复会运行该工具。
 - **不支持 `GenerateOptions.stop`** — 非官方 Run 不映射停止序列。
 - **不发送图片字节** — 该路由声明只接受文本输入，因此每张图片以 harness 的纯文本占位符到达模型，而不是作为 Cursor 选中图片。
 - **不映射 `maxTokens`、`temperature` 和 `reasoningEffort`** — Run 没有对应字段；努力程度通过 Cursor 模型 id 后缀（如 `-high`）选择。
