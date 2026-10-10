@@ -911,6 +911,94 @@ describe('streamCursorRun', () => {
       .toEqual(['text', 'reasoning', 'tool-call'])
   })
 
+  describe('tool-call markup a model leaked as text', () => {
+    const tools = [{ name: 'bash', description: 'run', parameters: { type: 'object' } }]
+    const markup = (toolName: string): string => '<|open|>toolscall tool="CallDynamicTool" index="1"<|sep|>'
+      + '<|open|>argument key="namespace" type="string"<|sep|>dsh<|close|>argument<|sep|>'
+      + `<|open|>argument key="toolName" type="string"<|sep|>${toolName}<|close|>argument<|sep|>`
+      + '<|open|>argument key="arguments" type="object"<|sep|>{"command": "ls"}<|close|>argument<|sep|>'
+      + '<|close|>call<|sep|><|close|>tools<|sep|>'
+
+    function delta(kind: 'textDelta' | 'thinkingDelta', text: string) {
+      return serverMessage({
+        message: {
+          case: 'interactionUpdate',
+          value: create(InteractionUpdateSchema, {
+            message: kind === 'textDelta'
+              ? { case: 'textDelta', value: create(TextDeltaUpdateSchema, { text }) }
+              : { case: 'thinkingDelta', value: create(ThinkingDeltaUpdateSchema, { text }) },
+          }),
+        },
+      })
+    }
+
+    const turnEnded = serverMessage({
+      message: {
+        case: 'interactionUpdate',
+        value: create(InteractionUpdateSchema, { message: { case: 'turnEnded', value: create(TurnEndedUpdateSchema, {}) } }),
+      },
+    })
+
+    function textDeltas(text: string, size: number) {
+      const deltas = []
+      for (let start = 0; start < text.length; start += size) deltas.push(delta('textDelta', text.slice(start, start + size)))
+      return deltas
+    }
+
+    function run(messages: ReturnType<typeof serverMessage>[]): Promise<StreamChunk[]> {
+      return collect(streamCursorRun({ ...request, tools }, 'tok', TIMING, scripted(messages)))
+    }
+
+    function streamedText(chunks: StreamChunk[]): string {
+      return chunks.flatMap(chunk => chunk.type === 'text-delta' ? [chunk.text] : []).join('')
+    }
+
+    it('turns leaked markup at turn end into a harness tool call', async () => {
+      const chunks = await run([delta('thinkingDelta', 'hmm'), ...textDeltas(markup('bash'), 7), turnEnded])
+      expect(chunks.map(chunk => chunk.type)).toEqual([
+        'block-start', 'reasoning-delta', 'block-end',
+        'block-start', 'tool-call-delta', 'block-end',
+        'usage', 'finish',
+      ])
+      const call = chunks[5]
+      expect(call).toMatchObject({ type: 'block-end', index: 1, block: { type: 'tool-call', name: 'bash', arguments: '{"command":"ls"}' } })
+      expect(call?.type === 'block-end' && call.block.type === 'tool-call' ? call.block.id : '').toMatch(/^cursor-leaked-/)
+      expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'tool-calls' } })
+    })
+
+    it('keeps the text written before the markup', async () => {
+      const chunks = await run([...textDeltas(`Checking. ${markup('bash')}`, 5), turnEnded])
+      expect(streamedText(chunks)).toBe('Checking. ')
+      expect(chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'text'))
+        .toMatchObject({ block: { text: 'Checking. ' } })
+      expect(chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'))
+        .toMatchObject({ index: 1, block: { name: 'bash' } })
+      expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'tool-calls' } })
+    })
+
+    it('streams unrecoverable markup as text when the turn ends', async () => {
+      const chunks = await run([...textDeltas(markup('write'), 9), turnEnded])
+      expect(streamedText(chunks)).toBe(markup('write'))
+      expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    })
+
+    it('releases a partial marker once the text diverges from it', async () => {
+      const chunks = await run([delta('textDelta', 'a <|op'), delta('textDelta', 'en door'), turnEnded])
+      expect(chunks.filter(chunk => chunk.type === 'text-delta')).toMatchObject([{ text: 'a ' }, { text: '<|open door' }])
+      expect(chunks.find(chunk => chunk.type === 'block-end')).toMatchObject({ block: { text: 'a <|open door' } })
+    })
+
+    it('streams markup as text when the model keeps going after it', async () => {
+      const chunks = await run([...textDeltas(markup('bash'), 11), delta('thinkingDelta', 'next'), delta('textDelta', 'done'), turnEnded])
+      expect(chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)).toEqual([
+        { type: 'text', text: markup('bash') },
+        { type: 'reasoning', text: 'next' },
+        { type: 'text', text: 'done' },
+      ])
+      expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    })
+  })
+
   it('fails ABORTED when the caller signal fires mid-read', async () => {
     const controller = new AbortController()
     await expect(collect(streamCursorRun({ ...request, signal: controller.signal }, 'tok', TIMING, () => ({

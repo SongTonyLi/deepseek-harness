@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-llm-cursor/stream
  */
 
+import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -98,6 +99,7 @@ import {
   type McpStateExecArgs,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
+import { leakedMarkupStart, parseLeakedToolCalls } from './leaked-call.ts'
 import { CursorRun, parkFingerprint } from './park.ts'
 import type { CursorRunRegistry } from './park.ts'
 import { CURSOR_RUN_PATH, DYNAMIC_TOOL_CALL, MCP_PROMPT_TOOL_PREFIX, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
@@ -111,10 +113,18 @@ export type OpenCursorStream = (input: {
   signal?: AbortSignal
 }) => CursorConnectStream
 
+/**
+ * The block deltas are appending to. A text block streams only its prefix
+ * before any leaked tool-call marker (see `leaked-call.ts`); `index` stays
+ * unset until the first delta is emitted, so a block withheld entirely never
+ * starts.
+ */
 interface OpenBlock {
-  index: number
+  index: number | undefined
   type: 'text' | 'reasoning'
   text: string
+  /** Length of `text` already emitted as deltas. */
+  emitted: number
 }
 
 function sendClient(stream: CursorConnectStream, message: Parameters<typeof create<typeof AgentClientMessageSchema>>[1]): void {
@@ -601,13 +611,54 @@ function rejectNativeQuestion(stream: CursorConnectStream, query: InteractionQue
   })
 }
 
-function* closeOpen(open: OpenBlock | undefined): Generator<StreamChunk> {
-  if (open === undefined) return
-  if (open.type === 'text') {
-    yield { type: 'block-end', index: open.index, block: { type: 'text', text: open.text } }
-  } else {
-    yield { type: 'block-end', index: open.index, block: { type: 'reasoning', text: open.text } }
+function* emitThrough(state: StepState, open: OpenBlock, end: number): Generator<StreamChunk> {
+  if (end <= open.emitted) return
+  if (open.index === undefined) {
+    open.index = state.nextIndex
+    state.nextIndex += 1
+    yield { type: 'block-start', index: open.index, blockType: open.type }
   }
+  const text = open.text.slice(open.emitted, end)
+  open.emitted = end
+  yield open.type === 'text'
+    ? { type: 'text-delta', index: open.index, text }
+    : { type: 'reasoning-delta', index: open.index, text }
+}
+
+/** End the open block, first emitting any withheld text, and clear it. */
+function* closeOpen(state: StepState): Generator<StreamChunk> {
+  const open = state.open
+  if (open === undefined) return
+  state.open = undefined
+  yield* emitThrough(state, open, open.text.length)
+  const index = open.index
+  if (index === undefined) return
+  if (open.type === 'text') {
+    yield { type: 'block-end', index, block: { type: 'text', text: open.text } }
+  } else {
+    yield { type: 'block-end', index, block: { type: 'reasoning', text: open.text } }
+  }
+}
+
+/**
+ * At turn end, replace a withheld text tail that parses as leaked harness tool
+ * calls with tool-call blocks. The text before the markup stays a text block.
+ * @returns the replacing chunks, or `undefined` when nothing was recovered.
+ */
+function recoverLeakedCalls(state: StepState, mcpTools: readonly McpToolDefinition[]): StreamChunk[] | undefined {
+  const open = state.open
+  if (open?.type !== 'text' || open.emitted === open.text.length) return undefined
+  const calls = parseLeakedToolCalls(open.text.slice(open.emitted), new Set(mcpTools.map(tool => tool.toolName)))
+  if (calls === undefined) return undefined
+  open.text = open.text.slice(0, open.emitted)
+  const chunks = [...closeOpen(state)]
+  for (const call of calls) {
+    const toolCallId = `cursor-leaked-${randomUUID()}`
+    chunks.push(...emitToolCall(state.nextIndex, toolCallId, call.toolName, call.arguments))
+    state.nextIndex += 1
+    state.toolCallIds.push(toolCallId)
+  }
+  return chunks
 }
 
 function* emitToolCall(index: number, id: string, name: string, args: Record<string, unknown>): Generator<StreamChunk> {
@@ -726,8 +777,7 @@ async function* stepOnRun(
   const reader: AsyncIterator<ConnectFrame> = { next: () => run.next() }
   const state: StepState = { nextIndex: 0, open: undefined, outputTokens: 0, sawContent: false, toolCallIds: [] }
   const finish = function* (reason: Extract<StreamChunk, { type: 'finish' }>['reason']): Generator<StreamChunk> {
-    yield* closeOpen(state.open)
-    state.open = undefined
+    yield* closeOpen(state)
     const usage: TokenUsage = { inputTokens, outputTokens: state.outputTokens }
     yield { type: 'usage', usage }
     yield { type: 'finish', reason }
@@ -768,8 +818,10 @@ async function* stepOnRun(
         yield* outcome.chunks
       }
       if (outcome.turnEnded === true) {
+        // Calls recovered from leaked markup end a turn Cursor already closed,
+        // so the next step opens a new Run rebuilt from history.
         run.close(false)
-        yield* finish({ kind: 'stop' })
+        yield* finish({ kind: outcome.recoveredCalls === true ? 'tool-calls' : 'stop' })
         return
       }
       if (endsToolBatch || (outcome.checkpoint === true && state.toolCallIds.length > 0)) {
@@ -791,7 +843,7 @@ function handleServerMessage(
   message: AgentServerMessage,
   run: CursorRun,
   state: StepState,
-): { chunks?: StreamChunk[]; turnEnded?: true; checkpoint?: true } {
+): { chunks?: StreamChunk[]; turnEnded?: true; recoveredCalls?: true; checkpoint?: true } {
   const chunks: StreamChunk[] = []
   const stream = run.stream
   const payload = run.payload
@@ -803,15 +855,12 @@ function handleServerMessage(
       if (text.length > 0) {
         const type = updateCase === 'textDelta' ? 'text' : 'reasoning'
         if (state.open?.type !== type) {
-          chunks.push(...closeOpen(state.open))
-          state.open = { index: state.nextIndex, type, text: '' }
-          chunks.push({ type: 'block-start', index: state.nextIndex, blockType: type })
-          state.nextIndex += 1
+          chunks.push(...closeOpen(state))
+          state.open = { index: undefined, type, text: '', emitted: 0 }
         }
-        state.open.text += text
-        chunks.push(type === 'text'
-          ? { type: 'text-delta', index: state.open.index, text }
-          : { type: 'reasoning-delta', index: state.open.index, text })
+        const open = state.open
+        open.text += text
+        chunks.push(...emitThrough(state, open, type === 'text' ? leakedMarkupStart(open.text, open.emitted) : open.text.length))
         state.sawContent = true
       }
     } else if (updateCase === 'tokenDelta') {
@@ -820,6 +869,8 @@ function handleServerMessage(
       if (!state.sawContent && state.open === undefined) {
         throw new LlmError('llm-cursor: Cursor returned no content', 'EMPTY_RESPONSE')
       }
+      const recovered = recoverLeakedCalls(state, payload.mcpTools)
+      if (recovered !== undefined) return { chunks: [...chunks, ...recovered], turnEnded: true, recoveredCalls: true }
       return { chunks, turnEnded: true }
     }
     return { chunks }
@@ -841,8 +892,7 @@ function handleServerMessage(
     if (execCase === 'mcpArgs') {
       const mcp = exec.message.value
       const toolCallId = mcp.toolCallId || `cursor-${exec.id}`
-      chunks.push(...closeOpen(state.open))
-      state.open = undefined
+      chunks.push(...closeOpen(state))
       chunks.push(...emitToolCall(state.nextIndex, toolCallId, harnessToolName(mcp), decodeMcpArgsMap(mcp.args)))
       state.nextIndex += 1
       state.sawContent = true
@@ -859,8 +909,7 @@ function handleServerMessage(
     }
     // A refused exec is a tool call the model made between two stretches of
     // output, so text written after the refusal starts its own block.
-    chunks.push(...closeOpen(state.open))
-    state.open = undefined
+    chunks.push(...closeOpen(state))
     if (answerNativeExec(stream, exec, payload.mcpTools)) {
       return { chunks }
     }
@@ -885,14 +934,12 @@ function handleServerMessage(
     // A refused native call sits between two stretches of output, so text written
     // after the refusal starts its own block.
     if (query.query.case === 'webFetchRequestQuery') {
-      chunks.push(...closeOpen(state.open))
-      state.open = undefined
+      chunks.push(...closeOpen(state))
       rejectNativeFetch(stream, query, payload.mcpTools)
       return { chunks }
     }
     if (query.query.case === 'askQuestionInteractionQuery') {
-      chunks.push(...closeOpen(state.open))
-      state.open = undefined
+      chunks.push(...closeOpen(state))
       rejectNativeQuestion(stream, query, payload.mcpTools)
       return { chunks }
     }
