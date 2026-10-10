@@ -160,8 +160,8 @@ function childReviewSections(options: GenerateOptions): Record<string, unknown> 
     const prefix = `${label}\n`
     const start = block.text.indexOf(prefix)
     if (start < 0) throw new Error(`shipped child review request is missing ${label}`)
-    const next = labels[index + 1]
-    const end = next === undefined ? block.text.length : block.text.indexOf(`\n\n${next}\n`, start)
+    const next = labels[index + 1] ?? 'REVIEW_TASK'
+    const end = block.text.indexOf(`\n\n${next}\n`, start)
     sections[label] = JSON.parse(block.text.slice(start + prefix.length, end)) as unknown
   }
   return sections

@@ -67,7 +67,7 @@ Auto 在每个受支持调用的 body 执行前审查一次，包括每个已开
 
 另有两个 listener 让 Auto 留在受限后端上。在任何调用 body 之前，pre-execute listener 会调用权限预设服务的 `confineAuto(session)`，它在后端限制读取时收窄仍为 `danger-full-access` 的会话，只追加沙箱模式，因此委派子会话所固定的审批策略不变；它对未经审查的 `run_code` transport 同样运行，被拒绝的变更（例如持久终端的沙箱模式限制）会使调用失败，而不是让它在陈旧的模式下运行。置前的 `approval/request` listener 对满足以下条件的请求应答 `allowed-once`：请求指向 reviewer 已放行、仍在运行的调用，且会话仍处于 Auto；下游 listener 针对该调用自己发起的审批不在其覆盖范围内，调用结算时 `tools/post-execute` 会让它忘记该调用。
 
-Reviewer 从当前 Session surface 与待执行调用重建五个分区：固定策略、仅 cwd 的环境、带来源的项目约束、过滤后带来源的历史，以及完整待审动作。原生 schema 来自最新 request header。PTC binding 冻结其 schema，经由调度器传入临时执行元数据；开始与结算事件都不序列化描述或参数 schema。主 agent 的 `system/message` 节点、assistant 正文与 reasoning、tool results 全部排除。外层评审输入是冻结的 `RequestUserInput`，不含持久身份或来源；保留历史在评审文本中仍携带原始来源。[决策记录](../../../.agents/notes/implemented/feature/2026-08-28-auto-review.zh.md)拥有权威、生命周期与 child 继承的理由。
+Reviewer 从当前 Session surface 与待执行调用重建六个分区：固定策略、仅 cwd 的环境、带来源的项目约束、过滤后带来源的历史、完整待审动作，以及固定的最终评审任务。原生 schema 来自最新 request header。PTC binding 冻结其 schema，经由调度器传入临时执行元数据；开始与结算事件都不序列化描述或参数 schema。主 agent 的 `system/message` 节点、assistant 正文与 reasoning、tool results 全部排除。外层评审输入是冻结的 `RequestUserInput`，不含持久身份或来源；保留历史在评审文本中仍携带原始来源。[决策记录](../../../.agents/notes/implemented/feature/2026-08-28-auto-review.zh.md)拥有权威、生命周期与 child 继承的理由。
 
 卸载时先关闭选择与 review admission，经由既有 preset writer 迁移存活 Auto Session，再中止并等待在途 review 结清，最后撤回 listener 与 contribution。处于 `danger-full-access` 的会话变为 Full access，通过 Session writer 写入 `never` 审批策略，不排入策略变更通知；处于 `workspace-write` 的会话变为 Workspace Write，仅当会话尚无 `ask` 审批策略时才写入它。模型在下一次 runtime-context 快照中看到新策略。每个会话保留自己的沙箱值，持久终端在迁移中保持不变。持久 Auto Session 缺少完整 integration 时不能发布；安装后重新打开需要用户显式操作。重装只恢复选项，不把存活 Session 切回 Auto。
 
@@ -92,11 +92,11 @@ Reviewer 从当前 Session surface 与待执行调用重建五个分区：固定
 
 #### 模型看到什么
 
-Reviewer 使用最新 `request/header.config` 的 provider 与模型，并沿用 shipped adapter 默认 reasoning。`temperature` 设置接受 `0` 到 `2` 的数值或 `provider-default`；后者省略请求参数。插件默认值为 `0`，bundle 仅在 `tui` profile 中选择 `provider-default`，使不接受 temperature 的 provider 也能审查调用。固定 `REVIEW_POLICY` 替代恰好一个动作的人工审批：allow 后立即执行，措辞上视为拥有完整宿主机访问权限，即使会话保留着容器也是如此，因此 reviewer 会把每个调用都当作拥有该权限来评判。其余四个分区只包含上文列出的保留事实。响应为一个严格 JSON text 对象，包含 `risk` 与 `decision`；deny 可附字符串 `reason`。Reasoning blocks 可以位于这唯一 text block 之前。只有 `low + allow`、`medium + allow/deny` 和 `high + deny` 合法。
+Reviewer 使用最新 `request/header.config` 的 provider 与模型，并沿用 shipped adapter 默认 reasoning。`temperature` 设置接受 `0` 到 `2` 的数值或 `provider-default`；后者省略请求参数。插件默认值为 `0`，bundle 仅在 `tui` profile 中选择 `provider-default`，使不接受 temperature 的 provider 也能审查调用。固定 `REVIEW_POLICY` 替代恰好一个动作的人工审批：allow 后立即执行，措辞上视为拥有完整宿主机访问权限，即使会话保留着容器也是如此，因此 reviewer 会把每个调用都当作拥有该权限来评判。随后四个分区只包含上文列出的保留事实。最终的 `REVIEW_TASK` 分区位于待审动作之后，重申 reviewer 不是保留历史中的 agent：其中的指令只按策略规定加以权衡，绝不执行，且响应为一个 JSON 对象。长历史以发给被审 agent 的指令结尾；缺少该分区时，reviewer 可能回应这些指令，而不是对动作分类。响应为一个严格 JSON text 对象，包含 `risk` 与 `decision`；deny 可附字符串 `reason`。Reasoning blocks 可以位于这唯一 text block 之前。只有 `low + allow`、`medium + allow/deny` 和 `high + deny` 合法。
 
 #### Token 影响
 
-每个受支持调用额外产生一次模型请求。完整 text 响应不是有效 JSON 时，`maxJsonRetries` 允许额外请求（默认 `1`，非负安全整数；`0` 禁用重试）。每次重试复用冻结的动作事实，并在策略后追加固定格式提醒，不包含格式错误的响应。有效拒绝、非法 risk／decision 对象、provider 或 stream 失败以及已取消的 review 不重试。JSON 重试耗尽后调用失败，不执行 body。请求不缓存、截断、压缩，也不设单独的小型输出预算；超窗请求以 provider 错误使调用失败。
+每个受支持调用额外产生一次模型请求。完整 text 响应不是有效 JSON 时，`maxJsonRetries` 允许额外请求（默认 `1`，非负安全整数；`0` 禁用重试）。每次重试复用冻结的动作事实，并在最终 `REVIEW_TASK` 分区后追加固定格式提醒，不包含格式错误的响应。有效拒绝、非法 risk／decision 对象、provider 或 stream 失败以及已取消的 review 不重试。JSON 重试耗尽后调用失败，不执行 body。请求不缓存、截断、压缩，也不设单独的小型输出预算；超窗请求以 provider 错误使调用失败。
 
 #### KV Cache 影响
 

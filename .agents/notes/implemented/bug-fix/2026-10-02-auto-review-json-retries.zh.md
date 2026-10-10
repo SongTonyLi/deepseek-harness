@@ -10,7 +10,7 @@ Auto reviewer 可能无视 JSON 指令而返回解释性文字。解析这些文
 
 ## 决策
 
-Reviewer 只重试完整响应中唯一的最终 text block 无法解析为 JSON 的情况。包的 `maxJsonRetries` 设置是非负安全整数，默认 `1`，接受 `0` 以禁用重试。每次尝试使用相同的冻结动作事实、route、采样设置与取消信号。重试在策略后追加固定 JSON 格式提醒；格式错误的响应既不提供指令，也不提供授权，并且不会发送回 reviewer。
+Reviewer 只重试完整响应中唯一的最终 text block 无法解析为 JSON 的情况。包的 `maxJsonRetries` 设置是非负安全整数，默认 `1`，接受 `0` 以禁用重试。每次尝试使用相同的冻结动作事实、route、采样设置与取消信号。每个请求都在待审动作之后以固定评审任务结尾，重申 reviewer 的角色与 JSON 输出，因为长保留历史以发给被审 agent 的指令结尾，reviewer 可能回应这些指令而不是对动作分类。重试在该最终任务后追加固定 JSON 格式提醒；格式错误的响应既不提供指令，也不提供授权，并且不会发送回 reviewer。
 
 每次尝试必须通过完整 stream 与 risk／decision 校验，结果才能授权执行。有效拒绝、非法决定对象、重复 JSON 成员、provider 失败、非法 stream 结束以及已取消的 review 不重试。重试耗尽时返回带有 `auto-review: reviewer output must be valid JSON` 的 reviewer 失败，绝不执行工具 body。[用户审批兜底](../feature/2026-09-24-auto-review-user-approval-fallback.zh.md)仍负责有效拒绝。
 
