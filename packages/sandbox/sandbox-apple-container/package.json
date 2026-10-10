@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-sandbox-apple-container",
   "description": "Apple container sandbox backend for the DeepSeek Harness sandbox seam: confined commands run in a per-workspace Linux VM with the workspace bind-mounted, switchable per session to the local backend",
-  "version": "0.2.0-rc.2",
+  "version": "0.2.1-alpha.2",
   "publishConfig": {
     "access": "public"
   },

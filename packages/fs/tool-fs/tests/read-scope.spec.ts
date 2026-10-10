@@ -5,7 +5,7 @@
  * scope, and without a confining provider reads are unconfined.
  */
 
-import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -24,6 +24,8 @@ import { WorkspaceReadSandbox } from '../../../sandbox/sandbox/tests/read-scope-
 
 let ws: string
 let outside: string
+/** The Session's current directory, which a test moves away from the workspace the way `cd` does. */
+let current: string
 let ctx: Context
 let calls = 0
 
@@ -66,6 +68,7 @@ function text(result: { content: { type: string; text?: string }[] }): string {
 
 async function mount(confining: boolean, mode: 'workspace-write' | 'danger-full-access' = 'workspace-write', approval = false): Promise<void> {
   ctx = new Context()
+  ctx.provide('workingDirectory', { ensure: () => Promise.resolve(current) })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(SessionProjectionRegistry)
@@ -79,6 +82,7 @@ async function mount(confining: boolean, mode: 'workspace-write' | 'danger-full-
 beforeEach(async () => {
   ws = await realpath(await mkdtemp(join(tmpdir(), 'dsh-read-scope-ws-')))
   outside = await realpath(await mkdtemp(join(tmpdir(), 'dsh-read-scope-out-')))
+  current = ws
   await writeFile(join(ws, 'a.txt'), 'inside\n')
   await writeFile(join(ws, '.env'), 'DEEPSEEK_API_KEY=sk-test\n')
   await writeFile(join(outside, 'secret.txt'), 'outside\n')
@@ -119,6 +123,19 @@ describe('sandbox read fence', () => {
     await ctx.fiber.dispose()
     await mount(true, 'danger-full-access')
     expect(text(await call('read', { file_path: '.env' }))).toContain('sk-test')
+  })
+
+  it('resolves a relative path against the session current directory and fences it there', async () => {
+    await mount(true)
+    await mkdir(join(ws, 'sub'))
+    await writeFile(join(ws, 'sub', 'b.txt'), 'in the subdirectory\n')
+    const { agent } = readingAgent()
+    current = join(ws, 'sub')
+    expect(text(await call('read', { file_path: 'b.txt' }, agent))).toContain('in the subdirectory')
+    current = outside
+    const refused = await call('read', { file_path: 'secret.txt' }, agent)
+    expect(refused.error).toMatchObject({ info: { code: 'FS_SANDBOX_DENIED' } })
+    expect(text(refused)).toContain('the sandbox hides this path from this session')
   })
 
   describe('reading outside the workspace', () => {
@@ -179,6 +196,14 @@ describe('sandbox read fence', () => {
       const result = await call('read', { file_path: 'link.txt' }, readingAgent().agent)
       expect(text(result)).toContain('the user declined access')
       expect(asked).toEqual([expect.objectContaining({ reason: `read outside the sandbox read scope: ${join(outside, 'secret.txt')}` })])
+    })
+
+    it('asks about the path resolved against the session current directory', async () => {
+      const asked = await mountAnswering('rejected')
+      current = outside
+      const result = await call('read', { file_path: 'secret.txt' }, readingAgent().agent)
+      expect(text(result)).toContain('the user declined access')
+      expect(asked.map(req => req.reason)).toEqual([`read outside the sandbox read scope: ${join(outside, 'secret.txt')}`])
     })
 
     it('refuses hidden files outside the workspace without asking, even through a symlink', async () => {

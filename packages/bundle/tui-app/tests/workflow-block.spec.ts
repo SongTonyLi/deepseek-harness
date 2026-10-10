@@ -21,7 +21,7 @@ const child = (id: string): ToolWorkflowAgentStartData['childId'] => id as ToolW
 
 /** Fold events into the view a block renders. */
 function view(events: readonly WorkflowRunEvent[], interrupted = false): WorkflowRunView {
-  const state = events.reduce((current, event) => foldWorkflowRun(current, event), undefined as ReturnType<typeof foldWorkflowRun>)
+  const state = events.reduce<ReturnType<typeof foldWorkflowRun>>((current, event) => foldWorkflowRun(current, event), undefined)
   if (state === undefined) throw new Error('workflow fixture never started')
   return projectWorkflowRun(state, interrupted ? { markUnfinishedInterrupted: true } : {})
 }

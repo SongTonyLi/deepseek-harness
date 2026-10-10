@@ -27,20 +27,20 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-09-21-user-question-reply"
-    after: "ea172c2ed8dec7d79a4192b9a6d8b9b0ece1883a987ad8ef4613e066abe77173"
+    previous: "2026-10-05-working-directory-attribution"
+    after: "3657a134850d96e4ca1c9f54bae79a5bb8f6b40eea412d8f5f362c6e9292d3bb"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-09-21-user-question-reply"
-    after: "d9a3a8f54bfacf46732d4aa79259ffb76061a639decb9da29e44731cbcb24652"
+    previous: "2026-10-05-working-directory-attribution"
+    after: "9ba59a2a9237a9f5eebb860f46c08c1f5f719d26712ee8579eda8bf885bc7838"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-09-21-user-question-reply"
-    after: "e73681a0c49ce85084e62b0f05c4babc972942f6e8954253edacf5ed57e89fb1"
+    previous: "2026-10-07-title-reasoning-effort"
+    after: "e8597919599b39fdd41b62528bdfa009817050cc821d109982b408a773b9844b"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-09-21-user-question-reply"
-    after: "9340955242dc4d086197eafa06ec6319116e9ee447d71f4dc4a9d12ba616eb10"
+    previous: "2026-10-05-working-directory-attribution"
+    after: "bbc82c00f7d5080f24f5038c38ef9502030af02572d1c1deb47c6be43f7e39ab"
     decision: same-version
 ```
 

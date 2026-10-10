@@ -762,7 +762,8 @@ describe('sendSession submission echo', () => {
     const prompt = vi.spyOn(session, 'prompt').mockResolvedValue({ ok: true, value: { accepted: true } })
     await expect(b.root.sendSession(session, '继续', [], 'steer')).resolves.toEqual({ kind: 'success' })
     expect(beginSubmission).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer', text: '继续' }))
-    const requestId = beginSubmission.mock.results[0]?.value.requestId as string
+    const submitted = beginSubmission.mock.results[0]
+    const requestId = submitted?.type === 'return' ? submitted.value.requestId : undefined
     expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: '继续' }], 'steer', undefined, requestId)
     await b.runtime.dispose()
   })

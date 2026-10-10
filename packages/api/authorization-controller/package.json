@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-api-authorization-controller",
   "description": "Remote owner for browser sign-in over the authorization seam: flow listing, streamed attempts, prompt answers, and sign-out",
-  "version": "0.2.0-rc.1",
+  "version": "0.2.1-alpha.2",
   "publishConfig": {
     "access": "public"
   },

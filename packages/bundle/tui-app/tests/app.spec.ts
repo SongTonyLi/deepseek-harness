@@ -1019,6 +1019,7 @@ describe('TuiApp', () => {
         ctx.commands.register({
           name: 'odd',
           description: 'rejects with a non-error',
+          // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the command contract must survive a non-Error rejection.
           handler: () => Promise.reject('plain reason'),
         })
       },
@@ -1794,9 +1795,20 @@ describe('the activity board', () => {
     expect(screen).not.toContain('write the layer')
   })
 
-  it('replaces the one-line descendant summary and ignores a session that is not a descendant', async () => {
-    const test = await bench()
+  it('replaces the one-line descendant summary from catalog membership and ignores fork lineage', async () => {
+    const entries: SubagentDescendantListEntry[] = [{
+      kind: 'child',
+      id: 'session-kid' as SessionId,
+      activity: 'running',
+      mode: 'one-shot',
+      hasChildren: false,
+      parentId: 'session-tui-test' as SessionId,
+      depth: 1,
+    }]
+    const test = await bench({ subagents: () => Promise.resolve(entries) })
     const kid = await test.createChild({ id: 'session-kid' })
+    test.tick()
+    await test.settle()
     test.ctx.emit('subagent/start', { runId: 'run-kid', provider: 'test', id: kid.id, local: true } as never)
     let screen = await test.screen()
     expect(screen).toContain('session-kid · running')
@@ -1867,7 +1879,42 @@ describe('the activity board', () => {
       }),
     }, { surfaceOp: 'append' })
     screen = await test.screen()
-    expect(screen).toContain('session-orphan · result without a call')
+    expect(screen).not.toContain('session-orphan · result without a call')
+  })
+
+  it('labels catalog-confirmed external lifecycle work without opening a local child session', async () => {
+    const entries: SubagentDescendantListEntry[] = [{
+      kind: 'child',
+      id: 'external-run' as SessionId,
+      activity: 'inactive',
+      mode: 'external',
+      hasChildren: false,
+      parentId: 'session-tui-test' as SessionId,
+      depth: 1,
+      label: 'code review',
+    }]
+    const test = await bench({ subagents: () => Promise.resolve(entries) })
+    test.ctx.emit('subagent/start', { runId: 'run-external', provider: 'codex', id: 'external-run', local: false } as never)
+    test.tick()
+    await test.settle()
+    expect(await test.screen()).toContain('code review (external task) · running')
+    test.ctx.emit('subagent/end', { runId: 'run-external', provider: 'codex', id: 'external-run', local: false, stopReason: 'completed' } as never)
+    expect(await test.screen()).toContain('code review (external task) · completed')
+  })
+
+  it('names a candidate the listing could not read by its id on the activity line', async () => {
+    const entries: SubagentDescendantListEntry[] = [{
+      kind: 'diagnostic',
+      id: 'session-broken' as SessionId,
+      reason: 'corrupt',
+      parentId: 'session-tui-test' as SessionId,
+      depth: 1,
+    }]
+    const test = await bench({ subagents: () => Promise.resolve(entries) })
+    test.tick()
+    await test.settle()
+    test.ctx.emit('subagent/start', { runId: 'run-broken', provider: 'test', id: 'session-broken', local: true } as never)
+    expect(await test.screen()).toContain('session-broken · running')
   })
 
   it('names a listed descendant and a bound-parent stop reason without the last assistant message', async () => {
@@ -1950,10 +1997,21 @@ describe('the activity board', () => {
       env: { COLORTERM: 'truecolor' },
       background: 'rgb:0000/0000/0000',
       projections: projectionsStub(() => ({ todos })),
+      subagents: () => Promise.resolve([{
+        kind: 'child',
+        id: 'session-fade' as SessionId,
+        activity: 'running',
+        mode: 'one-shot',
+        hasChildren: false,
+        parentId: 'session-tui-test' as SessionId,
+        depth: 1,
+      }]),
     })
     todos = [{ content: 'fade me', status: 'pending' }]
     writeTodos(test, todos)
     const kid = await test.createChild({ id: 'session-fade' })
+    test.tick()
+    await test.settle()
     kid.session.append('tool/call', {
       turn: 1,
       step: 1,

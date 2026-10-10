@@ -74,11 +74,12 @@ describe('TuiApp user shell lines', () => {
     await test.settle()
     expect(test.calls.followups).toHaveLength(0)
     expect(test.calls.steers).toHaveLength(0)
-    expect(requests).toEqual([expect.objectContaining({
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
       command: 'echo hi',
       workdir: '/work',
-      sandboxPolicy: expect.objectContaining({ mode: 'danger-full-access', workspaceRoot: '/work' }),
-    })])
+      sandboxPolicy: { mode: 'danger-full-access', workspaceRoot: '/work' },
+    })
     expect(test.calls.injections).toHaveLength(1)
     const [notice] = test.calls.injections
     expect(notice?.content).toEqual([{

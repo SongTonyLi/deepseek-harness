@@ -3,12 +3,12 @@
  * descendant listing plus the live facts the app sampled for it become the
  * panel's rows, and a second function renders those rows as the panel's text.
  *
- * Membership is residency, not completion: a `child` entry joins the panel
- * while its session record is resident in this process (`activity: 'running'`)
- * and leaves once it is not, so the panel tracks the children running right
- * now while `/subagents` browses the complete durable tree. A `diagnostic`
- * entry always draws, because a candidate the listing could not interpret is
- * a live problem rather than a settled child.
+ * Membership is local residency, not completion: a non-external `child` entry
+ * joins the panel while its session record is resident in this process
+ * (`activity: 'running'`) and leaves once it is not, so the panel tracks
+ * locally viewable children while `/subagents` also lists external task
+ * records. A `diagnostic` entry always draws, because a candidate the listing
+ * could not interpret is a live problem rather than a settled child.
  *
  * Unfocused the panel is one summary line; focused it is the heading, the
  * drawn rows, overflow, and hints. Everything here is pure — no Context, no
@@ -56,6 +56,8 @@ function focusHints(room: number): string {
 export interface SubagentLiveFacts {
   /** Whether the child's Agent is running a turn in this process right now. */
   running: boolean
+  /** Whether the latest settled child turn completed; absent before one settles. */
+  lastTurnCompleted?: boolean
   /** Start of the child's open turn, from `subagentTiming.active.since`; absent between turns. */
   activeSince?: number
   /** Milliseconds the child's settled turns took, from `subagentTiming.settledMs`. */
@@ -147,7 +149,8 @@ function rowOf(entry: SubagentDescendantListEntry, facts: SubagentLiveFacts | un
   if (entry.kind === 'diagnostic') {
     return { id: entry.id, enterable: false, ticking: false, text: `${indent}${entry.id}${SEPARATOR}unreadable: ${entry.reason}` }
   }
-  const parts = [entry.mode, 'resident', facts?.running === true ? 'running' : 'idle']
+  const status = facts?.running === true ? 'running' : facts?.lastTurnCompleted === true ? 'completed' : 'idle'
+  const parts = [entry.mode, 'resident', status]
   const elapsed = elapsedOf(facts, now)
   if (elapsed !== undefined) parts.push(elapsed)
   if (facts?.usage !== undefined) {
@@ -162,13 +165,13 @@ function rowOf(entry: SubagentDescendantListEntry, facts: SubagentLiveFacts | un
 }
 
 /**
- * Build one panel draw: every resident child and every diagnostic candidate
- * of the listing, in listing order, cut to {@link SUBAGENT_PANEL_MAX_ROWS}.
+ * Build one panel draw: every resident local child and every diagnostic
+ * candidate of the listing, in listing order, cut to {@link SUBAGENT_PANEL_MAX_ROWS}.
  * @param inputs - the listing, the live facts, and the current time.
  * @returns the drawn rows, the count they left out, and whether any of them advances with the clock.
  */
 export function subagentPanelView(inputs: SubagentPanelInputs): SubagentPanelView {
-  const listed = inputs.entries.filter(entry => entry.kind === 'diagnostic' || entry.activity === 'running')
+  const listed = inputs.entries.filter(entry => entry.kind === 'diagnostic' || (entry.mode !== 'external' && entry.activity === 'running'))
   const rows = listed
     .slice(0, SUBAGENT_PANEL_MAX_ROWS)
     .map(entry => rowOf(entry, inputs.facts.get(entry.id), inputs.now))

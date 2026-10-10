@@ -165,12 +165,21 @@ describe('listSubagentChoices', () => {
       { kind: 'diagnostic', id: 'session-c', reason: 'corrupt', parentId: sessionId, depth: 1 },
     ])
     await expect(listSubagentChoices(ctx, sessionId, signal)).resolves.toEqual([
-      { id: 'session-a', depth: 1, label: 'reviewer', description: 'running · continuable · session-a', enterable: true },
-      { id: 'session-b', depth: 2, label: '  session-b', description: 'inactive · one-shot', enterable: true },
-      { id: 'session-d', depth: 3, label: '    fixer', description: 'inactive · one-shot · session-d', enterable: true },
-      { id: 'session-c', depth: 1, label: 'session-c', description: 'corrupt', enterable: false },
+      { id: 'session-a', depth: 1, label: 'reviewer', description: 'running · continuable · session-a', target: 'session', mode: 'continuable', enterable: true },
+      { id: 'session-b', depth: 2, label: '  session-b', description: 'inactive · one-shot', target: 'session', mode: 'one-shot', enterable: true },
+      { id: 'session-d', depth: 3, label: '    fixer', description: 'inactive · one-shot · session-d', target: 'session', mode: 'one-shot', enterable: true },
+      { id: 'session-c', depth: 1, label: 'session-c', description: 'corrupt', target: 'diagnostic', enterable: false },
     ])
     expect(asked).toEqual([[sessionId, signal]])
+  })
+
+  it('keeps an external execution visible without offering a local session', async () => {
+    const { ctx } = descendantsStub([
+      { kind: 'child', id: 'external-run', activity: 'inactive', mode: 'external', label: 'code review', hasChildren: false, parentId: sessionId, depth: 1 },
+    ])
+    await expect(listSubagentChoices(ctx, sessionId, signal)).resolves.toEqual([
+      { id: 'external-run', depth: 1, label: 'code review', description: 'external task · no local session · external-run', target: 'external-task', mode: 'external', enterable: false },
+    ])
   })
 
   it('refuses an entry kind it does not know', async () => {
@@ -199,6 +208,7 @@ describe('subagentDetail', () => {
     depth: 1,
     label: 'reviewer',
     description: 'running · continuable · session-a',
+    target: 'session',
     enterable: true,
   }
 
@@ -242,6 +252,7 @@ describe('subagentDetail', () => {
       depth: 2,
       label: '  session-b',
       description: 'inactive · one-shot',
+      target: 'session',
       enterable: true,
     }
     const identity = ['session-b', 'inactive · one-shot', 'created: 2026-02-03 14:25']
@@ -309,18 +320,31 @@ describe('subagentDetail', () => {
     await expect(subagentDetail(ctx, child, signal)).resolves.toEqual(['cannot read session-a: session "session-a" not found'])
   })
 
-  it('reports the listing diagnostic for a row with no readable session, without observing it', async () => {
+  it('reports a diagnostic or external task with no readable session, without observing it', async () => {
     const { ctx, observed } = observationStub({ header: { id: 'session-c', createdAt: 0 }, events: [] })
     const diagnostic: SubagentChoice = {
       id: 'session-c' as SessionId,
       depth: 1,
       label: 'session-c',
       description: 'corrupt',
+      target: 'diagnostic',
+      enterable: false,
+    }
+    const external: SubagentChoice = {
+      id: 'external-run' as SessionId,
+      depth: 1,
+      label: 'code review',
+      description: 'external task · no local session · external-run',
+      target: 'external-task',
       enterable: false,
     }
     await expect(subagentDetail(ctx, diagnostic, signal)).resolves.toEqual([
       'session-c',
       'unreadable subagent session: corrupt',
+    ])
+    await expect(subagentDetail(ctx, external, signal)).resolves.toEqual([
+      'external-run',
+      'external task: no local session',
     ])
     expect(observed).toEqual([])
   })

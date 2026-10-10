@@ -187,36 +187,33 @@ export function resolveRgPath(): Promise<string> {
   return rgPathPromise
 }
 
+/** What a search under a confining sandbox must stay within. */
+export interface SearchFence {
+  /** The calling session's host read scope. */
+  scope: SandboxReadScope
+  /** The model-supplied search path, relative to the search directory; absent searches the directory itself. */
+  path: string | undefined
+}
+
 /**
- * The calling session's host read scope, after refusing a search path the
- * sandbox hides. A search inside the scope must still exclude the scope's
- * hidden file names from content reads.
+ * The fence of one search, or `undefined` when reads are unconfined. The tool
+ * excludes the scope's hidden file names from content reads, and
+ * {@link runRipgrep} refuses a path outside the scope against the directory it
+ * actually searches.
  * @param ctx - the plugin context; reads are unconfined without `ctx.sandboxPolicy`.
- * @param exec - the tool execution, supplying the session and its cwd.
- * @param toolName - `glob` or `grep`, used in the refusal.
- * @param path - the model-supplied search path, relative to the session cwd; absent searches the cwd.
- * @returns the read scope, or `undefined` when reads are unconfined.
- * @throws {SearchError} `SEARCH_SANDBOX_DENIED` when the path is outside the scope.
+ * @param exec - the tool execution, supplying the calling session.
+ * @param path - the model-supplied search path; absent searches the current directory.
+ * @returns the fence, or `undefined` when reads are unconfined.
  */
-export function searchReadScope(
-  ctx: Context,
-  exec: ToolExecution,
-  toolName: string,
-  path: string | undefined,
-): SandboxReadScope | undefined {
+export function searchFence(ctx: Context, exec: ToolExecution, path: string | undefined): SearchFence | undefined {
   const scope = ctx.get('sandboxPolicy')?.readScope(exec.agent === undefined ? {} : { session: exec.agent.session })
-  if (scope === undefined) return undefined
-  const target = resolve(exec.agent?.session.header.cwd ?? process.cwd(), path ?? '.')
-  if (!isReadableIn(target, scope)) {
-    throw new SearchError(`${toolName} cannot search "${path ?? '.'}": the sandbox hides this path from this session`, 'SEARCH_SANDBOX_DENIED')
-  }
-  return scope
+  return scope === undefined ? undefined : { scope, path }
 }
 
 /**
  * Run the packaged ripgrep binary with a plain argv vector and return its
  * complete raw stdout. The working directory is the calling agent's session
- * cwd (`exec.agent.session.header.cwd`) when available, else
+ * current directory when available, else
  * `process.cwd()`. `exec.signal` is forwarded so the cooperative tool timeout
  * (`@deepseek-ai/dsh-tool-call-timeout-policy`) and caller cancellation terminate the
  * process tree.
@@ -241,12 +238,14 @@ export function searchReadScope(
  * creation time becomes `SEARCH_ABORTED` instead.
  *
  * @param ctx - the plugin context; execution uses its `subprocess` service.
- * @param exec - the tool-execution context; supplies the session cwd and the abort signal.
+ * @param exec - the tool-execution context; supplies the owning Agent and the abort signal.
  * @param toolName - `glob` or `grep`, used in error messages.
  * @param argv - the ripgrep arguments (every model value an unquoted argv element; no shell layer exists).
  * @param rawOutputMaxBytes - cap on the complete raw stdout the tool will parse.
  * @param graceMs - the seam's terminate-escalation grace period.
  * @param stderrMaxBytes - cap on the retained stderr diagnostic tail.
+ * @param fence - the sandbox fence of a confining session; a search path outside its read scope, resolved against the
+ *   directory the command runs in, fails as `SEARCH_SANDBOX_DENIED` before anything spawns.
  * @returns the complete stdout, the zero-result flag, and the resolved workdir.
  */
 export async function runRipgrep(
@@ -257,12 +256,17 @@ export async function runRipgrep(
   rawOutputMaxBytes: number,
   graceMs: number,
   stderrMaxBytes: number,
+  fence?: SearchFence,
 ): Promise<RipgrepRun> {
   if (exec.signal.aborted) {
     throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
   }
-  const cwd = exec.agent?.session.header.cwd
-  const workdir = cwd ?? process.cwd()
+  const workdir = exec.agent === undefined
+    ? process.cwd()
+    : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
+  if (fence !== undefined && !isReadableIn(resolve(workdir, fence.path ?? '.'), fence.scope)) {
+    throw new SearchError(`${toolName} cannot search "${fence.path ?? '.'}": the sandbox hides this path from this session`, 'SEARCH_SANDBOX_DENIED')
+  }
   let handle: SubprocessHandle
   try {
     handle = ctx.subprocess.spawn({

@@ -84,7 +84,7 @@ describe('the live subagent panel', () => {
     expect(await test.screen()).not.toContain('subagents ·')
   })
 
-  it('draws a running child, a resident idle one, and a candidate it could not read', async () => {
+  it('draws a running child, a resident one whose last turn completed, and a candidate it could not read', async () => {
     const test = await bench({
       subagents: () => Promise.resolve([
         entry('session-kid'),
@@ -95,7 +95,7 @@ describe('the live subagent panel', () => {
         // The child between turns has a settled total and no open turn.
         subagentTiming: id === 'session-kid'
           ? { settledMs: 8000, active: { since: BENCH_NOW - 72_000, through: BENCH_NOW } }
-          : { settledMs: 8000 },
+          : { settledMs: 8000, lastTurnCompleted: true },
         tokenUsage: { uncachedInputTokens: 1000, cacheReadTokens: 200, cacheWriteTokens: 0, outputTokens: 300 },
       })),
     })
@@ -115,7 +115,7 @@ describe('the live subagent panel', () => {
     expect(screen).toContain('subagents · 3 listed')
     expect(screen).toContain('↑↓ children · Enter opens · Tab regions · Esc input')
     expect(panelRow(screen, 'session-kid')).toBe('session-kid · one-shot · resident · running · 1m12s · ↑1.2k ↓300')
-    expect(panelRow(screen, 'reviewer')).toBe('reviewer · continuable · resident · idle · 8s · ↑1.2k ↓300')
+    expect(panelRow(screen, 'reviewer')).toBe('reviewer · continuable · resident · completed · 8s · ↑1.2k ↓300')
     expect(panelRow(screen, 'session-broken')).toBe('session-broken · unreadable: corrupt')
   })
 
@@ -351,6 +351,86 @@ describe('the live subagent panel', () => {
     expect(back).not.toContain('back to main')
   })
 
+  it('opens a one-shot subagent read-only: a prompt stays in the editor, Esc cannot stop it, and commands still run', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([entry('session-kid', { label: 'explorer' })] as never) })
+    const kid = await test.createChild({ id: 'session-kid' })
+    await reconcile(test, kid)
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
+    await test.settle()
+    expect(await test.screen()).toContain('subagent view · one-shot, read-only')
+
+    for (const char of 'hello') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    const refused = await test.screen()
+    expect(refused).toContain('this one-shot subagent never accepts follow-ups')
+    expect(refused).toContain('hello')
+    expect(test.calls.followups).toHaveLength(0)
+
+    // The child is running, yet Esc neither arms nor stops its turn.
+    test.terminal.type(KEY.escape)
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.calls.cancels).toBe(0)
+    expect(test.terminal.text()).toContain('cannot be stopped from its view')
+
+    // Commands still run: /parent returns, and the parent takes prompts again.
+    test.terminal.type(KEY.ctrlU)
+    for (const char of '/parent') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('back in session session-tui-test')
+    for (const char of 'after') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'after' }]])
+  })
+
+  it('keeps a one-shot subagent view read-only after a btw side agent opened over it ends', async () => {
+    const test = await bench({ subagents: () => Promise.resolve([entry('session-kid', { label: 'explorer' })] as never) })
+    const kid = await test.createChild({ id: 'session-kid' })
+    await reconcile(test, kid)
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
+    await test.settle()
+    for (const char of '/btw') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('btw side agent')
+    for (const char of '/parent') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('one-shot, read-only')
+
+    for (const char of 'hello') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('this one-shot subagent never accepts follow-ups')
+    expect(test.calls.followups).toHaveLength(0)
+  })
+
+  it('keeps a continuable subagent view open to prompts and to a stop', async () => {
+    const test = await bench({
+      subagents: () => Promise.resolve([entry('session-kid', { mode: 'continuable', label: 'reviewer' })] as never),
+    })
+    const kid = await test.createChild({ id: 'session-kid' })
+    await reconcile(test, kid)
+    test.terminal.type(KEY.shiftDown)
+    test.terminal.type(KEY.right)
+    await test.settle()
+    expect(await test.screen()).not.toContain('read-only')
+
+    for (const char of 'go on') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'go on' }]])
+
+    test.terminal.type(KEY.escape)
+    test.terminal.type(KEY.escape)
+    expect(test.calls.cancels).toBe(1)
+  })
+
   it('enters a subagent from /subagents, releases every view on a session switch, and quits the root', async () => {
     const test = await bench({
       subagents: () => Promise.resolve([entry('session-kid', { label: 'explorer' })] as never),
@@ -435,6 +515,23 @@ describe('the live subagent panel', () => {
     test.terminal.type(KEY.up)
     await test.settle()
     expect(await selected()).toBe('workspace: /work/session-third')
+  })
+
+  it('shows an external task in /subagents without trying to open a local session', async () => {
+    const test = await bench({
+      subagents: () => Promise.resolve([
+        { kind: 'child', id: 'external-run', activity: 'inactive', mode: 'external', label: 'code review', hasChildren: false, parentId: 'session-tui-test', depth: 1 },
+      ] as never),
+    })
+    for (const char of '/subagents') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('external task · no local session · external-run')
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('external task: no local session')
+    expect(await test.screen()).not.toContain('subagent view')
+    expect(test.hostCalls).not.toContain('observe:external-run')
   })
 
   it('opens nothing for a row the listing could not read', async () => {
@@ -627,7 +724,7 @@ describe('the live subagent panel', () => {
   })
 
   it('leaves the keyboard at the editor when the panel goes away behind an open page', async () => {
-    let listed: unknown[] = [entry('session-kid')]
+    let listed: unknown[] = [entry('session-kid', { mode: 'continuable' })]
     const test = await bench({
       subagents: () => Promise.resolve(listed as never),
       before: (ctx) => {

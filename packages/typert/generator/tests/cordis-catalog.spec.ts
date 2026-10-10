@@ -99,6 +99,15 @@ describe('Typert-backed Cordis catalog', () => {
     expect(rendered).toContain('ACTIVE,')
   })
 
+  it('keeps repository types whose names a generated protobuf binding also exports', () => {
+    const { projector, model } = projection()
+    const rendered = projector.renderRuntimeApi(model)
+    // `llm-cursor`'s generated bindings export `FileDiff` and `UserMessage` as well. Without the policy exclusion
+    // the name turns ambiguous and the generator silently drops the repository type from the model-facing catalog.
+    expect(rendered).toContain("name: 'FileDiff'")
+    expect(rendered).toContain("name: 'UserMessage'")
+  })
+
   it('keeps the Slots service declaration and its referenced types within the display budget', { timeout: 480_000 }, () => {
     const { projector, model } = clientProjection()
     const slots = model.services.find(service => service.key === 'slots')

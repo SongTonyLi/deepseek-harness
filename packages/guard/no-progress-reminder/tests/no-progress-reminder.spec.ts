@@ -36,7 +36,7 @@ async function harness(config: Config = {}, options: { goals?: boolean } = {}): 
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(AgentLoop, { agents: [] })
   if (options.goals === true) await ctx.plugin(GoalService)
-  await ctx.plugin(NoProgressReminder, { providers: ['mock'], ...config })
+  await ctx.plugin(NoProgressReminder, Object.assign({ providers: ['mock'] }, config))
   ctx.tools.register(defineContentToolFixture({
     name: 'todo_write',
     description: 't',

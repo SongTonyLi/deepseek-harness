@@ -24,15 +24,21 @@ export function rawInputLines(value: unknown): string[] {
   if (Array.isArray(value) && value.every(item => typeof item === 'string')) {
     return value.flatMap(item => item === '' ? [] : item.split('\n'))
   }
-  const text = JSON.stringify(value)
+  const text = jsonText(value)
   return text === undefined ? [] : [text]
+}
+
+/** `JSON.stringify` yields undefined for values with no JSON form, which its declared return type omits. */
+function jsonText(value: unknown): string | undefined {
+  return JSON.stringify(value)
 }
 
 /** One status line per todo item, or undefined when the value is not a todo list. */
 function todoLines(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined
   const lines: string[] = []
-  for (const item of value) {
+  const items: readonly unknown[] = value
+  for (const item of items) {
     if (typeof item !== 'object' || item === null) return undefined
     if (!('content' in item) || !('status' in item)) return undefined
     if (typeof item.content !== 'string' || typeof item.status !== 'string') return undefined

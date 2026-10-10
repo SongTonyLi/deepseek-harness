@@ -17,7 +17,7 @@ import type { GenericCallView, SearchResultView, ToolResult } from '@deepseek-ai
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import type { GrepMatch } from './search-core.ts'
-import { SearchError, previewLine, retainGrepMatches, runRipgrep, searchReadScope, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
+import { SearchError, previewLine, retainGrepMatches, runRipgrep, searchFence, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
 import { grepSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'
 
@@ -325,8 +325,8 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
     },
     async execute(args, exec) {
       const input = parseGrepArgs(args)
-      const hiddenNames = searchReadScope(ctx, exec, 'grep', input.path)?.hiddenNames ?? []
-      const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand(input, hiddenNames), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
+      const fence = searchFence(ctx, exec, input.path)
+      const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand(input, fence?.scope.hiddenNames ?? []), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes, fence)
       if (run.noMatches) return { matches: [] }
 
       const all: GrepMatch[] = []
