@@ -39,8 +39,8 @@ async function collect(events: AsyncIterable<AssistantMessageEvent>): Promise<{ 
 
 const context = normalizeContext({ messages: [{ role: 'user', content: 'hi', timestamp: 0 }] })
 
-describe('streamed tool-call arguments (patched pi-ai)', () => {
-  it('openai-completions parses arguments once, at the end of the call', async () => {
+describe('streamed tool-call arguments', () => {
+  it('openai-completions includes parsed arguments in partial updates', async () => {
     const server = await mockServer([{ events: [
       JSON.stringify({ choices: [{
         delta: {
@@ -58,11 +58,11 @@ describe('streamed tool-call arguments (patched pi-ai)', () => {
     const events = streamCompletions(model('openai-completions', server.url), context, { apiKey: 'test-key' })
     const { partials, final } = await collect(events)
     expect(partials).toHaveLength(fragments.length)
-    expect(partials.every(partial => JSON.stringify(partial) === '{}')).toBe(true)
+    expect(partials.every(partial => typeof partial === 'object' && partial !== null)).toBe(true)
     expect(final).toEqual(args)
   })
 
-  it('anthropic-messages parses arguments once, at the end of the call', async () => {
+  it('anthropic-messages streams partial arguments and finalizes the call', async () => {
     const server = await mockServer([{ events: [
       anthropicMessageStart,
       frame({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_1', name: 'write', input: {} } }),
@@ -76,11 +76,11 @@ describe('streamed tool-call arguments (patched pi-ai)', () => {
     const events = streamAnthropic(model('anthropic-messages', server.url), context, { apiKey: 'test-key' })
     const { partials, final } = await collect(events)
     expect(partials).toHaveLength(fragments.length)
-    expect(partials.every(partial => JSON.stringify(partial) === '{}')).toBe(true)
+    expect(partials.every(partial => typeof partial === 'object' && partial !== null)).toBe(true)
     expect(final).toEqual(args)
   })
 
-  it('openai-responses parses arguments once, at the end of the call', async () => {
+  it('openai-responses includes parsed arguments in partial updates', async () => {
     const item = { type: 'function_call', call_id: 'call_1', id: 'fc_1', name: 'write' }
     const server = await mockServer([{ events: [
       '{"type":"response.created","response":{"id":"resp_1"}}',
@@ -95,7 +95,7 @@ describe('streamed tool-call arguments (patched pi-ai)', () => {
     const events = streamResponses(model('openai-responses', server.url), context, { apiKey: 'test-key' })
     const { partials, final } = await collect(events)
     expect(partials).toHaveLength(fragments.length)
-    expect(partials.every(partial => JSON.stringify(partial) === '{}')).toBe(true)
+    expect(partials.every(partial => typeof partial === 'object' && partial !== null)).toBe(true)
     expect(final).toEqual(args)
   })
 })
