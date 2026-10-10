@@ -77,6 +77,7 @@ function lastClosedTurn(events: readonly SessionEvent[]): readonly SessionEvent[
 
 /** Whether that closed turn recorded a successful edit, write, or bash result. */
 function lastClosedTurnMutatedWorkspace(session: Session): boolean {
+  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
   const window = lastClosedTurn(session.snapshotEvents())
   const names = new Map<string, string>()
   for (const event of window) {

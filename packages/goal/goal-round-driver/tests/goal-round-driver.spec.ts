@@ -1289,10 +1289,10 @@ describe('continue-intent helpers', () => {
       },
       logger: { warn },
     } as never, { ...agent, session: { snapshotEvents: () => unpaired } } as never, [continueMessage])
-    expect(resumed?.content[0]).toMatchObject({
-      type: 'text',
-      text: expect.stringContaining('the previous turn made no file changes; do not repeat its plan'),
-    })
+    const first = resumed?.content[0]
+    expect(first?.type).toBe('text')
+    expect(first?.type === 'text' ? first.text : undefined)
+      .toContain('the previous turn made no file changes; do not repeat its plan')
   })
 })
 

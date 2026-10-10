@@ -292,6 +292,15 @@ function splitModelValue(value: string): ModelSelection {
 /** What the banner and header call an open `/btw` side agent. */
 const BTW_VIEW_TITLE = 'btw side agent'
 
+/** What the banner calls an open one-shot subagent view, which shows history and takes no input. */
+const ONE_SHOT_VIEW_TITLE = 'subagent view · one-shot, read-only'
+
+/** What a prompt or `!` line typed into a one-shot subagent view is answered with. */
+const ONE_SHOT_INPUT_NOTICE = 'this one-shot subagent never accepts follow-ups · Ctrl+P or /parent returns to its parent'
+
+/** What `Esc` is answered with while a one-shot subagent view shows a running turn. */
+const ONE_SHOT_STOP_NOTICE = 'a one-shot subagent runs to completion and cannot be stopped from its view · Ctrl+P or /parent returns to its parent'
+
 /** What the transcript is told when a session switch took the conversation the reader was showing. */
 const READER_GONE = 'the transcript changed · reader closed'
 
@@ -445,6 +454,12 @@ interface WorkflowOwnership {
   readonly background: boolean
   /** Job that currently owns a background run when the local registry exposed one. */
   readonly jobId?: JobId
+}
+
+/** Latest lifecycle status waiting for the catalog to establish descendant membership. */
+interface PendingSubagentActivity {
+  /** Status the activity board draws after the child appears in the catalog. */
+  readonly status: string
 }
 
 /**
@@ -862,6 +877,8 @@ export class TuiApp {
   private barSelection: FooterSegmentId = FIRST_FOOTER_SEGMENT
   /** The descendant listing the last reconcile produced, in pre-order. */
   private subagentEntries: readonly SubagentDescendantListEntry[] = []
+  /** Lifecycle status held until a fresh catalog confirms the named descendant. */
+  private pendingSubagentActivity = new Map<SessionId, PendingSubagentActivity>()
   /** The rows of the last panel draw. */
   private panelView: SubagentPanelView = EMPTY_PANEL_VIEW
   /** The panel row the selection sits on; absent before the first row is drawn. */
@@ -965,6 +982,12 @@ export class TuiApp {
   private readonly banner: ViewBanner
   /** The open views that are `/btw` side agents, which leaving the view ends. */
   private readonly asides = new Set<BoundSession>()
+  /**
+   * The open subagent views whose mode takes no human input: a one-shot child
+   * runs to completion and never accepts a follow-up or a stop, so its view
+   * shows history and live progress only.
+   */
+  private readonly readOnlyViews = new Set<BoundSession>()
   private streaming: AssistantBlock | undefined
   /** Whether the fold keys left every foldable block open; one appended later follows it. */
   private toolsExpanded = false
@@ -1114,22 +1137,18 @@ export class TuiApp {
         }
         this.setWorking(status === 'running')
       }),
-      // Neither lifecycle edge names the delegating parent in its payload;
-      // both fire for out-of-process children too. The listing and the child's
-      // header decide whether the activity board may show the status word.
+      // Lifecycle payloads do not identify their delegating parent. Only the
+      // parent-owned catalog establishes membership; hold an early edge until a
+      // fresh catalog can associate it with the bound session.
       ctx.on('subagent/start', (info) => {
         this.markSubagentsStale()
         this.refreshWorkflowChildLinks()
-        if (this.isBoundDescendantId(info.id)) {
-          this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: 'running' })
-        }
+        this.noteSubagentActivity(info.id, 'running')
       }),
       ctx.on('subagent/end', (info) => {
         this.markSubagentsStale()
         this.refreshWorkflowChildLinks()
-        if (this.isBoundDescendantId(info.id)) {
-          this.setActivitySubagent({ label: this.activityLabelFor(info.id), status: info.stopReason })
-        }
+        this.noteSubagentActivity(info.id, info.stopReason)
       }),
       // A prompt waits above the editor from the moment it enters the inbox
       // until the loop claims it for a turn or step, or `/queue clear` drops it.
@@ -1231,8 +1250,8 @@ export class TuiApp {
     this.parents.length = 0
     this.viewLabels.length = 0
     this.asides.clear()
-    /* v8 ignore next -- the destructured list always holds the bound session */
-    this.deps.onQuit(root ?? this.bound)
+    this.readOnlyViews.clear()
+    this.deps.onQuit(root)
   }
 
   // ── session binding ─────────────────────────────────────────────────────
@@ -1289,6 +1308,7 @@ export class TuiApp {
     this.queueSelection = undefined
     this.clearActivityBoard()
     this.subagentEntries = []
+    this.pendingSubagentActivity.clear()
     this.panelSelection = undefined
     this.listingFailure = undefined
     this.subagentsStale = false
@@ -1305,7 +1325,9 @@ export class TuiApp {
     this.refreshWorkflowChildLinks()
     if (reading) this.notice(READER_GONE)
     this.refreshHeader()
-    this.banner.setViews(this.viewLabels, this.asides.has(next) ? BTW_VIEW_TITLE : undefined)
+    this.banner.setViews(this.viewLabels, this.asides.has(next)
+      ? BTW_VIEW_TITLE
+      : this.readOnlyViews.has(next) ? ONE_SHOT_VIEW_TITLE : undefined)
     this.refreshQueue()
     this.refreshFooter()
     this.refreshSubagentPanel()
@@ -1349,6 +1371,7 @@ export class TuiApp {
     const released = [this.bound, ...this.parents.splice(0).reverse()]
     this.viewLabels.length = 0
     this.asides.clear()
+    this.readOnlyViews.clear()
     const dropped = this.pending.length
     this.bind(next)
     this.notice(`${verb}: session ${next.agent.session.id}`, 'success')
@@ -1367,12 +1390,12 @@ export class TuiApp {
    * one alive to return to: the whole conversation surface - the live
    * transcript, the conversation walk, the inspector, the reader, and that
    * session's own subagents - then reads the child. The entry's detail rows
-   * follow the entry notice.
-   * @param id - the subagent session.
+   * follow the entry notice. Only a continuable child takes input in its view.
+   * @param choice - the listing row of the subagent session.
    * @param row - the listing entry, for its label and detail rows.
    * @param options - `liveOnly` refuses to resume a child that is not running here.
    */
-  private async enterSubagent(id: SessionId, row: BrowseRow, options?: { readonly liveOnly?: boolean }): Promise<void> {
+  private async enterSubagent(choice: SubagentChoice, row: BrowseRow, options?: { readonly liveOnly?: boolean }): Promise<void> {
     if (this.switching) {
       this.notice('wait for the session switch to finish', 'error')
       return
@@ -1380,10 +1403,10 @@ export class TuiApp {
     this.switching = true
     let next: BoundSession
     try {
-      next = await this.deps.host.observe(id, options)
+      next = await this.deps.host.observe(choice.id, options)
     } catch (error: unknown) {
       this.switching = false
-      this.notice(`opening subagent ${id} failed: ${describeFailure(error)}`, 'error')
+      this.notice(`opening subagent ${choice.id} failed: ${describeFailure(error)}`, 'error')
       return
     }
     this.switching = false
@@ -1395,6 +1418,7 @@ export class TuiApp {
     const dropped = this.pending.length
     this.parents.push(parent)
     this.viewLabels.push(row.item.label)
+    if (choice.mode !== 'continuable') this.readOnlyViews.add(next)
     this.bind(next)
     this.notice(`subagent ${row.item.label} · Ctrl+P or /parent returns to session ${parent.agent.session.id}`, 'success')
     if (dropped > 0) this.notice(`${String(dropped)} pending attachment(s) stayed with the parent session`)
@@ -1488,8 +1512,12 @@ export class TuiApp {
     const view = this.bound
     this.parents.pop()
     this.viewLabels.pop()
+    this.readOnlyViews.delete(view)
     const aside = this.asides.delete(view)
-    this.bind({ ...parent, history })
+    // The returned session is a fresh object, so a read-only parent view carries its mark over.
+    const restored: BoundSession = { ...parent, history }
+    if (this.readOnlyViews.delete(parent)) this.readOnlyViews.add(restored)
+    this.bind(restored)
     this.notice(aside ? `btw ended · back in session ${parent.agent.session.id}` : `back in session ${parent.agent.session.id}`, 'success')
     try {
       await view.dispose()
@@ -1735,40 +1763,60 @@ export class TuiApp {
     this.activitySubagent = undefined
     this.activitySubagentFade = undefined
     this.activityChildCall = undefined
+    this.pendingSubagentActivity.clear()
     this.refreshActivityBoard()
   }
 
   /**
-   * Whether `id` belongs under the bound session: a listing entry, or a
-   * live child whose header parent is the bound session.
+   * Whether the parent-owned descendant catalog places `id` below the bound
+   * session. Session lineage also represents ordinary forks, so it cannot
+   * establish subagent membership.
    * @param id - the session id a lifecycle event named.
    * @returns true when the activity board may show that child's status word.
    */
   private isBoundDescendantId(id: SessionId): boolean {
-    if (this.subagentEntries.some(entry => entry.id === id)) return true
-    const child = this.deps.ctx.get('agents')?.get(id)
-    return child !== undefined && child.session.header.parentSession === this.agent.session.id
+    return this.subagentEntries.some(entry => entry.id === id)
   }
 
   /**
-   * Whether `session` is a descendant of the bound session: a listing entry,
-   * or a header whose parent is the bound session.
+   * Whether the parent-owned descendant catalog contains `session`.
    * @param session - the session that just logged an event.
    * @returns true when the activity board may show that session's latest line.
    */
   private isBoundDescendant(session: Session): boolean {
-    return this.isBoundDescendantId(session.id) || session.header.parentSession === this.agent.session.id
+    return this.isBoundDescendantId(session.id)
   }
 
   /**
    * The listing label for a descendant, or its session id when the listing
-   * has not named it.
+   * has not named it. External work has no local Session, so the line says so.
    * @param id - the descendant session id.
    * @returns the board's label for that child.
    */
   private activityLabelFor(id: SessionId): string {
     const entry = this.subagentEntries.find(candidate => candidate.id === id)
-    return entry?.kind === 'child' && entry.label !== undefined ? entry.label : id
+    if (entry?.kind !== 'child') return id
+    const label = entry.label ?? id
+    return entry.mode === 'external' ? `${label} (external task)` : label
+  }
+
+  /**
+   * Draw a lifecycle status once a catalog confirms its descendant membership.
+   * @param id - child identity carried by the lifecycle edge.
+   * @param status - start or terminal status for the activity board.
+   */
+  private noteSubagentActivity(id: SessionId, status: string): void {
+    this.pendingSubagentActivity.set(id, { status })
+    this.flushPendingSubagentActivity()
+  }
+
+  /** Apply pending lifecycle status only to ids the current catalog owns. */
+  private flushPendingSubagentActivity(): void {
+    for (const [id, activity] of this.pendingSubagentActivity) {
+      if (!this.isBoundDescendantId(id)) continue
+      this.setActivitySubagent({ label: this.activityLabelFor(id), status: activity.status })
+      this.pendingSubagentActivity.delete(id)
+    }
   }
 
   /**
@@ -1891,6 +1939,7 @@ export class TuiApp {
         const timing = values.subagentTiming
         if (timing !== undefined) {
           live.settledMs = timing.settledMs
+          if (timing.lastTurnCompleted !== undefined) live.lastTurnCompleted = timing.lastTurnCompleted
           if (timing.active !== undefined) live.activeSince = timing.active.since
         }
         const usage = values.tokenUsage
@@ -1950,6 +1999,7 @@ export class TuiApp {
       if (this.agent.session === session) {
         this.subagentEntries = entries
         this.listingFailure = undefined
+        this.flushPendingSubagentActivity()
       } else {
         this.markSubagentsStale()
       }
@@ -2475,9 +2525,9 @@ export class TuiApp {
   }
 
   /**
-   * Walk the subagent listing: `Enter` on a session opens it as a live view,
-   * and on a row the listing could not read shows why, then reopens the list
-   * on that row.
+   * Walk the subagent listing: `Enter` on a local session opens it as a live
+   * view, while an external task or unreadable row explains why it has no
+   * local session, then reopens the list on that row.
    * @param choices - the listing rows, in listing order.
    */
   private async browseSubagents(choices: readonly SubagentChoice[]): Promise<void> {
@@ -2491,7 +2541,7 @@ export class TuiApp {
       const [choice, row] = [choices[index], rows[index]]
       if (choice === undefined || row === undefined) return
       if (choice.enterable) {
-        await this.enterSubagent(choice.id, row)
+        await this.enterSubagent(choice, row)
         return
       }
       visited = choice.id
@@ -2527,7 +2577,8 @@ export class TuiApp {
     const entry = this.subagentEntries.find(candidate => candidate.id === row.id)
     /* v8 ignore next -- every drawn row comes from the entries of the last listing */
     if (entry === undefined) return
-    await this.enterSubagent(entry.id, this.subagentBrowseRow(subagentChoice(entry)))
+    const choice = subagentChoice(entry)
+    await this.enterSubagent(choice, this.subagentBrowseRow(choice))
   }
 
   private async settings(argument: string): Promise<void> {
@@ -2790,7 +2841,8 @@ export class TuiApp {
    * turn. In the editor it cancels a running `!` command or `/compact` at
    * once, which changes nothing in the conversation; otherwise it arms the
    * stop and says so, and only a second press while that line is still on
-   * screen stops the turn.
+   * screen stops the turn. A one-shot subagent view never stops its turn: the
+   * press is answered with a notice instead.
    * @returns the consume marker, or undefined while the editor's open
    * autocomplete answers the key itself.
    */
@@ -2816,6 +2868,10 @@ export class TuiApp {
         this.editor.setText('')
         this.syncEditorBorder()
       }
+      return { consume: true }
+    }
+    if (this.readOnlyViews.has(this.bound)) {
+      this.notice(ONE_SHOT_STOP_NOTICE)
       return { consume: true }
     }
     if (now >= this.stopArmedUntil) {
@@ -3515,6 +3571,8 @@ export class TuiApp {
   /**
    * Handle a submitted editor line: a `/` line runs a command, a nonempty `!`
    * / `!!` line runs in the terminal, and anything else becomes a user message.
+   * A one-shot subagent view takes only commands: any other line is refused
+   * with a notice and stays in the editor.
    * @param raw - the editor text.
    * @param mode - how a message reaches a running Agent: `queue` waits for the next turn, `steer` enters the current one.
    */
@@ -3523,6 +3581,13 @@ export class TuiApp {
     if (text === '') return
     if (this.switching) {
       this.notice(SESSION_SWITCH_WAIT, 'error')
+      return
+    }
+    // `/parent` must still run here; a prompt or `!` line has nowhere to go and stays in the editor.
+    if (this.readOnlyViews.has(this.bound) && !text.startsWith('/')) {
+      this.notice(ONE_SHOT_INPUT_NOTICE, 'error')
+      this.editor.setText(raw)
+      this.syncEditorBorder()
       return
     }
     this.editor.setText('')
@@ -5044,8 +5109,7 @@ export class TuiApp {
         this.pacer?.flush()
         this.streaming = undefined
         this.endFade()
-        if (frame.outcome.kind === 'abandoned'
-          || (frame.outcome.kind === 'committed' && frame.outcome.eventType === 'assistant/attempt')) {
+        if (frame.outcome.kind === 'abandoned' || frame.outcome.eventType === 'assistant/attempt') {
           this.dropUnconfirmedTools()
         }
         this.tui.requestRender()
@@ -5393,7 +5457,8 @@ export class TuiApp {
       this.refreshWorkflowChildLinks()
       return
     }
-    await this.enterSubagent(entry.id, this.subagentBrowseRow(subagentChoice(entry)), { liveOnly: true })
+    const choice = subagentChoice(entry)
+    await this.enterSubagent(choice, this.subagentBrowseRow(choice), { liveOnly: true })
   }
 
   /**

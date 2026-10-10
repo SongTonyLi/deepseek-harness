@@ -11,6 +11,7 @@ import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-
 import type {} from '@deepseek-ai/dsh-fs'
 import { computeHunkDiffs, diffJson, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
+import { mutationResult } from './mutation-result.ts'
 import { assertSandboxReadable } from './read-target.ts'
 import { sessionResolveOptions } from './session-cwd.ts'
 import type { FsSandboxController } from './sandbox.ts'
@@ -101,7 +102,7 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
         type: 'object',
         additionalProperties: false,
         properties: {
-          path: { type: 'string', required: true },
+          path: { type: 'string', required: true, description: 'Canonical absolute path in the filesystem execution world.' },
           before: { type: 'string', required: true },
           after: { type: 'string', required: true },
         },
@@ -110,8 +111,9 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
         type: 'text',
         text: formatEditOutput(value.path, args.replace_all ?? false),
       }],
-      presentationMeta: (args, value) => ({
-        diffs: computeHunkDiffs(args.file_path, value.before, value.after).map(diffJson),
+      presentationMeta: (_args, value) => ({
+        path: value.path,
+        diffs: computeHunkDiffs(value.path, value.before, value.after).map(diffJson),
       }),
     },
     async execute(args: EditToolArgs, exec) {
@@ -119,7 +121,7 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
       // Resolve the per-call sandbox policy (approved mode > session override
       // > backend default, plus the session cwd root) BEFORE anything executes.
       const sandboxPolicy = await sandbox.resolvePolicy('edit', args, exec)
-      const target = await ctx.fs.resolve(input.filePath, sessionResolveOptions(exec, sandboxPolicy?.workspaceRoot))
+      const target = await ctx.fs.resolve(input.filePath, await sessionResolveOptions(ctx, exec))
       assertSandboxReadable(ctx, exec, target, sandboxPolicy?.mode)
       // Single-slot decision: the policy plugin returns { version: vObserved } or
       // throws FS_NOT_OBSERVED; the bare default is undefined (unconditional edit).
@@ -143,12 +145,7 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
         // stable model-facing diagnostic; anything else passes through.
         throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
       }
-      ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
-      return {
-        path: target.displayPath,
-        before: outcome.before,
-        after: outcome.after,
-      }
+      return mutationResult(ctx, target, outcome, exec)
     },
     // Pure display: a diff card of the literal replacement (old_string → new_string), derived
     // from the call args. `oldText: old_string || null` matches claude-agent-acp's Edit arm;

@@ -123,7 +123,7 @@ export async function resolveAuthorizedReadTarget(
   requestedPath: string,
   toolName: string,
 ): Promise<FsTarget> {
-  const options = sessionResolveOptions(exec)
+  const options = await sessionResolveOptions(ctx, exec)
   const policy = ctx.get('sandboxPolicy')
   const session = exec.agent?.session
   const request = session === undefined ? {} : { session }
@@ -155,7 +155,7 @@ export async function resolveAuthorizedReadTarget(
  * {@link resolveAuthorizedReadTarget}), observe absence, and require a
  * regular file.
  * @param ctx - the plugin context providing filesystem resolution and observation events.
- * @param exec - the current tool execution, including session cwd and cancellation.
+ * @param exec - the current tool execution, including the owning Agent and cancellation.
  * @param requestedPath - the raw path supplied to the tool.
  * @param toolName - the reading tool's name, recorded on an approval request.
  * @returns the resolved target and its single stat result.

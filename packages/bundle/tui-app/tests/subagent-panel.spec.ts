@@ -62,7 +62,12 @@ describe('subagentPanelView', () => {
     expect(view([child('session-gone', { activity: 'inactive' })]).rows).toEqual([])
   })
 
-  it('reads a running child, a resident idle one, and one with no live facts at all', () => {
+  it('keeps an external execution out even when a stale listing marks it running', () => {
+    const external = child('external-run', { mode: 'external', activity: 'running' })
+    expect(view([external]).rows).toEqual([])
+  })
+
+  it('reads a running child, a completed resident child, and one with no live facts at all', () => {
     const entries = [
       child('session-busy'),
       child('session-waiting', { depth: 2, mode: 'continuable', label: 'reviewer' }),
@@ -70,10 +75,10 @@ describe('subagentPanelView', () => {
     ]
     expect(texts(entries, {
       'session-busy': { running: true, settledMs: 4000, activeSince: NOW - 72_000, usage: { inputTokens: 1200, outputTokens: 300 } },
-      'session-waiting': { running: false, settledMs: 8000 },
+      'session-waiting': { running: false, lastTurnCompleted: true, settledMs: 8000 },
     })).toEqual([
       'session-busy · one-shot · resident · running · 1m12s · ↑1.2k ↓300',
-      '  reviewer · continuable · resident · idle · 8s',
+      '  reviewer · continuable · resident · completed · 8s',
       'session-elsewhere · one-shot · resident · idle',
     ])
   })

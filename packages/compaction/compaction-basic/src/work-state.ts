@@ -137,6 +137,7 @@ function messageHasCompactedSummary(message: Message): boolean {
 
 function previousTurnChangedFiles(session: Session): boolean {
   const state = { names: new Map<string, string>(), last: false, current: false }
+  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
   for (const event of session.snapshotEvents()) applyTurnFileChange(state, event)
   return state.last
 }

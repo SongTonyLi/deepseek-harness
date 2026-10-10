@@ -13,7 +13,7 @@ import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ToolWorkflowAgentStartData, ToolWorkflowRunStartData } from '@deepseek-ai/dsh-tool-workflow/types'
+import type { ToolWorkflowRunStartData } from '@deepseek-ai/dsh-tool-workflow/types'
 import SessionStore from '@deepseek-ai/dsh-session'
 import { SessionLogOffset, type EpochHeader, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -462,7 +462,7 @@ describe('tui runner', () => {
       seq: 1,
       label: 'scan-reader',
       phase: 'scan',
-      childId: memberId as ToolWorkflowAgentStartData['childId'],
+      childId: memberId,
     })
     await settled()
     observed.terminal.type(KEY.shiftUp)
@@ -503,7 +503,7 @@ describe('tui runner', () => {
       seq: 1,
       label: 'scan-reader',
       phase: 'scan',
-      childId: memberId as ToolWorkflowAgentStartData['childId'],
+      childId: memberId,
     })
     await settled()
     stopped.observed.terminal.type(KEY.shiftUp)

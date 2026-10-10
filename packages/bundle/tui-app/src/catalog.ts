@@ -160,30 +160,36 @@ export function listPlugins(ctx: Context): string[] {
 
 /** One `/subagents` picker row over a descendant listing entry. */
 export interface SubagentChoice {
-  /** The descendant session id; the picker row value. */
+  /** The descendant session or external-task id; the picker row value. */
   id: SessionId
   /** Root-relative depth, 1 for a direct child. */
   depth: number
   /** Row label: the depth indent, then the durable label when the entry has one, else the id. */
   label: string
-  /** Row description: activity, mode, the id when the label already shows one, or the diagnostic reason. */
+  /** Row description: local activity and mode, or why no local Session can be opened. */
   description: string
-  /** Whether session details can be read for this row; false for a `diagnostic` entry. */
+  /** What the row names, which determines why it cannot open a local Session. */
+  target: 'session' | 'external-task' | 'diagnostic'
+  /** The listed mode of a child row, which decides whether its view takes input; absent for a diagnostic. */
+  mode?: Extract<SubagentDescendantListEntry, { kind: 'child' }>['mode']
+  /** Whether this row identifies a locally readable Session; false for diagnostics and external executions. */
   enterable: boolean
 }
 
 /**
- * One descendant listing entry as a picker row: the child session id (usable
- * with `/sessions` and `--resume`), its activity, mode, and label, or a
- * diagnostic candidate's reason. The live panel enters the same row.
+ * One descendant listing entry as a picker row: a local child has its session
+ * id, activity, mode, and label; an external execution names its durable task
+ * record without offering a Session to open. A diagnostic candidate shows its
+ * reason. The live panel enters the same local-child row.
  * @param entry - the listing entry.
- * @returns the row; `enterable` is false exactly for a diagnostic entry.
+ * @returns the row; `enterable` is false for a diagnostic or external entry.
  */
 export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoice {
   const prefix = indent(entry.depth - 1)
   switch (entry.kind) {
     case 'child': {
-      const parts: string[] = [entry.activity, entry.mode]
+      const external = entry.mode === 'external'
+      const parts: string[] = external ? ['external task', 'no local session'] : [entry.activity, entry.mode]
       // The label took the id's place in the row label, so the description carries it.
       if (entry.label !== undefined) parts.push(entry.id)
       return {
@@ -191,7 +197,9 @@ export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoi
         depth: entry.depth,
         label: `${prefix}${entry.label ?? entry.id}`,
         description: parts.join(' · '),
-        enterable: true,
+        target: external ? 'external-task' : 'session',
+        mode: entry.mode,
+        enterable: !external,
       }
     }
     case 'diagnostic':
@@ -200,6 +208,7 @@ export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoi
         depth: entry.depth,
         label: `${prefix}${entry.id}`,
         description: entry.reason,
+        target: 'diagnostic',
         enterable: false,
       }
     default:
@@ -208,7 +217,7 @@ export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoi
 }
 
 /**
- * Every session-backed subagent below one session in pre-order as picker rows.
+ * Every discovered subagent below one session in pre-order as picker rows.
  * @param ctx - plugin context carrying the optional subagent runtime.
  * @param sessionId - the root session whose descendants are listed.
  * @param signal - cancels the listing.
@@ -229,15 +238,16 @@ export async function listSubagentChoices(ctx: Context, sessionId: SessionId, si
  * into one counting row; a fact this profile keeps no projection or header
  * field for is skipped.
  *
- * Reading the session never throws here: a row that is not `enterable`, an
- * absent session query engine, and a failed read each return explanatory
- * rows instead.
+ * Reading the session never throws here: an external execution or diagnostic
+ * row, an absent session query engine, and a failed read each return
+ * explanatory rows instead.
  * @param ctx - plugin context carrying the optional session query engine.
  * @param choice - the entered picker row.
  * @param signal - cancels a cold log read.
  * @returns the detail rows; never empty.
  */
 export async function subagentDetail(ctx: Context, choice: SubagentChoice, signal: AbortSignal): Promise<string[]> {
+  if (choice.target === 'external-task') return [choice.id, 'external task: no local session']
   if (!choice.enterable) return [choice.id, `unreadable subagent session: ${choice.description}`]
   const query = ctx.get('sessionQuery')
   if (query === undefined) return [`cannot read ${choice.id}: the session query engine is not mounted in this profile`]

@@ -322,7 +322,7 @@ function slicePaintedBySource(painted: string, start: number, end: number): stri
       index = close + 1
       continue
     }
-    if (source >= start) out += painted[index]
+    if (source >= start) out += painted[index] ?? ''
     source += 1
     index += 1
   }

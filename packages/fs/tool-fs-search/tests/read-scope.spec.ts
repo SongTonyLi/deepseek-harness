@@ -1,6 +1,6 @@
 /** The sandbox read fence on `grep` and `glob`: outside search paths are refused and hidden files are never searched. */
 
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -19,6 +19,8 @@ import { WorkspaceReadSandbox } from '../../../sandbox/sandbox/tests/read-scope-
 
 let ws: string
 let outside: string
+/** The Session's current directory, which a test moves away from the workspace the way `cd` does. */
+let current: string
 let ctx: Context
 let calls = 0
 
@@ -50,7 +52,9 @@ beforeEach(async () => {
   await writeFile(join(ws, '.env'), 'needle=sk-test\n')
   await writeFile(join(ws, 'server.env'), 'needle visible\n')
   await writeFile(join(outside, 'secret.txt'), 'needle outside\n')
+  current = ws
   ctx = new Context()
+  ctx.provide('workingDirectory', { ensure: () => Promise.resolve(current) })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(LocalSubprocessRuntime)
@@ -93,6 +97,22 @@ describe('search read fence', () => {
     expect(text(await call('grep', { pattern: 'needle' }, agentIn(ws)))).toContain('a.txt')
     const agentless = await call('grep', { pattern: 'needle' })
     expect(text(agentless)).toContain('grep cannot search ".": the sandbox hides this path from this session')
+  })
+
+  it('fences the directory the search runs in, not the workspace the session started in', async () => {
+    await ctx.plugin(WorkspaceReadSandbox)
+    const agent = agentIn(ws)
+    current = outside
+    for (const [name, args] of [['grep', { pattern: 'needle' }], ['glob', { pattern: '*' }]] as const) {
+      const refused = await call(name, args, agent)
+      expect(refused.error).toMatchObject({ info: { code: 'SEARCH_SANDBOX_DENIED' } })
+      expect(text(refused)).not.toContain('secret.txt')
+    }
+    await mkdir(join(ws, 'sub'))
+    current = join(ws, 'sub')
+    const found = text(await call('grep', { pattern: 'needle', path: '..' }, agent))
+    expect(found).toContain('a.txt')
+    expect(found).not.toContain('sk-test')
   })
 
   it('searches anywhere without a confining provider', async () => {

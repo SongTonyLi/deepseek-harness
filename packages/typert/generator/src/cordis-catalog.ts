@@ -126,6 +126,12 @@ export interface CordisCatalogPolicy {
   readonly inheritedServices: readonly InheritedEntry[]
   /** Maximum rendered characters per runtime type declaration. */
   readonly runtimeDeclarationMaxChars?: number
+  /**
+   * Repository-relative source files whose declarations never join the runtime type closure. Generated bindings
+   * belong here: they sit on no Service or Event signature, and one that exports a name a repository type also
+   * uses would make the name ambiguous and silently drop the repository type from the catalog.
+   */
+  readonly runtimeTypeSourceExclusions?: ReadonlySet<string>
 }
 
 /** Complete model-level Cordis projection used by every text renderer. */
@@ -340,6 +346,7 @@ export class CordisCatalogProjector {
       if (declaration.face !== this.face.face
         || (!/^packages\/[^/]+\/[^/]+\/src\/.+\.tsx?$/.test(declaration.location.file)
           && !(declaration.kind === 'enum' && /^vendor\/[^/]+\/src\/.+\.ts$/.test(declaration.location.file)))) continue
+      if (this.policy.runtimeTypeSourceExclusions?.has(declaration.location.file)) continue
       if (declarations.has(declaration.name)) {
         ambiguous.add(declaration.name)
         continue

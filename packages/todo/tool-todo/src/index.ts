@@ -118,6 +118,7 @@ function sameTodoList(left: readonly TodoItem[], right: readonly TodoItem[]): bo
  * @returns the latest `todo/write` list, or `undefined` before the first write.
  */
 function latestWrittenTodos(session: Session): TodoItem[] | undefined {
+  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
   return session.snapshotEvents().findLast(event => event.type === 'todo/write')?.data.todos
 }
 

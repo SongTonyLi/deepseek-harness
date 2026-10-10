@@ -1,0 +1,23 @@
+- id: session-persistence-jsonl
+  config:
+    root: !!js "ctx.get('profileContext').cwd + '/.sessions'"
+    compression: none
+- id: session-title-llm
+  disabled: true
+# Keep the container probe off the host so the run does not depend on an installed `container` CLI.
+- id: sandbox-apple-container
+  name: '@deepseek-ai/dsh-sandbox-apple-container'
+  config:
+    backend: local
+    executable: './missing-snapshot-container'
+# The same keyless external provider and Codex-shaped delegation tool as the
+# headless product-subagent-result-diagnostic scenario.
+- insert:
+    - id: subagent-result-diagnostic
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/subagent-result-diagnostic.ts'
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: snapshot-diagnostic
+        toolName: subagent_codex
+        maxDepth: provider-managed

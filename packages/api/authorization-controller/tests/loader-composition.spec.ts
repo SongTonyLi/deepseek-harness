@@ -91,7 +91,8 @@ describe('the sign-in surface in a real composition', () => {
       key: 'llm-pi-ai/openai-codex',
       scope: 'llm-pi-ai',
       id: 'openai-codex',
-      label: 'OpenAI Codex',
+      // pi-ai owns the display name; its 1.x line reports 'OpenAI Codex (legacy)'.
+      label: expect.stringContaining('OpenAI Codex'),
       inFlight: false,
       configured: false,
     })

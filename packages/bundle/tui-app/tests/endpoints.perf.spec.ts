@@ -34,7 +34,7 @@ describe('TUI measurement cards', () => {
   it('card C: one burst of a 20k live reply lexes the closed prefix once', () => {
     const { highlight, counter } = countingHighlighter()
     const block = new AssistantBlock({ ...theme, codeHighlight: highlight }, 1)
-    const fence = `${'```ts\n'}${Array.from({ length: 200 }, (_, index) => `const v${String(index)} = ${String(index)}`).join('\n')}\n\`\`\`\n\n`
+    const fence = `\`\`\`ts\n${Array.from({ length: 200 }, (_, index) => `const v${String(index)} = ${String(index)}`).join('\n')}\n\`\`\`\n\n`
     const tail = 'word '.repeat(4_000)
     const text = `${fence}${tail}`
     expect(text.length).toBeGreaterThan(20_000)
