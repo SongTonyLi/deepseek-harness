@@ -521,9 +521,11 @@ export interface SessionHost {
   observe(id: SessionId, options?: { readonly liveOnly?: boolean }): Promise<BoundSession>
   /**
    * Open a temporary side agent for `/btw`, seeded with every event `parent`
-   * has logged so far, an unfinished turn included. It runs on the parent's
-   * current model with read-only tools, records the parent only as lineage,
-   * and appends nothing to the parent's log; `dispose` ends it.
+   * has logged so far, an unfinished turn included. It starts with no pending
+   * input: prompts and context still queued for the parent stay the parent's.
+   * It runs on the parent's current model with read-only tools, records the
+   * parent only as lineage, and appends nothing to the parent's log; `dispose`
+   * ends it.
    * @param parent - the session the side agent is opened from.
    */
   aside(parent: BoundSession): Promise<BoundSession>

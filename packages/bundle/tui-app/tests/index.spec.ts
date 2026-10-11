@@ -75,6 +75,13 @@ async function bench(
     if (options.resumeHeader !== undefined && String(id) === 'session-old') {
       session.append('request/header', { header: options.resumeHeader, reason: 'initial' })
     }
+    // A live Agent's inbox is the durable fold of every splice in its log, a seed's included.
+    const inbox = createInboxStub()
+    for (const event of seed ?? []) {
+      if (event.type === 'agent/inbox/spliced') {
+        inbox.splice(event.data.target, event.data.start, event.data.removedCount ?? 0, [...event.data.inserted])
+      }
+    }
     const agent: Agent = {
       id: session.id,
       options: {
@@ -83,7 +90,7 @@ async function bench(
         ...agentOptions?.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
       },
       session,
-      inbox: createInboxStub(),
+      inbox,
       status: 'idle',
       ctx: ownerCtx,
       cancel: () => { observed.cancels += 1; observed.order.push('cancel') },
@@ -555,6 +562,29 @@ describe('tui runner', () => {
     typeLine(observed.terminal, '/parent')
     await settled()
     expect(observed.order.slice(start)).toEqual([`observe:${String(root)}`, 'release-observation', 'dispose'])
+  })
+
+  it('starts a /btw side agent without the working session\'s queued prompts and context', async () => {
+    const logged: SessionEvent[] = []
+    const { ctx, observed } = await bench({ observed: logged })
+    apply(ctx, config())
+    await settled()
+    const root = observed.created[0]?.sessionId
+    const agent = root === undefined ? undefined : ctx.agents.get(root)
+    if (agent === undefined) throw new Error('the runner published no agent')
+    const queued = createUserMessage({ content: [{ type: 'text', text: 'create a PR' }], source: { kind: 'user' } })
+    const injected = createUserMessage({ content: [{ type: 'text', text: 'job bash-1 finished' }], source: { kind: 'user' } })
+    agent.session.append('turn/start', { turn: 1 })
+    agent.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [queued] })
+    agent.session.append('agent/inbox/spliced', { target: 'next-step', start: 0, inserted: [injected] })
+    logged.push(...agent.session.ownEvents())
+    typeLine(observed.terminal, '/btw what now')
+    await settled()
+    const side = observed.created[1]
+    expect(side?.seed?.filter(event => event.type === 'agent/inbox/spliced')).toHaveLength(2)
+    const sideAgent = side === undefined ? undefined : ctx.agents.get(side.sessionId)
+    expect(sideAgent?.inbox.nextTurn).toEqual([])
+    expect(sideAgent?.inbox.nextStep).toEqual([])
   })
 
   it('reports a /btw side agent that has no query engine to read the session from', async () => {
