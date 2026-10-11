@@ -521,9 +521,11 @@ export interface SessionHost {
   observe(id: SessionId, options?: { readonly liveOnly?: boolean }): Promise<BoundSession>
   /**
    * Open a temporary side agent for `/btw`, seeded with every event `parent`
-   * has logged so far, an unfinished turn included. It runs on the parent's
-   * current model with read-only tools, records the parent only as lineage,
-   * and appends nothing to the parent's log; `dispose` ends it.
+   * has logged so far, an unfinished turn included. It starts with no pending
+   * input: prompts and context still queued for the parent stay the parent's.
+   * It runs on the parent's current model with read-only tools, records the
+   * parent only as lineage, and appends nothing to the parent's log; `dispose`
+   * ends it.
    * @param parent - the session the side agent is opened from.
    */
   aside(parent: BoundSession): Promise<BoundSession>
@@ -1344,6 +1346,12 @@ export class TuiApp {
   private async switchSession(open: () => Promise<BoundSession>, verb: string): Promise<void> {
     if ([this.bound, ...this.parents].some(bound => bound.agent.status === 'running')) {
       this.notice('stop the running turn (Esc twice) before switching sessions', 'error')
+      return
+    }
+    const live = this.liveChainJobs()
+    if (live.length > 0) {
+      // Releasing a session ends its jobs, so their results would never reach its log.
+      this.notice(`wait for or stop the background jobs still running (${live.map(job => job.id).join(', ')}) before switching sessions · /jobs lists them`, 'error')
       return
     }
     if (this.compacting !== undefined) {
@@ -2204,6 +2212,20 @@ export class TuiApp {
     // A kill the model requested is answered by its own `job_kill` result, so
     // only a settlement nobody waited on is certain to reach the Agent.
     this.showToast(settledToast(job, !event.awaited && event.cause === 'producer'))
+  }
+
+  /**
+   * The background jobs still running for the bound session and every session
+   * its views were entered from. A job a running call registered for itself
+   * is that call's own work and is left out.
+   * @returns the live jobs, bound session first.
+   */
+  private liveChainJobs(): JobView[] {
+    const jobs = this.deps.ctx.get('jobs')
+    if (jobs === undefined) return []
+    return [this.bound, ...this.parents]
+      .flatMap(bound => jobs.list(bound.agent.session.id))
+      .filter(job => isLive(job) && !this.backgrounder.isInner(job.id))
   }
 
   /**

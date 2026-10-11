@@ -34,6 +34,12 @@ const ESCAPE = '\u001b'
 /** Mouse press and release reports, SGR-encoded, as the tui app turns them on and off. */
 const MOUSE_ON = '\u001b[?1000h\u001b[?1006h'
 const MOUSE_OFF = '\u001b[?1006l\u001b[?1000l'
+/**
+ * The full-screen reader's position readout over a one-turn session. Unlike
+ * the ` ● READER ` chip, which a pinned prompt row replaces once the turn
+ * panel scrolls, the readout is drawn at every width and scroll position.
+ */
+const READER_READOUT = 'turn 1/1 · row '
 
 function runScript(cwd: string, args: readonly string[], steps: readonly Step[]): Promise<Run> {
   return runTuiScript(cwd, args, steps, configPath)
@@ -76,7 +82,7 @@ describe('tui profile keyless smoke', () => {
         // Closing restores the conversation's own screen rather than drawing
         // it again, so the step that follows walks a section: what the
         // terminal writes next is the conversation answering a key.
-        { marker: ' ● READER ', keys: `${ESCAPE}${SHIFT_UP}` },
+        { marker: READER_READOUT, keys: `${ESCAPE}${SHIFT_UP}` },
         { marker: ' ● READ ', keys: '' },
       ])
       expect(first.exitCode, `stderr:\n${first.stderr}\nstdout:\n${first.stdout}`).toBe(0)
@@ -92,7 +98,6 @@ describe('tui profile keyless smoke', () => {
       // full-screen surface that takes the terminal from the conversation.
       expect(first.stdout).toContain(' ● READ ')
       expect(first.stdout).toContain('Esc input')
-      expect(first.stdout).toContain(' ● READER ')
       // It opened on the section the walk held, so the turn panel owns the
       // keyboard and the readout states how far into that turn the reading is.
       // The legend takes the widest of its steps the width holds.
@@ -105,7 +110,8 @@ describe('tui profile keyless smoke', () => {
       expect(takes).toBeGreaterThan(-1)
       expect(first.raw.indexOf('\u001b[?1049l', takes)).toBeGreaterThan(takes)
       // The conversation is underneath it, answering the walk again.
-      const reader = first.stdout.indexOf(' ● READER ')
+      const reader = first.stdout.indexOf(READER_READOUT)
+      expect(reader).toBeGreaterThan(-1)
       expect(first.stdout.indexOf(' ● READ ', reader)).toBeGreaterThan(reader)
       const saved = /--resume (session-[\w-]+)/u.exec(first.stderr)
       expect(saved, first.stderr).not.toBeNull()
@@ -159,7 +165,9 @@ describe('tui profile keyless smoke', () => {
       expect(enabled).toBeGreaterThan(-1)
       const reader = run.raw.indexOf('\u001b[?1049h', enabled)
       expect(run.raw.indexOf('\u001b[?1049l', reader)).toBeGreaterThan(reader)
-      expect(run.stdout.indexOf(' ● READ ', run.stdout.indexOf(' ● READER '))).toBeGreaterThan(-1)
+      const opened = run.stdout.indexOf(READER_READOUT)
+      expect(opened).toBeGreaterThan(-1)
+      expect(run.stdout.indexOf(' ● READ ', opened)).toBeGreaterThan(opened)
       // No report reached the editor as typed text.
       expect(run.stdout).not.toMatch(/\[<0;\d+;\d+[Mm]/u)
       expect(run.raw.lastIndexOf(MOUSE_OFF)).toBeGreaterThan(run.raw.lastIndexOf(MOUSE_ON))

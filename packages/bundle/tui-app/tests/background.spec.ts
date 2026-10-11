@@ -203,6 +203,28 @@ describe('TuiApp Ctrl+B background handoff', () => {
     expect(await test.screen()).not.toContain('Background jobs')
   })
 
+  it('refuses a session switch while a background job runs, and switches once it settles', async () => {
+    const test = await bench({ running: true, before: composeJobs })
+    const held = heldTool(test.ctx, 'slow')
+    const outcome = dispatch(test, 'slow', 'sleep 60', new AbortController().signal)
+    await flush(test)
+    test.terminal.type(KEY.ctrlB)
+    await outcome
+    test.setStatus('idle')
+    await flush(test)
+    const before = test.hostCalls.length
+    typeLine(test.terminal, '/new')
+    await flush(test)
+    expect(test.hostCalls).toHaveLength(before)
+    expect(test.terminal.text()).toContain('wait for or stop the background jobs still running (tool-1) before switching')
+
+    held[0]?.finish('slept')
+    await flush(test)
+    typeLine(test.terminal, '/new')
+    await flush(test)
+    expect(test.hostCalls.slice(before)).toEqual(['create'])
+  })
+
   it('labels a moved call\'s job with its card headline', async () => {
     const test = await bench({ running: true, before: composeJobs })
     heldTool(test.ctx, 'slow')

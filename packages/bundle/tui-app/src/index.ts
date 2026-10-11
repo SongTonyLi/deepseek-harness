@@ -394,7 +394,7 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
       }
       const { seed, inheritedEventCount } = btwSeed(events)
       const model = resumeModelSelection(session.requestHeader(), parent.selection.current ?? defaultModel.currentSelection())
-      return bind((selection, installSelection) => {
+      const aside = await bind((selection, installSelection) => {
         selection.current = model
         // No parent Agent and no subagent catalog entry: the working Agent
         // neither owns nor lists the side agent, and the side agent is not
@@ -416,6 +416,11 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
           },
         })
       }, [])
+      // The seed's inbox splices carry the parent's queued prompts and context,
+      // which the parent's own Agent claims. Left pending here, the side agent's
+      // first turn would claim them ahead of the user's question.
+      aside.agent.inbox.clear()
+      return aside
     },
     observe: async (id, options) => {
       const resident = agents.get(id)
