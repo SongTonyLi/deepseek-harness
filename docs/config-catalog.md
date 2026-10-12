@@ -879,7 +879,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-auto-review`
 
 - `inject`: `approval` · `llm` · `permissionPresets` · `sessions` · `tools` · `workingDirectory`
-- `source`: [`packages/experimental/auto-review/src/index.ts:144`](../packages/experimental/auto-review/src/index.ts)
+- `source`: [`packages/experimental/auto-review/src/index.ts:151`](../packages/experimental/auto-review/src/index.ts)
 
 ```ts config-catalog
 /** Generation and JSON retry settings for per-call reviewer requests. */

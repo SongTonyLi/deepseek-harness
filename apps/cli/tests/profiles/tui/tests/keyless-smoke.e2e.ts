@@ -119,11 +119,12 @@ describe('tui profile keyless smoke', () => {
 
       const viaPicker = await runScript(cwd, [], [
         { marker: 'cli-mock/cli-mock', keys: `/resume${ENTER}` },
-        { marker: 'Switch to a session', keys: `${DOWN}${ENTER}` },
+        { marker: 'Switch to a session', keys: ENTER },
         { marker: `resumed: session ${sessionId}`, keys: '' },
       ])
       expect(viaPicker.exitCode, `stderr:\n${viaPicker.stderr}\nstdout:\n${viaPicker.stdout}`).toBe(0)
       expect(viaPicker.stdout).toContain('Switch to a session')
+      expect(viaPicker.stdout).not.toContain(' · current')
       expect(viaPicker.stdout).toContain(`resumed: session ${sessionId}`)
       expect(viaPicker.stdout).toContain('❯ I want to quickly do!')
       expect(viaPicker.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')

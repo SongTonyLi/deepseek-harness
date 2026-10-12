@@ -44,7 +44,7 @@ function sessionList(ctx: Context): void {
 }
 
 describe('session commands', () => {
-  it('resumes through the picker, binds the selected session, and releases the previous one', async () => {
+  it.each(['/resume', '/sessions'])('%s defaults to the newest other session and releases the previous one', async (command) => {
     const test = await bench({
       before: sessionList,
       openedHistory: [{
@@ -54,11 +54,11 @@ describe('session commands', () => {
         data: createUserMessage({ content: [{ type: 'text', text: 'earlier prompt' }], source: { kind: 'user' } }),
       }] as never[],
     })
-    typeLine(test.terminal, '/resume')
+    typeLine(test.terminal, command)
     await test.settle()
     expect(test.terminal.text()).toContain('Older chat')
     expect(test.terminal.text()).toContain('/elsewhere')
-    test.terminal.type(KEY.down)
+    expect(test.terminal.text()).not.toContain(' · current')
     test.terminal.type(KEY.enter)
     await test.settle()
     expect(test.hostCalls).toEqual(['resume:session-older'])
@@ -107,12 +107,8 @@ describe('session commands', () => {
     expect(await test.screen()).not.toContain('Reasoning effort ·')
   })
 
-  it('keeps the current session when the picker picks it or is dismissed', async () => {
+  it('keeps the current session when the picker is dismissed', async () => {
     const test = await bench({ before: sessionList })
-    typeLine(test.terminal, '/sessions')
-    await test.settle()
-    test.terminal.type(KEY.enter)
-    await test.settle()
     typeLine(test.terminal, '/sessions')
     await test.settle()
     test.terminal.type(KEY.escape)

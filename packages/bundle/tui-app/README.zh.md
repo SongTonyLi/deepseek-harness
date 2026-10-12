@@ -36,7 +36,7 @@ dsh tui --resume <session-id>             # continue an earlier session
 dsh tui --no-open                         # print sign-in URLs without opening a browser
 ```
 
-退出时应用在 stderr 为当时绑定的会话打印 `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>`。恢复的会话会在接受输入前先重绘其持久化历史，并沿用该会话上次使用的模型；日志里还没有请求头时则使用启动默认模型。在终端内，`/resume` 与 `/sessions` 打开覆盖所有持久化根会话的同一个选择器，并恢复选中的先前会话，`/new` 使用启动默认模型开始新的空会话，而 `/clear` 开始新的空会话并保留当前模型和推理强度；先前会话仍留在磁盘上可用 `/resume` 恢复，`/fork` 把当前会话复制到其最后一个完成轮次并作为新会话，切割点与浏览器的 fork 相同。切换会释放先前的 Agent 并重绘下一个会话的对话记录。
+退出时应用在 stderr 为当时绑定的会话打印 `dsh: session <id> saved; resume with: dsh --profile tui --resume <id>`。恢复的会话会在接受输入前先重绘其持久化历史，并沿用该会话上次使用的模型；日志里还没有请求头时则使用启动默认模型。在终端内，`/resume` 与 `/sessions` 打开同一个选择器，按从新到旧列出当前会话以外的持久化根会话，并恢复选中的先前会话，`/new` 使用启动默认模型开始新的空会话，而 `/clear` 开始新的空会话并保留当前模型和推理强度；先前会话仍留在磁盘上可用 `/resume` 恢复，`/fork` 把当前会话复制到其最后一个完成轮次并作为新会话，切割点与浏览器的 fork 相同。切换会释放先前的 Agent 并重绘下一个会话的对话记录。
 
 ### 屏幕布局
 

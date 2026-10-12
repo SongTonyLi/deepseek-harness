@@ -20,12 +20,10 @@ export interface SessionChoice {
   title: string | undefined
   cwd: string | undefined
   createdAt: number
-  /** Whether the session is the one the terminal drives right now. */
-  current: boolean
 }
 
 /**
- * List persisted sessions newest first, with their titles; subagent sessions are excluded.
+ * List persisted sessions newest first, with their titles; the current session and subagents are excluded.
  *
  * Titles come from the live `title` projection or the durable projection
  * cache, the same values the browser list uses. The picker does not load
@@ -34,7 +32,7 @@ export interface SessionChoice {
  * listing after the cache has the row.
  *
  * @param ctx - plugin context carrying the session query engine.
- * @param currentId - the session the terminal drives, marked in the result.
+ * @param currentId - the session the terminal drives, excluded from the result.
  * @param signal - cancels the listing.
  * @returns the choices, or an empty list when no query engine is composed.
  */
@@ -42,15 +40,14 @@ export async function listSessionChoices(ctx: Context, currentId: SessionId, sig
   const query = ctx.get('sessionQuery')
   if (query === undefined) return []
   const records = (await query.listSessions(signal))
-    // Forks keep their parent lineage and stay listed; only subagent sessions are hidden, as in the browser sidebar.
-    .filter(record => record.header.origin === undefined)
+    // Forks remain switchable regardless of parent lineage.
+    .filter(record => record.header.origin === undefined && record.header.id !== currentId)
     .sort((left, right) => right.header.createdAt - left.header.createdAt)
   return records.map(record => ({
     id: record.header.id,
     title: sessionListTitle(ctx, record.header),
     cwd: record.header.cwd,
     createdAt: record.header.createdAt,
-    current: record.header.id === currentId,
   }))
 }
 
@@ -62,7 +59,6 @@ export async function listSessionChoices(ctx: Context, currentId: SessionId, sig
 export function describeSession(choice: SessionChoice): { label: string; description: string } {
   const parts = [formatTimestamp(choice.createdAt)]
   if (choice.cwd !== undefined) parts.push(choice.cwd)
-  if (choice.current) parts.push('current')
   return { label: choice.title ?? choice.id, description: parts.join(' · ') }
 }
 

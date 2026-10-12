@@ -4414,7 +4414,7 @@ export class TuiApp {
     const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Switch to a session', items), signal)
     if (picked === undefined || this.operationAbandoned(bound, signal)) return
     const target = choices.find(choice => choice.id === picked.value)
-    if (target === undefined || target.current) return
+    if (target === undefined) return
     await this.switchSession(() => this.deps.host.resume(target.id), 'resumed')
   }
 
