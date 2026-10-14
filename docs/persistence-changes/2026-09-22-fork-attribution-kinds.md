@@ -27,20 +27,20 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-10-05-working-directory-attribution"
-    after: "3657a134850d96e4ca1c9f54bae79a5bb8f6b40eea412d8f5f362c6e9292d3bb"
+    previous: "2026-10-13-user-rpc-principal"
+    after: "8f46cfe00d9b7cef2188da411a30d9088ab0a376ba36f523839c48e5375adc6f"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-10-05-working-directory-attribution"
-    after: "9ba59a2a9237a9f5eebb860f46c08c1f5f719d26712ee8579eda8bf885bc7838"
+    previous: "2026-10-13-user-rpc-principal"
+    after: "b3e4411741ee4e0ec5ce40eb2054bac73e66c4586161748c3896ddbf41a0eac1"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-10-07-title-reasoning-effort"
-    after: "e8597919599b39fdd41b62528bdfa009817050cc821d109982b408a773b9844b"
+    previous: "2026-10-13-user-rpc-principal"
+    after: "a4ccffb0fe337434bfbc4d054d092e0a97c0bbf2049b3a893e75e2434b3a77c1"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-10-05-working-directory-attribution"
-    after: "bbc82c00f7d5080f24f5038c38ef9502030af02572d1c1deb47c6be43f7e39ab"
+    previous: "2026-10-13-user-rpc-principal"
+    after: "ecff517267d800dd81577a288bf654e14272d2eef1d00003fdb77144cd1b079d"
     decision: same-version
 ```
 

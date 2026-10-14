@@ -29,6 +29,7 @@
  */
 
 import { Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
+import { maskCredentialText } from '@deepseek-ai/dsh-client-ui-secret-mask'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { paintKeys } from './key-chips.ts'
@@ -368,7 +369,8 @@ export class UserBlock implements Component, UserSection {
     const palette = this.theme.palette
     const { marked, content: inner } = focusFrame(width, this.highlight)
     const lines = this.drawn.get(`${String(width)}:${String(marked)}`, () => {
-      const body = wrapTextWithAnsi(this.text, Math.max(1, inner - 2))
+      // Recognized credentials draw masked; the section rows keep the sent text for copying.
+      const body = wrapTextWithAnsi(maskCredentialText(this.text), Math.max(1, inner - 2))
       if (this.kind === 'injected') {
         return ['', ...body.map((line, index) => bandRow(palette, palette.dim(`${index === 0 ? USER_GLYPH : ' '} ${line}`), inner, palette.injectedBand))]
       }

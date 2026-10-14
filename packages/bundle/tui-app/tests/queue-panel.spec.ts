@@ -53,6 +53,16 @@ describe('follow-up panel', () => {
     expect(shown).toContain('↑↓ · Enter steer · E edit · Esc input')
   })
 
+  it('draws a credential in a queued follow-up masked while the row keeps the sent text', () => {
+    const key = `sk-${'a1b2c3d4e5f6g7h8i9j0'}`
+    const rows = queuePanelRows([], [message(`use ${key} now`)])
+    const shown = renderQueuePanel(rows, { palette: createPalette(false), width: 60 })
+    expect(shown).toContain('○ use sk-a1b2c')
+    expect(shown).toContain('*')
+    expect(shown).not.toContain(key)
+    expect(rows[0]?.text).toBe(`use ${key} now`)
+  })
+
   it('draws nothing for an empty inbox', () => {
     expect(renderQueuePanel([], { palette: createPalette(true), width: 40 })).toBe('')
   })

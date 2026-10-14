@@ -29,6 +29,16 @@ describe('blocks', () => {
     block.invalidate()
   })
 
+  it('draws a recognized credential masked while the section keeps the sent text', () => {
+    const key = `sk-${'a1b2c3d4e5f6g7h8i9j0'}`
+    const block = new UserBlock(theme, `use ${key} now`, 1)
+    const drawn = block.render(60).join('\n')
+    expect(drawn).toContain('use sk-a1b2c')
+    expect(drawn).toContain('*')
+    expect(drawn).not.toContain(key)
+    expect(block.parts()).toEqual([{ kind: 'user', rows: [`use ${key} now`] }])
+  })
+
   it('lays every prompt row on the background band, the leading blank line left bare', () => {
     const block = new UserBlock({ ...theme, palette: createPalette(true) }, 'one two three', 1)
     const lines = block.render(10)

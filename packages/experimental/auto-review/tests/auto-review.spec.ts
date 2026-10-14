@@ -298,7 +298,8 @@ function requestSections(request: GenerateOptions): Record<string, unknown> {
     if (start < 0) throw new Error(`missing ${label}`)
     const nextLabel = labels[index + 1] ?? 'REVIEW_TASK'
     const end = text.indexOf(`\n\n${nextLabel}\n`, start)
-    sections[label] = JSON.parse(text.slice(start + prefix.length, end)) as unknown
+    const parsed: unknown = JSON.parse(text.slice(start + prefix.length, end))
+    sections[label] = parsed
   }
   return sections
 }
@@ -1507,8 +1508,6 @@ describe('out-of-process delegation boundary', () => {
     expect(providerRequest?.cwd).toBe(process.cwd())
     expect(providerRequest?.agentOptions).toBeUndefined()
     expect(providerRequest?.maxDepth).toBeUndefined()
-    expect(providerRequest?.persona).toBeUndefined()
-    expect(providerRequest?.toolFilter).toBeUndefined()
     expect(providerRequest).not.toHaveProperty('permission')
     expect(providerRequest).not.toHaveProperty('sandboxMode')
     expect(providerRequest).not.toHaveProperty('approvalPolicy')

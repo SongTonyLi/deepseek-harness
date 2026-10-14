@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo"
+  },
+  "files": [
+    "src/client/credential-formats.ts",
+    "src/client/credential-masks.ts",
+    "src/client/credential-scanner.ts",
+    "src/client/format-tables.ts",
+    "src/index.ts"
+  ]
+}
