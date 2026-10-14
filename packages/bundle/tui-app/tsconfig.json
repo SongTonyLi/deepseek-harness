@@ -27,6 +27,9 @@
       "path": "../../boot/plugin-manager"
     },
     {
+      "path": "../../client/ui-secret-mask/tsconfig.host.json"
+    },
+    {
       "path": "../../compaction/compaction"
     },
     {

@@ -8,7 +8,7 @@ import { ToolCallId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
 import ToolRuntime, { defineTool, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { movedResultText } from '../src/background.ts'
+import { movedJobId, movedResultText } from '../src/background.ts'
 import { KEY, bench, type Bench } from './bench.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
@@ -96,6 +96,18 @@ function textOf(content: readonly ContentBlock[]): string {
   return content.map(block => block.type === 'text' ? block.text : '').join('')
 }
 
+/**
+ * The job a moved call's result names. The registry issues job ids, so the spec
+ * reads the id back from the result the Agent receives.
+ * @param content - the moved call's result blocks.
+ * @returns the job id the result names.
+ */
+function jobIdOf(content: readonly ContentBlock[]): JobId {
+  const id = movedJobId(content)
+  if (id === undefined) throw new Error('the call was not moved to a background job')
+  return JobId(id)
+}
+
 /** Let queued microtasks and the throttled renderer run. */
 async function flush(test: Bench): Promise<void> {
   await test.settle()
@@ -126,27 +138,28 @@ describe('TuiApp Ctrl+B background handoff', () => {
 
     test.terminal.type(KEY.ctrlB)
     const result = await outcome
+    const id = jobIdOf(result.content)
     expect(result.isError).toBe(true)
-    expect(textOf(result.content)).toBe(movedResultText(JobId('tool-1')))
+    expect(textOf(result.content)).toBe(movedResultText(id))
     await flush(test)
-    expect(test.terminal.text()).toContain('◇ slow moved to the background as tool-1 · /jobs lists it')
+    expect(test.terminal.text()).toContain(`◇ slow moved to the background as ${id} · /jobs lists it`)
     const screen = await screenBelowToast(test)
-    expect(screen).toContain('◇ 1 in background · tool-1 slow 0s · /jobs')
+    expect(screen).toContain(`◇ 1 in background · ${id} slow 0s · /jobs`)
     expect(screen).not.toContain('Ctrl+B background')
     expect(screen).not.toContain('elsewhere')
     expect(held[0]?.signal.aborted).toBe(false)
     // The registry stamps jobs with the process clock; the live line measures against the app's.
-    test.setNow(test.ctx.jobs.get(JobId('tool-1'), test.agent.id).startedAt + 65_000)
+    test.setNow(test.ctx.jobs.get(id, test.agent.id).startedAt + 65_000)
     test.tick(0)
-    expect(await test.screen()).toContain('◇ 1 in background · tool-1 slow 1m05s · /jobs')
+    expect(await test.screen()).toContain(`◇ 1 in background · ${id} slow 1m05s · /jobs`)
 
     held[0]?.finish('built ok')
     await flush(test)
     expect(test.calls.injections.map(message => textOf(message.content))).toEqual([
-      'background job tool-1 (tool: slow) finished [status: completed]. Read its output with job_output.',
+      `background job ${id} (tool: slow) finished [status: completed]. Read its output with job_output.`,
     ])
-    expect(test.terminal.text()).toContain('◇ tool-1 completed · slow · agent notified')
-    expect(test.ctx.jobs.read(JobId('tool-1'), test.agent.id).result).toBe('built ok')
+    expect(test.terminal.text()).toContain(`◇ ${id} completed · slow · agent notified`)
+    expect(test.ctx.jobs.read(id, test.agent.id).result).toBe('built ok')
     expect(await test.screen()).not.toContain('in background')
   })
 
@@ -168,9 +181,9 @@ describe('TuiApp Ctrl+B background handoff', () => {
     expect(await test.screen()).not.toContain('in background')
 
     test.terminal.type(KEY.ctrlB)
-    await outcome
+    const id = jobIdOf((await outcome).content)
     await flush(test)
-    expect(await screenBelowToast(test)).toContain('◇ 1 in background · tool-1 bash 0s · /jobs')
+    expect(await screenBelowToast(test)).toContain(`◇ 1 in background · ${id} bash 0s · /jobs`)
 
     typeLine(test.terminal, '/jobs')
     await flush(test)
@@ -181,7 +194,7 @@ describe('TuiApp Ctrl+B background handoff', () => {
     test.terminal.type(KEY.enter)
     await flush(test)
     screen = await test.screen()
-    expect(screen).toContain('Job tool-1')
+    expect(screen).toContain(`Job ${id}`)
     expect(screen).toContain('compiling 3 files')
 
     test.terminal.type(KEY.escape)
@@ -189,15 +202,15 @@ describe('TuiApp Ctrl+B background handoff', () => {
     test.terminal.type(KEY.ctrlK)
     await flush(test)
     expect(held[0]?.signal.aborted).toBe(true)
-    expect(test.terminal.text()).toContain('◇ tool-1 killed · bash')
-    expect(test.ctx.jobs.get(JobId('tool-1'), test.agent.id)).toMatchObject({ status: 'killed', detail: 'stopped by the user' })
+    expect(test.terminal.text()).toContain(`◇ ${id} killed · bash`)
+    expect(test.ctx.jobs.get(id, test.agent.id)).toMatchObject({ status: 'killed', detail: 'stopped by the user' })
     expect(await screenBelowToast(test)).not.toContain('in background')
     expect(test.calls.injections.map(message => textOf(message.content))).toEqual([
-      'background job tool-1 (tool: bash) finished [status: killed, stopped by the user]. Read its output with job_output.',
+      `background job ${id} (tool: bash) finished [status: killed, stopped by the user]. Read its output with job_output.`,
     ])
     test.terminal.type(KEY.ctrlK)
     await flush(test)
-    expect(test.terminal.text()).toContain('tool-1 already finished')
+    expect(test.terminal.text()).toContain(`${id} already finished`)
     test.terminal.type(KEY.escape)
     await flush(test)
     expect(await test.screen()).not.toContain('Background jobs')
@@ -209,14 +222,14 @@ describe('TuiApp Ctrl+B background handoff', () => {
     const outcome = dispatch(test, 'slow', 'sleep 60', new AbortController().signal)
     await flush(test)
     test.terminal.type(KEY.ctrlB)
-    await outcome
+    const id = jobIdOf((await outcome).content)
     test.setStatus('idle')
     await flush(test)
     const before = test.hostCalls.length
     typeLine(test.terminal, '/new')
     await flush(test)
     expect(test.hostCalls).toHaveLength(before)
-    expect(test.terminal.text()).toContain('wait for or stop the background jobs still running (tool-1) before switching')
+    expect(test.terminal.text()).toContain(`wait for or stop the background jobs still running (${id}) before switching`)
 
     held[0]?.finish('slept')
     await flush(test)
@@ -232,8 +245,8 @@ describe('TuiApp Ctrl+B background handoff', () => {
     const outcome = dispatch(test, 'slow', 'deploy', new AbortController().signal)
     await flush(test)
     test.terminal.type(KEY.ctrlB)
-    await outcome
-    expect(test.ctx.jobs.get(JobId('tool-1'), test.agent.id).label).toBe('slow run deploy')
+    const id = jobIdOf((await outcome).content)
+    expect(test.ctx.jobs.get(id, test.agent.id).label).toBe('slow run deploy')
   })
 
   it('stops a moved call with its turn without waking the Agent', async () => {
@@ -243,7 +256,7 @@ describe('TuiApp Ctrl+B background handoff', () => {
     const outcome = dispatch(test, 'slow', 'watch', turn.signal)
     await flush(test)
     test.terminal.type(KEY.ctrlB)
-    await outcome
+    const id = jobIdOf((await outcome).content)
     // A call the user left in the foreground stops with the turn as every call does.
     const foreground = dispatch(test, 'slow', 'lint', turn.signal)
     await flush(test)
@@ -254,7 +267,7 @@ describe('TuiApp Ctrl+B background handoff', () => {
     expect((await foreground).isError).toBe(true)
     expect(held.map(call => call.signal.aborted)).toEqual([true, true])
     expect(test.terminal.text()).toContain('stopping the turn… 1 background call(s) from this turn stop with it')
-    expect(test.ctx.jobs.get(JobId('tool-1'), test.agent.id)).toMatchObject({ status: 'killed', detail: 'stopped with the turn that called it' })
+    expect(test.ctx.jobs.get(id, test.agent.id)).toMatchObject({ status: 'killed', detail: 'stopped with the turn that called it' })
     expect(test.calls.injections).toEqual([])
   })
 
@@ -327,17 +340,19 @@ describe('TuiApp Ctrl+B background handoff', () => {
     const second = dispatch(test, 'slow', 'touch', new AbortController().signal)
     await flush(test)
     test.terminal.type(KEY.ctrlB)
-    await Promise.all([first, second])
+    const [failedCall, doneCall] = await Promise.all([first, second])
+    const failedId = jobIdOf(failedCall.content)
+    const doneId = jobIdOf(doneCall.content)
     await flush(test)
     expect(test.terminal.text()).toContain('◇ 2 calls moved to the background · /jobs lists them')
 
     failing[0]?.fail(new Error('network down\n  at fetch'))
     failing[1]?.finish('')
     await flush(test)
-    expect(test.ctx.jobs.get(JobId('tool-1'), test.agent.id)).toMatchObject({ status: 'failed', detail: 'network down' })
-    expect(test.ctx.jobs.read(JobId('tool-1'), test.agent.id).result).toBe('Error: network down\n  at fetch')
-    expect(test.ctx.jobs.get(JobId('tool-2'), test.agent.id).status).toBe('completed')
-    expect(test.ctx.jobs.read(JobId('tool-2'), test.agent.id).result).toBeUndefined()
+    expect(test.ctx.jobs.get(failedId, test.agent.id)).toMatchObject({ status: 'failed', detail: 'network down' })
+    expect(test.ctx.jobs.read(failedId, test.agent.id).result).toBe('Error: network down\n  at fetch')
+    expect(test.ctx.jobs.get(doneId, test.agent.id).status).toBe('completed')
+    expect(test.ctx.jobs.read(doneId, test.agent.id).result).toBeUndefined()
   })
 
   it('fails a moved call\'s job when a later around-dispatch wrapper rejects', async () => {
@@ -351,9 +366,9 @@ describe('TuiApp Ctrl+B background handoff', () => {
     const outcome = dispatch(test, 'slow', 'sync', new AbortController().signal)
     await flush(test)
     test.terminal.type(KEY.ctrlB)
-    await outcome
+    const id = jobIdOf((await outcome).content)
     gate.resolve(undefined)
     await flush(test)
-    expect(test.ctx.jobs.get(JobId('tool-1'), test.agent.id)).toMatchObject({ status: 'failed', detail: 'wrapper broke' })
+    expect(test.ctx.jobs.get(id, test.agent.id)).toMatchObject({ status: 'failed', detail: 'wrapper broke' })
   })
 })

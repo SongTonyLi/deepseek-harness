@@ -7,6 +7,7 @@
 import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { InboxTarget } from '@deepseek-ai/dsh-agent'
+import { maskCredentialText } from '@deepseek-ai/dsh-client-ui-secret-mask'
 import { BODY_MARGIN, bodyLine, bottomRule, fitLegend, topRule, type FrameTone } from './frame.ts'
 import { paintKeys } from './key-chips.ts'
 import { HINTS, QUEUE_ENTRY_HINT } from './keys.ts'
@@ -90,7 +91,8 @@ function followUpLines(text: string, room: number, glyph: string): string[] {
 /**
  * Render the pending prompts as a boxed follow-ups list. A focused panel
  * accents its held row and names enter, select/edit, and cancel; an unfocused
- * panel names the key that enters it.
+ * panel names the key that enters it. Recognized credentials draw masked, as
+ * sent user text does; the rows keep the raw text for editing and sending.
  * @param rows - pending prompts in claim order.
  * @param render - palette, terminal width, and optional selection.
  * @returns panel text, or the empty string when no prompt waits.
@@ -105,7 +107,7 @@ export function renderQueuePanel(rows: readonly QueuePanelRow[], render: QueuePa
   const room = Math.max(1, width - BODY_MARGIN)
   for (const [index, row] of rows.entries()) {
     const glyph = selected === index ? palette.accent(FOLLOW_UP_GLYPH) : FOLLOW_UP_GLYPH
-    for (const content of followUpLines(row.text, room, glyph)) {
+    for (const content of followUpLines(maskCredentialText(row.text), room, glyph)) {
       lines.push(bodyLine(content, width, palette, tone))
     }
   }

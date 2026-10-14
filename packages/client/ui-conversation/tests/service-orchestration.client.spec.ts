@@ -755,16 +755,17 @@ describe('sendSession submission echo', () => {
     await b.runtime.dispose()
   })
 
-  it('registers a subagent continuation echo and forwards its request identity', async () => {
+  it('echoes a subagent continuation and sends it under the echo request id', async () => {
     const b = await bench()
     const session = b.runtime.sessions.binding('s1')!.session
     const beginSubmission = vi.spyOn(session, 'beginSubmission')
     const prompt = vi.spyOn(session, 'prompt').mockResolvedValue({ ok: true, value: { accepted: true } })
-    await expect(b.root.sendSession(session, '继续', [], 'steer')).resolves.toEqual({ kind: 'success' })
-    expect(beginSubmission).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer', text: '继续' }))
-    const submitted = beginSubmission.mock.results[0]
-    const requestId = submitted?.type === 'return' ? submitted.value.requestId : undefined
-    expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: '继续' }], 'steer', undefined, requestId)
+    await expect(b.root.sendSession(session, '继续', [], 'queue')).resolves.toEqual({ kind: 'success' })
+    expect(beginSubmission).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mode: 'queue', text: '继续' }))
+    const echo = beginSubmission.mock.results[0]
+    const requestId = echo?.type === 'return' ? echo.value.requestId : undefined
+    expect(requestId).toEqual(expect.any(String))
+    expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: '继续' }], 'queue', undefined, requestId)
     await b.runtime.dispose()
   })
 })
