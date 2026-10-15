@@ -411,7 +411,7 @@ export async function bench(options: {
   fadeStepMs?: number
   /** Frames a streamed backlog drains over; `0`, the default, draws each delta as it arrives. */
   streamPaceFrames?: number
-  /** Frames a tool card's rows unroll over; `0`, the default, draws every row at once. */
+  /** Frames one full-width row of a tool card takes to flow out; `0`, the default, draws every card whole with no animation. */
   toolRevealFrames?: number
   /** Milliseconds each frame of every working animation lasts, which is also the spinner tick's period. */
   spinnerMs?: number

@@ -17,13 +17,14 @@
  * block is released through {@link StreamPacer.flushChannel} instead of
  * staying ahead of the reply.
  *
- * {@link RowReveal} applies the same release rule to the rows of a tool card,
- * which would otherwise appear in one frame after the text above it arrived
- * a few graphemes at a time.
+ * {@link CardFlow} draws a tool card the other way: not a share of a backlog
+ * per frame but a front that crosses the card's columns at a constant pace,
+ * so the card flows out row after row, word after word.
  *
- * Nothing here arms a timer or reads a clock: the application calls
- * {@link StreamPacer.frame} from its frame tick and {@link StreamPacer.flush}
- * wherever the stream's full text must be on screen.
+ * Nothing here arms a timer: the application calls {@link StreamPacer.frame}
+ * and {@link CardFlow.frame} from its frame tick and {@link StreamPacer.flush}
+ * wherever the stream's full text must be on screen. Only {@link CardFlow}
+ * reads a clock, the one it is given.
  * @module @deepseek-ai/dsh-tui-app/pace
  */
 
@@ -165,73 +166,170 @@ export class StreamPacer {
 }
 
 /**
- * Frames the rows a tool card has not drawn yet take to unroll by default.
- * Six frames at the 16 ms frame tick unroll an eight-row card preview in about
- * 100 ms, close to how far paced text trails the stream.
+ * Frames one full-width row of a tool card takes to flow out by default. Six
+ * frames at the 16 ms frame tick draw a row in about 100 ms, so an eight-row
+ * card of half-filled rows is out in about 400 ms and its pace stays the same
+ * whatever the card holds.
  */
 export const TOOL_REVEAL_FRAMES = 6
 
 /**
- * How many rows of a growing block are drawn, advanced on the application's
- * frame tick the same way {@link StreamPacer} releases text: each frame draws
- * `hidden / drainFrames` more rows, at least one, with the fractional part
- * carried to the next frame. The
- * block reports its full row count after every render and draws only the
- * first {@link RowReveal.shown} rows until the reveal catches up.
+ * Longest stretch of wall-clock time one {@link CardFlow.frame} advances the
+ * front by, in frames. A frame that ran late draws a few columns more, and a
+ * stalled event loop does not make the card jump to its end.
  */
-export class RowReveal {
-  private readonly drainFrames: number
-  private count: number
-  /** Rows the next frame may draw beyond its own share. */
-  private credit = 0
+const MAX_ADVANCE_FRAMES = 4
+
+/** Settings a {@link CardFlow} is built with. */
+export interface CardFlowOptions {
+  /** Frames one full-width row takes to flow out; at least 1. */
+  rowFrames: number
+  /** How long one frame lasts, in milliseconds. */
+  stepMs: number
+  /** Brightness levels a drawn column passes through; it leaves the trail after `steps * stepMs`. */
+  steps: number
+  /**
+   * The wall clock the front and the trail are measured against.
+   * @returns the current time in milliseconds.
+   */
+  now: () => number
+}
+
+/** A run of freshly drawn columns and how old it is. */
+export interface FlowBand {
+  /** First column of the run, counted over the card's rows from the first. */
+  start: number
+  /** Column after the run. */
+  end: number
+  /** Elapsed time since the run was drawn, in units of `stepMs`. */
+  age: number
+}
+
+/** The columns one frame drew and the instant it drew them. */
+interface DrawnBand {
+  start: number
+  end: number
+  /** When the frame ran, in milliseconds. */
+  bornAt: number
+  /** How long the frame's advance lasted, in milliseconds. */
+  span: number
+}
+
+/**
+ * The front of a tool card that flows out: how many columns of its rows are
+ * drawn, counted row after row from the first, and the columns drawn lately,
+ * which the card brightens from the terminal background by age. The front moves a fixed number of columns per
+ * unit of wall-clock time, so rows and the words in them come out at one pace
+ * however much the card holds and however late a frame runs.
+ *
+ * The pace is `width / (rowFrames * stepMs)` columns per millisecond, so a
+ * full-width row takes `rowFrames` frames. The front reads only the clock and
+ * the card's current column count; the call or result that grew the card never
+ * waits for it, and a card that grows while it flows is caught up with at the
+ * same pace.
+ */
+export class CardFlow {
+  private readonly options: CardFlowOptions
+  private front: number
+  /** When the front last advanced; absent while it has nothing to draw. */
+  private last: number | undefined
+  private bands: DrawnBand[] = []
 
   /**
-   * @param drainFrames - frames a hidden run takes to unroll; at least 1.
-   * @param shown - rows drawn before the first frame.
+   * @param options - the pace, the trail length, and the clock.
+   * @param shown - columns drawn before the first frame.
    */
-  constructor(drainFrames: number, shown: number) {
-    this.drainFrames = Math.max(1, drainFrames)
-    this.count = shown
+  constructor(options: CardFlowOptions, shown: number) {
+    this.options = { ...options, rowFrames: Math.max(1, options.rowFrames) }
+    this.front = shown
+    this.last = options.now()
   }
 
   /**
-   * Rows drawn right now.
-   * @returns the count, which may exceed the block's rows after {@link RowReveal.settle}.
+   * Columns drawn right now.
+   * @returns the whole columns, which may exceed the card's columns after {@link CardFlow.settle}.
    */
   shown(): number {
-    return this.count
+    return Math.floor(this.front)
   }
 
   /**
-   * Draw one frame's share of the rows still hidden.
-   * @param total - the block's full row count at its last render.
-   * @returns whether rows are still hidden after this frame.
+   * The drawn columns still colored toward their settled colors.
+   * @returns one run per frame that drew columns lately, oldest first.
    */
-  frame(total: number): boolean {
-    if (this.count >= total) {
-      this.credit = 0
+  trail(): FlowBand[] {
+    const at = this.options.now()
+    const live: FlowBand[] = []
+    for (const band of this.bands) {
+      const age = this.ageOf(band, at)
+      if (age < this.options.steps) live.push({ start: Math.floor(band.start), end: Math.floor(band.end), age })
+    }
+    return live
+  }
+
+  /**
+   * Whether a drawn run is still climbing toward its settled color.
+   * @returns true while the trail holds a run.
+   */
+  receding(): boolean {
+    return this.trail().length > 0
+  }
+
+  /**
+   * Move the front by the time elapsed since the previous frame, and drop the
+   * runs that reached their settled color. The first frame after the card
+   * grew again starts the clock without moving the front.
+   * @param total - the card's column count at its last render.
+   * @param width - the terminal width the pace is measured against.
+   * @returns whether columns are still hidden after this frame.
+   */
+  frame(total: number, width: number): boolean {
+    const at = this.options.now()
+    this.bands = this.bands.filter(band => this.ageOf(band, at) < this.options.steps)
+    if (this.front >= total) {
+      this.last = undefined
       return false
     }
-    this.credit += (total - this.count) / this.drainFrames
-    const rows = Math.max(1, Math.floor(this.credit))
-    this.credit = Math.max(0, this.credit - rows)
-    this.count = Math.min(total, this.count + rows)
-    return this.count < total
+    const previous = this.last
+    if (previous === undefined) {
+      this.last = at
+      return true
+    }
+    const { rowFrames, stepMs } = this.options
+    const span = Math.min(Math.max(0, at - previous), MAX_ADVANCE_FRAMES * stepMs)
+    const next = Math.min(total, this.front + span * Math.max(1, width) / (rowFrames * stepMs))
+    if (next > this.front) this.bands.push({ start: this.front, end: next, bornAt: at, span })
+    this.front = next
+    // A front that caught up has nothing to time until the card grows again.
+    this.last = next < total ? at : undefined
+    return next < total
   }
 
   /**
-   * Hold the count at the block's full row count, so rows the block loses
-   * later are not owed again when it grows back.
-   * @param total - the block's full row count at this render.
+   * Hold the front at the card's column count, so columns the card loses later
+   * are not owed again when it grows back.
+   * @param total - the card's column count at this render.
    */
   clamp(total: number): void {
-    if (this.count > total) this.count = total
+    if (this.front > total) this.front = total
   }
 
-  /** Draw every row the block has at its next render. */
+  /** Draw every column the card has at its next render, with no trail. */
   settle(): void {
-    this.count = Number.POSITIVE_INFINITY
-    this.credit = 0
+    this.front = Number.POSITIVE_INFINITY
+    this.bands = []
+    this.last = undefined
+  }
+
+  /**
+   * The age a run draws at: its midpoint, which the frame drew over the
+   * `span` before `bornAt`.
+   * @param band - the run.
+   * @param at - the current time in milliseconds.
+   * @returns elapsed time in units of `stepMs`.
+   */
+  private ageOf(band: DrawnBand, at: number): number {
+    return (at - band.bornAt + band.span / 2) / this.options.stepMs
   }
 }
 

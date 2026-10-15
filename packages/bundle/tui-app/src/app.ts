@@ -131,6 +131,7 @@ import { foldWorkflowRun, projectWorkflowRun, type WorkflowRunEvent, type Workfl
 import {
   ACTIVITY_SPINNERS,
   COMPACTING_ACTIVITY,
+  THINKING_SPINNER,
   TOOL_SPINNERS,
   activityStatus,
   callingActivity,
@@ -150,7 +151,7 @@ import { SEARCH_ROUTE_ITEMS, applySearchRoute, currentSearchRoute, type SearchRo
 import { matchPermission, permissionHint, permissionItems } from './permission.ts'
 import { SandboxPrompt } from './sandbox.ts'
 import { exportSessionZip } from './export.ts'
-import { RowReveal, StreamPacer } from './pace.ts'
+import { CardFlow, StreamPacer } from './pace.ts'
 import { ViewBanner } from './view-banner.ts'
 import { BlockFadeClock, FadeRegistry, FadeTracker, buildFadeRamp, resolveFadeCapability, type FadeCapability, type FadeStyle } from './fade.ts'
 import { InspectorPane, type InspectorView } from './inspector.ts'
@@ -573,8 +574,9 @@ export interface TuiAppDeps {
    */
   streamPaceFrames: number
   /**
-   * Frames the rows of a tool card take to unroll when the card appears or
-   * grows; `0` draws them at once. Reduced motion also draws them at once.
+   * Frames one full-width row of a tool card takes to flow out when the card
+   * appears or grows; `0` draws every card whole with no animation. Reduced
+   * motion also does.
    */
   toolRevealFrames: number
   /**
@@ -4671,7 +4673,11 @@ export class TuiApp {
    * releasing it after the model has moved on to reply text or a tool call.
    */
   private finishReasoningPace(): void {
-    if (this.pacer?.flushChannel('reasoning') === true) this.tui.requestRender()
+    const released = this.pacer?.flushChannel('reasoning') === true
+    const spinning = this.streaming?.spinning() === true
+    this.streaming?.setReasoningSpinner(undefined)
+    this.updateSpinTicker()
+    if (released || spinning) this.tui.requestRender()
   }
 
   /**
@@ -4701,6 +4707,10 @@ export class TuiApp {
   private appendStreamedReasoning(delta: string): void {
     const block = this.streamingBlock()
     block.appendReasoning(delta)
+    if (!this.deps.reducedMotion && !block.spinning()) {
+      block.setReasoningSpinner(() => spinnerFrame(THINKING_SPINNER, this.deps.now(), this.deps.spinnerMs))
+      this.updateSpinTicker()
+    }
     if (!this.fading) return
     if (this.reasoningTail === undefined) {
       this.reasoningTail = this.createTail()
@@ -4738,10 +4748,10 @@ export class TuiApp {
   }
 
   /**
-   * Fade one group of a card's rows in from the terminal background, from the
-   * instant the log carried them. A terminal that draws no ramp and a session
-   * being replayed fade nothing.
-   * @param attach - hands the fade to the block that draws those rows.
+   * Fade one activity-board row in from the terminal background, from the
+   * instant it appeared. A terminal that draws no ramp and a session being
+   * replayed fade nothing.
+   * @param attach - hands the fade to the board that draws that row.
    */
   private fadeBlock(attach: (fade: BlockFade) => void): void {
     if (!this.fading || this.replaying) return
@@ -4757,14 +4767,21 @@ export class TuiApp {
   }
 
   /**
-   * Unroll a new card's rows on the frame tick from its header down. A card
-   * drawn from a replayed log, and every card on a terminal that paces
+   * Flow a new card out on the frame tick, row after row from its header
+   * down, at a pace that depends on neither the card nor the call it shows.
+   * A card drawn from a replayed log, and every card on a terminal that paces
    * nothing, draws whole.
    * @param block - the card that was just mounted.
    */
   private revealBlock(block: ToolBlock): void {
     if (this.replaying || this.deps.reducedMotion || this.deps.toolRevealFrames === 0) return
-    block.setReveal(new RowReveal(this.deps.toolRevealFrames, 1))
+    const flow = new CardFlow({
+      rowFrames: this.deps.toolRevealFrames,
+      stepMs: this.deps.fadeStepMs,
+      steps: this.deps.fadeSteps,
+      now: () => this.deps.now(),
+    }, 1)
+    block.setFlow(flow, () => this.fadeStyle)
     this.trackReveal(block)
   }
 
@@ -4815,7 +4832,8 @@ export class TuiApp {
    * stopped app runs none.
    */
   private updateSpinTicker(): void {
-    const spinning = this.spinners.size > 0 || this.boardSpinners.size > 0 || this.workflowSpinners.size > 0
+    const spinning = this.streaming?.spinning() === true
+      || this.spinners.size > 0 || this.boardSpinners.size > 0 || this.workflowSpinners.size > 0
     if (!this.stopped && (this.loaderAnimates() || spinning)) {
       this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, this.deps.spinnerMs)
       return
@@ -4841,7 +4859,7 @@ export class TuiApp {
     }
     if (this.loaderAnimates()) this.refreshLoader()
     if (this.boardSpinners.size > 0) this.refreshActivityBoard()
-    else if (this.spinners.size > 0 || this.workflowSpinners.size > 0) this.tui.requestRender()
+    else if (this.streaming?.spinning() === true || this.spinners.size > 0 || this.workflowSpinners.size > 0) this.tui.requestRender()
     this.updateSpinTicker()
   }
 
@@ -5004,7 +5022,7 @@ export class TuiApp {
     const wanted: HeldSection | undefined = section !== undefined && this.focus === 'transcript'
       ? { block: section.block, part: section.cursor.part, level: this.markLift() }
       : undefined
-    const fades = this.fadesMoving() || this.spinners.size > 0
+    const fades = this.fadesMoving() || this.streaming?.spinning() === true || this.spinners.size > 0
     // The walk reads the frame that was just built, so applying one change
     // cannot move the line another change is judged against.
     let start = this.header.render(width).length
@@ -5063,6 +5081,8 @@ export class TuiApp {
     switch (frame.type) {
       case 'start':
         this.pacer?.flush()
+        this.streaming?.setReasoningSpinner(undefined)
+        this.updateSpinTicker()
         this.streaming = undefined
         this.endFade()
         this.beginLiveUsage()
@@ -5129,6 +5149,8 @@ export class TuiApp {
         // An abandoned attempt keeps streamed text; unconfirmed tool cards do
         // not, because those calls never ran. A retry starts a new block.
         this.pacer?.flush()
+        this.streaming?.setReasoningSpinner(undefined)
+        this.updateSpinTicker()
         this.streaming = undefined
         this.endFade()
         if (frame.outcome.kind === 'abandoned' || frame.outcome.eventType === 'assistant/attempt') {
@@ -5217,7 +5239,6 @@ export class TuiApp {
         }
         this.spinners.delete(block)
         this.updateSpinTicker()
-        this.fadeBlock((fade) => { block.setResultFade(fade) })
         this.trackReveal(block)
         this.pendingToolNames.delete(result.toolCallId)
         this.syncLoaderFromPendingTools()
@@ -5762,7 +5783,6 @@ export class TuiApp {
     block.setExpanded(this.toolsExpanded)
     this.toolBlocks.set(callId, block)
     this.chat.addChild(block)
-    this.fadeBlock((fade) => { block.setFade(fade) })
     this.revealBlock(block)
     this.spinBlock(block)
     if (source === 'stream') this.unconfirmedTools.set(callId, block)

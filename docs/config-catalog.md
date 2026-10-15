@@ -4505,13 +4505,17 @@ export interface Config {
    */
   streamPaceFrames: number
   /**
-   * How many `streamFadeStepMs` frames the rows of a tool card take to
-   * unroll when the card appears or grows. Each frame draws a share of the
-   * rows still hidden proportional to their number, at least one, so a card
-   * slides in under the text that preceded it rather than landing whole. A
-   * card whose unrolling rows have scrolled above the part of the screen the
-   * renderer can repaint draws them at once, and unfolding a card draws its
-   * rows at once. `0` draws every row at once, and so does `reducedMotion`.
+   * How many `streamFadeStepMs` frames one full-width row of a tool card
+   * takes to flow out when the card appears or grows. The card draws its
+   * columns left to right, row after row, at that constant pace whatever it
+   * holds; a shorter row takes proportionally less time. Each column
+   * brightens from the terminal background to its settled color over
+   * `streamFadeSteps` frames. A call or result that lands while the card
+   * flows is drawn behind the columns already on their way and never waits
+   * for them. A card whose flowing row has scrolled above the part of the
+   * screen the renderer can repaint draws its columns at once, and unfolding
+   * a card draws its rows at once. `0` draws every card whole with no
+   * animation, and so does `reducedMotion`.
    */
   toolRevealFrames: number
   /**

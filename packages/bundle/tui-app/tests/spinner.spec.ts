@@ -6,6 +6,7 @@ import {
   ACTIVITY_SPINNERS,
   COMPACTING_ACTIVITY,
   SPINNER_CYCLE,
+  THINKING_SPINNER,
   TOOL_SPINNERS,
   activityStatus,
   callingActivity,
@@ -262,5 +263,13 @@ describe('shimmer', () => {
 
   it('returns the text unchanged on a disabled palette', () => {
     expect(shimmer(createPalette(false), 'calling bash', 200, 100)).toBe('calling bash')
+  })
+})
+
+describe('THINKING_SPINNER', () => {
+  it('shares no glyph with any other animation', () => {
+    const taken = new Set<string>(ALL_SPINNERS.flatMap(([_name, frames]) => frames))
+    for (const frame of THINKING_SPINNER) expect(taken.has(frame)).toBe(false)
+    expect(new Set(THINKING_SPINNER).size).toBe(THINKING_SPINNER.length)
   })
 })

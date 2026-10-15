@@ -10,6 +10,7 @@ import {
   FadeRegistry,
   FadeTracker,
   buildFadeRamp,
+  fadeInSlice,
   fadeSgr,
   mixFadeColor,
   recolorLines,
@@ -482,6 +483,55 @@ describe('FadeRegistry', () => {
     registry.add(member(true))
     registry.clear()
     expect(registry.needsRepaint()).toBe(false)
+  })
+})
+
+describe('fadeInSlice', () => {
+  const FIELD: FadeStyle = { capability: 'truecolor', ramp: buildFadeRamp(BLACK, WHITE, 4) }
+
+  it('starts a plain run at the darkest level and ends it at the foreground', () => {
+    const start = fadeInSlice('word', 0, FIELD)
+    expect(fadeRgbs(start)).toEqual([FIELD.ramp[0]])
+    expect(start.startsWith('\u001b[22m')).toBe(true)
+    expect(start.endsWith('word\u001b[39m')).toBe(true)
+    const luma = [0, 1, 2, 3].map(age => luminance(fadeRgbs(fadeInSlice('word', age, FIELD))[0] as RgbColor))
+    expect(luma).toEqual([...luma].sort((a, b) => a - b))
+    expect(new Set(luma).size).toBe(4)
+    // A run that reached the ramp length is the component's own bytes.
+    expect(fadeInSlice('word', 4, FIELD)).toBe('word')
+  })
+
+  it('brings each styled run up to its own settled color', () => {
+    const slice = '\u001b[38;2;200;100;50mhot\u001b[39m plain'
+    // The slice keeps the component's own sequence, then each run's overlay follows its sequence and wins.
+    const [own, hot, plain] = fadeRgbs(fadeInSlice(slice, 2, FIELD)) as [RgbColor, RgbColor, RgbColor]
+    expect(own).toEqual({ r: 200, g: 100, b: 50 })
+    // The run the component colored climbs toward that color, keeping its hue; the plain run climbs toward the foreground, which is gray.
+    expect(hot.r).toBeGreaterThan(hot.g)
+    expect(hot.g).toBeGreaterThan(hot.b)
+    expect(plain.r).toBe(plain.g)
+    expect(plain.g).toBe(plain.b)
+    // Near the end of the climb the colored run is close to its own color and not past it.
+    const late = fadeRgbs(fadeInSlice(slice, 3.9, FIELD))[1] as RgbColor
+    expect(late.r).toBeGreaterThan(hot.r)
+    expect(late.r).toBeLessThanOrEqual(200)
+  })
+
+  it('draws the youngest ages faint in the two-level mode, and later ages as rendered', () => {
+    expect(fadeInSlice('word', 0, DIM_STYLE)).toBe('\u001b[2mword\u001b[22m')
+    expect(fadeInSlice('word', 1.9, DIM_STYLE)).toBe('\u001b[2mword\u001b[22m')
+    expect(fadeInSlice('word', 2, DIM_STYLE)).toBe('word')
+  })
+
+  it('writes nothing for a terminal without color, an empty slice, or a ramp with no levels', () => {
+    expect(fadeInSlice('word', 0, { capability: 'none', ramp: [] })).toBe('word')
+    expect(fadeInSlice('', 0, COLOR)).toBe('')
+    expect(fadeInSlice('word', 0, { capability: 'truecolor', ramp: [] })).toBe('word')
+  })
+
+  it('encodes the climb in the 256-color palette', () => {
+    const drawn = fadeInSlice('word', 1, { capability: 'ansi256', ramp: buildFadeRamp(BLACK, WHITE, 4) })
+    expect(drawn).toMatch(/^\u001b\[22m\u001b\[38;5;\d+mword\u001b\[39m$/)
   })
 })
 

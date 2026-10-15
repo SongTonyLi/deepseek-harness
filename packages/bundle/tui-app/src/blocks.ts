@@ -31,12 +31,13 @@
 import { Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
 import { maskCredentialText } from '@deepseek-ai/dsh-client-ui-secret-mask'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
+import { sliceColumns } from './columns.ts'
+import { fadeInSlice, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { paintKeys } from './key-chips.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
 import type { DiffMark } from './diff.ts'
-import type { RowReveal } from './pace.ts'
+import type { CardFlow, FlowBand } from './pace.ts'
 import { TailWrappedText } from './tail-wrap.ts'
 import { bandDiffRows, bandRow, markdownTheme, type CodeHighlighter, type Palette } from './style.ts'
 import { foldMarker, foldRows, paintCodeRows, SHELL_COMMAND_PREFIX, shellCommandBody, type CodeSpan, type SubagentRowFacts, type ToolCallText } from './transcript.ts'
@@ -694,6 +695,10 @@ export class AssistantBlock implements Component, AssistantSection {
   /** Width of the last render that drew a text tail; absent before the first one. */
   private fadeWidth: number | undefined
   private reasoningFade: FadeRender | undefined
+  /** The live Thinking header's bloom; absent draws the settled glyph. */
+  private reasoningSpinner: (() => string) | undefined
+  /** Whether the message is still streaming, which the header spinner requires; commit settles it. */
+  private streaming = false
   /** Width of the last render that drew a reasoning tail; absent before the first one. */
   private reasoningFadeWidth: number | undefined
   /** First line of this block either tail may still recolor. */
@@ -763,6 +768,23 @@ export class AssistantBlock implements Component, AssistantSection {
   }
 
   /**
+   * Animate the live Thinking header on the application's spinner clock.
+   * @param frame - the current bloom glyph, or undefined to settle the header;
+   * a settled message or a header above the repaint window keeps the static glyph.
+   */
+  setReasoningSpinner(frame: (() => string) | undefined): void {
+    this.reasoningSpinner = this.streaming && this.repaintFloor <= 1 ? frame : undefined
+  }
+
+  /**
+   * Whether the live Thinking header still spins in the repaint window.
+   * @returns true while the message streams with an attached spinner.
+   */
+  spinning(): boolean {
+    return this.reasoningSpinner !== undefined && this.streaming
+  }
+
+  /**
    * Hand the rows the renderer can no longer repaint back to the colors this
    * block drew them in, so a tail that is still moving never rewrites them.
    * @param floor - this block's own first repaintable line; the application
@@ -773,7 +795,9 @@ export class AssistantBlock implements Component, AssistantSection {
   setRepaintFloor(floor: number): boolean {
     if (floor <= this.repaintFloor) return false
     this.repaintFloor = floor
-    return (this.fade !== undefined && fadingInSpans(this.fade).length > 0)
+    const spinning = this.spinning() && floor > 1
+    if (spinning) this.reasoningSpinner = undefined
+    return spinning || (this.fade !== undefined && fadingInSpans(this.fade).length > 0)
       || (this.reasoningFade !== undefined && floatingOutSpans(this.reasoningFade).length > 0)
   }
 
@@ -783,6 +807,7 @@ export class AssistantBlock implements Component, AssistantSection {
    */
   appendText(delta: string): void {
     this.text += delta
+    this.streaming = true
     this.revision += 1
   }
 
@@ -792,6 +817,7 @@ export class AssistantBlock implements Component, AssistantSection {
    */
   appendReasoning(delta: string): void {
     this.reasoning += delta
+    this.streaming = true
     this.revision += 1
     this.reasoningText.setText(this.theme.palette.dim(this.theme.palette.italic(this.reasoning.trimEnd())))
   }
@@ -806,11 +832,13 @@ export class AssistantBlock implements Component, AssistantSection {
     this.text = text
     this.reasoning = reasoning
     this.interrupted = interrupted
+    this.streaming = false
     this.revision += 1
     // The committed content replaces what was streamed, so neither tail
     // describes anything on screen and this block is settled for good.
     this.fade = undefined
     this.reasoningFade = undefined
+    this.reasoningSpinner = undefined
     this.prefixCache = undefined
     this.appliedPrefix = undefined
     this.appliedTail = undefined
@@ -832,7 +860,7 @@ export class AssistantBlock implements Component, AssistantSection {
     const { marked, content: inner } = focusFrame(width, this.highlight)
     // A tail recolours the newest words by their age, which changes every
     // frame, so a streaming message is composed each time it is asked for.
-    const streaming = this.fade !== undefined || this.reasoningFade !== undefined
+    const streaming = this.fade !== undefined || this.reasoningFade !== undefined || this.spinning()
     const { lines, reasoning, reply } = streaming
       ? this.compose(inner)
       : this.drawn.get(`${String(width)}:${String(marked)}:${String(this.revision)}`, () => this.compose(inner))
@@ -855,7 +883,8 @@ export class AssistantBlock implements Component, AssistantSection {
     if (this.reasoning.trim() !== '') {
       const palette = this.theme.palette
       reasoning.from = lines.length
-      lines.push(truncateToWidth(`${palette.heading(REASONING_GLYPH)} ${palette.dim(REASONING_TITLE)}`, inner, '…'))
+      const glyph = this.reasoningSpinner?.() ?? REASONING_GLYPH
+      lines.push(truncateToWidth(`${palette.heading(glyph)} ${palette.dim(REASONING_TITLE)}`, inner, '…'))
       const width = Math.max(1, inner - REASONING_INDENT.length)
       lines.push(...this.renderReasoning(width, lines.length).map(line => `${REASONING_INDENT}${line}`))
       reasoning.to = lines.length
@@ -976,14 +1005,20 @@ export type ToolCardStatus = 'running' | 'done' | 'error' | 'background'
  * A tool call card: the status-coloured {@link TOOL_GLYPH}, the bold tool
  * name, the headline in the link colour, then a foldable body.
  *
- * The card arrives in two pieces, and each floats out on its own: the header
- * and the call rows when the model starts the call (a stream delta, or the
- * logged `tool/call`), the result rows when the tool answers. While it runs
- * the body carries {@link TOOL_RUNNING_ROW} in place of a result, and a card
- * given a spinner ({@link ToolBlock.setSpinner}) cycles its glyph until the
- * result lands or its header leaves the renderer's repaint window, then draws
- * the static glyph. A card rebuilt from history carries neither fade nor
- * spinner.
+ * The card arrives in two pieces: the header and the call rows when the model
+ * starts the call (a stream delta, or the logged `tool/call`), the result rows
+ * when the tool answers. While it runs the body carries
+ * {@link TOOL_RUNNING_ROW} in place of a result, and a card given a spinner
+ * ({@link ToolBlock.setSpinner}) cycles its glyph until the result lands or
+ * its header leaves the renderer's repaint window, then draws the static
+ * glyph.
+ *
+ * A card given a {@link CardFlow} ({@link ToolBlock.setFlow}) flows out: the
+ * flow's front decides how many columns of its rows are drawn, row after row,
+ * and the columns drawn lately brighten from the terminal background toward
+ * their settled colors by their own age. The flow is advanced from the application's
+ * frame tick and never by a call or result, which only change what the card
+ * holds. A card rebuilt from history carries neither flow nor spinner.
  */
 export class ToolBlock implements Component, ToolSection, Foldable {
   readonly navigable = true as const
@@ -998,8 +1033,6 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   /** The facts a folded subagent card draws as one row; absent for every other tool. */
   private subagent: SubagentRowFacts | undefined
   private expanded = false
-  private fade: BlockFade | undefined
-  private resultFade: BlockFade | undefined
   /** The glyph a running card draws right now; absent draws {@link TOOL_GLYPH}. */
   private spinner: (() => string) | undefined
   /** First line of this card either fade may still recolor. */
@@ -1014,11 +1047,17 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private revision = 0
   /** The sections last read, and the revision they were built at. */
   private sections: { revision: number; parts: readonly SectionPart[] } | undefined
-  /** How many of the card's rows are drawn while it unrolls; absent draws every row. */
-  private reveal: RowReveal | undefined
-  /** The card's full row count, the leading blank line excluded, at its last render. */
-  private rows = 0
-  /** Whether {@link rows} was measured after the last call, result, or fold change. */
+  /** How many columns of the card's rows are drawn while it flows out; absent draws every column. */
+  private flow: CardFlow | undefined
+  /** The drawing settings the flow's trail is colored with; absent flows without color. */
+  private flowStyle: (() => FadeStyle) | undefined
+  /** The card's visible columns over all rows, the leading blank line excluded, at its last render. */
+  private columns = 0
+  /** Lines the last render drew, the leading blank line included. */
+  private drawnLines = 0
+  /** The width the last render was given, which the flow measures its pace against. */
+  private flowWidth = 1
+  /** Whether {@link columns} was measured after the last call, result, or fold change. */
   private measured = false
   private toolName: string
   private call: ToolCallText
@@ -1099,22 +1138,6 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   }
 
   /**
-   * Draw the header and the call rows through `fade` until it settles.
-   * @param fade - the level and drawing settings of this card's own fade.
-   */
-  setFade(fade: BlockFade): void {
-    this.fade = fade
-  }
-
-  /**
-   * Draw the result rows through `fade` until it settles.
-   * @param fade - the level and drawing settings of the result's own fade.
-   */
-  setResultFade(fade: BlockFade): void {
-    this.resultFade = fade
-  }
-
-  /**
    * Cycle the header glyph while the card runs.
    * @param frame - the glyph to draw at the moment of a render.
    */
@@ -1147,17 +1170,18 @@ export class ToolBlock implements Component, ToolSection, Foldable {
       this.repaintFloor = Math.max(this.repaintFloor, floor)
       return true
     }
-    // Rows unrolling below a line the renderer can no longer repaint would
-    // force a full redraw on every frame, so such a card draws them at once.
-    const reveal = this.reveal
-    if (reveal !== undefined && reveal.shown() < this.rows && floor > 1 + reveal.shown()) {
-      reveal.settle()
+    // The row the front is drawing changes on every frame; one below a line the
+    // renderer can no longer repaint would force a full redraw each time, so
+    // such a card draws its columns at once.
+    const flow = this.flow
+    if (flow !== undefined && flow.shown() < this.columns && floor >= this.drawnLines) {
+      flow.settle()
       this.repaintFloor = Math.max(this.repaintFloor, floor)
       return true
     }
     if (floor <= this.repaintFloor) return false
     this.repaintFloor = floor
-    return this.fade?.age() !== undefined || this.resultFade?.age() !== undefined
+    return flow !== undefined && this.flowColors() !== undefined && flow.receding()
   }
 
   /**
@@ -1195,36 +1219,61 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   }
 
   /**
-   * Unroll the card's rows on the application's frame tick instead of drawing
-   * them all in one frame: now, and again whenever a call or a result makes
-   * the card grow.
-   * @param reveal - how many rows are drawn; the card draws that many of its
-   * rows after the leading blank line.
+   * Flow the card's rows out on the application's frame tick instead of
+   * drawing them all in one frame: now, and again whenever a call or a result
+   * makes the card grow.
+   * @param flow - the front that decides how many columns are drawn; the card
+   * draws that many columns of its rows after the leading blank line.
+   * @param style - the settings the freshly drawn columns are colored with,
+   * read per render because the terminal background query settles after the
+   * card is mounted; absent draws the flow without color.
    */
-  setReveal(reveal: RowReveal): void {
-    this.reveal = reveal
+  setFlow(flow: CardFlow, style?: () => FadeStyle): void {
+    this.flow = flow
+    this.flowStyle = style
     this.measured = false
   }
 
   /**
-   * Whether rows of this card are still hidden, or the card changed since its
-   * last render and may have gained rows.
-   * @returns true while the reveal still has a frame to draw.
+   * Whether columns of this card are still hidden or still brightening, or
+   * the card changed since its last render and may have gained columns.
+   * @returns true while the flow still has a frame to draw.
    */
   revealing(): boolean {
-    return this.reveal !== undefined && (!this.measured || this.reveal.shown() < this.rows)
+    return this.flow !== undefined && (!this.measured || this.flowDrawing(this.flow))
   }
 
   /**
-   * Draw one frame's share of the rows still hidden.
-   * @returns whether the reveal still has a frame to draw after this one.
+   * Move the flow's front by the time elapsed since the previous frame.
+   * @returns whether the flow still has a frame to draw after this one.
    */
   revealFrame(): boolean {
-    if (this.reveal === undefined) return false
-    // A change the card has not rendered yet has no row count to reveal
+    const flow = this.flow
+    if (flow === undefined) return false
+    // A change the card has not rendered yet has no column count to flow
     // towards; the render that follows this frame measures it.
     if (!this.measured) return true
-    return this.reveal.frame(this.rows)
+    flow.frame(this.columns, this.flowWidth)
+    return this.flowDrawing(flow)
+  }
+
+  /**
+   * Whether another frame of `flow` changes what the card draws: columns are
+   * hidden, or drawn ones are brightening in a terminal that draws the color.
+   * @param flow - the card's flow.
+   * @returns true while a frame is still owed.
+   */
+  private flowDrawing(flow: CardFlow): boolean {
+    return flow.shown() < this.columns || (this.flowColors() !== undefined && flow.receding())
+  }
+
+  /**
+   * The colors the flow's trail is drawn with right now.
+   * @returns the style, or undefined when the card has none or the terminal draws no color.
+   */
+  private flowColors(): FadeStyle | undefined {
+    const style = this.flowStyle?.()
+    return style?.capability === 'none' ? undefined : style
   }
 
   /**
@@ -1241,7 +1290,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    */
   setExpanded(expanded: boolean): void {
     // Unfolding answers a key, so the rows it adds are drawn at once.
-    if (expanded !== this.expanded) this.reveal?.settle()
+    if (expanded !== this.expanded) this.flow?.settle()
     this.expanded = expanded
   }
 
@@ -1257,17 +1306,17 @@ export class ToolBlock implements Component, ToolSection, Foldable {
       () => this.layout(outer, marked),
     )
     // The leading blank line is index 0 of the card, so the call group starts
-    // at 1 and the result group where the call group ended. A fade that has
-    // settled, or was never attached, hands the group back as it is.
-    const call = faded(this.spun(layout.call), this.fade, this.repaintFloor - 1)
-    const result = faded(layout.result, this.resultFade, this.repaintFloor - 1 - layout.call.length)
-    const full = call === layout.call && result === layout.result ? layout.lines : ['', ...call, ...result]
-    this.rows = full.length - 1
+    // at 1 and the result group where the call group ended.
+    const call = this.spun(layout.call)
+    const full = call === layout.call ? layout.lines : ['', ...call, ...layout.result]
+    const widths = layout.widths ??= layout.lines.slice(1).map(line => visibleWidth(line))
+    this.columns = widths.reduce((sum, columns) => sum + columns, 0)
+    this.flowWidth = width
     this.measured = true
-    this.reveal?.clamp(this.rows)
-    const shown = this.reveal === undefined ? this.rows : this.reveal.shown()
-    const visible = (lines: string[]): string[] => shown < this.rows ? lines.slice(0, 1 + shown) : lines
-    if (this.highlight === undefined) return visible(full)
+    this.flow?.clamp(this.columns)
+    const visible = this.flow === undefined ? full : this.flowed(full, widths)
+    this.drawnLines = visible.length
+    if (this.highlight === undefined) return visible
     // The truncation marker belongs to the card rather than to either section:
     // it stands for the rows both of them left out, so it keeps the block's own
     // gutter while the held section still has a row of its own. It is the last
@@ -1281,7 +1330,36 @@ export class ToolBlock implements Component, ToolSection, Foldable {
       { from: section.from, to: Math.min(section.to, sections) },
       { from: sections, to: full.length },
     )
-    return visible(withGutter(palette, full, index => index >= held.from && index < held.to, this.highlightLevel))
+    return withGutter(palette, visible, index => index >= held.from && index < held.to, this.highlightLevel)
+  }
+
+  /**
+   * The card with only the columns the flow has reached, the last row cut
+   * where the front stands, and the columns drawn lately colored by age.
+   * @param full - the card's lines, the leading blank line first.
+   * @param widths - the visible columns of each line after the blank one.
+   * @returns the lines to draw, which are `full` itself once the flow has drawn
+   * every column and its trail has receded.
+   */
+  private flowed(full: string[], widths: readonly number[]): string[] {
+    const flow = this.flow as CardFlow
+    const shown = flow.shown()
+    const style = this.flowColors()
+    const trail = style === undefined ? [] : flow.trail()
+    if (shown >= this.columns && trail.length === 0) return full
+    const lines = ['']
+    let start = 0
+    for (const [index, columns] of widths.entries()) {
+      if (start >= shown) break
+      const line = full[1 + index] as string
+      const drawn = Math.min(columns, shown - start)
+      const cut = drawn >= columns ? line : sliceColumns(line, [drawn])[0] as string
+      // A row above the first repaintable line keeps the colors it settled in.
+      const settled = style === undefined || trail.length === 0 || 1 + index < this.repaintFloor
+      lines.push(settled ? cut : floatedRow(cut, start, drawn, trail, style))
+      start += columns
+    }
+    return lines
   }
 
   /**
@@ -1421,20 +1499,33 @@ interface ToolLayout {
   lines: string[]
   /** Lines the fold marker took at the end of `result`; 0 while nothing was folded away. */
   marker: number
+  /** The visible columns of each line after the blank one, measured when the card first needs them. */
+  widths?: number[]
 }
 
 /**
- * Draw one group of a card's rows at the mix its fade reports.
- * @param lines - the group's final rendered lines.
- * @param fade - the group's fade; absent for a card that never faded.
- * @param from - first line of the group the fade may recolor.
- * @returns the lines at that mix, or the lines themselves once the fade
- * settled or was never attached.
+ * Float out the freshly drawn columns of one row, each run at its own age.
+ * @param row - the row as drawn, already cut at the front.
+ * @param start - the first column of this row over the card's rows.
+ * @param drawn - the columns of this row that are drawn.
+ * @param trail - the runs drawn lately, oldest first, in columns over the card's rows.
+ * @param style - the capability and the ramp.
+ * @returns the row with each run it holds recolored, or `row` when none reaches it.
  */
-function faded(lines: readonly string[], fade: BlockFade | undefined, from: number): readonly string[] {
-  if (fade === undefined) return lines
-  const age = fade.age()
-  return age === undefined ? lines : recolorLines(lines, age, fade.style(), from)
+function floatedRow(row: string, start: number, drawn: number, trail: readonly FlowBand[], style: FadeStyle): string {
+  const runs: { from: number; to: number; age: number }[] = []
+  for (const band of trail) {
+    const from = Math.max(band.start - start, 0)
+    const to = Math.min(band.end - start, drawn)
+    if (to > from) runs.push({ from, to, age: band.age })
+  }
+  if (runs.length === 0) return row
+  const pieces = sliceColumns(row, runs.flatMap(run => [run.from, run.to]))
+  let out = pieces[0] as string
+  runs.forEach((run, index) => {
+    out += `${fadeInSlice(pieces[2 * index + 1] as string, run.age, style)}${pieces[2 * index + 2] as string}`
+  })
+  return out
 }
 
 /**

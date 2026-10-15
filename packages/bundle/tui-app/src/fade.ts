@@ -364,6 +364,33 @@ export function recolorLines(lines: readonly string[], age: number, style: FadeS
   return lines.map((line, index) => index < from || line === '' ? line : floatOutLine(line, t, capability, fg))
 }
 
+/**
+ * Draw one slice of a rendered line as it climbs out of the terminal
+ * background, at a single age, for a caller that gives neighbouring slices of
+ * one line different ages. Each run in the slice starts at the ramp's darkest
+ * level and rises to the color the component drew it in, so text in the
+ * default foreground, a dim rule, and a colored title each brighten to their
+ * own settled color. The slice should come from {@link sliceColumns}, which
+ * replays the sequences in force at its first column.
+ * @param slice - the slice's text with its escape sequences.
+ * @param age - elapsed time in units of `stepMs`; `ramp.length` is t = 1.
+ * @param style - the capability and the ramp, darkest level first.
+ * @returns the slice at that mix, closed so the mix does not leak into the text
+ * after it; the slice itself when the style writes no sequence, the slice is
+ * empty, or `age` has reached the ramp length. The two-level mode draws the
+ * youngest ages faint, like {@link fadeSgr}.
+ */
+export function fadeInSlice(slice: string, age: number, style: FadeStyle): string {
+  const { capability } = style
+  if (capability === 'none' || slice === '') return slice
+  if (capability === 'dim') return age < DIM_AGES ? `${DIM}${slice}${RESET_INTENSITY}` : slice
+  const steps = style.ramp.length
+  const start = style.ramp[0]
+  const fg = style.ramp[steps - 1]
+  if (start === undefined || fg === undefined || age >= steps) return slice
+  return floatOutLine(slice, age / steps, capability, fg, start)
+}
+
 /** Assumed terminal white, used only to lift a settled color that is already brighter than `fg`. */
 const WHITE_RGB: RgbColor = { r: CHANNEL_MAX, g: CHANNEL_MAX, b: CHANNEL_MAX }
 
@@ -450,25 +477,26 @@ function encodeMix(capability: 'truecolor' | 'ansi256', color: RgbColor): string
 }
 
 /**
- * Rebuild one card row as a per-run float-out mix.
+ * Rebuild one card row as a per-run mix toward each run's settled color.
  * @param line - the rendered line.
- * @param t - 0 at lift, 1 at settle.
+ * @param t - 0 at the start color, 1 at settle.
  * @param capability - how the mix is encoded.
  * @param fg - the assumed default foreground.
+ * @param from - the color every run starts from; absent starts each run at its lift above its own settled color.
  * @returns the line with each run overlaid, closed by {@link RESET_FOREGROUND}.
  */
-function floatOutLine(line: string, t: number, capability: 'truecolor' | 'ansi256', fg: RgbColor): string {
+function floatOutLine(line: string, t: number, capability: 'truecolor' | 'ansi256', fg: RgbColor, from?: RgbColor): string {
   let out = ''
   let last = 0
   const state: FgState = { color: undefined, dim: false }
   for (const match of line.matchAll(SGR_SEQUENCE)) {
-    const start = match.index
-    if (start > last) out += paintSegment(line.slice(last, start), state, t, capability, fg)
+    const position = match.index
+    if (position > last) out += paintSegment(line.slice(last, position), state, t, capability, fg, from)
     applySgr(state, match[0])
     out += match[0]
-    last = start + match[0].length
+    last = position + match[0].length
   }
-  if (last < line.length) out += paintSegment(line.slice(last), state, t, capability, fg)
+  if (last < line.length) out += paintSegment(line.slice(last), state, t, capability, fg, from)
   return `${out}${RESET_FOREGROUND}`
 }
 
@@ -479,11 +507,12 @@ function floatOutLine(line: string, t: number, capability: 'truecolor' | 'ansi25
  * @param t - 0 at lift, 1 at settle.
  * @param capability - how the mix is encoded.
  * @param fg - the assumed default foreground.
+ * @param from - the color the mix starts from; absent starts at the lift above `settled`.
  * @returns the run prefixed by intensity-reset and the mixed color.
  */
-function paintSegment(text: string, state: FgState, t: number, capability: 'truecolor' | 'ansi256', fg: RgbColor): string {
+function paintSegment(text: string, state: FgState, t: number, capability: 'truecolor' | 'ansi256', fg: RgbColor, from?: RgbColor): string {
   const settled = settledRgb(state, fg)
-  const mixed = mixFadeColor(liftColor(settled, fg), settled, t)
+  const mixed = mixFadeColor(from ?? liftColor(settled, fg), settled, t)
   return `${RESET_INTENSITY}${encodeMix(capability, mixed)}${text}`
 }
 

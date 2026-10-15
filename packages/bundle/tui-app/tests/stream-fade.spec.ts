@@ -1,4 +1,4 @@
-/** Streamed assistant text fading in, and reasoning and tool cards floating out. */
+/** Streamed assistant text fading in, reasoning floating out, and tool cards flowing out of the background. */
 
 import { describe, expect, it } from 'vitest'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -96,14 +96,15 @@ function drawn(test: Bench): string {
 
 /**
  * The repainted line carrying `text`, so an assertion reads the assistant's own
- * line and not the palette's sequences elsewhere on the screen.
+ * line and not the palette's sequences elsewhere on the screen. The text is
+ * matched as drawn, so a word split across two colored runs still counts.
  * @param output - repaints from {@link drawn}.
  * @param text - the visible text the line carries.
- * @returns the last line that carries it.
+ * @returns the last line that carries it, escape sequences included.
  * @throws when the renderer repainted no such line.
  */
 function lineWith(output: string, text: string): string {
-  const found = output.split('\n').findLast(part => part.includes(text))
+  const found = output.split('\n').findLast(part => part.replace(/\u001b\[[0-9;]*m/g, '').includes(text))
   if (found === undefined) throw new Error(`no repainted line carries ${text}`)
   return found
 }
@@ -400,45 +401,45 @@ describe('streaming fade', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
-  it('floats a tool card out when its call is logged and its result rows when they land', async () => {
-    const test = await bench(TRUECOLOR)
+  it('brightens a tool card out of the background as its columns flow out, and its result rows as they land', async () => {
+    const test = await bench({ ...TRUECOLOR, toolRevealFrames: 4 })
     await test.settle()
     test.appendToolCall('call-1', 'probe', { path: 'x' })
     await test.settle()
-    const callFirst = lineWith(drawn(test), 'probe')
-    const callColor = fadeRgbs(callFirst)[0]
-    expect(callColor).toBeDefined()
-    expect(rgbLuma(callColor ?? { r: 0, g: 0, b: 0 })).toBeGreaterThan(200)
-    expect(callFirst).not.toContain(levelSgr(0))
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
 
+    // The header comes out near the background and climbs one step per period.
     await fadeTick(test)
-    await fadeTick(test)
-    const callMid = lineWith(drawn(test), 'probe')
-    expect(Math.min(...fadeRgbs(callMid).map(rgbLuma))).toBeLessThan(254)
-    expect(callMid).not.toContain(levelSgr(0))
+    const first = lineWith(drawn(test), 'probe')
+    expect(fadeRgbs(first).length).toBeGreaterThan(0)
+    const youngest = Math.max(...fadeRgbs(first).map(rgbLuma))
+    expect(youngest).toBeLessThan(80)
+    expect(first).not.toContain(levelSgr(FADE_STEPS - 1))
+    for (let tick = 0; tick < 6; tick += 1) await fadeTick(test)
+    const later = lineWith(drawn(test), 'probe')
+    expect(Math.max(...fadeRgbs(later).map(rgbLuma))).toBeGreaterThan(youngest)
 
-    for (let tick = 2; tick < FADE_STEPS - 1; tick += 1) await fadeTick(test)
-    drawn(test)
-    await fadeTick(test)
-    expect(lineWith(drawn(test), 'probe')).not.toContain(ANY_FADE_COLOR)
+    // The period that drops the last run from the trail repaints the row in its own colors.
+    let settled = later
+    for (let tick = 0; tick < FADE_STEPS + 2 && test.tickArmed(FADE_TICK_MS); tick += 1) {
+      await fadeTick(test)
+      const output = drawn(test)
+      if (output.includes('probe')) settled = lineWith(output, 'probe')
+    }
+    expect(settled).not.toContain(ANY_FADE_COLOR)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
 
     test.appendToolResult('call-1', [{ type: 'text', text: 'result row' }])
     await test.settle()
-    const landed = drawn(test)
-    const resultFirst = lineWith(landed, 'result row')
-    const resultColor = fadeRgbs(resultFirst)[0]
-    expect(resultColor).toBeDefined()
-    expect(rgbLuma(resultColor ?? { r: 0, g: 0, b: 0 })).toBeGreaterThan(150)
-    expect(resultFirst).not.toContain(levelSgr(0))
-    expect(lineWith(landed, 'probe')).not.toContain(ANY_FADE_COLOR)
+    expect(drawn(test)).not.toContain('result row')
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
+    for (let tick = 0; tick < 2; tick += 1) await fadeTick(test)
+    const landed = lineWith(drawn(test), 'result row')
+    const resultColor = fadeRgbs(landed)[0]
+    expect(resultColor).toBeDefined()
+    expect(rgbLuma(resultColor ?? { r: 255, g: 255, b: 255 })).toBeLessThan(200)
 
-    for (let tick = 0; tick < FADE_STEPS - 1; tick += 1) await fadeTick(test)
-    drawn(test)
-    await fadeTick(test)
-    expect(lineWith(drawn(test), 'result row')).not.toContain(ANY_FADE_COLOR)
+    for (let tick = 0; tick < FADE_STEPS + 2 && test.tickArmed(FADE_TICK_MS); tick += 1) await fadeTick(test)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
@@ -465,8 +466,8 @@ describe('streaming fade', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
-  it('keeps the rows above the repaint window out of a card fade, and never clears the scrollback', async () => {
-    const test = await bench(TRUECOLOR)
+  it('lets three tall cards flow out in a short terminal without clearing the scrollback', async () => {
+    const test = await bench({ ...TRUECOLOR, toolRevealFrames: 1, fadeSteps: 4 })
     // A short terminal: pi-tui repaints only the last `rows` lines of the frame
     // differentially and clears the scrollback for a change above them.
     test.terminal.rows = SHORT_TERMINAL_ROWS
@@ -476,52 +477,34 @@ describe('streaming fade', () => {
     test.terminal.type(KEY.enter)
     await test.settle()
     // Three calls of one step, logged together, each wrapping over several
-    // rows: the first card is already above the window when the frame is drawn.
+    // rows: the first card leaves the window while the others still flow.
     test.appendToolCall('call-1', 'alpha', WIDE_ARGUMENTS)
     test.appendToolCall('call-2', 'beta', WIDE_ARGUMENTS)
     test.appendToolCall('call-3', 'gamma', WIDE_ARGUMENTS)
     await test.settle()
-    const cards = drawn(test)
-    expect(lineWith(cards, 'alpha')).not.toContain(ANY_FADE_COLOR)
-    expect(fadeRgbs(lineWith(cards, 'gamma')).length).toBeGreaterThan(0)
 
-    await fadeTick(test)
-    await fadeTick(test)
-    expect(fadeRgbs(lineWith(drawn(test), 'gamma')).length).toBeGreaterThan(0)
+    let gammaFaded = false
+    for (let tick = 0; tick < 40 && test.tickArmed(FADE_TICK_MS); tick += 1) {
+      await fadeTick(test)
+      const output = drawn(test)
+      if (output.includes('gamma') && fadeRgbs(lineWith(output, 'gamma')).length > 0) gammaFaded = true
+    }
+    expect(gammaFaded).toBe(true)
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
     expect(since()).not.toContain(CLEAR_SCROLLBACK)
   })
 
-  it('settles a card that later content pushed above the window, in the frame that pushed it', async () => {
-    const test = await bench(TRUECOLOR)
+  it('flows a card taller than the screen out to its last row, rather than clearing the scrollback', async () => {
+    const test = await bench({ ...TRUECOLOR, toolRevealFrames: 1, fadeSteps: 4 })
     test.terminal.rows = SHORT_TERMINAL_ROWS
     await test.settle()
     const since = writesFrom(test)
-    test.appendToolCall('call-1', 'alpha', WIDE_ARGUMENTS)
+    test.appendToolCall('call-1', 'alpha', { path: `${'x'.repeat(2_400)}END` })
     await test.settle()
-    await fadeTick(test)
-    expect(fadeRgbs(lineWith(drawn(test), 'alpha')).length).toBeGreaterThan(0)
-
-    test.appendToolCall('call-2', 'beta', WIDE_ARGUMENTS)
-    test.appendToolCall('call-3', 'gamma', WIDE_ARGUMENTS)
-    await test.settle()
-    expect(lineWith(drawn(test), 'alpha')).not.toContain(ANY_FADE_COLOR)
-
-    await fadeTick(test)
-    await fadeTick(test)
+    for (let tick = 0; tick < 60 && test.tickArmed(FADE_TICK_MS); tick += 1) await fadeTick(test)
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
     expect(since()).not.toContain(CLEAR_SCROLLBACK)
-  })
-
-  it('draws a card taller than the screen in its own colors rather than clearing the scrollback', async () => {
-    const test = await bench(TRUECOLOR)
-    test.terminal.rows = SHORT_TERMINAL_ROWS
-    await test.settle()
-    const since = writesFrom(test)
-    test.appendToolCall('call-1', 'alpha', { path: 'x'.repeat(2_400) })
-    await test.settle()
-    expect(lineWith(drawn(test), 'alpha')).not.toContain(ANY_FADE_COLOR)
-
-    await fadeTick(test)
-    expect(since()).not.toContain(CLEAR_SCROLLBACK)
+    expect(await test.screen()).toContain('xxxEND')
   })
 
   it('stops the reasoning tail at the window once the reply streamed past it', async () => {

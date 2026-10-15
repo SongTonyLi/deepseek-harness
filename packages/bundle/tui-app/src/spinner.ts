@@ -80,6 +80,12 @@ export const TOOL_SPINNERS = {
  */
 export const WORKFLOW_SPINNER: SpinnerFrames = ['◇', '◈', '◆', '❖', '◆', '◈', '◇', '◊']
 
+/**
+ * Bloom frames for the live Thinking header, disjoint from every tool
+ * family; completed reasoning keeps its static `✻`.
+ */
+export const THINKING_SPINNER: SpinnerFrames = ['☙', '✴', '❇', '✳', '※', '⚜', '⁂', '❄']
+
 /** One tool family of {@link TOOL_SPINNERS}. */
 export type ToolFamily = keyof typeof TOOL_SPINNERS
 
