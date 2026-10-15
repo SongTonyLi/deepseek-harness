@@ -1,7 +1,7 @@
 /** The queue between the live stream and the frames that draw it. */
 
 import { describe, expect, it } from 'vitest'
-import { RowReveal, STREAM_PACE_FRAMES, StreamPacer, TOOL_REVEAL_FRAMES } from '../src/pace.ts'
+import { CardFlow, STREAM_PACE_FRAMES, StreamPacer, TOOL_REVEAL_FRAMES } from '../src/pace.ts'
 
 /**
  * A pacer whose released parts are recorded per channel.
@@ -130,39 +130,184 @@ describe('StreamPacer', () => {
   })
 })
 
-describe('RowReveal', () => {
-  it('draws a share of the hidden rows per frame, at least one, until it catches up', () => {
+/** Milliseconds one frame lasts in the flow tests. */
+const STEP_MS = 10
+
+/**
+ * A flow on a clock the test moves, drawing a 40-column row in four 10 ms
+ * frames: ten columns per frame at width 40.
+ * @param shown - columns drawn before the first frame.
+ * @returns the flow and a function that moves its clock.
+ */
+function flowing(shown = 0): { flow: CardFlow; advance: (ms: number) => void } {
+  let now = 1000
+  const flow = new CardFlow({ rowFrames: 4, stepMs: STEP_MS, steps: 5, now: () => now }, shown)
+  return { flow, advance: (ms) => { now += ms } }
+}
+
+describe('CardFlow', () => {
+  it('ships a flow of a full-width row over a few frames', () => {
     expect(TOOL_REVEAL_FRAMES).toBeGreaterThan(0)
-    const reveal = new RowReveal(4, 1)
-    const counts: number[] = []
-    while (reveal.frame(9)) counts.push(reveal.shown())
-    counts.push(reveal.shown())
-    // 8 hidden rows over 4 frames: two rows, then a single row a frame as the hidden run shrinks.
-    expect(counts).toEqual([3, 4, 5, 6, 7, 8, 9])
-    expect(reveal.frame(9)).toBe(false)
   })
 
-  it('reveals rows a block gains after it caught up', () => {
-    const reveal = new RowReveal(1, 2)
-    expect(reveal.frame(2)).toBe(false)
-    expect(reveal.frame(5)).toBe(false)
-    expect(reveal.shown()).toBe(5)
+  it('moves the front the same number of columns every frame, however much is left', () => {
+    const { flow, advance } = flowing()
+    const shown: number[] = []
+    for (let frame = 0; frame < 6; frame += 1) {
+      advance(STEP_MS)
+      flow.frame(500, 40)
+      shown.push(flow.shown())
+    }
+    expect(shown).toEqual([10, 20, 30, 40, 50, 60])
+
+    const short = flowing()
+    const small: number[] = []
+    for (let frame = 0; frame < 3; frame += 1) {
+      short.advance(STEP_MS)
+      short.flow.frame(25, 40)
+      small.push(short.flow.shown())
+    }
+    expect(small).toEqual([10, 20, 25])
   })
 
-  it('treats a drain below one frame as one frame', () => {
-    const reveal = new RowReveal(0, 0)
-    expect(reveal.frame(3)).toBe(false)
-    expect(reveal.shown()).toBe(3)
+  it('records no run for a frame that ran at the same instant as the one before', () => {
+    const { flow, advance } = flowing()
+    advance(STEP_MS)
+    flow.frame(500, 40)
+    flow.frame(500, 40)
+    expect(flow.shown()).toBe(10)
+    expect(flow.trail()).toHaveLength(1)
   })
 
-  it('settles to every row and clamps back to the rows a block has', () => {
-    const reveal = new RowReveal(8, 1)
-    reveal.settle()
-    expect(reveal.shown()).toBe(Number.POSITIVE_INFINITY)
-    reveal.clamp(4)
-    expect(reveal.shown()).toBe(4)
-    reveal.clamp(6)
-    expect(reveal.shown()).toBe(4)
-    expect(reveal.frame(6)).toBe(true)
+  it('follows the time that passed rather than the number of frames', () => {
+    const { flow, advance } = flowing()
+    advance(5)
+    flow.frame(500, 40)
+    expect(flow.shown()).toBe(5)
+    advance(20)
+    flow.frame(500, 40)
+    expect(flow.shown()).toBe(25)
+  })
+
+  it('takes a frame longer as the terminal gets wider', () => {
+    const { flow, advance } = flowing()
+    advance(STEP_MS)
+    flow.frame(500, 80)
+    expect(flow.shown()).toBe(20)
+  })
+
+  it('does not jump to the end after a stall', () => {
+    const { flow, advance } = flowing()
+    advance(60_000)
+    expect(flow.frame(500, 40)).toBe(true)
+    // Four frames at ten columns each, however long the loop was away.
+    expect(flow.shown()).toBe(40)
+  })
+
+  it('starts the clock on the first frame after the card grew, without moving', () => {
+    const { flow, advance } = flowing(8)
+    advance(STEP_MS)
+    flow.frame(10, 40)
+    expect(flow.shown()).toBe(10)
+    // Caught up: the card sat still, then gained columns.
+    advance(60_000)
+    flow.frame(10, 40)
+    expect(flow.shown()).toBe(10)
+    flow.frame(50, 40)
+    expect(flow.shown()).toBe(10)
+    advance(STEP_MS)
+    flow.frame(50, 40)
+    expect(flow.shown()).toBe(20)
+  })
+
+  it('never recedes on a clock that steps backward', () => {
+    const { flow, advance } = flowing()
+    advance(STEP_MS)
+    flow.frame(500, 40)
+    expect(flow.shown()).toBe(10)
+    advance(-30)
+    flow.frame(500, 40)
+    expect(flow.shown()).toBe(10)
+    advance(STEP_MS)
+    flow.frame(500, 40)
+    expect(flow.shown()).toBe(20)
+  })
+
+  it('starts the clock afresh when a card grows right after the front caught up', () => {
+    const { flow, advance } = flowing()
+    advance(STEP_MS)
+    expect(flow.frame(15, 40)).toBe(true)
+    expect(flow.shown()).toBe(10)
+    advance(STEP_MS)
+    expect(flow.frame(15, 40)).toBe(false)
+    expect(flow.shown()).toBe(15)
+    // The time that passed while nothing was left to draw is not owed to the columns that arrive later.
+    advance(2 * STEP_MS)
+    expect(flow.frame(80, 40)).toBe(true)
+    expect(flow.shown()).toBe(15)
+    advance(STEP_MS)
+    flow.frame(80, 40)
+    expect(flow.shown()).toBe(25)
+  })
+
+  it('keeps the freshly drawn columns in a trail that ages with the clock and then empties', () => {
+    const { flow, advance } = flowing()
+    expect(flow.trail()).toEqual([])
+    advance(STEP_MS)
+    flow.frame(500, 40)
+    advance(STEP_MS)
+    flow.frame(500, 40)
+    // Each frame's run is aged from the middle of its own advance: half a step more than the clock moved.
+    expect(flow.trail()).toEqual([
+      { start: 0, end: 10, age: 1.5 },
+      { start: 10, end: 20, age: 0.5 },
+    ])
+    // The run that reached the five steps leaves the trail; the newer one is still receding.
+    advance(STEP_MS * 4)
+    expect(flow.trail()).toEqual([
+      { start: 10, end: 20, age: 4.5 },
+    ])
+    expect(flow.frame(20, 40)).toBe(false)
+    expect(flow.receding()).toBe(true)
+    advance(STEP_MS * 3)
+    expect(flow.trail()).toEqual([])
+    expect(flow.receding()).toBe(false)
+  })
+
+  it('reports hidden columns from the frame, and the runs still brightening apart from them', () => {
+    const { flow, advance } = flowing()
+    advance(STEP_MS)
+    expect(flow.frame(20, 40)).toBe(true)
+    advance(STEP_MS)
+    expect(flow.frame(20, 40)).toBe(false)
+    expect(flow.receding()).toBe(true)
+    advance(STEP_MS * 10)
+    expect(flow.receding()).toBe(false)
+  })
+
+  it('treats fewer than one frame per row as one frame per row', () => {
+    let now = 0
+    const flow = new CardFlow({ rowFrames: 0, stepMs: STEP_MS, steps: 5, now: () => now }, 0)
+    now += STEP_MS
+    flow.frame(500, 40)
+    expect(flow.shown()).toBe(40)
+  })
+
+  it('settles to every column and clamps back to the columns a card has', () => {
+    const { flow, advance } = flowing()
+    advance(STEP_MS)
+    flow.frame(500, 40)
+    flow.settle()
+    expect(flow.shown()).toBe(Number.POSITIVE_INFINITY)
+    expect(flow.trail()).toEqual([])
+    flow.clamp(30)
+    expect(flow.shown()).toBe(30)
+    flow.clamp(60)
+    expect(flow.shown()).toBe(30)
+    // Columns the card gains later flow again from where it ended.
+    flow.frame(60, 40)
+    advance(STEP_MS)
+    flow.frame(60, 40)
+    expect(flow.shown()).toBe(40)
   })
 })

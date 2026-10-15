@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest'
 import { createToolResultMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import { FADE_TICK_MS } from '../src/fade.ts'
-import { bench, spinning, type Bench } from './bench.ts'
+import { spinnerFrame, THINKING_SPINNER } from '../src/spinner.ts'
+import { BENCH_NOW, BENCH_SPINNER_MS, bench, spinning, type Bench } from './bench.ts'
 
 /** A reply long enough that one frame of a four-frame drain cannot draw all of it. */
 const REPLY = 'The quick brown fox jumps over the lazy dog.'
@@ -102,6 +103,43 @@ describe('stream pacing', () => {
     expect(named).not.toContain('writing')
   })
 
+  it('settles the Thinking header when the stream ends without a message', async () => {
+    const test = await bench({ streamPaceFrames: 8 })
+    await test.settle()
+    test.stream.start()
+    test.stream.chunk({ type: 'reasoning-delta', index: 0, text: 'pondering' })
+    await test.settle()
+    await frame(test)
+    expect(await test.screen()).toMatch(/[☙✴❇✳※⚜⁂❄] Thinking/)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    test.stream.end({ kind: 'abandoned' })
+    await test.settle()
+    expect(await test.screen()).toContain('✻ Thinking')
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+  })
+
+  it('spins the Thinking header on the spinner clock while reasoning streams, and settles it at block end', async () => {
+    const test = await bench({ streamPaceFrames: 8 })
+    await test.settle()
+    test.stream.start()
+    test.stream.chunk({ type: 'reasoning-delta', index: 0, text: 'pondering' })
+    await test.settle()
+    await frame(test)
+    const first = spinnerFrame(THINKING_SPINNER, BENCH_NOW, BENCH_SPINNER_MS)
+    expect(await test.screen()).toContain(` ${first} Thinking`)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    test.runTick(BENCH_SPINNER_MS)
+    const next = spinnerFrame(THINKING_SPINNER, BENCH_NOW + BENCH_SPINNER_MS, BENCH_SPINNER_MS)
+    expect(next).not.toBe(first)
+    expect(await test.screen()).toContain(` ${next} Thinking`)
+    // A finished thinking block draws its settled glyph and stops the spinner clock.
+    test.stream.chunk({ type: 'block-end', index: 0, block: { type: 'reasoning', text: 'pondering' } })
+    await test.settle()
+    expect(await test.screen()).toContain('\u273b Thinking')
+    expect(await test.screen()).not.toContain(` ${next} Thinking`)
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+  })
+
   it('draws a finished thinking block at once and keeps pacing the reply', async () => {
     const test = await bench({ streamPaceFrames: 8 })
     await test.settle()
@@ -152,10 +190,10 @@ describe('stream pacing', () => {
   })
 })
 
-describe('tool card reveal', () => {
+describe('tool card flow', () => {
   const OUTPUT = [{ type: 'text' as const, text: 'row-a\nrow-b\nrow-c\nrow-d' }]
 
-  it('unrolls a card and its result over the following frames', async () => {
+  it('flows a card and its result out over the following frames', async () => {
     const test = await bench({ toolRevealFrames: 2, toolPreviewLines: 8 })
     await test.settle()
     test.appendToolCall('call-1', 'bash', { command: 'ls' })
@@ -171,6 +209,38 @@ describe('tool card reveal', () => {
     for (let index = 0; index < 10 && test.tickArmed(FADE_TICK_MS); index += 1) await frame(test)
     expect(await test.screen()).toContain('row-d')
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  })
+
+  it('draws a long result a constant stretch of columns per frame, row after row', async () => {
+    const rows = ['Q', 'X', 'Z'].map(letter => letter.repeat(60))
+    const test = await bench({ toolRevealFrames: 8, toolPreviewLines: 8 })
+    await test.settle()
+    test.appendToolCall('call-1', 'bash', { command: 'ls' })
+    await test.settle()
+    for (let index = 0; index < 6 && test.tickArmed(FADE_TICK_MS); index += 1) await frame(test)
+    // The tool answers while the card is drawn; the call is not held for the animation.
+    test.appendToolResult('call-1', [{ type: 'text', text: rows.join('\n') }])
+    await test.settle()
+
+    const drawn: Record<'Q' | 'X' | 'Z', number>[] = []
+    for (let index = 0; index < 40 && test.tickArmed(FADE_TICK_MS); index += 1) {
+      await frame(test)
+      const screen = await test.screen()
+      const count = (letter: string): number => screen.split(letter).length - 1
+      drawn.push({ Q: count('Q'), X: count('X'), Z: count('Z') })
+    }
+    const totals = drawn.map(row => row.Q + row.X + row.Z)
+    const steps = totals.map((total, index) => total - (totals[index - 1] ?? 0))
+    // A full-width row takes eight frames: twelve or thirteen columns per frame of the 96 to 100
+    // columns the bench reads the screen at, and fewer on the frames that cross a row's four gutter columns.
+    expect(Math.max(...steps)).toBeLessThanOrEqual(13)
+    expect(steps.filter(step => step > 0)).toHaveLength(steps.length)
+    expect(totals.at(-1)).toBe(180)
+    // Rows come out in order: a row has no column on screen until the one above it is complete.
+    for (const row of drawn) {
+      if (row.X > 0) expect(row.Q).toBe(60)
+      if (row.Z > 0) expect(row.X).toBe(60)
+    }
   })
 
   it('draws a replayed card whole', async () => {
@@ -194,12 +264,13 @@ describe('tool card reveal', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
-  it('stops unrolling a streamed card the stream abandoned', async () => {
+  it('stops flowing a streamed card the stream abandoned', async () => {
     const test = await bench({ toolRevealFrames: 8 })
     await test.settle()
     test.stream.start()
     test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'bash', argumentsDelta: '{"command":"ls"}' })
     await test.settle()
+    await frame(test)
     expect(await test.screen()).toMatch(spinning('bash', 'tool'))
     test.stream.end({ kind: 'abandoned' })
     await test.settle()

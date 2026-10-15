@@ -2,24 +2,48 @@
 
 import { describe, expect, it } from 'vitest'
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui'
-import { AssistantBlock, ContextBlock, NoticeBlock, SUBAGENT_RUNNING_GLYPH, TOOL_RUNNING_ROW, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from '../src/blocks.ts'
+import { AssistantBlock, ContextBlock, NoticeBlock, SUBAGENT_RUNNING_GLYPH, TOOL_RUNNING_ROW, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
 import type { CodeSpan } from '../src/transcript.ts'
-import { RowReveal } from '../src/pace.ts'
+import { CardFlow } from '../src/pace.ts'
 
 const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 6 }
 
 /** The two-level fade style, which draws one sequence whatever the ramp would be. */
 const FADE: FadeStyle = { capability: 'dim', ramp: [] }
 
+/** A card's flow on a clock the test moves; at width 40 its front crosses two columns per millisecond. */
+interface FlowClock {
+  flow: CardFlow
+  /** Move the clock and run the card's frame. */
+  frame: (ms: number) => void
+}
+
 /**
- * A card fade fixed at one level.
- * @param age - the level, or undefined for a fade that already settled.
- * @returns the fade the block reads per render.
+ * Build the flow of a card on a clock the test moves: a 40-column row takes
+ * one 20 ms frame, and a run drawn by a frame recedes over four of them.
+ * @param shown - columns drawn before the first frame.
+ * @returns the flow and a function that moves its clock.
  */
-function blockFade(age: number | undefined): BlockFade {
-  return { age: () => age, style: () => FADE }
+function flowClock(shown = 0): { flow: CardFlow; advance: (ms: number) => void } {
+  let now = 1000
+  const flow = new CardFlow({ rowFrames: 1, stepMs: 20, steps: 4, now: () => now }, shown)
+  return { flow, advance: (ms) => { now += ms } }
+}
+
+/**
+ * Flow a card: hand it a flow on a test clock and measure it once.
+ * @param block - the card.
+ * @param style - the colors the trail is drawn with; absent flows without color.
+ * @param shown - columns drawn before the first frame.
+ * @returns the flow, with a `frame` that moves the clock and runs the card's frame.
+ */
+function flowOut(block: ToolBlock, style?: () => FadeStyle, shown = 0): FlowClock {
+  const { flow, advance } = flowClock(shown)
+  block.setFlow(flow, style)
+  block.render(40)
+  return { flow, frame: (ms) => { advance(ms); block.revealFrame() } }
 }
 
 describe('blocks', () => {
@@ -243,32 +267,78 @@ describe('blocks', () => {
     expect(visibleWidth(narrow)).toBeLessThanOrEqual(12)
   })
 
-  it('draws the header and call rows at the level of the card fade, and the result rows at their own', () => {
+  it('floats the freshly drawn columns of a card out, each run at its own age', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     block.setResult(['out'], false)
-    block.setFade(blockFade(0))
-    block.setResultFade(blockFade(undefined))
+    const { frame } = flowOut(block, () => FADE)
+    // Rows are 9, 11, and 7 columns; 9 ms at two columns per millisecond draws 18 of the 27,
+    // so the front stands inside the second row.
+    frame(9)
     expect(block.render(40)).toEqual([
       '',
       '\u001b[2m\u25c6 bash ls\u001b[22m',
-      '\u001b[2m  \u2502 cwd: /w\u001b[22m',
-      '  \u2502 out',
+      '\u001b[2m  \u2502 cwd: \u001b[22m',
+    ])
+    frame(5)
+    // The row the first frame left unfinished now holds two runs, each drawn at its own age.
+    expect(block.render(40)).toEqual([
+      '',
+      '\u001b[2m\u25c6 bash ls\u001b[22m',
+      '\u001b[2m  \u2502 cwd: \u001b[22m\u001b[2m/w\u001b[22m',
+      '\u001b[2m  \u2502 out\u001b[22m',
     ])
   })
 
-  it('draws the truncation marker with the group whose rows it cut into', () => {
-    const block = new ToolBlock({ ...theme, toolPreviewLines: 1 }, 'bash', { title: '', lines: ['a', 'b'] }, 1)
-    block.setResult(['c'], false)
-    block.setFade(blockFade(0))
-    block.setResultFade(blockFade(undefined))
-    // The preview stops inside the call rows, so no result row is drawn at all
-    // and the marker fades with the call.
-    expect(block.render(40)).toEqual([
-      '',
-      '\u001b[2m\u25c6 bash\u001b[22m',
-      '\u001b[2m  \u2502 a\u001b[22m',
-      '\u001b[2m  \u2502 \u2026 2 more rows · Ctrl+O expands\u001b[22m',
-    ])
+  it('colors the columns of one row by when they were drawn', () => {
+    const style: FadeStyle = {
+      capability: 'truecolor',
+      ramp: [{ r: 0, g: 0, b: 0 }, { r: 80, g: 80, b: 80 }, { r: 160, g: 160, b: 160 }, { r: 240, g: 240, b: 240 }],
+    }
+    const block = new ToolBlock(theme, 'bash', { title: 'ls -la /tmp', lines: [] }, 1)
+    const { frame } = flowOut(block, () => style)
+    frame(3)
+    frame(3)
+    const row = block.render(40)[1] ?? ''
+    const colors = [...row.matchAll(/\u001b\[38;2;(\d+);/g)].map(match => Number(match[1]))
+    // The run drawn first has climbed further toward the settled color than the one drawn last.
+    expect(colors.length).toBeGreaterThanOrEqual(2)
+    expect(colors[0]).toBeGreaterThan(colors.at(-1) as number)
+    expect(row.replace(/\u001b\[[0-9;]*m/g, '')).toBe('\u25c6 bash ls -l')
+  })
+
+  it('draws a cut row without the columns past the front, and the rows after it not at all', () => {
+    const block = new ToolBlock({ ...theme, palette: createPalette(true) }, 'bash', { title: '', lines: ['alpha beta'] }, 1)
+    block.setResult(['gamma'], false)
+    const { frame } = flowOut(block, undefined, 0)
+    frame(8)
+    const drawn = block.render(40).map(line => line.replace(/\u001b\[[0-9;]*m/g, ''))
+    expect(drawn).toEqual(['', '\u25c6 bash', '  \u2502 alpha '])
+  })
+
+  it('draws a card whole once its flow caught up and the trail receded', () => {
+    const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: [] }, 1)
+    const { frame } = flowOut(block, () => FADE)
+    frame(10)
+    expect(block.revealing()).toBe(true)
+    const trailing = block.render(40)
+    expect(trailing.every(line => line.includes('\u001b[2m') || line === '')).toBe(true)
+    frame(100)
+    frame(100)
+    expect(block.revealFrame()).toBe(false)
+    expect(block.revealing()).toBe(false)
+    expect(block.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 \u2026'])
+  })
+
+  it('flows without color when the card is given no style, or the terminal draws none', () => {
+    const plain = new ToolBlock(theme, 'bash', { title: 'ls', lines: [] }, 1)
+    const { frame } = flowOut(plain)
+    frame(100)
+    expect(plain.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 \u2026'])
+
+    const none = new ToolBlock(theme, 'bash', { title: 'ls', lines: [] }, 1)
+    const { frame: noneFrame } = flowOut(none, () => ({ capability: 'none', ramp: [] }))
+    noneFrame(100)
+    expect(none.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 \u2026'])
   })
 
   it('flushes the reply tail when the width changes', () => {
@@ -304,30 +374,63 @@ describe('blocks', () => {
     expect(flushed).toBe(1)
   })
 
-  it('keeps a card fade off the rows above the repaint floor', () => {
+  it('spins the live Thinking header through its frame, and settles it once reasoning is done', () => {
+    const block = new AssistantBlock(theme, 1)
+    block.appendReasoning('thinking hard')
+    expect(block.spinning()).toBe(false)
+    expect(block.render(40)[1]).toContain('✻ Thinking')
+    block.setReasoningSpinner(() => '✼')
+    expect(block.spinning()).toBe(true)
+    expect(block.render(40)[1]).toContain('✼ Thinking')
+    block.setReasoningSpinner(undefined)
+    expect(block.spinning()).toBe(false)
+    expect(block.render(40)[1]).toContain('✻ Thinking')
+    block.commit('reply', 'thinking hard', false)
+    block.setReasoningSpinner(() => '✼')
+    expect(block.spinning()).toBe(false)
+    expect(block.render(40)[1]).toContain('✻ Thinking')
+  })
+
+  it('stops spinning a header the repaint floor took, and never resumes it', () => {
+    const block = new AssistantBlock(theme, 1)
+    block.appendReasoning('thinking hard')
+    block.setReasoningSpinner(() => '✼')
+    block.render(40)
+    expect(block.setRepaintFloor(2)).toBe(true)
+    expect(block.spinning()).toBe(false)
+    expect(block.render(40)[1]).toContain('✻ Thinking')
+    // The floor stays; a later header frame is dropped, not resumed.
+    block.setReasoningSpinner(() => '✽')
+    block.render(40)
+    expect(block.spinning()).toBe(false)
+    expect(block.render(40)[1]).toContain('✻ Thinking')
+    expect(block.setRepaintFloor(1)).toBe(false)
+  })
+
+  it('keeps the trail off the rows above the repaint floor', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
     block.setResult(['out'], false)
-    block.setFade(blockFade(0))
-    block.setResultFade(blockFade(0))
+    const { frame } = flowOut(block, () => FADE)
+    frame(14)
     expect(block.setRepaintFloor(2)).toBe(true)
     expect(block.render(40)).toEqual([
       '',
-      '◆ bash ls',
+      '\u25c6 bash ls',
       '\u001b[2m  \u2502 cwd: /w\u001b[22m',
       '\u001b[2m  \u2502 out\u001b[22m',
     ])
   })
 
-  it('never lowers a card floor and reports no change while both fades are settled', () => {
+  it('never lowers a card floor and reports no change while its flow is settled', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
-    block.setFade(blockFade(0))
+    const { frame } = flowOut(block, () => FADE)
+    frame(14)
     expect(block.setRepaintFloor(2)).toBe(true)
     expect(block.setRepaintFloor(1)).toBe(false)
-    // The header sits at index 1, which the floor of 2 keeps out of the fade.
-    expect(block.render(40)[1]).toBe('◆ bash ls')
+    // The header sits at index 1, which the floor of 2 keeps out of the trail.
+    expect(block.render(40)[1]).toBe('\u25c6 bash ls')
 
     const settled = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
-    settled.setFade(blockFade(undefined))
     expect(settled.setRepaintFloor(2)).toBe(false)
   })
 
@@ -502,9 +605,10 @@ describe('the focus gutter', () => {
     expect(long.render(40)).toEqual(['│ ', '┃ ◆ bash', '┃   │ a', '┃   │ b', '│   │ c'])
   })
 
-  it('prepends the gutter after the fade, so the fade keeps matching the card own text', () => {
+  it('prepends the gutter after the flow, so the trail keeps matching the card own text', () => {
     const block = new ToolBlock(theme, 'bash', { title: 'ls', lines: ['cwd: /w'] }, 1)
-    block.setFade(blockFade(0))
+    const { frame } = flowOut(block, () => FADE)
+    frame(13)
     block.setHighlight(0)
     expect(block.render(40)).toEqual([
       '│ ',
@@ -734,16 +838,18 @@ describe('render reuse', () => {
     expect(counter.calls).toBe(3)
   })
 
-  it('draws a card fade over the card body without rebuilding it', () => {
+  it('draws a flowing card over the card body without rebuilding it', () => {
     const { highlight, counter } = countingHighlighter()
     const block = new ToolBlock({ ...theme, palette: createPalette(true), codeHighlight: highlight }, 'read', { title: 'a.ts', lines: [] }, 1)
     block.setResult(READ_ROWS, false, READ_CODE)
     const settled = block.render(40)
-    block.setResultFade(blockFade(0))
+    const { frame } = flowOut(block, () => FADE, 0)
+    frame(10)
     const faded = block.render(40)
     expect(faded).not.toEqual(settled)
-    expect(faded.at(-1)).toContain('[2m')
-    block.setResultFade(blockFade(undefined))
+    expect(faded.at(-1)).toContain('\u001b[2m')
+    frame(200)
+    frame(200)
     expect(block.render(40)).toBe(settled)
     expect(counter.calls).toBe(1)
     // The gutter narrows the card and renames its fold key, so the focus
@@ -894,34 +1000,71 @@ describe('render reuse', () => {
   })
 })
 
-describe('unrolling a tool card', () => {
+describe('flowing a tool card out', () => {
   const ROWS = ['one', 'two', 'three']
 
-  it('draws only the revealed rows, and reports the rows still to unroll', () => {
+  it('draws only the reached columns, row after row, and reports what is still to flow', () => {
     const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
     expect(block.revealing()).toBe(false)
     expect(block.revealFrame()).toBe(false)
-    block.setReveal(new RowReveal(1, 1))
-    // A reveal the card has not rendered under waits for the render to measure it.
+    const { flow, advance } = flowClock(1)
+    block.setFlow(flow)
+    // A flow the card has not rendered under waits for the render to measure it.
     expect(block.revealing()).toBe(true)
     expect(block.revealFrame()).toBe(true)
-    expect(block.render(40)).toEqual(['', '◆ bash ls'])
+    expect(block.render(40)).toEqual(['', '\u25c6'])
     expect(block.revealing()).toBe(true)
+
+    // The header is nine columns: the front crosses four of them in two milliseconds.
+    advance(2)
+    expect(block.revealFrame()).toBe(true)
+    expect(block.render(40)).toEqual(['', '\u25c6 bas'])
+    // The next row starts after the header; a row is drawn from its first column.
+    advance(4)
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 '])
+    advance(1)
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 \u2026'])
+    // Nothing is left to draw, and with no color there is no trail to wait for.
     expect(block.revealFrame()).toBe(false)
-    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ …'])
     expect(block.revealing()).toBe(false)
 
+    // The result replaces the loading row, so the front, which stood at its end, stands inside the first result row.
     block.setResult(ROWS, false)
     expect(block.revealing()).toBe(true)
-    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ one'])
-    expect(block.revealing()).toBe(true)
-    expect(block.revealFrame()).toBe(false)
-    expect(block.render(40)).toEqual(['', '◆ bash ls', '  │ one', '  │ two', '  │ three'])
+    expect(block.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 o'])
+    expect(block.revealFrame()).toBe(true)
+    advance(8)
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 one', '  \u2502 two', '  \u2502 thr'])
+    advance(8)
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502 one', '  \u2502 two', '  \u2502 three'])
+  })
+
+  it('keeps its own pace when a result lands while the header still flows', () => {
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
+    const { flow, advance } = flowClock(0)
+    block.setFlow(flow)
+    block.render(40)
+    advance(2)
+    block.revealFrame()
+    // The card holds the result at once, and the front carries on through the header into the rows behind it.
+    block.setResult(ROWS, false)
+    expect(block.parts()).toEqual([{ kind: 'call', rows: ['ls'] }, { kind: 'result', rows: ROWS }])
+    expect(block.render(40)).toEqual(['', '\u25c6 ba'])
+    advance(2)
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['', '\u25c6 bash l'])
+    advance(2)
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['', '\u25c6 bash ls', '  \u2502'])
   })
 
   it('draws every row once the card unfolds', () => {
     const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
-    block.setReveal(new RowReveal(8, 1))
+    block.setFlow(flowClock(1).flow)
     block.setResult(ROWS, false)
     expect(block.render(40)).toHaveLength(2)
     block.setExpanded(false)
@@ -931,27 +1074,32 @@ describe('unrolling a tool card', () => {
     expect(block.revealing()).toBe(false)
   })
 
-  it('draws every row once the unrolling edge is above the repaintable lines', () => {
+  it('draws every column once the flowing row is above the repaintable lines', () => {
     const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
-    block.setReveal(new RowReveal(8, 1))
+    block.setFlow(flowClock(1).flow)
     block.setResult(ROWS, false)
     block.render(40)
-    // The edge sits right after the header, line 2 of the card, so a floor at it can still follow the rows.
-    expect(block.setRepaintFloor(2)).toBe(false)
+    // The front is in the header, line 1 of the card, so a floor at it can still follow the front.
+    expect(block.setRepaintFloor(1)).toBe(false)
     expect(block.render(40)).toHaveLength(2)
-    expect(block.setRepaintFloor(3)).toBe(true)
+    expect(block.setRepaintFloor(2)).toBe(true)
     expect(block.render(40)).toHaveLength(5)
     expect(block.setRepaintFloor(3)).toBe(false)
   })
 
-  it('unrolls a focused card with its gutter', () => {
+  it('flows a focused card with its gutter', () => {
     const block = new ToolBlock({ ...theme, toolPreviewLines: 8 }, 'bash', { title: 'ls', lines: [] }, 1)
-    block.setReveal(new RowReveal(8, 1))
+    const { flow, advance } = flowClock(1)
+    block.setFlow(flow)
     block.setResult(ROWS, false)
     block.setHighlight(1)
-    expect(block.render(40)).toEqual(['│ ', '│ ◆ bash ls'])
+    expect(block.render(40)).toEqual(['\u2502 ', '\u2502 \u25c6'])
+    advance(8)
     block.revealFrame()
-    expect(block.render(40)).toEqual(['│ ', '│ ◆ bash ls', '┃   │ one'])
+    block.render(40)
+    advance(7)
+    block.revealFrame()
+    expect(block.render(40)).toEqual(['\u2502 ', '\u2502 \u25c6 bash ls', '\u2503   \u2502 one', '\u2503   \u2502 two', '\u2503   \u2502 thre'])
   })
 })
 
