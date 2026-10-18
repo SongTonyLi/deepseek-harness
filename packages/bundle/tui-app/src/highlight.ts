@@ -22,6 +22,7 @@
 import type { HighlighterCore, ThemeRegistrationAny } from 'shiki/core'
 import type { RgbColor } from '@earendil-works/pi-tui'
 import { nearestAnsi256 } from './fade.ts'
+import { declaresTruecolor } from './style.ts'
 
 /** How far a terminal can encode one token colour. */
 export type ColorDepth =
@@ -159,8 +160,7 @@ export function resolveColorDepth(input: { paletteEnabled: boolean; env: NodeJS.
   if (!input.paletteEnabled) return 'none'
   const term = input.env.TERM ?? ''
   if (term === 'dumb') return 'none'
-  const colorterm = (input.env.COLORTERM ?? '').toLowerCase()
-  if (colorterm === 'truecolor' || colorterm === '24bit') return 'truecolor'
+  if (declaresTruecolor(input.env)) return 'truecolor'
   return term.includes('256color') ? 'ansi256' : 'none'
 }
 

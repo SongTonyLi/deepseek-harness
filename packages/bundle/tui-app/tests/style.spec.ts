@@ -1,12 +1,12 @@
 /** Palette roles, color detection, and the derived pi-tui themes. */
 
 import { describe, expect, it } from 'vitest'
-import { bandDiffRows, bandRow, colorEnabled, createPalette, editorTheme, markdownTheme, paintDiffRows, selectListTheme } from '../src/style.ts'
+import { bandDiffRows, bandRow, colorEnabled, createPalette, editorTheme, markdownTheme, paintDiffRows, paletteDepth, selectListTheme } from '../src/style.ts'
 
 describe('palette', () => {
   it('wraps text in SGR pairs when enabled and returns it verbatim otherwise', () => {
     const on = createPalette(true)
-    expect(on.accent('x')).toBe('\u001b[36mx\u001b[39m')
+    expect(on.accent('x')).toBe('\u001b[38;5;111mx\u001b[39m')
     expect(on.heading('x')).toBe('\u001b[38;5;215mx\u001b[39m')
     expect(on.link('x')).toBe('\u001b[38;5;141mx\u001b[39m')
     expect(on.bold('x')).toBe('\u001b[1mx\u001b[22m')
@@ -21,6 +21,33 @@ describe('palette', () => {
     expect(off.enabled).toBe(false)
   })
 
+  it('draws each colored role in its Tokyo Night hue, as the exact color under truecolor', () => {
+    const indexed = createPalette(true)
+    expect(indexed.success('x')).toBe('\u001b[38;5;149mx\u001b[39m')
+    expect(indexed.warning('x')).toBe('\u001b[38;5;179mx\u001b[39m')
+    expect(indexed.error('x')).toBe('\u001b[38;5;210mx\u001b[39m')
+    expect(indexed.tool('x')).toBe('\u001b[38;5;117mx\u001b[39m')
+    expect(indexed.subject('x')).toBe('\u001b[38;5;80mx\u001b[39m')
+    expect(indexed.model('x')).toBe('\u001b[38;5;140mx\u001b[39m')
+    const exact = createPalette(true, false, 'truecolor')
+    expect(exact.accent('x')).toBe('\u001b[38;2;122;162;247mx\u001b[39m')
+    expect(exact.tool('x')).toBe('\u001b[38;2;125;207;255mx\u001b[39m')
+    expect(exact.subject('x')).toBe('\u001b[38;2;115;218;202mx\u001b[39m')
+    expect(exact.model('x')).toBe('\u001b[38;2;157;124;216mx\u001b[39m')
+    expect(exact.hue.orange('x')).toBe(exact.heading('x'))
+    expect(exact.hue.magenta('x')).toBe(exact.link('x'))
+    // Backgrounds are not hues, so the depth leaves them alone.
+    expect(exact.band('x')).toBe(indexed.band('x'))
+    expect(createPalette(false, false, 'truecolor').hue.blue('x')).toBe('x')
+  })
+
+  it('reads truecolor from COLORTERM and falls back to the indexed colors', () => {
+    expect(paletteDepth({ COLORTERM: 'truecolor' })).toBe('truecolor')
+    expect(paletteDepth({ COLORTERM: '24BIT' })).toBe('truecolor')
+    expect(paletteDepth({ COLORTERM: 'yes' })).toBe('ansi256')
+    expect(paletteDepth({})).toBe('ansi256')
+  })
+
   it('lays a row on the background band across the full width, and leaves it bare without color', () => {
     const on = createPalette(true)
     expect(on.band('x')).toBe('\u001b[48;5;236mx\u001b[49m')
@@ -33,8 +60,8 @@ describe('palette', () => {
   it('paints additions green and removals red without changing context rows', () => {
     const source = ['+ add', '- remove', '  keep', '@@ hunk']
     expect(paintDiffRows(source, source, createPalette(true))).toEqual([
-      '\u001b[32m+ add\u001b[39m',
-      '\u001b[31m- remove\u001b[39m',
+      '\u001b[38;5;149m+ add\u001b[39m',
+      '\u001b[38;5;210m- remove\u001b[39m',
       '  keep',
       '@@ hunk',
     ])

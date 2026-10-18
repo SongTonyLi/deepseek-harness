@@ -8,7 +8,7 @@ import { createPalette } from '../src/style.ts'
 import { KEY } from './bench.ts'
 
 /** One key as a colored palette draws its chip: accent, italic. */
-const chip = (label: string): string => `\u001b[3m\u001b[36m${label}\u001b[39m\u001b[23m`
+const chip = (label: string): string => `\u001b[3m\u001b[38;5;111m${label}\u001b[39m\u001b[23m`
 
 const palette = createPalette(false)
 
@@ -173,7 +173,7 @@ describe('prompts', () => {
       expect(page(prompt)).toEqual(['', 'session-a', 'reviewer', 'running · continuable', 'created: 2026-02-03 14:25', HINT])
       const colored = new DetailPrompt(createPalette(true), 'session-a', ['reviewer'])
       const lines = page(colored)
-      expect(lines[1]).toBe('\u001b[1m\u001b[36msession-a\u001b[39m\u001b[22m')
+      expect(lines[1]).toBe('\u001b[1m\u001b[38;5;111msession-a\u001b[39m\u001b[22m')
       const dim = (text: string): string => `\u001b[2m${text}\u001b[22m`
       expect(lines.at(-1)).toBe(
         `${chip('↑')}${dim(' ')}${chip('↓')}${dim(' scroll · ')}${chip('Enter')}${dim(', ')}${chip('Esc')}${dim(', or ')}${chip('←')}${dim(' returns')}`,

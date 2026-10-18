@@ -102,10 +102,10 @@ describe('renderActivityBoard', () => {
 
   it('scratches out completed content and leaves the glyph', () => {
     const shown = renderActivityBoard(activityBoardView({ todos: mixed }), { palette: color })
-    expect(shown).toContain('\u001b[32m✓\u001b[39m ')
+    expect(shown).toContain('\u001b[38;5;149m✓\u001b[39m ')
     expect(shown).toContain('\u001b[9mread the spec\u001b[29m')
-    expect(shown).toContain('\u001b[33m▸\u001b[39m write the data layer')
-    expect(shown).toContain('\u001b[36m○\u001b[39m wire the picker')
+    expect(shown).toContain('\u001b[38;5;179m▸\u001b[39m write the data layer')
+    expect(shown).toContain('\u001b[38;5;111m○\u001b[39m wire the picker')
     expect(shown.indexOf('✓')).toBeLessThan(shown.indexOf('▸'))
   })
 
@@ -113,8 +113,8 @@ describe('renderActivityBoard', () => {
     const view = activityBoardView({ todos: mixed })
     expect(spinningTodos(view)).toEqual(['write the data layer'])
     const shown = renderActivityBoard(view, { palette: color, spinners: new Map([['write the data layer', '✦']]) })
-    expect(shown).toContain('\u001b[33m✦\u001b[39m write the data layer')
-    expect(shown).toContain('\u001b[36m○\u001b[39m wire the picker')
+    expect(shown).toContain('\u001b[38;5;179m✦\u001b[39m write the data layer')
+    expect(shown).toContain('\u001b[38;5;111m○\u001b[39m wire the picker')
     expect(spinningTodos(activityBoardView({ todos: [{ content: 'wire the picker', status: 'pending' }] }))).toEqual([])
 
     const parallel = activityBoardView({

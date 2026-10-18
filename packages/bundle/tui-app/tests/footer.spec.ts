@@ -20,7 +20,7 @@ import type { StatusFacts } from '../src/status.ts'
 import { createPalette } from '../src/style.ts'
 
 /** One key as a colored palette draws its chip: accent, italic. */
-const chip = (label: string): string => `\u001b[3m\u001b[36m${label}\u001b[39m\u001b[23m`
+const chip = (label: string): string => `\u001b[3m\u001b[38;5;111m${label}\u001b[39m\u001b[23m`
 
 const model: ModelSelection = { provider: 'deepseek', model: 'deepseek-chat' }
 
@@ -282,8 +282,8 @@ describe('renderFooter', () => {
 
   it('distinguishes the model, live turn, and context by color, and draws each entry key as a chip', () => {
     const [line = ''] = renderFooter(buildFooterSegments(crowded()), { palette: createPalette(true), width: WIDE })
-    expect(line).toContain('\u001b[36mdeepseek-chat\u001b[39m')
-    expect(line).toContain('\u001b[33mturn 1m12s\u001b[39m')
+    expect(line).toContain('\u001b[38;5;140mdeepseek-chat\u001b[39m')
+    expect(line).toContain('\u001b[38;5;179mturn 1m12s\u001b[39m')
     expect(line).toContain('\u001b[38;5;141mctx 42%\u001b[39m')
     expect(line).toContain(`${chip('Shift+↑')}\u001b[38;5;141m read · \u001b[39m${chip('Shift+↓')}\u001b[38;5;141m status\u001b[39m`)
     expect(visibleWidth(line)).toBe(WIDE)
@@ -347,7 +347,7 @@ describe('renderFooter', () => {
     expect(lines[1]).toBe('reasoning effort: the model\'s own default · ←→ segments · Enter details · Tab regions · Esc input')
     const styled = renderFooter(usage, { palette: createPalette(true), selected: 1, width: WIDE })
     const [bar, expansion] = styled
-    expect(bar).toContain('\u001b[36m[effort default]\u001b[39m')
+    expect(bar).toContain('\u001b[38;5;111m[effort default]\u001b[39m')
     expect(bar).toContain('\u001b[2mdeepseek-chat\u001b[22m')
     expect(bar).toContain('\u001b[2m/work\u001b[22m')
     expect(expansion).toContain('reasoning effort: the model\'s own default')
@@ -360,8 +360,8 @@ describe('renderFooter', () => {
     const at = (level: MotionLevel): string => renderFooter(usage, { palette: styled, selected: 1, level, width: WIDE })[0] ?? ''
     // The peak is the one moment the bar draws bold; the settled label is the
     // plain accent, whatever the terminal's motion setting.
-    expect(at(2)).toContain('\u001b[1m\u001b[36m\u001b[36m[effort default]')
-    expect(at(1)).toContain('\u001b[36m\u001b[36m[effort default]')
+    expect(at(2)).toContain('\u001b[1m\u001b[38;5;111m\u001b[38;5;111m[effort default]')
+    expect(at(1)).toContain('\u001b[38;5;111m\u001b[38;5;111m[effort default]')
     expect(at(0)).toBe(renderFooter(usage, { palette: styled, selected: 1, width: WIDE })[0])
     expect(at(0)).not.toContain('\u001b[1m')
     // A lift never changes how much of the bar is drawn.

@@ -146,6 +146,14 @@ describe('contextUsageLines', () => {
     ])
   })
 
+  it('draws each category in its own hue', () => {
+    const legend = contextUsageLines(usage, color, 80).join('\n')
+    const hues = [color.hue.blue, color.hue.cyan, color.hue.orange, color.hue.yellow, color.hue.green, color.hue.magenta]
+    for (const [index, label] of ['System prompt', 'System tools', 'Instructions', 'Skills', 'Injected context', 'Messages'].entries()) {
+      expect(legend).toContain(`${hues[index]?.('⛁') ?? ''} ${label}:`)
+    }
+  })
+
   it('stacks the legend under a half-width grid on a narrow terminal, and never exceeds the width', () => {
     const lines = contextUsageLines(usage, plain, 30)
     expect(lines[2]).toBe(`⛁ ⛁ ⛁ ⛁ ⛁ ${Array<string>(5).fill('⛶').join(' ')}`)
@@ -192,9 +200,9 @@ describe('contextUsageLines', () => {
     const half = contextUsageLines(usage, plain, 80, { fill: 0.4, frontier: false, live: false })
     expect(half[2]?.startsWith(`⛁ ⛁ ${Array<string>(18).fill('⛶').join(' ')}`)).toBe(true)
     const lit = contextUsageLines(usage, color, 80, { fill: 1, frontier: true, live: true })
-    expect(lit.join('\n')).toContain('\u001b[1m\u001b[36m⛶')
+    expect(lit.join('\n')).toContain('\u001b[1m\u001b[38;5;111m⛶')
     expect(lit.join('\n')).toContain(' · live')
-    expect(contextUsageLines(usage, color, 80, { fill: 0.5, frontier: true, live: true }).join('\n')).not.toContain('\u001b[1m\u001b[36m⛶')
+    expect(contextUsageLines(usage, color, 80, { fill: 0.5, frontier: true, live: true }).join('\n')).not.toContain('\u001b[1m\u001b[38;5;111m⛶')
   })
 })
 

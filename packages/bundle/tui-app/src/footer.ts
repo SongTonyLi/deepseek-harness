@@ -480,7 +480,7 @@ function unfocusedLine(segments: readonly FooterSegment[], palette: Palette, wid
     return palette.dim(segment.label)
   })
   const drawn = middleFacts(facts, rest.length - facts.length, width - visibleWidth(model) - reserved)
-  const left = [model === '' ? '' : palette.accent(model), ...drawn]
+  const left = [model === '' ? '' : palette.model(model), ...drawn]
     .filter(token => token !== '').join(palette.dim(SEPARATOR))
   if (hint === '') return fitLine(left, width)
   const padding = ' '.repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(hint)))

@@ -32,7 +32,7 @@ import { FADE_STEPS, FADE_TICK_MS } from './fade.ts'
 import { STREAM_PACE_FRAMES, TOOL_REVEAL_FRAMES } from './pace.ts'
 import { FOCUS_PREVIEW_LINES } from './inspector.ts'
 import { READER_MIN_COLUMNS } from './reader.ts'
-import { colorEnabled, createPalette } from './style.ts'
+import { colorEnabled, createPalette, paletteDepth, type PaletteDepth } from './style.ts'
 import { TOAST_MS } from './toast.ts'
 import { describeFailure } from './transcript.ts'
 
@@ -243,6 +243,8 @@ interface TuiHost {
   stderr: { write(chunk: string): unknown }
   /** Whether SGR styling is emitted. */
   color: boolean
+  /** How the palette encodes its hues. */
+  depth: PaletteDepth
   /** Whether this Host can hand a URL to a local desktop. */
   canOpenUrl(): boolean
   /** Hand an authorization page to the local default browser. */
@@ -252,13 +254,14 @@ interface TuiHost {
 }
 
 /** The process-bound pieces of the host; tests substitute a fake terminal and captured streams. */
-export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stderr' | 'color' | 'canOpenUrl' | 'openUrl'> = {
+export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stderr' | 'color' | 'depth' | 'canOpenUrl' | 'openUrl'> = {
   /* v8 ignore next -- the process terminal owns raw stdin; tests substitute a fake */
   createTerminal: () => new ProcessTerminal(),
   /* v8 ignore next -- process stdin is the host's; tests substitute a recorder */
   releaseInput: () => { process.stdin.unref() },
   stderr: process.stderr,
   color: colorEnabled(process.env, process.stdout.isTTY),
+  depth: paletteDepth(process.env),
   canOpenUrl: () => canOpenNativePath(),
   openUrl: openNativeUrl,
 }
@@ -481,7 +484,7 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     host: sessions,
     initial,
     terminal: host.createTerminal(),
-    palette: createPalette(host.color, config.mouse),
+    palette: createPalette(host.color, config.mouse, host.depth),
     toolPreviewLines: config.toolPreviewLines,
     contextPreviewLines: config.contextPreviewLines,
     focusPreviewLines: config.focusPreviewLines,
@@ -541,6 +544,7 @@ export function apply(ctx: Context, config: Config): void {
     releaseInput: internals.releaseInput,
     stderr: internals.stderr,
     color: internals.color,
+    depth: internals.depth,
     canOpenUrl: internals.canOpenUrl,
     openUrl: internals.openUrl,
     exit,

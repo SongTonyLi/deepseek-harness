@@ -41,6 +41,7 @@
 
 import { stripTerminalSequences, visibleWidth, type RgbColor } from '@earendil-works/pi-tui'
 import { sliceColumns } from './columns.ts'
+import { declaresTruecolor } from './style.ts'
 
 /**
  * Brightness levels a chunk passes through. A chunk of age `a` draws between
@@ -182,8 +183,7 @@ export function resolveFadeCapability(input: FadeCapabilityInput): FadeCapabilit
   if (env.NO_COLOR !== undefined && env.NO_COLOR !== '') return 'none'
   const term = env.TERM ?? ''
   if (term === 'dumb') return 'none'
-  const colorterm = (env.COLORTERM ?? '').toLowerCase()
-  if (colorterm === 'truecolor' || colorterm === '24bit') return 'truecolor'
+  if (declaresTruecolor(env)) return 'truecolor'
   return term.includes('256color') ? 'ansi256' : 'dim'
 }
 

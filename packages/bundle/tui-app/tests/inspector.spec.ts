@@ -15,7 +15,7 @@ const bare = (line: string | undefined): string => (line ?? '').replaceAll('\u00
 const rowText = (line: string | undefined): string => bare(line).replace(/^│ /u, '').replace(/│$/u, '').trimEnd()
 
 /** The peak of a lift: the one moment a piece of chrome is drawn bold. */
-const PEAK = '\u001b[1m\u001b[36m'
+const PEAK = '\u001b[1m\u001b[38;5;111m'
 
 /**
  * A focused section as the inspector receives it.
@@ -72,8 +72,8 @@ describe('renderInspector', () => {
     expect(styled[0]).toContain('\u001b[2m╭\u001b[22m')
     expect(styled.at(-1)).toContain('\u001b[2m╰\u001b[22m')
     const marked = renderInspector(view(), { ...plain, palette: createPalette(true) })
-    expect(marked[0]).toContain('\u001b[36m╭\u001b[39m')
-    expect(marked.at(-1)).toContain('\u001b[36m╰\u001b[39m')
+    expect(marked[0]).toContain('\u001b[38;5;111m╭\u001b[39m')
+    expect(marked.at(-1)).toContain('\u001b[38;5;111m╰\u001b[39m')
   })
 
   it('lifts the whole outline and the chip together, and settles on the same lines', () => {
@@ -83,10 +83,10 @@ describe('renderInspector', () => {
     // The lift reaches the rules, the body border, and the chip as one, and
     // takes exactly the rows the settled frame takes.
     expect(lifted).toHaveLength(settled.length)
-    expect(lifted[0]).toContain(`${PEAK}\u001b[36m\u256d`)
+    expect(lifted[0]).toContain(`${PEAK}\u001b[38;5;111m\u256d`)
     expect(lifted[0]).toContain(`${PEAK}\u001b[7m`)
-    expect(lifted[1]).toContain(`${PEAK}\u001b[36m\u2502`)
-    expect(lifted.at(-1)).toContain(`${PEAK}\u001b[36m\u2570`)
+    expect(lifted[1]).toContain(`${PEAK}\u001b[38;5;111m\u2502`)
+    expect(lifted.at(-1)).toContain(`${PEAK}\u001b[38;5;111m\u2570`)
     expect(renderInspector(view({ level: 0 }), styled)).toEqual(settled)
   })
 
@@ -102,7 +102,7 @@ describe('renderInspector', () => {
   it('brackets the held label and dims the rest of the strip', () => {
     const styled = renderInspector(view(), { ...plain, palette: createPalette(true) })
     expect(styled[1]).toContain(
-      '\u001b[36m│\u001b[39m \u001b[2m← \u001b[22m\u001b[2m1 reasoning\u001b[22m\u001b[2m · \u001b[22m\u001b[36m[2 reply]\u001b[39m\u001b[2m →\u001b[22m',
+      '\u001b[38;5;111m│\u001b[39m \u001b[2m← \u001b[22m\u001b[2m1 reasoning\u001b[22m\u001b[2m · \u001b[22m\u001b[38;5;111m[2 reply]\u001b[39m\u001b[2m →\u001b[22m',
     )
     // The brackets carry the selection where no color is drawn at all.
     expect(renderInspector(view(), plain)[1]).toContain('[2 reply]')

@@ -71,8 +71,8 @@ describe('pulse', () => {
     const palette = createPalette(true)
     const settled = palette.dim('subagents')
     expect(pulse(palette, settled, 0)).toBe(settled)
-    expect(pulse(palette, settled, 1)).toBe(`\u001b[36m${settled}\u001b[39m`)
-    expect(pulse(palette, settled, 2)).toBe(`\u001b[1m\u001b[36m${settled}\u001b[39m\u001b[22m`)
+    expect(pulse(palette, settled, 1)).toBe(`\u001b[38;5;111m${settled}\u001b[39m`)
+    expect(pulse(palette, settled, 2)).toBe(`\u001b[1m\u001b[38;5;111m${settled}\u001b[39m\u001b[22m`)
   })
 
   it('draws every level verbatim on a terminal with no styling at all', () => {

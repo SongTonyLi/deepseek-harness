@@ -1122,7 +1122,7 @@ describe('the chrome motions', () => {
   }
 
   /** The peak of a lift: the one moment a piece of chrome is drawn bold. */
-  const PEAK = '\u001b[1m\u001b[36m'
+  const PEAK = '\u001b[1m\u001b[38;5;111m'
 
   /** How long a landing lasts on the bench's own fade period. */
   const LANDING_MS = LANDING_TICKS * FADE_TICK_MS
@@ -1135,7 +1135,7 @@ describe('the chrome motions', () => {
     // it settles at.
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
     const landing = await paint(test)
-    expect(landing.raw).toContain(`${PEAK}\u001b[36m╭`)
+    expect(landing.raw).toContain(`${PEAK}\u001b[38;5;111m╭`)
     expect(landing.shown).toContain(' ● READ ')
 
     test.runTick(FADE_TICK_MS, LANDING_MS)
@@ -1143,8 +1143,8 @@ describe('the chrome motions', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
     const settled = await paint(test)
     expect(settled.raw).not.toBe(landing.raw)
-    expect(settled.raw).not.toContain(`${PEAK}\u001b[36m╭`)
-    expect(settled.raw).toContain('\u001b[36m╭')
+    expect(settled.raw).not.toContain(`${PEAK}\u001b[38;5;111m╭`)
+    expect(settled.raw).toContain('\u001b[38;5;111m╭')
     // Nothing moves again on its own: the frame the motion settled on is the
     // frame ten minutes later draws.
     test.setNow(BENCH_NOW + 10 * 60_000)
@@ -1177,13 +1177,13 @@ describe('the chrome motions', () => {
     const stepping = await paint(test)
     // The step lifts the mark where it landed, and the frame is settled
     // again: the walk went on from the landing that brought it here.
-    expect(stepping.raw).toContain(`${PEAK}\u001b[36m┃ `)
-    expect(stepping.raw).not.toContain(`${PEAK}\u001b[36m╭`)
+    expect(stepping.raw).toContain(`${PEAK}\u001b[38;5;111m┃ `)
+    expect(stepping.raw).not.toContain(`${PEAK}\u001b[38;5;111m╭`)
     test.runTick(FADE_TICK_MS, STEP_TICKS * FADE_TICK_MS)
     await test.settle()
     const settled = await paint(test)
-    expect(settled.raw).toContain('\u001b[36m┃ ')
-    expect(settled.raw).not.toContain(`${PEAK}\u001b[36m┃ `)
+    expect(settled.raw).toContain('\u001b[38;5;111m┃ ')
+    expect(settled.raw).not.toContain(`${PEAK}\u001b[38;5;111m┃ `)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
 
@@ -1198,7 +1198,7 @@ describe('the chrome motions', () => {
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
     const landed = await paint(test)
     expect(landed.shown).toContain(' ● READ ')
-    expect(landed.raw).not.toContain(`${PEAK}\u001b[36m╭`)
+    expect(landed.raw).not.toContain(`${PEAK}\u001b[38;5;111m╭`)
     test.terminal.type(KEY.up)
     test.terminal.type(KEY.enter)
     await test.settle()

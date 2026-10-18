@@ -376,17 +376,17 @@ function hotRow(usage: ContextUsage, palette: Palette, frame: ContextUsageFrame)
 function categoryStyle(palette: Palette, id: ContextCategoryId): Style {
   switch (id) {
     case 'system':
-      return palette.dim
+      return palette.hue.blue
     case 'tools':
-      return palette.accent
+      return palette.hue.cyan
     case 'instructions':
-      return palette.heading
+      return palette.hue.orange
     case 'skills':
-      return palette.warning
+      return palette.hue.yellow
     case 'context':
-      return palette.success
+      return palette.hue.green
     case 'messages':
-      return palette.link
+      return palette.hue.magenta
     /* v8 ignore next 2 -- closed-union exhaustiveness guard */
     default:
       return assertNever(id, 'context category')

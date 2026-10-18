@@ -864,7 +864,7 @@ describe('the lift under the editor', () => {
   }
 
   /** The peak of a lift: the one moment a mark under the editor is drawn bold. */
-  const PEAK = '\u001b[1m\u001b[36m\u001b[36m'
+  const PEAK = '\u001b[1m\u001b[38;5;111m\u001b[38;5;111m'
 
   it('lifts the segment a walk along the bar reaches and settles it on the accent', async () => {
     const test = await bench({ color: true })
@@ -875,7 +875,7 @@ describe('the lift under the editor', () => {
     expect(await repaint(test)).toContain(`${PEAK}[test-model]`)
     test.runTick(FADE_TICK_MS, LANDING_TICKS * FADE_TICK_MS)
     await test.settle()
-    expect(await repaint(test)).toContain('\u001b[36m[test-model]')
+    expect(await repaint(test)).toContain('\u001b[38;5;111m[test-model]')
 
     test.terminal.type(KEY.right)
     await test.settle()
@@ -885,7 +885,7 @@ describe('the lift under the editor', () => {
     test.runTick(FADE_TICK_MS, SEGMENT_TICKS * FADE_TICK_MS)
     await test.settle()
     const settled = await repaint(test)
-    expect(settled).toContain('\u001b[36m[effort default]')
+    expect(settled).toContain('\u001b[38;5;111m[effort default]')
     expect(settled).not.toContain(PEAK)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })
@@ -905,7 +905,7 @@ describe('the lift under the editor', () => {
     test.runTick(FADE_TICK_MS, LANDING_TICKS * FADE_TICK_MS)
     await test.settle()
     const settled = await repaint(test)
-    expect(settled).toContain('\u001b[36msession-kid')
+    expect(settled).toContain('\u001b[38;5;111msession-kid')
     expect(settled).not.toContain(PEAK)
     expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
   })

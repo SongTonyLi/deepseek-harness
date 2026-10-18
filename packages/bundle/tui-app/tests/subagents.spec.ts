@@ -479,7 +479,7 @@ describe('the live subagent panel', () => {
 
     /** Read which child the accented panel row names, without leaving the panel. */
     const selected = async (): Promise<string> => {
-      const accent = '\u001b[36m'
+      const accent = '\u001b[38;5;111m'
       await test.screen()
       const row = test.terminal.output.split('\n').find(line => line.includes(accent) && /session-(kid|other|third)/u.test(line))
       const id = /session-(kid|other|third)/u.exec(row ?? '')?.[0] ?? ''
