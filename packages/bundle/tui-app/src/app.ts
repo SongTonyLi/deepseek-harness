@@ -117,6 +117,7 @@ import {
 } from './catalog.ts'
 import { AssistantBlock, ContextBlock, NoticeBlock, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockFade, type BlockTheme, type FadeRender } from './blocks.ts'
 import { WorkflowBlock } from './workflow-block.ts'
+import { contextUsage, ContextUsageBlock, type ContextUsage } from './context-usage.ts'
 import {
   WORKFLOW_MEMBERS_HINT,
   WORKFLOWS_PICKER_HINT,
@@ -647,6 +648,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'signin', description: 'Sign in to a provider' },
   { name: 'export', description: 'Write this session log as a ZIP archive (/export [directory])' },
   { name: 'status', description: 'Show context usage, token totals, session stats, todos, goal, plan, and permission' },
+  { name: 'context', description: 'Show how the context window is used right now, by category, with the newest turn\'s tokens highlighted' },
   { name: 'todos', description: 'Browse the agent\'s todo list (Enter shows one item in full)' },
   { name: 'outline', description: 'List the turns of this session with their prompts and replies' },
   { name: 'deliverables', description: 'List the files the agent presented in this session' },
@@ -931,6 +933,8 @@ export class TuiApp {
    * terminal that fades nothing.
    */
   private readonly motions = new FadeRegistry()
+  /** The newest `/context` block while it still animates or re-reads. */
+  private contextUsageBlock: ContextUsageBlock | undefined
   /** The transient line on screen right now, with the clock that takes it down. */
   private toast: { handle: OverlayHandle; clock: ToastClock } | undefined
   /** The chrome motion running right now, and how much of the focused surface it lifts. */
@@ -1305,6 +1309,7 @@ export class TuiApp {
     this.streaming = undefined
     this.endFade()
     this.blockFades.clear()
+    this.retireContextUsage()
     this.usage = EMPTY_USAGE
     this.clearLiveUsage()
     this.pending = []
@@ -2635,6 +2640,56 @@ export class TuiApp {
     this.showBlock(statusReport(this.statusFacts()))
   }
 
+  /**
+   * Print the `/context` report for the bound session. It animates on a
+   * terminal that runs motion, and re-reads the usage while a turn runs; a
+   * newer report or a session switch settles the one before it.
+   */
+  private showContextUsage(): void {
+    const meter = this.deps.ctx.get('tokenMeter')
+    if (meter === undefined) {
+      this.notice('/context needs the token meter in this composition', 'error')
+      return
+    }
+    this.retireContextUsage()
+    const bound = this.bound
+    const read = (): ContextUsage => {
+      const { session } = bound.agent
+      const projections = this.deps.ctx.get('sessionProjections')
+      const facts = projections === undefined ? {} : readStatusFacts(projections, session)
+      const selection = this.currentSelection(bound)
+      const window = facts.context?.window ?? session.requestContext()?.contextWindow
+      return contextUsage({
+        model: `${selection.provider}/${selection.model}`,
+        turn: this.turn,
+        priced: meter.measure(session).nodes,
+        surface: this.compactions.surface(),
+        toolsTokens: facts.breakdown?.toolsTokens ?? 0,
+        ...facts.context === undefined ? {} : { used: facts.context.used },
+        ...window === undefined ? {} : { window },
+      })
+    }
+    const animate = this.fading && !this.deps.reducedMotion
+    const block = new ContextUsageBlock(this.deps.palette, {
+      read,
+      live: () => this.turnStartedAt !== undefined,
+      ...animate ? { now: () => this.deps.now() } : {},
+    })
+    this.chat.addChild(block)
+    if (block.needsRepaint()) {
+      this.contextUsageBlock = block
+      this.motions.add(block)
+      this.updateFadeTicker()
+    }
+    this.tui.requestRender()
+  }
+
+  /** Settle the running `/context` block, if any, on what it last read. */
+  private retireContextUsage(): void {
+    this.contextUsageBlock?.retire()
+    this.contextUsageBlock = undefined
+  }
+
   private currentSelection(bound: BoundSession = this.bound): ModelSelection {
     const { selection, agent } = bound
     const selected = selection.current ?? agent.session.requestHeader()?.config
@@ -3858,6 +3913,9 @@ export class TuiApp {
       case 'status':
         this.showStatus()
         return
+      case 'context':
+        this.showContextUsage()
+        return
       case 'todos':
         await this.browseTodos()
         return
@@ -5033,6 +5091,7 @@ export class TuiApp {
       if (child instanceof WorkflowBlock) {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
+      if (child instanceof ContextUsageBlock) child.setRepaintFloor(repaintFloor(start, viewportTop))
       if (fades && (child instanceof AssistantBlock || child instanceof ToolBlock)) {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
@@ -5072,6 +5131,8 @@ export class TuiApp {
     // level while it renders.
     if (this.panelLift !== this.panelLiftNow()) this.refreshSubagentPanel()
     if (this.activitySlot.children.length > 0) this.refreshActivityBoard()
+    this.contextUsageBlock?.tick()
+    if (this.contextUsageBlock?.needsRepaint() === false) this.contextUsageBlock = undefined
     this.motions.tick()
     this.tui.requestRender()
     this.updateFadeTicker()
