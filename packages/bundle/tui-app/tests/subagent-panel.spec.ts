@@ -15,7 +15,7 @@ import {
 } from '../src/subagent-panel.ts'
 
 /** One key as a colored palette draws its chip: accent, italic. */
-const chip = (label: string): string => `\u001b[3m\u001b[36m${label}\u001b[39m\u001b[23m`
+const chip = (label: string): string => `\u001b[3m\u001b[38;5;111m${label}\u001b[39m\u001b[23m`
 
 /** A fixed instant the running elapsed values are measured against. */
 const NOW = Date.UTC(2026, 1, 3, 14, 25, 0)
@@ -130,7 +130,7 @@ describe('renderSubagentPanel', () => {
     expect(heading).toContain(`${chip('↑')}${chip('↓')}\u001b[2m children · \u001b[22m${chip('Enter')}\u001b[2m opens · \u001b[22m`)
     expect(heading).toContain(`${chip('Tab')}\u001b[2m regions · \u001b[22m${chip('Esc')}\u001b[2m input\u001b[22m`)
     expect(first).toContain('\u001b[2msession-kid')
-    expect(second).toContain('\u001b[36msession-other')
+    expect(second).toContain('\u001b[38;5;111msession-other')
   })
 
   it('takes the legend step its width holds, so the heading never wraps into a second docked row', () => {
@@ -148,8 +148,8 @@ describe('renderSubagentPanel', () => {
     const styled = createPalette(true)
     const rows = (level: MotionLevel): string[] =>
       renderSubagentPanel(built, { palette: styled, selected: 1, level, width: WIDE }).split('\n')
-    expect(rows(2)[2]).toContain('\u001b[1m\u001b[36m')
-    expect(rows(1)[2]).toContain('\u001b[36m')
+    expect(rows(2)[2]).toContain('\u001b[1m\u001b[38;5;111m')
+    expect(rows(1)[2]).toContain('\u001b[38;5;111m')
     expect(rows(0)[2]).toBe(renderSubagentPanel(built, { palette: styled, selected: 1, width: WIDE }).split('\n')[2])
     expect(rows(0)[2]).not.toContain('\u001b[1m')
     // The lift never changes what the panel takes on the screen.

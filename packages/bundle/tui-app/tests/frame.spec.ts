@@ -74,17 +74,17 @@ describe('the rules', () => {
   it('draws the rules accented while the surface acts and dim while it cannot', () => {
     const focused = topRule({ title: 'reply', width: 12, palette: styled, tone: 'focus' })
     const muted = topRule({ title: 'reply', width: 12, palette: styled, tone: 'muted' })
-    expect(focused).toContain('\u001b[36m╭\u001b[39m')
-    expect(focused).toContain('\u001b[36m───')
+    expect(focused).toContain('\u001b[38;5;111m╭\u001b[39m')
+    expect(focused).toContain('\u001b[38;5;111m───')
     expect(muted).toContain('\u001b[2m╭\u001b[22m')
-    expect(muted).not.toContain('\u001b[36m')
+    expect(muted).not.toContain('\u001b[38;5;111m')
     expect(visibleWidth(focused)).toBe(12)
     expect(visibleWidth(muted)).toBe(12)
   })
 
   it('lifts its own glyphs while a landing moves, and leaves a muted frame alone', () => {
     const lifted = topRule({ title: 'reply', width: 12, palette: styled, tone: 'focus', level: 2 })
-    expect(lifted).toContain('\u001b[1m\u001b[36m\u001b[36m╭')
+    expect(lifted).toContain('\u001b[1m\u001b[38;5;111m\u001b[38;5;111m╭')
     expect(visibleWidth(lifted)).toBe(12)
     // A dim frame says the surface cannot act on what it shows; brightening
     // it would say the opposite.
@@ -101,7 +101,7 @@ describe('the rules', () => {
 describe('chip', () => {
   it('names the mode as the one inverse block the surface draws', () => {
     expect(chip(plain, 'READ')).toBe(' ● READ ')
-    expect(chip(styled, 'READ')).toBe('\u001b[7m\u001b[36m ● READ \u001b[39m\u001b[27m')
+    expect(chip(styled, 'READ')).toBe('\u001b[7m\u001b[38;5;111m ● READ \u001b[39m\u001b[27m')
   })
 })
 
@@ -146,7 +146,7 @@ describe('bodyLine', () => {
   })
 
   it('lifts both borders with the rest of the frame', () => {
-    expect(bodyLine('clean tree', 40, styled, 'focus', 2)).toContain('\u001b[1m\u001b[36m\u001b[36m│')
+    expect(bodyLine('clean tree', 40, styled, 'focus', 2)).toContain('\u001b[1m\u001b[38;5;111m\u001b[38;5;111m│')
     expect(bodyLine('clean tree', 40, styled, 'muted', 2)).toBe(bodyLine('clean tree', 40, styled, 'muted'))
     expect(bodyLine('clean tree', 40, plain, 'focus', 2)).toBe(bodyLine('clean tree', 40, plain, 'focus'))
   })

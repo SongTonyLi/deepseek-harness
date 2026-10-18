@@ -445,7 +445,7 @@ function restingHeader(block: SectionSource, part: SectionPart, palette: Palette
   const name = sectionName(block, part)
   if (block.blockKind === 'tool' && part.kind === 'call') {
     const status = settledTool(block) ? palette.success : palette.warning
-    return `${status(glyph)} ${palette.bold(block.name)}${palette.link(name.slice(block.name.length))}`
+    return `${status(glyph)} ${palette.bold(palette.tool(block.name))}${palette.subject(name.slice(block.name.length))}`
   }
   if (block.blockKind === 'assistant' && part.kind === 'reply') return `${palette.accent(glyph)} ${name}`
   return palette.dim(`${glyph} ${name}`)

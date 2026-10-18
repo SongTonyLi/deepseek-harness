@@ -1375,7 +1375,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
       const row = this.subagentRow(this.subagent, outer)
       return { call: [row], result: [], lines: ['', row], marker: 0 }
     }
-    const header = `${this.statusStyle()(TOOL_GLYPH)} ${palette.bold(this.toolName)}${this.call.title === '' ? '' : ` ${palette.link(this.call.title)}`}`
+    const header = `${this.statusStyle()(TOOL_GLYPH)} ${palette.bold(palette.tool(this.toolName))}${this.call.title === '' ? '' : ` ${palette.subject(this.call.title)}`}`
     const loading = this.status === 'running' ? [TOOL_RUNNING_ROW] : []
     const body = [...this.call.lines, ...loading, ...this.resultLines]
     // The spans align with the body by index; a half with no code gets a
@@ -1458,7 +1458,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
 
   /**
    * The one row a folded subagent card draws, led by the status-coloured
-   * {@link SUBAGENT_RUNNING_GLYPH}. A running row carries the accent tool
+   * {@link SUBAGENT_RUNNING_GLYPH}. A running row carries the cyan tool
    * name; a settled row is dim and ends on its outcome tag at the right edge:
    * `[failed]` for an error, `[started]` for a call that handed the child to
    * the background, whose result reads `started …` and whose glyph is dim,
@@ -1472,7 +1472,7 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const meta = facts.meta.length === 0 ? '' : ` ${palette.dim(facts.meta.join(' · '))}`
     const description = facts.description === '' ? '' : `  ${facts.description}`
     if (this.status === 'running') {
-      const name = palette.bold(palette.accent(this.toolName))
+      const name = palette.bold(palette.tool(this.toolName))
       return truncateToWidth(`${palette.warning(SUBAGENT_RUNNING_GLYPH)} ${name}${description}${meta}`, width, '…')
     }
     const started = this.status === 'done' && this.resultLines[0]?.startsWith('started ') === true

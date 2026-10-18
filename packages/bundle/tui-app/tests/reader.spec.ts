@@ -578,17 +578,17 @@ describe('the turn panel\'s styling', () => {
 
   it('paints a diff\'s rows green and red, on bands the width of the panel', () => {
     const bare = draw({ block: 2, part: 1 }, {}, COLOR)
-    expect(bare.find(line => line.includes('+ new line'))).toContain('\u001b[32m+ new line\u001b[39m')
-    expect(bare.find(line => line.includes('- old line'))).toContain('\u001b[31m- old line\u001b[39m')
+    expect(bare.find(line => line.includes('+ new line'))).toContain('\u001b[38;5;149m+ new line\u001b[39m')
+    expect(bare.find(line => line.includes('- old line'))).toContain('\u001b[38;5;210m- old line\u001b[39m')
     const tints = readerTints(TRUECOLOR, { r: 0, g: 0, b: 0 })
     expect(tints).toBeDefined()
     const banded = draw({ block: 2, part: 1 }, { tints }, COLOR)
     const added = banded.find(line => line.includes('+ new line'))
-    expect(added).toMatch(/\u001b\[48;2;\d+;\d+;\d+m\u001b\[32m\+ new line\u001b\[39m {50}\u001b\[49m \u001b\[\d+m│\u001b\[39m$/)
+    expect(added).toMatch(/\u001b\[48;2;\d+;\d+;\d+m\u001b\[38;5;149m\+ new line\u001b\[39m {50}\u001b\[49m \u001b\[[\d;]+m│\u001b\[39m$/)
     expect(banded.find(line => line.includes('- old line'))).toContain('\u001b[48;2;')
     // The prompt band spans the whole panel.
     const prompt = banded.find(line => line.includes('patch checkout'))
-    expect(prompt).toMatch(/\u001b\[48;2;\d+;\d+;\d+m.*patch checkout.* {48}\u001b\[49m \u001b\[\d+m│\u001b\[39m$/)
+    expect(prompt).toMatch(/\u001b\[48;2;\d+;\d+;\d+m.*patch checkout.* {48}\u001b\[49m \u001b\[[\d;]+m│\u001b\[39m$/)
     // Every banded row still fits the frame exactly.
     for (const line of banded) expect(visibleWidth(line)).toBeLessThanOrEqual(95)
   })
@@ -711,8 +711,8 @@ describe('the turn panel\'s styling', () => {
     const lines = draw({ block: 2, part: 1 }, {}, COLOR).join('\n')
     expect(lines).toContain(`${COLOR.accent('┃ ')}${RESULT_INDENT}${COLOR.bold(COLOR.accent('⎿ Result'))}`)
     // A call's glyph takes its status color: green once answered, yellow while it runs.
-    expect(lines).toContain(`${COLOR.success('◆')} ${COLOR.bold('edit')}${COLOR.link(' src/api/checkout.ts')}`)
-    expect(lines).toContain(`${COLOR.warning('◆')} ${COLOR.bold('grep')}${COLOR.link(' · running')}`)
+    expect(lines).toContain(`${COLOR.success('◆')} ${COLOR.bold(COLOR.tool('edit'))}${COLOR.subject(' src/api/checkout.ts')}`)
+    expect(lines).toContain(`${COLOR.warning('◆')} ${COLOR.bold(COLOR.tool('grep'))}${COLOR.subject(' · running')}`)
     expect(lines).toContain(`${COLOR.accent('¶')} Reply`)
     expect(lines).toContain(`${COLOR.accent('❯')} ${COLOR.bold('patch checkout')}`)
     const prompt = draw({ block: 0, part: 0 }, {}, COLOR).join('\n')

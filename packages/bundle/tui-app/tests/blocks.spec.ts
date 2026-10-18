@@ -97,10 +97,10 @@ describe('blocks', () => {
     expect(block.render(40)[1]).toContain(on.error(SUBAGENT_RUNNING_GLYPH))
   })
 
-  it('draws a tool card header with the status-coloured glyph and the title in the link colour', () => {
+  it('draws a tool card header with the status-coloured glyph, the name in the tool colour, and the title in the subject colour', () => {
     const on = createPalette(true)
     const block = new ToolBlock({ ...theme, palette: on }, 'edit', { title: 'src/a.ts', lines: [] }, 1)
-    expect(block.render(40)[1]).toBe(`${on.warning('◆')} ${on.bold('edit')} ${on.link('src/a.ts')}`)
+    expect(block.render(40)[1]).toBe(`${on.warning('◆')} ${on.bold(on.tool('edit'))} ${on.subject('src/a.ts')}`)
     block.setResult([], true)
     expect(block.render(40)[1]?.startsWith(on.error('◆'))).toBe(true)
   })
@@ -124,7 +124,7 @@ describe('blocks', () => {
     let frame = '⠋'
     block.setSpinner(() => frame)
     expect(block.spinning()).toBe(true)
-    expect(block.render(40)[1]).toBe(`${on.warning('⠋')} ${on.bold('bash')} ${on.link('ls')}`)
+    expect(block.render(40)[1]).toBe(`${on.warning('⠋')} ${on.bold(on.tool('bash'))} ${on.subject('ls')}`)
     frame = '⠙'
     expect(block.render(40)[1]?.startsWith(on.warning('⠙'))).toBe(true)
     block.setResult(['ok'], false)
