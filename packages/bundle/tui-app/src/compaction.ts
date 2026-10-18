@@ -22,7 +22,7 @@ import { isSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
 // checkpoint into `MessageSourceMap`.
 import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { injectedContextTitle } from './context.ts'
+import { contextGroup, injectedContextTitle, type ContextGroup } from './context.ts'
 import type { SectionPart } from './navigation.ts'
 import { contentText, formatTokens } from './transcript.ts'
 
@@ -79,9 +79,11 @@ export type CompactionOutcome =
 export type CheckpointEstimator = (message: UserMessage) => number | undefined
 
 /** One mirrored surface node. */
-interface SurfaceNode {
+export interface SurfaceNode {
   readonly seq: SessionSeq
   readonly fact: SurfaceFact
+  /** What an injected context node is for; present exactly on `context` facts. */
+  readonly group?: ContextGroup
 }
 
 /** A transaction between its `compaction/start` and `compaction/end`. */
@@ -126,6 +128,14 @@ export class CompactionLedger {
    */
   constructor(private readonly estimate: CheckpointEstimator) {}
 
+  /**
+   * The mirrored surface as it stands now.
+   * @returns the nodes in surface order; the array is the ledger's own and changes with the next observed event.
+   */
+  surface(): readonly SurfaceNode[] {
+    return this.nodes
+  }
+
   /** Forget the mirrored surface and every open transaction. */
   clear(): void {
     this.nodes.length = 0
@@ -162,7 +172,9 @@ export class CompactionLedger {
         break
     }
     if (!isSurfaceEvent(event)) return undefined
-    const node = { seq: event.seq, fact: this.factOf(event, turn) }
+    const fact = this.factOf(event, turn)
+    const group = fact.kind === 'context' && event.type === 'user/message' ? contextGroup(event.data.source) : undefined
+    const node: SurfaceNode = group === undefined ? { seq: event.seq, fact } : { seq: event.seq, fact, group }
     if (event.surfaceOp === 'append') {
       this.nodes.push(node)
       return undefined

@@ -1,7 +1,7 @@
 /** Project logged system prompts and injected context into transcript sections. */
 
 import { describe, expect, it } from 'vitest'
-import { injectedContextTitle, injectedContextView, systemPromptView } from '../src/context.ts'
+import { contextGroup, injectedContextTitle, injectedContextView, systemPromptView } from '../src/context.ts'
 
 const text = (value: string) => [{ type: 'text' as const, text: value }]
 
@@ -159,5 +159,16 @@ describe('injectedContextView', () => {
       { kind: 'session-reference', form: 'recall', references: [{ label: 'prior' }, { label: 'prior' }, { label: 'other' }] },
       text('excerpt'),
     )).toMatchObject({ title: 'recall · prior, other' })
+  })
+})
+
+describe('contextGroup', () => {
+  it('attributes instruction files, skills, and other injections, and nothing else', () => {
+    expect(contextGroup({ kind: 'agent-instructions', form: 'instructions', changes: [] })).toBe('instructions')
+    expect(contextGroup({ kind: 'skill-catalog', form: 'catalog', entries: [] })).toBe('skills')
+    expect(contextGroup({ kind: 'skill-invocation', name: 'pdf', form: 'instructions' })).toBe('skills')
+    expect(contextGroup({ kind: 'plugin', plugin: 'tui-app', form: 'notice', summary: '! ls' })).toBe('context')
+    expect(contextGroup({ kind: 'user' })).toBeUndefined()
+    expect(contextGroup({ kind: 'compact-checkpoint', compactionId: 'c1' })).toBeUndefined()
   })
 })

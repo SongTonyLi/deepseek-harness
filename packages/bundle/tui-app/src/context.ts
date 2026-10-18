@@ -72,6 +72,28 @@ export function injectedContextTitle(source: unknown): string | undefined {
   return context === undefined ? undefined : contextTitle(context)
 }
 
+/**
+ * What one injected context is for, as `/context` attributes its tokens:
+ * `instructions` for loaded instruction files, `skills` for the skill catalog
+ * and invoked skill bodies, `context` for every other injection.
+ */
+export type ContextGroup = 'instructions' | 'skills' | 'context'
+
+/** Source kinds the skill packages stamp on their catalog and on an invoked skill's body. */
+const SKILL_KINDS: readonly string[] = ['skill-catalog', 'skill-invocation']
+
+/**
+ * Attribute one injected `user/message` to a {@link ContextGroup}.
+ * @param source - the message's durable source.
+ * @returns the group, or undefined when this message is not injected context.
+ */
+export function contextGroup(source: unknown): ContextGroup | undefined {
+  const context = contextSource(source)
+  if (context === undefined) return undefined
+  if (SKILL_KINDS.includes(context.kind)) return 'skills'
+  return context.form === 'instructions' ? 'instructions' : 'context'
+}
+
 /** A durable source that injects context, with the fields its title and parts read. */
 interface ContextSource {
   readonly record: Record<string, unknown>

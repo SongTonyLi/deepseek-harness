@@ -24,8 +24,8 @@
   en: 365ce77bf78accd5
   zh: e945a1f209e18f36
 /deepseek-ai-dsh-tui-app/use-this-package/keys-and-commands:
-  en: e3650a069cc84840
-  zh: b8428946ec8beab1
+  en: 8397ec35de157ed5
+  zh: 135411de6c63f306
 /deepseek-ai-dsh-tui-app/use-this-package/background-tool-calls:
   en: 322ae3c6d76383ec
   zh: 8c38eee4b57ed8dd
@@ -48,14 +48,14 @@
   en: 843f7f46161ca8d3
   zh: ddff3216005e2b57
 /deepseek-ai-dsh-tui-app/understand-the-implementation/rendering-model:
-  en: fb43018b679482fb
-  zh: e60cc1d0cbaa40a0
+  en: 42cc6ac3475fba61
+  zh: 450342bc7b31cb61
 /deepseek-ai-dsh-tui-app/understand-the-implementation/patch-surface-over-base:
   en: 142f04bf29e981dd
   zh: a1689297b06c9ca6
 /deepseek-ai-dsh-tui-app/understand-the-implementation/source-map:
-  en: db616267d54607c0
-  zh: 37ac9d793fbce025
+  en: a1b526bb25bf3096
+  zh: 36d8f8acc73700fd
 /deepseek-ai-dsh-tui-app/understand-the-implementation/invariant-ownership:
   en: 0ddf6de8928026d5
   zh: 24feedcbb9e9d676

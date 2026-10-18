@@ -190,6 +190,7 @@ follow-ups 面板持有键盘时：
 | `/login` | 用提供方订阅登录（隐藏仅收集密钥的登录）；`/login <key>` 跳过选择器 |
 | `/export [dir]` | 把本会话的日志 ZIP（含子会话与附件）写入 `dir`，默认 workspace |
 | `/status` | 上下文窗口用量与构成、含缓存命中的 token 总计、会话统计、todo、目标、计划模式与权限 |
+| `/context` | 上下文窗口此刻的用法：200 个单元格的网格，旁边是模型、占用，以及系统提示词、工具定义、指令文件、技能、其他注入上下文与消息的估算 token，最后是剩余空间。保存最新一轮新增 token 的单元格是热区，以粗体绘制，并在 `▲ hot` 行计数。终端运行动效时，网格在打开时逐格填充，一道亮带扫过热区；轮次进行期间，报告每四分之一秒重新读取用量、标记为 `live`，并让第一个空闲单元格闪烁。当没有轮次进行且打开动画结束、另一个 `/context` 打开、会话切换，或它离开重绘窗口时，报告定格。减弱动效时只绘制定格后的报告 |
 | `/todos` | 浏览 agent 的 todo 列表；已完成行会被划掉；`Enter` 完整打开其中一条，含其状态、位置与轮次 |
 | `/outline` | 本会话各轮次及其提示与回复预览 |
 | `/deliverables` | agent 交付的文件，按轮次分组 |
@@ -269,7 +270,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 
 ### 渲染模型
 
-持久事实来自会话日志：`system/message`（非空提示词完整画出；空的绘制则省略）、`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——以暗色 `⬡` 行完整画出，快照按具名贡献各成一部分；压缩检查点以及工具或模型来源则省略）、`compaction/start`、`compaction/summary`、检查点替换与 `compaction/end`（依据每个事件的 `surfaceOp` 维护的 surface 镜像写明被替换与仍保留的节点，结束标记绘出压缩块或失败的 `/compact` 通知；归属于轮次的 `compaction/start` 会改写运行中的旋转指示标签）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`workspace/changes`（在 Host 仍保存摘要时，以一行通知给出该轮的文件数与行数）、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（某条 todo 的详情页所报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目；同一次写入还从 `todos` 投影刷新 activity board）。后代会话的 `tool/call`、`tool/result` 或 `turn/end`，以及绑定父会话的 `subagent/start` / `subagent/end`，会替换该板上的一行摘要——工具标题或结果首行，从不使用子会话的 assistant 正文；绑定会话的 `turn/end` 与 bind 会清空该板。实时增量来自 `agent/assistant-stream` 的文本、推理、工具调用与用量增量：模型一报出工具名就挂上卡片，工作时的旋转指示跟随该流以及持久的 `tool/call` / `tool/result`，从而标出 `thinking`、`writing` 或 `calling <tool>`，并带着该次调用的实时 `↑` 发送与 `↓` 接收。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器身份、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供选择器标题使用的实时或缓存 `title` 投影、供页脚、`/status`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
+持久事实来自会话日志：`system/message`（非空提示词完整画出；空的绘制则省略）、`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——以暗色 `⬡` 行完整画出，快照按具名贡献各成一部分；压缩检查点以及工具或模型来源则省略）、`compaction/start`、`compaction/summary`、检查点替换与 `compaction/end`（依据每个事件的 `surfaceOp` 维护的 surface 镜像写明被替换与仍保留的节点，结束标记绘出压缩块或失败的 `/compact` 通知；归属于轮次的 `compaction/start` 会改写运行中的旋转指示标签）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`workspace/changes`（在 Host 仍保存摘要时，以一行通知给出该轮的文件数与行数）、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（某条 todo 的详情页所报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目；同一次写入还从 `todos` 投影刷新 activity board）。后代会话的 `tool/call`、`tool/result` 或 `turn/end`，以及绑定父会话的 `subagent/start` / `subagent/end`，会替换该板上的一行摘要——工具标题或结果首行，从不使用子会话的 assistant 正文；绑定会话的 `turn/end` 与 bind 会清空该板。实时增量来自 `agent/assistant-stream` 的文本、推理、工具调用与用量增量：模型一报出工具名就挂上卡片，工作时的旋转指示跟随该流以及持久的 `tool/call` / `tool/result`，从而标出 `thinking`、`writing` 或 `calling <tool>`，并带着该次调用的实时 `↑` 发送与 `↓` 接收。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器身份、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供选择器标题使用的实时或缓存 `title` 投影、供页脚、`/status`、`/context`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `/context` 使用的 `tokenMeter`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
 
 ### 基于 base 的 patch 面
 
@@ -293,7 +294,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/export.ts`](src/export.ts) | `/export`：通过导出包的归档辅助函数写出会话日志 ZIP |
 | [`src/blocks.ts`](src/blocks.ts) | 对话记录组件：用户提示、用户 shell 运行、assistant 回复、工具卡片、系统提示词与注入上下文、通知；可导航的块暴露其各小节并绘制焦点标记条，可折叠的块则承载两个折叠键共用的那条标记。每个块保留上次画出的行，回复还保留上次 Markdown 解析所着色的代码围栏，并只对最后一个已关闭围栏之后仍打开的尾部重新词法分析，因此已稳定的对话记录每帧只花每块一次键比较，一次流式增量也只为发生变化的那个围栏着色 |
 | [`src/context.ts`](src/context.ts) | 把已记录的系统提示词与注入的用户消息投影为对话记录小节 |
-| [`src/compaction.ts`](src/compaction.ts) | 压缩说明：写明每次压缩替换了什么、什么仍逐字保留的 surface 镜像，以及其块的标题与小节 |
+| [`src/context-usage.ts`](src/context-usage.ts) | `/context` 报告：把测量的 surface 节点归入各类别与热区、单元格网格与图例，以及带动画的块 |
+| [`src/compaction.ts`](src/compaction.ts) | 压缩说明：写明每次压缩替换了什么、什么仍逐字保留的 surface 镜像（`/context` 也读取它），以及其块的标题与小节 |
 | [`src/navigation.ts`](src/navigation.ts) | 把对话记录看作各个小节、沿四条轴走遍它们的光标、这些小节归入的各轮次，以及检视面板的标题 |
 | [`src/inspector.ts`](src/inspector.ts) | 停靠的检视面板：带模式徽标的边框面板、小节标题、带编号且会折行的各部分选择行、折叠后的各行，及其挂载的组件 |
 | [`src/frame.ts`](src/frame.ts) | 纯粹的画框：圆角边框线、反白的模式徽标、正文行，以及某个宽度容纳得下的按键提示级别 |
@@ -358,6 +360,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、可导航的子 agent 与 todo 列表、目录命令、命令提示与审批详情 |
 | [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | 走遍对话记录、区域序列、检视面板、实时会话上的阅读器连同它接管与交还的终端，以及重绘窗口内的原地标记条 |
 | [`tests/context.spec.ts`](tests/context.spec.ts) | 把系统提示词与注入上下文投影为对话记录小节 |
+| [`tests/context-usage.spec.ts`](tests/context-usage.spec.ts) | `/context` 的归类、单元格网格、图例与块动画 |
+| [`tests/context-usage-app.spec.ts`](tests/context-usage-app.spec.ts) | 终端中的 `/context`：基于 token 计量器的报告、在淡入节拍上的实时重读、定格，以及缺少计量器的情形 |
 | [`tests/compaction.spec.ts`](tests/compaction.spec.ts) | 基于真实会话追加的压缩说明：被替换与保留的节点、多次压缩、失败，以及格式化后的各行 |
 | [`tests/compaction-app.spec.ts`](tests/compaction-app.spec.ts) | 终端中的 `/compact`：旋转指示、`Esc`、排队的提示、被拒绝的切换、取代结果的压缩块，以及从重放日志绘出的压缩块 |
 | [`tests/sessions.spec.ts`](tests/sessions.spec.ts) | 会话选择器列表：最新在前、实时或缓存标题、隐藏子 agent |
