@@ -39,6 +39,19 @@ describe('catalog supplement', () => {
     })
   })
 
+  it('supplements the OpenRouter DeepSeek V4.1 Flash 1017 model with its listed pricing', () => {
+    const model = catalogModels('openrouter').get('deepseek/deepseek-v4.1-flash-1017')
+    expect(model).toMatchObject({
+      id: 'deepseek/deepseek-v4.1-flash-1017',
+      name: 'DeepSeek: DeepSeek V4.1 Flash (1017)',
+      provider: 'openrouter',
+      api: 'openai-completions',
+      contextWindow: 1000000,
+      cost: { input: 0.05, output: 0.6 },
+      thinkingLevelMap: { off: 'none', high: 'high', max: 'max' },
+    })
+  })
+
   it('returns no supplemental models for a provider route the supplement does not extend', () => {
     expect(supplementModule.supplementalCatalogModels('deepseek')).toEqual([])
   })

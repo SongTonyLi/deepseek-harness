@@ -40,4 +40,32 @@ export const CATALOG_SUPPLEMENT: Readonly<Record<string, Readonly<Record<string,
       type: 'chat',
     },
   },
+  openrouter: {
+    'deepseek/deepseek-v4.1-flash-1017': {
+      id: 'deepseek/deepseek-v4.1-flash-1017',
+      name: 'DeepSeek: DeepSeek V4.1 Flash (1017)',
+      api: 'openai-completions',
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      reasoning: true,
+      input: ['text', 'image'],
+      cost: { input: 0.05, output: 0.6, cacheRead: 0.006, cacheWrite: 0 },
+      contextWindow: 1000000,
+      maxTokens: 943718,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: 'openrouter',
+        supportsStrictMode: true,
+        sendSessionAffinityHeaders: true,
+        requiresReasoningContentOnAssistantMessages: true,
+      },
+      thinkingLevelMap: { off: 'none', minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max' },
+      inputLimits: {
+        images: {
+          resize: { maxWidth: 2000, maxHeight: 2000, maxBytes: 4718592, jpegQuality: 80 },
+        },
+      },
+      type: 'chat',
+    },
+  },
 }
