@@ -930,8 +930,9 @@ describe('LocalSubprocessRuntime', () => {
       await Promise.all([first.done, second.done])
       expect(warning).toHaveBeenCalledOnce()
       expect(warning).toHaveBeenCalledWith(
-        expect.stringContaining('descendants that escape the process group'),
+        expect.stringContaining('termination reaches the process group and the descendants observed in the process tree'),
       )
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('such as a double-forked daemon'))
     } finally {
       warning.mockRestore()
       await fiber.dispose()

@@ -63,13 +63,13 @@ Windows 普通子进程通过 `windowsHide` 启动私有 Job runner，并为原�
 
 ### 关闭行为
 
-正常 dispose 会终止每个仍在运行的受管范围与终端会话并等待其完全停稳。在 JavaScript 可观察的宿主退出期间——直接 `process.exit()`、默认未捕获异常、默认未处理 rejection——同步最终清理会请求 Linux scope 终止其成员，同步终止每个 Windows runner 以关闭其唯一 Job handle，并为 fallback 使用既有 PGID、`taskkill` 或已捕获身份操作。它不创建 Promise 或定时器，也不声称已经完全停稳。同一退出阶段会删除未持有任何已完成 spill 文件的每进程私有 spill 目录；已完成的 spill 文件作为完整输出恢复产物保留，直到外部机制清理。未处理的 `SIGTERM`/`SIGINT`/`SIGHUP`、`SIGKILL`、fatal OOM、native crash 与断电需要外部 supervisor。
+正常 dispose 会终止每个仍在运行的受管范围与终端会话并等待其完全停稳。在 JavaScript 可观察的宿主退出期间——直接 `process.exit()`、默认未捕获异常、默认未处理 rejection——同步最终清理会请求 Linux scope 终止其成员，同步终止每个 Windows runner 以关闭其唯一 Job handle；对 fallback，则终止进程组及一次同步进程表读取找到的后代、运行 `taskkill`，或向已捕获身份发送信号。它不创建 Promise 或定时器，也不声称已经完全停稳。同一退出阶段会删除未持有任何已完成 spill 文件的每进程私有 spill 目录；已完成的 spill 文件作为完整输出恢复产物保留，直到外部机制清理。未处理的 `SIGTERM`/`SIGINT`/`SIGHUP`、`SIGKILL`、fatal OOM、native crash 与断电需要外部 supervisor。
 
 Linux 普通进程和终端进程即使在 bootstrap 消费启动请求前被取消，也会保留实际观察到的终止信号。如果没有请求对应的终止信号，未消费的请求仍会报启动失败；已记录的 pre-exec 错误始终优先。`waitForExit()` 独立证明 scope 已为空，其中也包括 payload 在进入该 scope 的 cgroup 前就被杀死、manager 因此让它保持 active 却没有任何进程的 scope。状态查询期间若发出终止信号，会重新查询后再判定清理是否成功。请求终止后，启动请求已消费且 scope 进程数为零即可证明完全停稳，无需等待直接进程的退出通知。如果最终 scope 信号发送失败，直接进程接受 `SIGKILL` 或被独立确认已不存在，owner 才可以等待一次尚未送达的直接进程停稳通知，再重新查询尚未证明为空的 active 范围。此等待独立于输出排空和整个范围的停稳。新取得的 scope 状态必须证明范围已为空；仍有进程存活或进程数未知时，仍报告信号失败。
 
 ### 可能出错的地方
 
-无法解析的可执行文件会明确报出稳定错误。当 spawn 或提供方故障使 direct outcome 无法产生时，`done` 会 reject；该 rejection 不能证明 target 是否已经开始执行。若所选 owner 无法再证明其范围为空，`waitForExit()` 会 reject，清理仍会尝试终止。越过保留尾部的读取是 `lossy` 的，并在 spill 文件存在时指向它。fallback 进程组或已观察终端 session 可能遗漏在观察前逃逸的后代——见下文限制。
+无法解析的可执行文件会明确报出稳定错误。当 spawn 或提供方故障使 direct outcome 无法产生时，`done` 会 reject；该 rejection 不能证明 target 是否已经开始执行。若所选 owner 无法再证明其范围为空，`waitForExit()` 会 reject，清理仍会尝试终止。越过保留尾部的读取是 `lossy` 的，并在 spill 文件存在时指向它。fallback 普通命令可能遗漏在终止读取进程表之前就已重新设定父进程、离开其进程树的后代；已观察终端 session 可能遗漏在观察前逃逸的后代——见下文限制。
 
 -----
 
@@ -83,7 +83,7 @@ Linux 普通进程和终端进程即使在 bootstrap 消费启动请求前被取
 
 ### 设计理念
 
-每次 spawn 都为信号发送与完全停稳选择同一个 owner。受支持的 Linux 普通命令与终端启动使用临时 user-systemd scope，受支持的 Windows 普通命令使用由 helper 持有、关闭时终止成员的 Job。macOS、不可用的 user-systemd，以及不可用的 Windows 原生支持使用既有 detached 进程组、`taskkill` 或终端会话观察，并只告警一次。native 路径可能已经启动命令后，本提供方绝不会通过 fallback 重放该命令。
+每次 spawn 都为信号发送与完全停稳选择同一个 owner。受支持的 Linux 普通命令与终端启动使用临时 user-systemd scope，受支持的 Windows 普通命令使用由 helper 持有、关闭时终止成员的 Job。macOS、不可用的 user-systemd，以及不可用的 Windows 原生支持使用 detached 进程组加上终止开始时记录的 leader 后代、`taskkill` 或终端会话观察，并只告警一次。native 路径可能已经启动命令后，本提供方绝不会通过 fallback 重放该命令。
 
 ### 源码地图
 
@@ -91,6 +91,7 @@ Linux 普通进程和终端进程即使在 bootstrap 消费启动请求前被取
 |---|---|
 | [`src/index.ts`](src/index.ts) | 服务接线：存活句柄集合、dispose、宿主退出最终清理、可执行文件查找 |
 | [`src/spawn.ts`](src/spawn.ts) | 共享进程管道：直接结果、保尾收集、spill 文件与 fallback spawn |
+| [`src/descendant-sweep.ts`](src/descendant-sweep.ts) | POSIX fallback 后代跟踪：终止时读取进程表，并按身份校验发送信号 |
 | [`src/managed-owner.ts`](src/managed-owner.ts) | 每个普通句柄使用的私有信号与等待 owner |
 | [`src/linux-scope.ts`](src/linux-scope.ts) | Linux user-systemd 能力检查、scope 启动、信号发送与完全停稳 |
 | [`src/linux-execve.ts`](src/linux-execve.ts) | Linux libc 进程映像替换与继承标准文件描述符保留 |
@@ -104,11 +105,11 @@ Linux 普通进程和终端进程即使在 bootstrap 消费启动请求前被取
 
 ### 主流程
 
-一次 spawn 会同步校验最终 argv、cwd 与环境，在用户命令可能运行前选择 containment，并在目标身份保持私有的情况下返回句柄。Linux 普通命令与终端启动使用私有的一次性请求；scope 内的 bootstrap 会恢复目标 cwd 与环境、解析可执行文件、清除 fd 0 至 fd 2 及可选控制 fd 7 的 close-on-exec 标记，再以原始 argv 进入 libc `execve()`。Windows 普通命令会隔离 runner 的 fd 0 至 fd 2、把 fd 3 留给 IPC，并用 fd 4 至 fd 6 承载 target stdio，在请求控制时还使用 fd 7；runner 把这些 CRT 描述符解析成 OS handle，以 suspended 状态创建 target，将其加入 Job、恢复运行，再关闭自身的标准流载体及可选 fd-7 载体。`done` 会在 direct command 及其 stdio 屏障结算后完成，`waitForExit()` 则分别等待所选 scope、Job、进程组或已观察会话变空。
+一次 spawn 会同步校验最终 argv、cwd 与环境，在用户命令可能运行前选择 containment，并在目标身份保持私有的情况下返回句柄。Linux 普通命令与终端启动使用私有的一次性请求；scope 内的 bootstrap 会恢复目标 cwd 与环境、解析可执行文件、清除 fd 0 至 fd 2 及可选控制 fd 7 的 close-on-exec 标记，再以原始 argv 进入 libc `execve()`。Windows 普通命令会隔离 runner 的 fd 0 至 fd 2、把 fd 3 留给 IPC，并用 fd 4 至 fd 6 承载 target stdio，在请求控制时还使用 fd 7；runner 把这些 CRT 描述符解析成 OS handle，以 suspended 状态创建 target，将其加入 Job、恢复运行，再关闭自身的标准流载体及可选 fd-7 载体。`done` 会在 direct command 及其 stdio 屏障结算后完成，`waitForExit()` 则分别等待所选 scope、Job、进程组及其已记录后代，或已观察会话变空。
 
 ### 安全不变式
 
-spill 文件以 `0600` 权限、`O_EXCL` 与随机名称在 `0700` 每进程目录下创建，可抵御共享临时目录中的符号链接植入；打开、追加或最终关闭失败时不公布 spill 路径，且绝不中断收集，因为收集运行在流的 `'data'` 监听器内，抛出的错误会杀死宿主进程。fallback 进程身份携带启动时间，因此清理绝不会跟随 PID 复用。选定的 native 路径失败时会报告错误，而不会通过 fallback 重放 argv；受管范围只有在清理完成后才从存活集合移除，否则失败仍保持可观察。宿主退出最终清理不创建 Promise 或定时器，保留宿主退出码与诊断，分别包含每个目标的失败，也不会声称已经完全停稳。
+spill 文件以 `0600` 权限、`O_EXCL` 与随机名称在 `0700` 每进程目录下创建，可抵御共享临时目录中的符号链接植入；打开、追加或最终关闭失败时不公布 spill 路径，且绝不中断收集，因为收集运行在流的 `'data'` 监听器内，抛出的错误会杀死宿主进程。fallback 进程身份携带启动时间，而且每次向某个身份发送信号之前，都会在同一个同步过程中读取进程表，因此清理不会跟随 PID 复用；普通命令的后代清扫只在 Node 尚未回收 leader 时采纳 leader 的进程树，因此被复用的 leader pid 绝不会把其他进程的子进程带进来。选定的 native 路径失败时会报告错误，而不会通过 fallback 重放 argv；受管范围只有在清理完成后才从存活集合移除，否则失败仍保持可观察。宿主退出最终清理不创建 Promise 或定时器，保留宿主退出码与诊断，分别包含每个目标的失败，也不会声称已经完全停稳。
 
 </details>
 
@@ -152,6 +153,7 @@ spill 文件以 `0600` 权限、`O_EXCL` 与随机名称在 `0700` 每进程目�
 - **Windows 终端信号是控制台级的**——SIGINT 以 `\x03` Ctrl-C 输入写入投递，由控制台宿主（Windows 上为 node-pty 自带的 OpenConsole）转为控制台级 CTRL_C 事件；SIGTSTP 与 SIGHUP 被拒绝（不可用）；不带 `/F` 的 `taskkill` 无法终止控制台进程，因此拆卸的 TERM 档是 `/F` 升级前的宽限等待。Windows 就绪没有精确的 stdin-wait 档：prompt-marker 快路径把 shell pid 作为伪前台进程组比较，其余由静默与计时档覆盖。
 - **Windows 终端分配依赖 node-pty 自带的控制台宿主资产**——每个 Windows 终端都以 `useConptyDll: true` 启动，分配时按 node-pty 自身 addon 的相对位置解析 `conpty/conpty.dll` 与 `OpenConsole.exe`；资产缺失或解包错误会让 `spawnTerminal` 抛错，而不是回退到操作系统控制台宿主。node-pty 把该选项标为实验性，升级 node-pty 可能改变这一行为。见[自带控制台宿主说明](../../../.agents/notes/implemented/bug-fix/2026-09-28-pty-bundled-console-host.zh.md)。
 - **fallback 终端 ownership 仍依赖观察**——在 macOS 或缺少可用 user-systemd 的 Linux 上，子进程如果在任何前台检查快照之前重新设定父进程，或离开自有终端会话，就可能逃出进程表扫描。本地提供方不会新增持续进程表监视器；受支持的 Linux native 模式改由 scope membership 持有这些后代。
+- **fallback 普通命令 ownership 只为终止读取进程表**——在 macOS 或缺少可用 user-systemd 的 Linux 上，终止会在开始时读取进程表，并在 `SIGKILL` 升级时再读取一次，向进程组以及该次读取找到的每个仍在运行的 leader 后代发送信号，`waitForExit()` 会等待两者；仍在进程组中的后代会收到每个信号两次。在读取之前已重新设定父进程的后代（例如父进程已变为 pid 1 的双重 fork 守护进程）不会被找到。在 macOS 上每次读取都会 fork `/bin/ps`，宿主退出最终清理会为每个存活命令读取一次；只剩已记录后代时，`waitForExit()` 最多每 50 毫秒读取一次。未被终止而自行退出的命令从不被检查，因此它留在进程组之外的守护进程会继续运行。进程表无法读取时，提供方只告警一次，并只向进程组发送信号。
 - **进程内清理要求退出阶段仍能执行 JavaScript**——直接 `process.exit()`、默认未捕获异常和默认未处理 rejection 会发出 Node 同步 `exit` 事件。未安装 handler 时，`SIGTERM`、`SIGINT` 或 `SIGHUP` 的默认 OS 处置不会发出该事件；应用只有安装执行正常 dispose 或调用 `process.exit()` 的 handler 才能覆盖这些信号。`SIGKILL`、fatal OOM、`process.abort()`、native crash、断电，以及任何无法运行 JavaScript 的故障，都需要外部 supervisor、容器 init 或等价的 OS owner 负责。
 - **凭据清除依赖名称启发式规则**——只匹配 `*KEY*`／`*PASSWORD*`／`*SECRET*`／`*TOKEN*`；名称不同的 secret（例如 `*PASSPHRASE*`）会继续传递，对误删变量引入白名单属于已记录的后续工作。
 - **不会删除已完成的 spill 文件**——有界的完整输出恢复文件会在 OS tmpdir 下累积，直到外部机制进行清理；每进程私有 spill 目录仅在未持有任何已完成 spill 文件时于 JavaScript 可观察的退出阶段删除。
