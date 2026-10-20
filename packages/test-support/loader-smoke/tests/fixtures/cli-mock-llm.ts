@@ -7,6 +7,7 @@ import {
   ReasoningEffortId,
   type GenerateOptions,
   type LlmResolvedModelInfo,
+  type RequestMessage,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 
@@ -18,10 +19,37 @@ const SHELL_COMMAND = process.platform === 'win32'
   : 'printf CLI_TOOL_ROUND_TRIP'
 /** The whole summary a compaction request receives, short enough to shrink any shadowed span. */
 const COMPACTION_SUMMARY = '## Primary Request and Intent\n- CLI_COMPACTION_SUMMARY'
+/** The model-facing name of the delegation tool the shipped profiles compose. */
+const DELEGATION_TOOL = 'subagent'
+/** Text in a delegated prompt that tells this mock it is answering the child, which makes the shell call. */
+const DELEGATED_MARKER = 'CLI_DELEGATED_SHELL_CALL'
+
+/**
+ * Whether the conversation is a delegated child or has already delegated.
+ * @param messages - the request's conversation.
+ * @returns true when a user message carries the delegation marker or an
+ * assistant message already called the delegation tool.
+ */
+function delegationHandled(messages: readonly RequestMessage[]): boolean {
+  return messages.some(message => message.content.some(block =>
+    (message.role === 'user' && block.type === 'text' && block.text.includes(DELEGATED_MARKER))
+    || (message.role === 'assistant' && block.type === 'tool-call' && block.name === DELEGATION_TOOL)))
+}
 
 /**
  * Keyless headless-agent adapter: one production shell call followed by a
  * final answer, and a fixed text summary for a compaction request.
+ *
+ * Test hooks, each inert while its variable is unset:
+ * - `DSH_CLI_MOCK_SHELL_COMMAND` is the command the shell call runs, in place
+ *   of the round-trip marker command.
+ * - `DSH_CLI_MOCK_SHELL_BACKGROUND=1` makes the shell call with
+ *   `run_in_background: true`.
+ * - `DSH_CLI_MOCK_DELEGATE=1` makes a conversation that has not delegated yet
+ *   call the `subagent` tool instead, with a prompt carrying
+ *   {@link DELEGATED_MARKER}; the child, whose conversation carries the
+ *   marker, makes the shell call. Later turns of the delegating conversation
+ *   make the shell call themselves.
  */
 class CliMockAdapter extends LlmAdapter {
   private readonly replay: ReplayEntry[] | undefined
@@ -96,13 +124,21 @@ class CliMockAdapter extends LlmAdapter {
     const toolResult = last?.role === 'tool' ? last : undefined
     if (toolResult === undefined) {
       const reasoning = 'Inspecting the task before the tool call.'
-      const args = JSON.stringify({ command: SHELL_COMMAND, description: 'Prove the CLI tool round trip.' })
+      const delegate = process.env.DSH_CLI_MOCK_DELEGATE === '1' && !delegationHandled(options.messages)
+      const tool = delegate ? DELEGATION_TOOL : SHELL_TOOL
+      const args = delegate
+        ? JSON.stringify({ description: 'Delegated shell call', prompt: `Make the CLI shell call. ${DELEGATED_MARKER}` })
+        : JSON.stringify({
+          command: process.env.DSH_CLI_MOCK_SHELL_COMMAND ?? SHELL_COMMAND,
+          description: 'Prove the CLI tool round trip.',
+          ...process.env.DSH_CLI_MOCK_SHELL_BACKGROUND === '1' ? { run_in_background: true } : {},
+        })
       yield { type: 'block-start', index: 0, blockType: 'reasoning' }
       yield { type: 'reasoning-delta', index: 0, text: reasoning }
       yield { type: 'block-end', index: 0, block: { type: 'reasoning', text: reasoning } }
       yield { type: 'block-start', index: 1, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 1, id: ToolCallId('cli-smoke-call'), name: SHELL_TOOL, argumentsDelta: args }
-      yield { type: 'block-end', index: 1, block: { type: 'tool-call', id: ToolCallId('cli-smoke-call'), name: SHELL_TOOL, arguments: args } }
+      yield { type: 'tool-call-delta', index: 1, id: ToolCallId('cli-smoke-call'), name: tool, argumentsDelta: args }
+      yield { type: 'block-end', index: 1, block: { type: 'tool-call', id: ToolCallId('cli-smoke-call'), name: tool, arguments: args } }
       yield { type: 'usage', usage: { inputTokens: 11, outputTokens: 3, cacheReadTokens: 2 } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return

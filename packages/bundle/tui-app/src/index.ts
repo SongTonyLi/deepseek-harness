@@ -31,6 +31,7 @@ import { CONTEXT_PREVIEW_LINES } from './blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from './fade.ts'
 import { STREAM_PACE_FRAMES, TOOL_REVEAL_FRAMES } from './pace.ts'
 import { FOCUS_PREVIEW_LINES } from './inspector.ts'
+import { QUIT_NOTICE_MS, quitOutcome, runQuit, safeWork, type QuitWork } from './quit.ts'
 import { READER_MIN_COLUMNS } from './reader.ts'
 import { colorEnabled, createPalette, paletteDepth, type PaletteDepth } from './style.ts'
 import { TOAST_MS } from './toast.ts'
@@ -95,12 +96,23 @@ export interface Config {
    * How long a transient key-feedback line - `press Esc again to stop turn
    * <n>`, `press Ctrl+C again to quit` - holds at full strength before it
    * fades out, in milliseconds. It is also the window in which a second `Esc`
-   * stops the running turn: the arm lasts exactly as long as any part of the
-   * line is on screen, so there is no invisible window in which the key means
-   * something else. The line floats over the conversation and is never
-   * written into it; facts worth keeping stay transcript notices.
+   * stops the running turn and a second `Ctrl+C` quits: the arm lasts exactly
+   * as long as any part of the line is on screen, so there is no invisible
+   * window in which the key means something else. The line floats over the
+   * conversation and is never written into it; facts worth keeping stay
+   * transcript notices.
    */
   toastMs: number
+  /**
+   * How long quitting waits for the stop to finish, in milliseconds: the turn
+   * is cancelled, the Agent goes idle, the session log is flushed, and the
+   * binding is disposed, which stops the commands, background jobs, and
+   * subagents it owns. When this budget runs out the terminal reports what may
+   * still be running and exits with code 1; the launcher's own five-second
+   * disposal and exit-time process kill follow. A second `Ctrl+C` while the
+   * stop is pending ends the wait at once.
+   */
+  quitGraceMs: number
   /**
    * Period in milliseconds of the terminal's one repeating redraw: it
    * advances the running-turn counter in the status bar and the per-child
@@ -221,6 +233,7 @@ export const Config: z<Config> = z.object({
   readerMinColumns: z.natural().min(40).default(READER_MIN_COLUMNS),
   codeHighlight: z.boolean().default(true),
   toastMs: z.natural().min(500).default(TOAST_MS),
+  quitGraceMs: z.natural().min(1000).default(10_000),
   liveRefreshMs: z.natural().min(100).default(1000),
   streamFadeSteps: z.natural().min(2).default(FADE_STEPS),
   streamFadeStepMs: z.natural().min(16).default(FADE_TICK_MS),
@@ -251,10 +264,19 @@ interface TuiHost {
   openUrl(url: string): Promise<void>
   /** Request process exit with `code` after the tree disposes. */
   exit(code: number): void
+  /**
+   * Listen for a process signal.
+   * @param signal - `SIGINT` forces a quit already under way; `SIGHUP` reports that the terminal went away.
+   * @param handler - runs once per delivery.
+   * @returns the disposer that removes the listener.
+   */
+  onSignal(signal: 'SIGINT' | 'SIGHUP', handler: () => void): () => void
+  /** Keep a write error on stdout or stderr from becoming an uncaught exception once the terminal is gone. */
+  swallowStreamErrors(): void
 }
 
 /** The process-bound pieces of the host; tests substitute a fake terminal and captured streams. */
-export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stderr' | 'color' | 'depth' | 'canOpenUrl' | 'openUrl'> = {
+export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stderr' | 'color' | 'depth' | 'canOpenUrl' | 'openUrl' | 'onSignal' | 'swallowStreamErrors'> = {
   /* v8 ignore next -- the process terminal owns raw stdin; tests substitute a fake */
   createTerminal: () => new ProcessTerminal(),
   /* v8 ignore next -- process stdin is the host's; tests substitute a recorder */
@@ -264,6 +286,19 @@ export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stder
   depth: paletteDepth(process.env),
   canOpenUrl: () => canOpenNativePath(),
   openUrl: openNativeUrl,
+  /* v8 ignore start -- process signals and streams are the host's; tests substitute recorders */
+  onSignal: (signal, handler) => {
+    process.on(signal, handler)
+    return () => { process.off(signal, handler) }
+  },
+  swallowStreamErrors: () => {
+    const ignore = (): void => {
+      // A terminal that closed leaves stdout and stderr failing with EIO or EPIPE; the quit still has to finish.
+    }
+    process.stdout.on('error', ignore)
+    process.stderr.on('error', ignore)
+  },
+  /* v8 ignore stop */
 }
 
 /**
@@ -512,19 +547,48 @@ async function run(ctx: Context, config: Config, host: TuiHost): Promise<void> {
     cwd,
     ...openUrl === undefined ? {} : { openUrl },
     releaseInput: () => { host.releaseInput() },
-    onQuit: (bound) => {
+    onQuit: (bound, request) => {
       void (async () => {
         const { agent } = bound
-        agent.cancel({ kind: 'user' })
-        await agent.whenIdle()
-        await core.sessions.flush(agent.session)
-        host.stderr.write(`dsh: session ${agent.session.id} saved; resume with: dsh --profile tui --resume ${agent.session.id}\n`)
-        await bound.dispose()
-        host.exit(0)
+        // Registered as an effect so the listener cannot outlive the plugin. It resolves the force
+        // signal with the census taken right here: the launcher's own SIGINT handler runs on the
+        // same signal and begins disposing the composition, after which nothing can be counted.
+        const interrupts: PromiseWithResolvers<QuitWork> = Promise.withResolvers()
+        const stopListening = ctx.effect(
+          () => host.onSignal('SIGINT', () => { interrupts.resolve(safeWork(() => app.liveWork())) }),
+          'tui-app: quit interrupt',
+        )
+        let outcome: ReturnType<typeof quitOutcome>
+        try {
+          const report = await runQuit({
+            bound,
+            work: () => app.liveWork(),
+            // The result only says whether a durability listener took part; the hint is printed either way.
+            flush: async () => { await core.sessions.flush(agent.session) },
+            say: (line) => { host.stderr.write(`${line}\n`) },
+            graceMs: config.quitGraceMs,
+            noticeMs: QUIT_NOTICE_MS,
+            forced: interrupts.promise,
+          }, request.work)
+          outcome = quitOutcome(report, { sessionId: agent.session.id, graceMs: config.quitGraceMs, cause: request.cause })
+        } finally {
+          void stopListening()
+        }
+        for (const line of outcome.lines) host.stderr.write(`${line}\n`)
+        host.exit(outcome.code)
       })().catch((error: unknown) => { fail(host, error) })
     },
   })
   app.start(config.prompt)
+  // The terminal closing is a quit the user did not type: same sequence, no terminal to draw on.
+  ctx.effect(() => host.onSignal('SIGHUP', () => {
+    host.swallowStreamErrors()
+    try {
+      app.hangup()
+    } catch (error) {
+      fail(host, error)
+    }
+  }), 'tui-app: terminal hangup')
 }
 
 /**
@@ -547,6 +611,8 @@ export function apply(ctx: Context, config: Config): void {
     depth: internals.depth,
     canOpenUrl: internals.canOpenUrl,
     openUrl: internals.openUrl,
+    onSignal: internals.onSignal,
+    swallowStreamErrors: internals.swallowStreamErrors,
     exit,
   }
   void run(ctx, config, host).catch((error: unknown) => { fail(host, error) })

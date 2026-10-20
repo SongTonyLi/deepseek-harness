@@ -2,8 +2,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { visibleWidth } from '@earendil-works/pi-tui'
-import { ToastClock, ToastPane, toastDrawable, toastOverlay } from '../src/toast.ts'
+import { QUIT_TOAST, ToastClock, ToastPane, quitToast, toastDrawable, toastOverlay } from '../src/toast.ts'
 import { buildFadeRamp, type FadeStyle } from '../src/fade.ts'
+import { NO_WORK } from '../src/quit.ts'
 import { createPalette } from '../src/style.ts'
 
 /** One line without the sequences a cut mark closes itself with. */
@@ -76,6 +77,20 @@ describe('where the box may float', () => {
     expect(toastDrawable(0)).toBe(true)
     expect(toastDrawable(1)).toBe(true)
     expect(toastDrawable(2)).toBe(false)
+  })
+})
+
+describe('the quit line', () => {
+  it('only names the key while nothing runs', () => {
+    expect(quitToast(NO_WORK)).toBe('press Ctrl+C again to quit')
+    expect(QUIT_TOAST).toBe('press Ctrl+C again to quit')
+  })
+
+  it('names what quitting stops', () => {
+    expect(quitToast({ commands: 1, jobs: 0, subagents: 0 })).toBe('press Ctrl+C again to quit · stops 1 command')
+    expect(quitToast({ commands: 2, jobs: 1, subagents: 3 }))
+      .toBe('press Ctrl+C again to quit · stops 2 commands, 1 background job, 3 subagents')
+    expect(quitToast({ commands: 0, jobs: 0, subagents: 1 })).toBe('press Ctrl+C again to quit · stops 1 subagent')
   })
 })
 

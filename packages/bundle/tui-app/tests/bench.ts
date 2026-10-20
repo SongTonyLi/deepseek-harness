@@ -19,6 +19,7 @@ import { TuiApp, type BoundSession, type SessionHost } from '../src/app.ts'
 import { CONTEXT_PREVIEW_LINES } from '../src/blocks.ts'
 import { FADE_STEPS, FADE_TICK_MS } from '../src/fade.ts'
 import { FOCUS_PREVIEW_LINES } from '../src/inspector.ts'
+import type { QuitRequest } from '../src/quit.ts'
 import { READER_MIN_COLUMNS } from '../src/reader.ts'
 import { ACTIVITY_SPINNERS, TOOL_SPINNERS, type ActivityStatus } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
@@ -279,6 +280,8 @@ export interface BenchChild {
 
 export interface Bench {
   ctx: Context
+  /** The agent registry's plugin fiber; disposing it models a composition that already lost the registry. */
+  agentRegistry: { dispose(): Promise<void> }
   agent: Agent
   session: Session
   calls: AgentCalls
@@ -287,6 +290,8 @@ export interface Bench {
   app: TuiApp
   /** The sessions handed to `onQuit`. */
   quits: BoundSession[]
+  /** The census and cause handed to `onQuit`, one per entry of {@link Bench.quits}. */
+  requests: QuitRequest[]
   /** What the scripted host was asked for, e.g. `create`, `resume:session-x`, `fork:session-x`, `aside:session-x`. */
   hostCalls: string[]
   /** Sessions the host bound after the initial one, with their disposal counts. */
@@ -297,10 +302,12 @@ export interface Bench {
    * Create one Agent and Session under the bound session, as a subagent
    * provider would: the durable header carries the parent, `origin`, and the
    * delegation depth the listing reads.
-   * @param options - the child's label-free identity: its id and depth.
+   * @param options - the child's label-free identity: its id and depth, and
+   * the live Agent that owns it at runtime; a child without `owner` is a
+   * top-level Agent of the registry.
    * @returns the child and the handles a spec drives it with.
    */
-  createChild(options?: { id?: string; depth?: number; parent?: SessionId }): Promise<BenchChild>
+  createChild(options?: { id?: string; depth?: number; parent?: SessionId; owner?: Agent }): Promise<BenchChild>
   /**
    * Run one period of every tick the app armed at `delayMs`, moving the bench
    * clock forward first. Nothing happens while no tick of that period is
@@ -442,7 +449,8 @@ export async function bench(options: {
   await ctx.plugin(SessionStore)
   if (options.projections === undefined) await ctx.plugin(SessionProjectionRegistry)
   else if (options.projections !== 'none') ctx.provide('sessionProjections', options.projections as never)
-  await ctx.plugin(AgentRegistry)
+  const agentRegistry = ctx.plugin(AgentRegistry)
+  await agentRegistry
   if (options.saveDefaultModel === undefined) {
     await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   } else {
@@ -488,7 +496,13 @@ export async function bench(options: {
         whenIdle: () => Promise.resolve(),
       }
       await createOptions.setup?.(ownerCtx, agent)
-      ctx.agents.register(agent)
+      if (createOptions.parentAgent === undefined) {
+        ctx.agents.register(agent)
+      } else {
+        // A child created for a live parent enters the registry owned by it, as a subagent provider's child does.
+        ctx.agents.enter(agent, createOptions.parentAgent)
+        await ctx.agents.announce(agent, 'startup')
+      }
       return { agent, dispose: () => Promise.resolve() }
     },
     resume: () => Promise.reject(new Error('not used')),
@@ -505,6 +519,7 @@ export async function bench(options: {
   const terminal = new FakeTerminal()
   if (options.background !== false) terminal.backgroundReply = options.background ?? 'not-a-color'
   const quits: BoundSession[] = []
+  const requests: QuitRequest[] = []
   const hostCalls: string[] = []
   const opened: { bound: BoundSession; disposed: number }[] = []
   let openedCount = 0
@@ -616,7 +631,10 @@ export async function bench(options: {
     cwd: '/work',
     ...options.openUrl === undefined ? {} : { openUrl: options.openUrl },
     releaseInput: () => {},
-    onQuit: (bound) => { quits.push(bound) },
+    onQuit: (bound, request) => {
+      quits.push(bound)
+      requests.push(request)
+    },
   })
   app.start(options.initialPrompt)
   const session = agent.session
@@ -628,6 +646,7 @@ export async function bench(options: {
   const emit = (frame: AssistantStreamFrame): void => { agent.ctx.emit('agent/assistant-stream', { agent, frame }) }
   return {
     ctx,
+    agentRegistry,
     agent,
     session,
     calls,
@@ -635,6 +654,7 @@ export async function bench(options: {
     selection,
     app,
     quits,
+    requests,
     hostCalls,
     opened,
     setStatus(next) {
@@ -646,6 +666,7 @@ export async function bench(options: {
       childStatuses.set(id, 'idle')
       const handle = await ctx.agents.create({
         sessionId: id,
+        ...childOptions.owner === undefined ? {} : { parentAgent: childOptions.owner },
         meta: {
           cwd: '/work',
           parentSession: childOptions.parent ?? agent.session.id,

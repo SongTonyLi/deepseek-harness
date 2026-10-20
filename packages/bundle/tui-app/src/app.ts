@@ -230,11 +230,12 @@ import {
   type SubagentPanelView,
 } from './subagent-panel.ts'
 import { listTodoChoices, todoDetail, type TodoTransition } from './todos.ts'
+import type { QuitCause, QuitRequest, QuitWork } from './quit.ts'
 import {
   NOTHING_TO_READ_TOAST,
-  QUIT_TOAST,
   ToastClock,
   ToastPane,
+  quitToast,
   stopTurnToast,
   toastDrawable,
   toastOverlay,
@@ -259,9 +260,6 @@ import {
   withLiveUsage,
   type UsageTotals,
 } from './transcript.ts'
-
-/** A second Ctrl+C inside this window quits. */
-const QUIT_DOUBLE_PRESS_MS = 600
 
 /** Text drawn in the terminal's own colors, as a footer segment's detail rows are. */
 const plainText: Style = text => text
@@ -560,7 +558,8 @@ export interface TuiAppDeps {
   /**
    * How long one transient key-feedback line holds at full strength before it
    * fades out, in milliseconds. It is also the window a second `Escape` stops
-   * the running turn in: the arm lasts exactly as long as the line is drawn.
+   * the running turn in, and the window a second `Ctrl+C` quits in: each arm
+   * lasts exactly as long as its line is drawn.
    */
   toastMs: number
   /** Period of the live-refresh tick, in milliseconds. */
@@ -625,8 +624,14 @@ export interface TuiAppDeps {
    * read or EOF; releasing it lets the process exit once the tree is disposed.
    */
   releaseInput(): void
-  /** Called once after the terminal is released with the session still bound; the host flushes and exits. */
-  onQuit(bound: BoundSession): void
+  /**
+   * Called once, after the terminal is released, with the root session still
+   * bound; the subagent views opened over it are already being released. The
+   * host stops the root's session tree, flushes its log, reports, and exits.
+   * @param bound - the root session.
+   * @param request - the census taken before anything was stopped, and why the terminal quit.
+   */
+  onQuit(bound: BoundSession, request: QuitRequest): void
 }
 
 /** The terminal's own commands, handled before the shared command registry. */
@@ -951,6 +956,8 @@ export class TuiApp {
   private escapeQuietUntil = 0
   /** Until when a second editor `Escape` stops the running turn. */
   private stopArmedUntil = 0
+  /** Until when a second `Ctrl+C` quits; the next key of any other kind drops the arm. */
+  private quitArmedUntil = 0
   /** Abort of the in-flight user `!` command, when one is running. */
   private shellAbort: AbortController | undefined
   /** Abort of the `/compact` this terminal dispatched and still waits on; `Esc` cancels it. */
@@ -1018,8 +1025,13 @@ export class TuiApp {
   private loaderActivity = 'thinking'
   /** Tool names still streamed or executing, in first-seen order. */
   private readonly pendingToolNames = new Map<ToolCallId, string>()
-  private lastCtrlC = 0
   private stopped = false
+  /**
+   * The root session handed to the host on quit. The quit releases the views
+   * that named the root, and the census the host keeps reading while the stop
+   * runs still counts under this one.
+   */
+  private quitRoot: BoundSession | undefined
 
   constructor(private readonly deps: TuiAppDeps) {
     const palette = deps.palette
@@ -1231,7 +1243,72 @@ export class TuiApp {
 
   /** Release the terminal and tell the host to exit; later calls are no-ops. */
   stop(): void {
+    this.quit('user')
+  }
+
+  /**
+   * Quit because the terminal went away (SIGHUP). It releases the terminal
+   * and tells the host to exit as {@link TuiApp.stop} does, but the terminal
+   * is taken to be gone: every write the quit makes to it, pi-tui's own
+   * teardown included, is attempted and a failure is dropped. A no-op once the
+   * terminal stopped.
+   */
+  hangup(): void {
+    this.quit('hangup')
+  }
+
+  /**
+   * Count what quitting stops right now, across the session tree: the root
+   * session and every Agent the registry lists as owned by it or by one of
+   * its descendants. The user's running `!` command and each live job a
+   * foreground tool call registered for itself are commands; every other
+   * live job of the tree is a background job, counted once although each
+   * member's listing repeats the unowned ones; a descendant running a turn is
+   * a subagent. It reads the registries synchronously and changes nothing; a
+   * composition without a job registry counts no jobs. After the quit it
+   * keeps counting under the root handed to the host.
+   * @returns the census.
+   */
+  liveWork(): QuitWork {
+    const { ctx } = this.deps
+    const family = [(this.quitRoot ?? this.parents[0] ?? this.bound).agent]
+    const agents = ctx.get('agents')
+    if (agents !== undefined) {
+      const live = agents.list()
+      // The walk also visits the members it appends, so it reaches every depth.
+      for (const owner of family) {
+        for (const candidate of live) {
+          if (agents.isOwnedBy(candidate.id, owner)) family.push(candidate)
+        }
+      }
+    }
+    let commands = this.shellAbort === undefined ? 0 : 1
+    let background = 0
+    const jobs = ctx.get('jobs')
+    if (jobs !== undefined) {
+      const counted = new Set<JobId>()
+      for (const member of family) {
+        for (const job of jobs.list(member.session.id)) {
+          if (!isLive(job) || counted.has(job.id)) continue
+          counted.add(job.id)
+          if (this.backgrounder.isInner(job.id)) commands += 1
+          else background += 1
+        }
+      }
+    }
+    const subagents = family.slice(1).filter(member => member.status === 'running').length
+    return { commands, jobs: background, subagents }
+  }
+
+  /**
+   * Release the terminal and hand the root session to the host, once.
+   * @param cause - why the terminal quits; `hangup` takes the terminal to be gone.
+   */
+  private quit(cause: QuitCause): void {
     if (this.stopped) return
+    // Counted before anything stops: dropping the `!` command ends what the census can see of it.
+    const work = this.liveWork()
+    const gone = cause === 'hangup'
     this.dropUserShell()
     this.dropCompaction()
     this.restoreQueueDraft()
@@ -1242,24 +1319,44 @@ export class TuiApp {
     this.cancelPickers()
     for (const dispose of this.disposers.splice(0)) dispose()
     this.modals.withdrawActive()
-    this.dropReader()
+    this.writeOnQuit(gone, () => { this.dropReader() })
     this.hideToast()
     // The shell that regains the terminal keeps whatever caret shape it was
     // left with, so the application gives the terminal's own shape back.
-    this.deps.terminal.write(SET_TERMINAL_DEFAULT_CURSOR)
-    this.tui.stop()
+    this.writeOnQuit(gone, () => { this.deps.terminal.write(SET_TERMINAL_DEFAULT_CURSOR) })
+    this.writeOnQuit(gone, () => { this.tui.stop() })
     this.deps.releaseInput()
     const [root, ...views] = [...this.parents, this.bound]
+    this.quitRoot = root
     for (const view of views.reverse()) {
       view.dispose().catch((error: unknown) => {
-        this.deps.terminal.write(`releasing a subagent view failed: ${describeFailure(error)}\n`)
+        this.writeOnQuit(gone, () => { this.deps.terminal.write(`releasing a subagent view failed: ${describeFailure(error)}\n`) })
       })
     }
     this.parents.length = 0
     this.viewLabels.length = 0
     this.asides.clear()
     this.readOnlyViews.clear()
-    this.deps.onQuit(root)
+    this.deps.onQuit(root, { work, cause })
+  }
+
+  /**
+   * Run one quit step that writes to the terminal. After a hangup the
+   * terminal can already be closed, so a failing step is dropped and the quit
+   * goes on; otherwise the failure propagates.
+   * @param gone - whether the terminal went away.
+   * @param step - the step.
+   */
+  private writeOnQuit(gone: boolean, step: () => void): void {
+    if (!gone) {
+      step()
+      return
+    }
+    try {
+      step()
+    } catch (_terminalGone) {
+      // A hung-up terminal fails writes and raw-mode changes, and nothing is left to read them.
+    }
   }
 
   // ── session binding ─────────────────────────────────────────────────────
@@ -2716,6 +2813,12 @@ export class TuiApp {
    */
   private onKey(data: string): { consume: true } | undefined {
     if (isKeyRelease(data)) return { consume: true }
+    // An armed quit lasts exactly as long as its own line is on screen, and
+    // the next key drops it wherever the keyboard is: only a second `Ctrl+C`
+    // reads it, and any other key takes the line down with it.
+    const quitArmed = this.deps.now() < this.quitArmedUntil
+    this.quitArmedUntil = 0
+    if (quitArmed && !matchesKey(data, 'ctrl+c')) this.hideToast()
     if (this.modals.isActive()) {
       if (!matchesKey(data, 'ctrl+c')) return undefined
       this.modals.withdrawActive()
@@ -2747,14 +2850,12 @@ export class TuiApp {
         this.notice('queued prompt edit canceled')
         return { consume: true }
       }
-      const now = Date.now()
-      if (now - this.lastCtrlC < QUIT_DOUBLE_PRESS_MS) {
+      if (quitArmed) {
         this.stop()
         return { consume: true }
       }
-      this.lastCtrlC = now
       this.editor.setText('')
-      this.showToast(QUIT_TOAST)
+      this.quitArmedUntil = this.deps.now() + this.showToast(quitToast(this.liveWork()))
       return { consume: true }
     }
     if (matchesKey(data, 'ctrl+d')) {
