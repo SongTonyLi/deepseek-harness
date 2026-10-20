@@ -27,6 +27,7 @@ const originalInternals = { ...internals }
 afterEach(() => {
   Object.assign(internals, originalInternals)
   vi.unstubAllEnvs()
+  vi.useRealTimers()
 })
 
 interface Observed {
@@ -37,6 +38,12 @@ interface Observed {
   created: CreateAgentOptions[]
   resumed: ResumeAgentOptions[]
   cancels: number
+  /** The listeners registered per process signal, as `internals.onSignal` hands them out. */
+  signals: Map<string, Set<() => void>>
+  /** How often the runner asked for stream errors to be swallowed. */
+  swallowed: number
+  /** What the Agent's `whenIdle` waits on; a test sets it after startup, because binding awaits it once. */
+  idle: Promise<void> | undefined
 }
 
 /** Mount the real registries around a scripted Agent factory and capture the process effects. */
@@ -47,6 +54,10 @@ async function bench(
     noPersistence?: boolean
     observed?: SessionEvent[]
     resumeHeader?: EpochHeader
+    /** Jobs the registry stub lists for every session; no registry is composed when omitted. */
+    jobs?: readonly object[]
+    /** Runs after each recorded exit request; a throw makes the launcher's exit request fail. */
+    onExit?: (code: number) => void
   } = {},
 ): Promise<{ ctx: Context; observed: Observed }> {
   const ctx = new Context()
@@ -58,7 +69,9 @@ async function bench(
   ctx.systemPrompt.variable('provider', context => context.agent?.options.provider)
   ctx.systemPrompt.variable('model', context => context.agent?.options.model)
   const terminal = new FakeTerminal()
-  const observed: Observed = { terminal, err: '', exits: [], order: [], created: [], resumed: [], cancels: 0 }
+  const observed: Observed = {
+    terminal, err: '', exits: [], order: [], created: [], resumed: [], cancels: 0, signals: new Map(), swallowed: 0, idle: undefined,
+  }
   const makeAgent = async (
     ownerCtx: Context,
     id: SessionId,
@@ -99,7 +112,7 @@ async function bench(
       followup: () => { observed.order.push('followup') },
       steer: () => {},
       inject: () => {},
-      whenIdle: () => Promise.resolve(),
+      whenIdle: () => observed.idle ?? Promise.resolve(),
     }
     await setup?.(ownerCtx, agent)
     ctx.agents.register(agent)
@@ -157,13 +170,28 @@ async function bench(
     } as never)
   }
   ctx.on('session/flush', () => { observed.order.push('flush') })
+  if (options.jobs !== undefined) {
+    const jobs = options.jobs
+    ctx.provide('jobs', { list: () => jobs, events: { subscribe: () => () => {} } } as never)
+  }
+  internals.onSignal = (signal, handler) => {
+    const handlers = observed.signals.get(signal) ?? new Set()
+    observed.signals.set(signal, handlers)
+    handlers.add(handler)
+    return () => { handlers.delete(handler) }
+  }
+  internals.swallowStreamErrors = () => { observed.swallowed += 1 }
   internals.createTerminal = () => terminal
   internals.releaseInput = () => { observed.order.push('release') }
   internals.stderr = { write: (chunk: string) => { observed.err += chunk; return true } }
   internals.color = false
   internals.canOpenUrl = () => false
   internals.openUrl = () => Promise.resolve()
-  ctx.provide('appExit', (code: number) => { observed.order.push(`exit:${String(code)}`); observed.exits.push(code) })
+  ctx.provide('appExit', (code: number) => {
+    observed.order.push(`exit:${String(code)}`)
+    observed.exits.push(code)
+    options.onExit?.(code)
+  })
   return { ctx, observed }
 }
 
@@ -190,6 +218,7 @@ function config(overrides: Partial<Config> = {}): Config {
     readerMinColumns: 60,
     codeHighlight: true,
     toastMs: 2000,
+    quitGraceMs: 10_000,
     liveRefreshMs: 1000,
     streamFadeSteps: 24,
     streamFadeStepMs: 16,
@@ -224,8 +253,107 @@ describe('tui runner', () => {
     observed.terminal.type(KEY.ctrlD)
     await settled()
     expect(observed.order).toEqual(['followup', 'release', 'cancel', 'flush', 'dispose', 'exit:0'])
-    expect(observed.err).toContain('saved; resume with: dsh --profile tui --resume session-')
+    expect(observed.err).toMatch(/^dsh: session session-[\w-]+ saved; resume with: dsh --profile tui --resume session-[\w-]+\n$/u)
     expect(observed.terminal.stopped).toBe(true)
+  })
+
+  it('names the work it stops before the resume hint, which comes last', async () => {
+    const running = { id: 'bash-1', kind: 'bash', label: 'sleep 300', status: 'running', startedAt: 1, output: { total: 0, earliest: 0 } }
+    const { ctx, observed } = await bench({ jobs: [running] })
+    apply(ctx, config())
+    await settled()
+    observed.terminal.type(KEY.ctrlD)
+    await settled()
+    const lines = observed.err.trimEnd().split('\n')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toBe('dsh: stopping 1 background job (Ctrl+C to force)')
+    expect(lines[1]).toContain('saved; resume with')
+    expect(observed.exits).toEqual([0])
+  })
+
+  it('gives up waiting at quitGraceMs, says what may still run, and exits 1 without a hint', async () => {
+    const running = { id: 'bash-1', kind: 'bash', label: 'sleep 300', status: 'running', startedAt: 1, output: { total: 0, earliest: 0 } }
+    const { ctx, observed } = await bench({ jobs: [running] })
+    apply(ctx, config({ quitGraceMs: 3000 }))
+    await settled()
+    observed.idle = new Promise(() => {})
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    observed.terminal.type(KEY.ctrlD)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(observed.err).toContain('dsh: stopping 1 background job (Ctrl+C to force)\n')
+    expect(observed.err).toContain('dsh: still stopping 1 background job (Ctrl+C to force)\n')
+    expect(observed.err).toContain('dsh: gave up waiting after 3s; 1 background job may still be running\n')
+    expect(observed.err).not.toContain('saved; resume with')
+    expect(observed.exits).toEqual([1])
+  })
+
+  it('reports an exit request that fails and asks again for a failing exit', async () => {
+    let refused = false
+    const { ctx, observed } = await bench({
+      onExit: () => {
+        if (refused) return
+        refused = true
+        throw new Error('exit refused')
+      },
+    })
+    apply(ctx, config())
+    await settled()
+    observed.terminal.type(KEY.ctrlD)
+    await settled()
+    expect(observed.err).toContain('dsh: exit refused')
+    expect(observed.exits).toEqual([0, 1])
+  })
+
+  it('ends the wait at once on SIGINT, names the work counted at that moment, and removes its listener', async () => {
+    const running = { id: 'bash-1', kind: 'bash', label: 'sleep 300', status: 'running', startedAt: 1, output: { total: 0, earliest: 0 } }
+    const { ctx, observed } = await bench({ jobs: [running] })
+    apply(ctx, config())
+    await settled()
+    observed.idle = new Promise(() => {})
+    expect(observed.signals.get('SIGINT')?.size ?? 0).toBe(0)
+    observed.terminal.type(KEY.ctrlD)
+    await settled()
+    expect(observed.exits).toEqual([])
+    const [interrupt] = [...observed.signals.get('SIGINT') ?? []]
+    interrupt?.()
+    await settled()
+    expect(observed.err).toBe(
+      'dsh: stopping 1 background job (Ctrl+C to force)\n'
+      + 'dsh: forcing exit; 1 background job may still be running\n',
+    )
+    expect(observed.exits).toEqual([130])
+    expect(observed.signals.get('SIGINT')?.size).toBe(0)
+  })
+
+  it('quits on SIGHUP with exit code 129 even when the terminal can no longer be written to', async () => {
+    const { ctx, observed } = await bench()
+    apply(ctx, config())
+    await settled()
+    const { terminal } = observed
+    terminal.write = () => { throw new Error('terminal closed') }
+    terminal.stop = () => { throw new Error('terminal closed') }
+    const [hangup] = [...observed.signals.get('SIGHUP') ?? []]
+    hangup?.()
+    await settled()
+    expect(observed.swallowed).toBe(1)
+    expect(observed.exits).toEqual([129])
+    expect(observed.order).toContain('cancel')
+    expect(observed.order).toContain('dispose')
+  })
+
+  it('reports a hangup that cannot even release the terminal input, and removes the SIGHUP listener with the plugin', async () => {
+    const { ctx, observed } = await bench()
+    internals.releaseInput = () => { throw new Error('input gone') }
+    apply(ctx, config())
+    await settled()
+    const [hangup] = [...observed.signals.get('SIGHUP') ?? []]
+    hangup?.()
+    await settled()
+    expect(observed.err).toContain('dsh: input gone')
+    expect(observed.exits).toEqual([1])
+    expect(observed.signals.get('SIGHUP')?.size).toBe(1)
+    await ctx.fiber.dispose()
+    expect(observed.signals.get('SIGHUP')?.size).toBe(0)
   })
 
   it('turns the terminal\'s mouse reports on for the run only when mouse is set', async () => {
@@ -731,7 +859,7 @@ describe('tui runner', () => {
     ctx.on('session/flush', () => { throw 'plain failure' })
     observed.terminal.type(KEY.ctrlD)
     await settled()
-    expect(observed.err).toContain('dsh: plain failure')
+    expect(observed.err).toContain('dsh: saving the session failed: plain failure')
     expect(observed.exits).toEqual([1])
   })
 
@@ -767,6 +895,7 @@ describe('the presentation tunables', () => {
       readerMinColumns: 60,
       codeHighlight: true,
       toastMs: 2000,
+      quitGraceMs: 10_000,
       liveRefreshMs: 1000,
       streamFadeSteps: 24,
       streamFadeStepMs: 16,
@@ -814,6 +943,13 @@ describe('the presentation tunables', () => {
     expect(() => validate({ toastMs: 0 })).toThrow()
     expect(() => validate({ toastMs: 499 })).toThrow()
     expect(validate({ toastMs: 500 })).toMatchObject({ toastMs: 500 })
+  })
+
+  // The budget has to outlast the tools' own 3 s kill grace, or every quit with a stubborn command would give up first.
+  it('refuse a quit budget under one second', () => {
+    expect(() => validate({ quitGraceMs: 0 })).toThrow()
+    expect(() => validate({ quitGraceMs: 999 })).toThrow()
+    expect(validate({ quitGraceMs: 1000 })).toMatchObject({ quitGraceMs: 1000 })
   })
 
   it('refuse a fade shorter than two levels or faster than one frame', () => {

@@ -265,10 +265,15 @@ describe('TuiApp user shell lines', () => {
     typeLine(test.terminal, '!sleep 10')
     await test.settle()
     test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    expect(test.terminal.text()).toContain('press Ctrl+C again to quit · stops 1 command')
     test.terminal.type(KEY.ctrlC)
     await test.settle()
     expect(test.quits).toHaveLength(1)
     expect(test.calls.injections).toHaveLength(0)
+    // The host is told about the command the quit stopped, which no later count still sees.
+    expect(test.requests).toEqual([{ work: { commands: 1, jobs: 0, subagents: 0 }, cause: 'user' }])
+    expect(test.app.liveWork()).toEqual({ commands: 0, jobs: 0, subagents: 0 })
   })
 
   it('sends a queued-prompt revision that starts with ! as a followup', async () => {

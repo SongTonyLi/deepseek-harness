@@ -4,23 +4,29 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { JobHooks, JobOutcome } from '@deepseek-ai/dsh-jobs'
+import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import { createAssistantMessage, createSystemMessage, createToolResultMessage, createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
+import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
 import { TOOL_RUNNING_ROW } from '../src/blocks.ts'
+import { SET_TERMINAL_DEFAULT_CURSOR } from '../src/editor.ts'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, QUEUE_ENTRY_HINT, REGION_LABELS, entryHints, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
 import { ACTIVITY_SPINNERS, SPINNER_CYCLE, TOOL_SPINNERS, shimmer, spinnerFrame, type ActivityStatus } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
 import { TODO_GLYPH } from '../src/todos.ts'
+import { NO_WORK } from '../src/quit.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
 import { BENCH_NOW, BENCH_SPINNER_MS, KEY, bench, spinning, type Bench } from './bench.ts'
@@ -699,9 +705,48 @@ describe('TuiApp', () => {
     expect(test.quits).toHaveLength(1)
   })
 
-  it('quits on a second Ctrl+C inside the double-press window', async () => {
+  it('quits on a second Ctrl+C for as long as the line the first one put up is drawn', async () => {
+    const test = await bench({ toastMs: 2000 })
+    test.terminal.type(KEY.ctrlC)
+    test.setNow(BENCH_NOW + 1000)
+    test.terminal.type(KEY.ctrlC)
+    expect(test.quits).toHaveLength(1)
+    expect(test.requests).toEqual([{ work: { commands: 0, jobs: 0, subagents: 0 }, cause: 'user' }])
+    // On a terminal that fades the line, the arm also covers the fade: 500 + 4 x 50.
+    const fading = await bench({ color: true, background: 'rgb:0000/0000/0000', toastMs: 500, fadeSteps: 4, fadeStepMs: 50 })
+    await fading.settle()
+    fading.terminal.type(KEY.ctrlC)
+    fading.setNow(BENCH_NOW + 699)
+    fading.terminal.type(KEY.ctrlC)
+    expect(fading.quits).toHaveLength(1)
+  })
+
+  it('arms the quit again instead of quitting once its line has come down', async () => {
+    const test = await bench({ toastMs: 2000 })
+    test.terminal.type(KEY.ctrlC)
+    test.setNow(BENCH_NOW + 2000)
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    expect(test.quits).toEqual([])
+    expect(await test.screen()).toContain('press Ctrl+C again to quit')
+    test.terminal.type(KEY.ctrlC)
+    expect(test.quits).toHaveLength(1)
+  })
+
+  it('drops the quit arm and its line on any other key, Escape included', async () => {
     const test = await bench()
     test.terminal.type(KEY.ctrlC)
+    test.terminal.type('a')
+    test.terminal.type(KEY.ctrlC)
+    expect(test.quits).toEqual([])
+    await test.settle()
+    expect(await test.screen()).toContain('press Ctrl+C again to quit')
+    // With no turn running Escape does nothing else, so only the dropped arm takes the line down.
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(await test.screen()).not.toContain('press Ctrl+C again to quit')
+    test.terminal.type(KEY.ctrlC)
+    expect(test.quits).toEqual([])
     test.terminal.type(KEY.ctrlC)
     expect(test.quits).toHaveLength(1)
   })
@@ -2229,5 +2274,182 @@ describe('working indicators', () => {
     expect(output).toMatch(/\u001b\[48;5;236m[^\n]*open the turn/u)
     expect(output).toMatch(/\u001b\[48;5;234m[^\n]*change course/u)
     expect(output).not.toMatch(/\u001b\[48;5;234m[^\n]*open the turn/u)
+  })
+})
+
+/** Hooks of a job that runs until something stops it. */
+function unending(): JobHooks {
+  return { cancel() {}, done: new Promise<JobOutcome>(() => {}) }
+}
+
+/**
+ * Mount the tool runtime, the local job registry with the job tools that
+ * serve its owners, and a `bash` tool whose call registers a process job of
+ * its own and holds it, as the shell tools do.
+ * @param ctx - the bench context.
+ */
+async function composeShellCalls(ctx: Context): Promise<void> {
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
+  await ctx.plugin(LocalJobRegistry)
+  await ctx.plugin(ToolJobs)
+  ctx.tools.register(defineTool({
+    name: 'bash',
+    description: 'Held shell.',
+    parameters: { command: { type: 'string', required: true } },
+    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+    presentCall: args => ({ card: 'generic', title: `run ${args.command}` }),
+    execute: (args, exec) => new Promise<string>(() => {
+      ctx.jobs.start({ kind: 'bash', label: args.command, ...exec.agent === undefined ? {} : { owner: exec.agent.id }, run: unending })
+    }),
+  }))
+}
+
+/**
+ * Dispatch one foreground `bash` call for `agent`, as the loop dispatches a model's call.
+ * @param test - the bench.
+ * @param agent - the Agent the call runs for.
+ * @param command - the call's command.
+ */
+function runShellCall(test: Bench, agent: Agent, command: string): void {
+  void test.ctx.tools.execute({ callId: `call-${command}` as ToolCallId, name: 'bash', arguments: { command }, agent, signal: new AbortController().signal })
+}
+
+/** A listed child that finished and is not resident, so viewing it resumes it through the host. */
+const FINISHED_CHILD = {
+  kind: 'child',
+  id: 'session-done',
+  activity: 'inactive',
+  mode: 'one-shot',
+  hasChildren: false,
+  parentId: 'session-tui-test',
+  depth: 1,
+  label: 'finished',
+}
+
+describe('quitting', () => {
+  it('counts the commands, background jobs, and running subagents of the session tree, and names them on the quit line', async () => {
+    const test = await bench({ running: true, before: composeShellCalls })
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    expect(test.terminal.text()).toContain('press Ctrl+C again to quit')
+    expect(test.terminal.text()).not.toContain('· stops')
+    test.terminal.type(KEY.right)
+
+    const child = await test.createChild({ owner: test.agent })
+    const grandchild = await test.createChild({ owner: child.agent, parent: child.id, depth: 2 })
+    const idle = await test.createChild({ owner: test.agent })
+    const stranger = await test.createChild()
+    for (const running of [child, grandchild, stranger]) running.setStatus('running')
+    runShellCall(test, test.agent, 'make')
+    runShellCall(test, child.agent, 'make test')
+    const { jobs } = test.ctx
+    jobs.start({ kind: 'bash', label: 'serve', owner: test.agent.id, run: unending })
+    // Every member's listing returns an unowned job; the census counts it once.
+    jobs.start({ kind: 'bash', label: 'shared', run: unending })
+    jobs.start({ kind: 'bash', label: 'grandchild job', owner: grandchild.id, run: unending })
+    jobs.start({ kind: 'bash', label: 'idle child job', owner: idle.id, run: unending })
+    jobs.start({ kind: 'bash', label: 'finished', owner: test.agent.id, run: () => ({ cancel() {}, done: Promise.resolve<JobOutcome>({ status: 'completed' }) }) })
+    jobs.start({ kind: 'bash', label: 'elsewhere', owner: stranger.id, run: unending })
+    await test.settle()
+    const work = { commands: 2, jobs: 4, subagents: 2 }
+    expect(test.app.liveWork()).toEqual(work)
+
+    test.terminal.type(KEY.ctrlC)
+    await test.settle()
+    expect(test.terminal.text()).toContain('press Ctrl+C again to quit · stops 2 commands, 4 background jobs, 2 subagents')
+    test.terminal.type(KEY.ctrlC)
+    expect(test.requests).toEqual([{ work, cause: 'user' }])
+  })
+
+  it('counts under the root session from inside a subagent view, and still does once the quit released the views', async () => {
+    const test = await bench({
+      subagents: () => Promise.resolve([{ ...FINISHED_CHILD, id: 'session-kid', activity: 'running', label: 'explorer' }] as never),
+    })
+    const child = await test.createChild({ id: 'session-kid', owner: test.agent })
+    child.setStatus('running')
+    typeLine(test.terminal, '/subagents')
+    await test.settle()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('subagent explorer')
+    const work = { commands: 0, jobs: 0, subagents: 1 }
+    expect(test.app.liveWork()).toEqual(work)
+    test.terminal.type(KEY.ctrlD)
+    expect(test.quits.map(bound => bound.agent.session.id)).toEqual(['session-tui-test'])
+    expect(test.requests).toEqual([{ work, cause: 'user' }])
+    expect(test.app.liveWork()).toEqual(work)
+  })
+
+  it('counts only the root session\'s own work once the agent registry left the composition', async () => {
+    const test = await bench({ before: composeShellCalls })
+    const child = await test.createChild({ owner: test.agent })
+    child.setStatus('running')
+    test.ctx.jobs.start({ kind: 'bash', label: 'serve', run: unending })
+    expect(test.app.liveWork()).toEqual({ commands: 0, jobs: 1, subagents: 1 })
+    // The host keeps reading the census while the composition tears down.
+    await test.agentRegistry.dispose()
+    expect(test.app.liveWork()).toEqual({ commands: 0, jobs: 1, subagents: 0 })
+  })
+
+  it('quits once for a hangup, handing the host the census and the cause', async () => {
+    const test = await bench()
+    test.app.hangup()
+    expect(test.quits).toHaveLength(1)
+    expect(test.requests).toEqual([{ work: NO_WORK, cause: 'hangup' }])
+    expect(test.terminal.stopped).toBe(true)
+    test.app.hangup()
+    test.app.stop()
+    expect(test.requests).toHaveLength(1)
+  })
+
+  it('finishes a hangup quit on a terminal that already went away, with the reader open', async () => {
+    const test = await bench()
+    test.appendPrompt('read the spec')
+    test.appendAssistant([{ type: 'text', text: 'the reply' }])
+    await test.settle()
+    test.terminal.type(KEY.ctrlG)
+    await test.settle()
+    expect(test.terminal.text()).toContain(' ● READER ')
+    const attempted: string[] = []
+    test.terminal.write = (data) => {
+      attempted.push(data)
+      throw new Error('write EIO')
+    }
+    test.app.hangup()
+    // Leaving the reader failed first, and the caret write and the host still followed.
+    expect(attempted).toContain(SET_TERMINAL_DEFAULT_CURSOR)
+    expect(test.requests).toEqual([{ work: NO_WORK, cause: 'hangup' }])
+
+    // pi-tui's teardown restores raw mode last, which a hung-up terminal also refuses.
+    const raw = await bench()
+    let stops = 0
+    raw.terminal.stop = () => {
+      stops += 1
+      throw new Error('setRawMode EIO')
+    }
+    raw.app.hangup()
+    expect(stops).toBe(1)
+    expect(raw.requests).toEqual([{ work: NO_WORK, cause: 'hangup' }])
+  })
+
+  it('drops the failed-release report of a view a hangup released, which the gone terminal cannot take', async () => {
+    const options: Parameters<typeof bench>[0] & object = { subagents: () => Promise.resolve([FINISHED_CHILD] as never) }
+    const test = await bench(options)
+    typeLine(test.terminal, '/subagents')
+    await test.settle()
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    options.disposeFailure = 'still busy'
+    const attempted: string[] = []
+    test.terminal.write = (data) => {
+      attempted.push(data)
+      throw new Error('write EIO')
+    }
+    test.app.hangup()
+    await test.settle()
+    expect(test.opened.find(entry => entry.bound.agent.session.id === 'session-done')?.disposed).toBe(1)
+    expect(attempted).toContain('releasing a subagent view failed: still busy\n')
+    expect(test.quits.map(bound => bound.agent.session.id)).toEqual(['session-tui-test'])
   })
 })

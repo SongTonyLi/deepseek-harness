@@ -14,6 +14,7 @@
 import { truncateToWidth, visibleWidth, type Component, type OverlayOptions } from '@earendil-works/pi-tui'
 import { recolorLines, type FadeStyle, type RegisteredFade } from './fade.ts'
 import { paintKeys } from './key-chips.ts'
+import { describeWork, workIsIdle, type QuitWork } from './quit.ts'
 import type { Palette } from './style.ts'
 
 /**
@@ -22,6 +23,16 @@ import type { Palette } from './style.ts'
  * the tests that pin them read the same words.
  */
 export const QUIT_TOAST = 'press Ctrl+C again to quit'
+
+/**
+ * What the line says while the quit is armed: {@link QUIT_TOAST}, followed
+ * by what quitting would stop when anything runs.
+ * @param work - the census taken when the quit was armed.
+ * @returns the line, e.g. `press Ctrl+C again to quit · stops 1 command`.
+ */
+export function quitToast(work: QuitWork): string {
+  return workIsIdle(work) ? QUIT_TOAST : `${QUIT_TOAST} · stops ${describeWork(work)}`
+}
 
 /** What the line says when the transcript holds nothing the reader could open. */
 export const NOTHING_TO_READ_TOAST = 'nothing in the transcript to read yet'

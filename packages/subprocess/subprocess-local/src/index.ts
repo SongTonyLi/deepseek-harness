@@ -33,6 +33,7 @@ import {
 } from './spawn.ts'
 import { logSpillFailure, prepareManagedProcessBinding } from './output.ts'
 import type { LocalSubprocessHandle, SpawnInternals } from './spawn.ts'
+import { SWEEP_FAILURE_IMPACT } from './descendant-sweep.ts'
 import {
   confirmLinuxManager,
   LinuxScopeNotStartedError,
@@ -72,6 +73,8 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
   internals: SpawnInternals = {}
   /** Provider-lifetime latch suppressing repeated weaker-containment warnings. */
   private fallbackWarningIssued = false
+  /** Provider-lifetime latch suppressing repeated descendant-sweep failure warnings. */
+  private sweepFailureReported = false
   /**
    * Linux native containment decisions. Each probe is a spawnSync that blocks the event loop and forks the
    * host, so the selector reruns it only after an event invalidates the previous verdict.
@@ -101,6 +104,16 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
 
   /** Spill failures reach the plugin logger; the log line is the only trace of why a result has no spill path. */
   private readonly reportSpillFailure = logSpillFailure(this.ctx.logger, 'subprocess-local')
+
+  /**
+   * Descendant-sweep failures reach the plugin logger once per provider; every
+   * affected fallback handle keeps terminating its process group only.
+   */
+  private readonly reportSweepFailure = (error: unknown): void => {
+    if (this.sweepFailureReported) return
+    this.sweepFailureReported = true
+    this.ctx.logger.warn(`subprocess-local ${SWEEP_FAILURE_IMPACT}`, error)
+  }
 
   private terminateForHostExit(): void {
     for (const handle of this.live) {
@@ -199,7 +212,11 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
     const env = targetEnvironment(spec)
     const containmentMode = this.selectContainmentMode('ordinary')
     let handle: LocalSubprocessHandle
-    const internals: SpawnInternals = { ...this.internals, onSpillFailure: this.reportSpillFailure }
+    const internals: SpawnInternals = {
+      ...this.internals,
+      onSpillFailure: this.reportSpillFailure,
+      onSweepFailure: this.reportSweepFailure,
+    }
     if (containmentMode === 'fallback') {
       handle = spawnSubprocess(spec, internals)
     } else {
@@ -272,7 +289,7 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
           : 'the Win32 Job runner is unavailable'
         : `platform ${platform} has no native managed range`)
     this.ctx.logger.warn(
-      `subprocess-local is using weaker process-tree containment because ${reason}; descendants that escape the process group or direct-parent tree are not guaranteed to terminate or delay waitForExit()`,
+      `subprocess-local is using weaker process-tree containment because ${reason}; termination reaches the process group and the descendants observed in the process tree, but a descendant that leaves both before it is observed, such as a double-forked daemon, is not guaranteed to terminate or delay waitForExit()`,
     )
   }
 

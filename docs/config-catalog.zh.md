@@ -4424,7 +4424,7 @@ export type ToolPresentationMode = 'native' | 'ptc'
 ## `@deepseek-ai/dsh-tui-app`
 
 - `inject`: `agentDefaultModel` · `agents` · `sessions`
-- `source`: [`packages/bundle/tui-app/src/index.ts:46`](../packages/bundle/tui-app/src/index.ts)
+- `source`: [`packages/bundle/tui-app/src/index.ts:47`](../packages/bundle/tui-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the invocation resolved from this app's injected provider service, plus presentation tunables. */
@@ -4480,12 +4480,23 @@ export interface Config {
    * How long a transient key-feedback line - `press Esc again to stop turn
    * <n>`, `press Ctrl+C again to quit` - holds at full strength before it
    * fades out, in milliseconds. It is also the window in which a second `Esc`
-   * stops the running turn: the arm lasts exactly as long as any part of the
-   * line is on screen, so there is no invisible window in which the key means
-   * something else. The line floats over the conversation and is never
-   * written into it; facts worth keeping stay transcript notices.
+   * stops the running turn and a second `Ctrl+C` quits: the arm lasts exactly
+   * as long as any part of the line is on screen, so there is no invisible
+   * window in which the key means something else. The line floats over the
+   * conversation and is never written into it; facts worth keeping stay
+   * transcript notices.
    */
   toastMs: number
+  /**
+   * How long quitting waits for the stop to finish, in milliseconds: the turn
+   * is cancelled, the Agent goes idle, the session log is flushed, and the
+   * binding is disposed, which stops the commands, background jobs, and
+   * subagents it owns. When this budget runs out the terminal reports what may
+   * still be running and exits with code 1; the launcher's own five-second
+   * disposal and exit-time process kill follow. A second `Ctrl+C` while the
+   * stop is pending ends the wait at once.
+   */
+  quitGraceMs: number
   /**
    * Period in milliseconds of the terminal's one repeating redraw: it
    * advances the running-turn counter in the status bar and the per-child

@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-19-tui-graceful-quit.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-19-tui-graceful-quit.md
+/agent-note-the-terminal-application-owns-its-quit:
+  en: 44cdc0508c8e41aa
+  zh: 94ab70eecbf96022
+/agent-note-the-terminal-application-owns-its-quit/problem:
+  en: 3d88bb3edf770b94
+  zh: 53ff9aa8db5bbce2
+/agent-note-the-terminal-application-owns-its-quit/decision:
+  en: bce800b34f7e5ab2
+  zh: 50b0d983feec61a2
+/agent-note-the-terminal-application-owns-its-quit/alternatives-considered:
+  en: d7778e3743ae88de
+  zh: abcfc210d569a826
+/agent-note-the-terminal-application-owns-its-quit/consequences:
+  en: c3b9c93165ec5b44
+  zh: 218c27807fe384de
+/agent-note-the-terminal-application-owns-its-quit/related-decisions:
+  en: 973771ba348bb6d1
+  zh: 9ab8927aecd3b447

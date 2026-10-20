@@ -3,6 +3,8 @@
  * with per-stream stdio dispositions, tail-keep collection with spill
  * files, provider-owned range signalling, and common termination scheduling.
  * POSIX owners stage TERM before KILL; Windows owners terminate immediately.
+ * The POSIX fallback range is the detached process group plus the leader's
+ * descendants recorded when termination starts ({@link DescendantSweep}).
  * This layer reacts to an abort signal; callers own deadlines, teardown
  * ladders, and cause classification.
  * @module dsh-subprocess-local/spawn
@@ -24,7 +26,8 @@ import type { BoundProcessOwner, ManagedProcessLaunch } from './managed-owner.ts
 import { waitWithAbort } from './managed-owner.ts'
 import { controlEnvironment, controlPipe } from './control-spawn.ts'
 import { SUBPROCESS_CONTROL_FD } from '@deepseek-ai/dsh-subprocess/control'
-import { linuxProcessGroupHasLiveMembers } from './process-inspector.ts'
+import { createProcessInspector, linuxProcessGroupHasLiveMembers, type ProcessInspector } from './process-inspector.ts'
+import { DescendantSweep, SWEEP_FAILURE_IMPACT, type SweepFailureReporter } from './descendant-sweep.ts'
 import { OutputCollector, prepareManagedProcessBinding, type SpillFailureReporter } from './output.ts'
 
 type SpawnProcess = (
@@ -67,6 +70,18 @@ export interface SpawnInternals {
   platform?: NodeJS.Platform
   /** Linux process-group member probe (defaults to `/proc` inspection). */
   linuxProcessGroupHasLiveMembers?: (processGroupId: number) => boolean | undefined
+  /**
+   * Process-table inspector factory for the POSIX descendant sweep (defaults to
+   * `createProcessInspector()` for the running host). Called at most once per
+   * handle, at its first table read; a throw counts as a sweep failure.
+   */
+  processInspector?: () => ProcessInspector
+  /**
+   * Receives the first descendant-sweep failure of each handle; that handle's
+   * termination then reaches its process group only. The runtime supplies a
+   * once-per-provider plugin-logger warning; bare callers get a stderr line.
+   */
+  onSweepFailure?: SweepFailureReporter
 }
 
 /**
@@ -79,14 +94,30 @@ export interface LocalSubprocessHandle extends SubprocessHandle {
   terminateForHostExit(): void
 }
 
+/** Range-wait poll interval while the process group lives; each poll is one `kill(-pgid, 0)`. */
+const GROUP_POLL_MS = 15
+
+/** Range-wait poll interval while only recorded descendants remain; each poll reads the whole process table, a `/bin/ps` fork on macOS. */
+const DESCENDANT_POLL_MS = 50
+
 /**
- * Liveness-poll cadence for tree-exit waits. The timer stays ref'd: an
- * awaited teardown must keep the event loop alive until the tree really
+ * Wait one liveness-poll interval of a tree-exit wait. The timer stays ref'd:
+ * an awaited teardown must keep the event loop alive until the tree really
  * exits, or the parent can exit while claiming quiescence and orphan the
  * survivors it promised to reap.
  */
-function sleepTick(): Promise<void> {
-  return sleepMs(15)
+function sleepTick(ms: number): Promise<void> {
+  return sleepMs(ms)
+}
+
+/**
+ * The sweep failure reporter used when no owner supplies one: a bare
+ * {@link spawnSubprocess} caller has no plugin logger, and the weaker
+ * termination must still reach the process diagnostics.
+ * @param error - the inspector creation or process-table read failure.
+ */
+function reportSweepFailureToStderr(error: unknown): void {
+  process.stderr.write(`dsh-subprocess-local: ${SWEEP_FAILURE_IMPACT}: ${String(error)}\n`)
 }
 
 /**
@@ -131,13 +162,11 @@ export function taskkillProcessTree(pid: number | undefined): void {
  */
 function signalTree(
   platform: NodeJS.Platform,
-  pid: number | undefined,
+  pid: number,
   sig: NodeJS.Signals,
   child: ChildProcess,
   taskkill: (pid: number) => void,
 ): void {
-  /* v8 ignore next -- kill/terminate gate on treeAlive(), which is false without a pid; this guard protects direct callers only. */
-  if (pid === undefined) return
   if (platform === 'win32') {
     taskkill(pid)
     return
@@ -199,6 +228,13 @@ function directChildResult(child: ChildProcess): Promise<SubprocessOutcome> {
   })
 }
 
+/**
+ * The fallback owner: a detached POSIX process group plus, through `sweep`,
+ * the leader's recorded descendants, or a Windows `taskkill` tree (`sweep` is
+ * undefined there). The range is alive while the group or a recorded
+ * descendant runs; the first observed absence is permanent and stops all
+ * signalling.
+ */
 function fallbackOwner(
   platform: NodeJS.Platform,
   pid: number | undefined,
@@ -206,6 +242,7 @@ function fallbackOwner(
   taskkill: (pid: number) => void,
   linuxGroupHasLiveMembers: (processGroupId: number) => boolean | undefined,
   direct: Promise<SubprocessOutcome>,
+  sweep: DescendantSweep | undefined,
 ): BoundProcessOwner {
   let stopped = false
   let directSettled = false
@@ -215,12 +252,14 @@ function fallbackOwner(
     () => { directSettled = true },
   )
 
-  const alive = (): boolean => {
-    if (stopped || pid === undefined) return false
+  /** The leader pid while signalling is still permitted. */
+  const livePid = (): number | undefined => stopped ? undefined : pid
+
+  const groupAlive = (leader: number): boolean => {
     if (platform === 'win32') return child.exitCode === null && child.signalCode === null
     try {
-      process.kill(-pid, 0)
-      if (directSettled && platform === 'linux' && linuxGroupHasLiveMembers(pid) === false) return false
+      process.kill(-leader, 0)
+      if (directSettled && platform === 'linux' && linuxGroupHasLiveMembers(leader) === false) return false
       return true
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
@@ -232,27 +271,44 @@ function fallbackOwner(
     }
   }
 
+  /** What keeps the range alive; only the `'descendants'` answer costs a table read. */
+  const liveness = (): 'group' | 'descendants' | 'gone' => {
+    const leader = livePid()
+    if (leader === undefined) return 'gone'
+    if (groupAlive(leader)) return 'group'
+    return sweep?.running() === true ? 'descendants' : 'gone'
+  }
+
   return {
     signal: (signal) => {
-      if (!alive()) {
+      const leader = livePid()
+      if (leader === undefined) {
         stopped = true
         return
       }
-      signalTree(platform, pid, signal, child, taskkill)
+      const group = groupAlive(leader)
+      const descendants = sweep?.signal(signal, group) === true
+      // Absence observed by a signal is as permanent as absence observed by the wait.
+      stopped = !group && !descendants
+      if (group) signalTree(platform, leader, signal, child, taskkill)
     },
     waitForExit: async () => {
       /* v8 ignore next -- bindManagedProcess memoizes this owner wait; the guard only
          protects direct internal re-entry after signal() observed absence. */
       if (stopped) return
       observation ??= (async () => {
-        while (alive()) await sleepTick()
+        for (let state = liveness(); state !== 'gone'; state = liveness()) {
+          await sleepTick(state === 'descendants' ? DESCENDANT_POLL_MS : GROUP_POLL_MS)
+        }
         stopped = true
       })()
       await observation
     },
     terminateForHostExit: () => {
-      if (stopped) return
-      signalTree(platform, pid, 'SIGKILL', child, taskkill)
+      const leader = livePid()
+      if (leader === undefined) return
+      sweep?.signal('SIGKILL', groupAlive(leader))
+      signalTree(platform, leader, 'SIGKILL', child, taskkill)
     },
   }
 }
@@ -447,8 +503,11 @@ export function bindManagedProcess(
 
 /**
  * Spawn one detached PGID/taskkill fallback and bind the common lifecycle.
+ * On POSIX, termination also reaches the leader's descendants found by a
+ * process-table read when it starts; a command that exits without being
+ * terminated is never inspected.
  * @param spec - fully resolved argv, cwd, stdio, grace, cancellation, environment.
- * @param internals - test-only spill-directory, platform, and taskkill overrides.
+ * @param internals - spill, platform, taskkill, and process-inspector overrides and the sweep failure reporter.
  * @returns live subprocess handle.
  */
 export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInternals = {}): LocalSubprocessHandle {
@@ -473,6 +532,12 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
   })
   const direct = directChildResult(child)
   const pid = child.pid
+  const sweep = platform === 'win32' || pid === undefined ? undefined : new DescendantSweep({
+    leaderPid: pid,
+    leaderHeld: () => child.exitCode === null && child.signalCode === null,
+    inspector: internals.processInspector ?? (() => createProcessInspector()),
+    onFailure: internals.onSweepFailure ?? reportSweepFailureToStderr,
+  })
   const owner = fallbackOwner(
     platform,
     pid,
@@ -480,6 +545,7 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
     internals.taskkill ?? taskkillProcessTree,
     internals.linuxProcessGroupHasLiveMembers ?? linuxProcessGroupHasLiveMembers,
     direct,
+    sweep,
   )
   return bindManagedProcess(spec, {
     stdin: child.stdin,
