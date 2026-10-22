@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-agent-team-profile` enables [Agent Teams](../agent-team/README.md) collaboration, tools, and Web UI with one bundle. Delegate work to teammates and view members, shared tasks, and teammate sessions in Web. Ordinary subagent delegation and overlapping global child controls are disabled; Workflow can still create fresh children. The bundle ships with dsh switched off. Enable it from the Plugins page or add it to an initialized profile.
+`dsh-experimental-agent-team-profile` enables [Agent Teams](../agent-team/README.md) collaboration, tools, and Web UI with one bundle. Delegate work to teammates and view members, shared tasks, and teammate sessions in Web. Ordinary subagent delegation and overlapping global child controls are disabled; Workflow can still create fresh children. The shipped TUI template selects the bundle, and every other shipped template leaves it switched off. Enable it from the Plugins page or add it to an initialized profile.
 
 ## Table of Contents
 
@@ -101,7 +101,7 @@ The shared system prompt and tool schemas remain prefix-stable while the bundle 
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Opt-in only** — the package ships with the installation switched off; no shipped CLI, Web, SDK, ACP, or Python profile enables it.
+- **Selected by the TUI template** — the shipped TUI template selects the bundle, and every other shipped template leaves it switched off.
 - **Workflow child tools** — the [Team tool visibility limitation](../tool-agent-team/README.md#known-limitations-and-deferred-work) also applies to workflow children.
 - **Shared checkout** — every teammate observes the same working directory; this bundle adds no worktree isolation or filesystem locking.
 - **Preset-scoped child controls** — Web presets can still mount continuable Subagent controls in their own scope; this top-level bundle does not replace those registrations.

@@ -10,7 +10,7 @@ English | [中文](2026-09-24-tui-auto-review.zh.md)
 
 ## Decision
 
-The shipped `tui` template selects `@deepseek-ai/dsh-experimental-auto-review` after `dsh-base` and `dsh-tui-app`. A profile whose bundle list is still exactly those two names is rewritten to the template on the next load; any other list is left as it is. Web, Headless, General settings, and new-session defaults stay without the layer. Default-product isolation allows this optional bundle only when the TUI template is its sole shipped selection.
+The shipped `tui` template selects `@deepseek-ai/dsh-experimental-auto-review` after `dsh-base` and `dsh-tui-app`, then `@deepseek-ai/dsh-experimental-agent-team-profile`. The predecessors are exactly `['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app']` and that list plus `@deepseek-ai/dsh-experimental-auto-review`; both rewrite to the current template on the next load, and any other list stays as it is. Web, Headless, General settings, and new-session defaults stay without Auto review. Default-product isolation allows this optional bundle when the TUI template is its only shipped selection and every other mention is a TUI predecessor tuple.
 
 Each prompt the person submits from the terminal stores `{ kind: 'user', rpcId }` with a new id. Auto review's existing check treats that id as a human instruction. A revised draft keeps a non-user source. Child creation prompts stay without `rpcId`.
 
@@ -29,4 +29,5 @@ Each prompt the person submits from the terminal stores `{ kind: 'user', rpcId }
 ## Related decisions
 
 - [Auto review](2026-08-28-auto-review.md) — authority, lifecycle, and the `rpcId` check.
+- [Agent Teams on the TUI template](2026-10-22-tui-agent-teams.md) — the following optional bundle on the same template.
 - [Optional bundles](../architecture/2026-09-21-experimental-capabilities-as-optional-bundles.md) — Web still switches the layer on from the Plugins page.

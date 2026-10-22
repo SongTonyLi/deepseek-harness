@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.1-rc.2/tui-agent-teams/guide.md
+/:
+  en: c0f2798e8b6f22ce
+  zh: 7c292654b783b5d2
+/stock-tui-profiles-mount-agent-teams:
+  en: 1491c22f888f642a
+  zh: 20ae21a5fcc103ed
+/stock-tui-profiles-mount-agent-teams/change:
+  en: 79c7a1e9d54b9d5f
+  zh: 7d3956472f1cfdef
+/stock-tui-profiles-mount-agent-teams/migration:
+  en: 8aa85618c9db59f6
+  zh: 18143b32eb257b6f

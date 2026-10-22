@@ -386,11 +386,12 @@ describe('loadProfile', () => {
     ])
   })
 
-  it('normalizes the stock TUI bundle tuple onto the template that includes Auto review', () => {
+  it('normalizes stock TUI predecessors onto the template that selects Auto review and Agent Teams', () => {
     const anchor = stageInstallation({
       '@deepseek-ai/dsh-base': { patch: '[]\n' },
       '@deepseek-ai/dsh-tui-app': { patch: '[]\n' },
       '@deepseek-ai/dsh-experimental-auto-review': { patch: '[]\n' },
+      '@deepseek-ai/dsh-experimental-agent-team-profile': { patch: '[]\n' },
       'custom-bundle': { patch: '[]\n' },
     })
     const home = tmp()
@@ -398,6 +399,16 @@ describe('loadProfile', () => {
     initProfile(stock, ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app'])
     loadProfile('t', 'tui', anchor, home)
     expect(readProfileManifest('t', stock).dsh?.profile?.bundles).toEqual([
+      ...PROFILE_TEMPLATES.tui?.bundles ?? [],
+    ])
+
+    const reviewedHome = tmp()
+    const reviewed = resolveProfileDir('tui', reviewedHome)
+    initProfile(reviewed, [
+      '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app', '@deepseek-ai/dsh-experimental-auto-review',
+    ])
+    loadProfile('t', 'tui', anchor, reviewedHome)
+    expect(readProfileManifest('t', reviewed).dsh?.profile?.bundles).toEqual([
       ...PROFILE_TEMPLATES.tui?.bundles ?? [],
     ])
 

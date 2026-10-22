@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-随附的 `tui` 模板在 `dsh-base` 与 `dsh-tui-app` 之后选中 `@deepseek-ai/dsh-experimental-auto-review`。bundle 列表仍恰好是这两个名字的 profile 在下次加载时改写为该模板；其他列表保持原样。Web、Headless、通用设置与新会话默认值仍然不包含这一层。默认产品隔离只在 TUI 模板是该可选 bundle 的唯一随附选择时放行它。
+随附的 `tui` 模板在 `dsh-base` 与 `dsh-tui-app` 之后选中 `@deepseek-ai/dsh-experimental-auto-review`，再选中 `@deepseek-ai/dsh-experimental-agent-team-profile`。前序列表恰好是 `['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app']`，以及该列表再加上 `@deepseek-ai/dsh-experimental-auto-review`；两者都在下次加载时改写为当前模板，其他列表保持原样。Web、Headless、通用设置与新会话默认值不包含 Auto review。默认产品隔离在 TUI 模板是该可选 bundle 的唯一随附选择，且其余出现都位于 TUI predecessor 元组时放行它。
 
 人从终端提交的每个 prompt 都存 `{ kind: 'user', rpcId }`，并使用一个新 id。Auto review 的既有检查把该 id 当作人的指令。被修改的草稿保留非 user 来源。Child 创建 prompt 仍然没有 `rpcId`。
 
@@ -29,4 +29,5 @@ Status: implemented
 ## Related decisions
 
 - [Auto review](2026-08-28-auto-review.zh.md) — 权威、生命周期与 `rpcId` 检查。
+- [在 TUI 模板中选中 Agent Teams](2026-10-22-tui-agent-teams.zh.md) — 同一模板上随后选中的可选组合包。
 - [可选 bundle](../architecture/2026-09-21-experimental-capabilities-as-optional-bundles.zh.md) — Web 仍从插件页开启这一层。
