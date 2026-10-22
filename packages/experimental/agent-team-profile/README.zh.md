@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-experimental-agent-team-profile` 让 [Agent Teams](../agent-team/README.zh.md) 的团队协作、工具和 Web 界面通过一个组合包启用。开启后可委派 teammate，并在 Web 中查看成员、任务看板和成员会话。普通 subagent 委派及名称重叠的全局 child control 会被禁用；Workflow 仍可创建 fresh 子代理。本包随 dsh 安装提供，默认关闭，可在插件页开启或添加到已初始化的 profile。
+`dsh-experimental-agent-team-profile` 让 [Agent Teams](../agent-team/README.zh.md) 的团队协作、工具和 Web 界面通过一个组合包启用。开启后可委派 teammate，并在 Web 中查看成员、任务看板和成员会话。普通 subagent 委派及名称重叠的全局 child control 会被禁用；Workflow 仍可创建 fresh 子代理。随附的 TUI 模板选中本组合包，其他随附模板保持关闭。可在插件页开启，或添加到已初始化的 profile。
 
 ## 目录
 
@@ -101,7 +101,7 @@ Team 策略与 schema 由 [`@deepseek-ai/dsh-experimental-tool-agent-team`](../t
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **仅显式启用**——本包随安装提供但默认关闭；随附 CLI、Web、SDK、ACP 与 Python profile 都不会启用它。
+- **由 TUI 模板选中**——随附的 TUI 模板选中本组合包，其他随附模板保持关闭。
 - **Workflow 子代理工具**——[Team 工具可见性限制](../tool-agent-team/README.zh.md#known-limitations-and-deferred-work)也适用于 workflow 子代理。
 - **共享 checkout**——所有 teammate 都观察同一个工作目录；本 bundle 不提供 worktree 隔离或文件系统锁。
 - **预设内的子代理控件**——Web 预设仍可在预设作用域挂载 continuable Subagent 控件；顶层组合包不会替换这些注册。

@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-22-tui-agent-teams.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-22-tui-agent-teams.md
+/agent-note-select-agent-teams-on-the-tui-template:
+  en: ffa3a4f466471fef
+  zh: 309d4cf0e153c9ae
+/agent-note-select-agent-teams-on-the-tui-template/problem:
+  en: a38369e31e448808
+  zh: c71ac4f3eebac8aa
+/agent-note-select-agent-teams-on-the-tui-template/decision:
+  en: 4183a337e688c496
+  zh: 1c2a7457691eb679
+/agent-note-select-agent-teams-on-the-tui-template/alternatives-considered:
+  en: 2037ac3a6ff07d8a
+  zh: 1e9c5e2a870b7e89
+/agent-note-select-agent-teams-on-the-tui-template/consequences:
+  en: c8fbf6b0ad92ad2f
+  zh: b3d7188cd6ac9fd0
+/agent-note-select-agent-teams-on-the-tui-template/related-decisions:
+  en: 22487452c5498109
+  zh: a1775ed99f15da45

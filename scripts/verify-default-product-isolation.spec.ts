@@ -469,6 +469,22 @@ describe('default product isolation', () => {
     expect(verifyDefaultProductIsolation(root).failures.join('\n')).toContain(experimental)
   })
 
+  it('allows an optional bundle the TUI template selects when only TUI predecessors repeat it', () => {
+    const root = fixture()
+    write(root, 'packages/experimental/prototype/package.json', {
+      name: experimental, icon: './icon.svg', exports: { './locale/*.json': './locale/*.json' },
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+    write(root, 'packages/experimental/prototype/cordis.patch.yml', [])
+    manifest(root, 'apps/cli/package.json', { dependencies: { [core]: 'workspace:^', [experimental]: 'workspace:^' } })
+    write(root, profile, `export const PROFILE_TEMPLATES = { web: { bundles: ['${base}'] }, tui: { bundles: ['${base}', '${experimental}'] } }\n`
+      + `export const DEFAULT_PROFILE_BUNDLES = ['${base}']\n`
+      + `export const OPTIONAL_BUNDLES = ['${experimental}']\n`
+      + `const INSTALLATION_OWNED_PROFILE_TUPLES = { tui: [['${base}'], ['${base}', '${experimental}']] }\n`)
+
+    expect(verifyDefaultProductIsolation(root).failures.join('\n')).not.toContain(experimental)
+  })
+
   it('checks inline modules alongside the default Web script', () => {
     const root = fixture()
     write(root, 'apps/web/index.html', '<script type="module" src="/src/main.ts"></script>'

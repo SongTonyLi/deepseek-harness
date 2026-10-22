@@ -56,6 +56,8 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 
 子 agent 面板在绑定会话之下有常驻的本地子 agent 会话、或列表中带有无法读取的候选者时绘制；外部任务没有本地会话，因此不在面板中出现。未聚焦时它是一行摘要，含列出的数量与第一个子会话的关键标签；聚焦时其标题统计所列出的条目，并以它所应答的按键 `↑↓ children · Enter opens · Tab regions · Esc input` 结尾，在容纳不下时收缩为 `↑↓ children · Esc input`，再收缩为 `Esc input`；每一行给出该子会话的层级缩进、其标签或 id、其模式（`one-shot` 或 `continuable`）、`resident`、其 agent 处于 `running`、最新已结束轮次后为 `completed`，还是 `idle`、其已用时间——进行中轮次的用时，否则是已结束轮次的合计——以及其 token 用量，以本进程对该子会话的可见程度与已组合的投影所能提供的为限。最多绘制六行，其下是 `+<n> more · /subagents lists them all`；`/subagents` 把外部任务显示为 `external task · no local session`，并显示其没有本地会话的详情而不打开会话，列表无法解读的候选者绘制为 `unreadable: <reason>`，并显示其原因而不打开会话，读取失败的列表则保留上一次成功读取产生的各行，并在其下写出 `listing failed: <reason>`。面板随其最后一行一同消失。在可读的行上按 `Enter` 或 `Right`，与在可读的 `/subagents` 行上按 `Enter` 一样，会把该子会话作为子 agent 视图打开：终端在已绑定会话的位置绘制子会话——其对话记录、实时流、对话记录走查、检查器、阅读器以及它自己的子 agent 面板——而进入它之前的会话保持打开。常驻的子会话被实时读取，其他子会话则被恢复。条目的详情行作为通知打印在 `subagent <label> · Ctrl+P or /parent returns to session <id>` 之下，页眉以 `◆ subagent view ›`（每进入一层一个 `›`）与 `· Ctrl+P returns` 结尾，只要视图打开，输入框正上方就有一条着色行写着 `◆ subagent view · main › <label> · Ctrl+P back to <parent>`，无论对话记录滚动到哪里，`Ctrl+P` 或 `/parent` 返回上一层，并按父会话此刻的日志重绘它。`one-shot` 子会话以只读方式打开：其横幅以 `◆ subagent view · one-shot, read-only` 开头，在其中输入的提示词或 `!` 行会被通知拒绝并留在编辑器中，`Esc` 不会停止它的轮次，而 `/parent` 等命令仍可运行；`continuable` 子会话则像任何会话一样接受提示词与停止。只要这条链中任一会话正在运行轮次或后台任务，`/new`、`/clear`、`/resume`、`/sessions` 与 `/fork` 都会拒绝（释放会话会结束它的后台任务），否则它们会随所离开的会话释放每一个视图；退出会释放每一个视图并保存根会话。
 
+团队面板在绑定会话有 teammate，或有一条状态不是 `deleted` 的共享任务时，是一行不占键盘的暗色摘要 `team · <n> members · <running> running · <tasks> tasks`；只有 lead、且没有这类任务时，面板不挂载。`/team-panel off` 隐藏该行，`/team-panel on` 强制显示，名册里既没有 teammate 也没有共享任务时绘制 `team · no teammates or shared tasks yet`，单独的 `/team-panel` 在这两种选择之间切换。`/team` 列出每一名成员和每一条未删除的共享任务；在 `running` 或 `inactive` 的 teammate 上按 `Enter` 会把该会话作为可继续的会话视图打开，lead、`provisioning` 或 `failed` 的成员以及任务则打开详情页。`/team-tools` 打印 Agent Teams 插件当前限定在本 agent 上的工具，每条带上插件给出的描述，并略去没有该插件时就已经可见的工具。插件新增或移除的工具，下一次 `/team-tools` 就会反映出来，终端本身不必改动。`/team` 的详情页也会打印插件加在成员或任务上的字符串、数字和布尔字段。`/team-play` 播放这些限定工具的调用，以及每一种 `team/` 事件。没有该服务时，每条命令提示 `Agent Teams are not enabled in this composition`，面板保持不挂载；会话不在团队中时提示 `this session is not on a team`。
+
 `/btw` 在屏幕上的会话之上打开一个临时的旁路 agent 视图，让用户在该会话的 agent 继续工作时提问。旁路 agent 是一个新的 Agent，以该会话迄今记录的全部事件为种子，包括尚未结束的轮次：仍在等待结果的工具调用会得到分叉产生的错误结果，仍在流式输出的回复文本不包含在内。该会话仍在排队的输入，无论是提示还是下一步上下文，都留给该会话的 agent，不会带进旁路 agent。它使用该会话最后记录的模型（否则使用其当前选择），并且只能读取：它的会话运行在 `read-only` 沙箱模式与 `never` 审批策略下，因此写入会失败且无法获批；它只看得到 `btwTools` 中列出的工具，以及在命令执行器会约束命令时 `btwSandboxedTools` 中的命令工具。其他工具对它隐藏，被调用时也会被拒绝。它运行自己的轮次：`/btw` 之后的问题是它的第一条提示，它在屏幕上时输入的每一行都交给它，`/btw <question>` 也一样。该视图的绘制方式与子 agent 视图相同：页眉以 `◆ btw side agent · Ctrl+P ends it and returns` 结尾，输入框上方的着色行写着 `◆ btw side agent · main › btw · Ctrl+P back to main`，对话记录从空开始，而不是重复继承来的对话。`Ctrl+P` 或 `/parent` 结束旁路 agent（取消它正在运行的轮次），并在 `btw ended · back in session <id>` 之下重绘打开它之前的会话。工作中的会话只被读取：不向其日志追加任何内容，不触碰其收件箱，其子 agent 面板、`/subagents` 与面向模型的子 agent 列表都不显示旁路 agent，旁路 agent 也不能给它发消息。被任一视图挡在后面的会话发起的审批或提问，会在 `session <id>, behind this view, asks:` 之后显示在屏幕上，而不是被拒绝。
 
 ### 按键与命令
@@ -196,6 +198,10 @@ follow-ups 面板持有键盘时：
 | `/deliverables` | agent 交付的文件，按轮次分组 |
 | `/changes [turn]` | 浏览最近一轮（或第 `turn` 轮）改动的文件及其行数；`Enter` 打开某个文件从轮次开始到结束的对比 |
 | `/subagents` | 浏览本会话之下的本地子 agent 会话和外部任务记录；`Enter` 把可读的会话作为子 agent 视图打开，对外部或无法读取的行则显示详情 |
+| `/team-play` | 在独立画面中播放 Agent Teams 成员如何互相发消息。`Esc` 关闭，`←` `→` 步进一次往来，`Space` 暂停。尚无 teammate 消息的会话播放一个示例。子 agent 视图仍是 `/subagents` |
+| `/team` | 浏览团队名册与共享任务；`Enter` 打开 running 或 inactive 的 teammate 会话，lead、provisioning 或 failed 的成员以及任务则打开详情 |
+| `/team-tools` | 列出 Agent Teams 插件当前提供给本 agent 的工具，并带上每个工具的描述 |
+| `/team-panel` | 显示或隐藏团队摘要（`/team-panel`、`/team-panel on`、`/team-panel off`） |
 | `/parent` | 从子 agent 视图返回进入它之前的会话，或结束 `/btw` 旁路 agent，与 `Ctrl+P` 相同 |
 | `/workflows` | 浏览本会话的工作流运行，附带状态、已结束成员、阶段与所属作业；`Enter` 列出一次运行的成员，在成员上按 `Enter` 时，若它仍在本进程运行则把其子会话作为实时视图打开，否则显示其详情，`Ctrl+K` 通过作业停止后台运行。`/workflows <name>` 打开该名称最新的一次运行 |
 | `/jobs` | 浏览本会话的后台作业，即用 `Ctrl+B` 移走的调用与 agent 启动的作业，附带状态与耗时；`Enter` 显示一个作业的状态与输出末尾，`Ctrl+K` 停止高亮的作业 |
@@ -205,6 +211,8 @@ follow-ups 面板持有键盘时：
 | `/turns` | 像 `Ctrl+G` 一样整屏读出对话记录，各轮次并排 |
 | `/btw <question>` | 打开一个带有本会话上下文的临时旁路 agent 并向它提问；它可以使用只读工具，本会话继续工作且看不到它，`Ctrl+P` 结束它。在旁路 agent 中，`/btw <question>` 向它再提一个问题 |
 | `/quit`、`/exit` | 保存会话并退出 |
+
+挂载了 Agent Teams 的 profile 在空会话里画出一张起始卡片。卡片写着 `Agent Teams is on by default`，给出 `/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile`，并播放一条轨道：lead 创建 reviewer、送出 `check the diff`、收到 `the diff is consistent`。标题行写着 `Agent Teams on`。减弱动效时三条轨道都以定格绘制。`/team-play` 在独立画面打开这段往来；`/subagents` 仍然打开一份对话记录。
 
 其他每条 `/name` 行都交给共享命令注册表，因此 `/compact`、`/goal` 与插件命令的行为和浏览器中一致。`/compact` 在轮次之间运行：有轮次正在进行时，它打印 `/compact runs between turns: let this turn finish, or stop it (Esc twice)`。运行期间，工作旋转指示显示 `compacting context · Esc cancels`，`Esc` 会取消它并给出通知 `/compact cancelled`，其间提交的提示在 follow-ups 列表中等待并提示 `queued: the prompt starts once compaction finishes`，切换会话也会等它结束；它落地的压缩块就是其结果，因此不再打印它自己的成功文本。运行中的轮次里发生的自动压缩，会把该轮次的旋转指示标为 `compacting`，直到下一次模型调用开始。
 
@@ -337,6 +345,8 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/status.ts`](src/status.ts) | 投影接缝的事实，以及 `/status` 报告与分段详情共享的小节；重试通知 |
 | [`src/footer.ts`](src/footer.ts) | 状态栏：有序的各分段、每个分段的详情行、未聚焦时由两端向内构建的一行，以及聚焦时的滑动窗口 |
 | [`src/subagent-panel.ts`](src/subagent-panel.ts) | 实时子 agent 面板：一次后代列表加上采样到的实时事实构成其各行、未聚焦时的摘要行，以及聚焦时的列表 |
+| [`src/team-panel.ts`](src/team-panel.ts) | 团队摘要：一行成员与任务计数，在有 teammate 或共享任务时绘制 |
+| [`src/team.ts`](src/team.ts) | `/team`、`/team-tools` 与 `/team-panel`：名册行、九个工具的可见性，以及对可选服务的读取 |
 | [`src/queue-panel.ts`](src/queue-panel.ts) | follow-ups 列表：待处理行符号、悬挂换行与 enter-steer 图例 |
 | [`src/background.ts`](src/background.ts) | `Ctrl+B`：跟踪根调用的 `tools/execute` 包装器，把调用移为 `tool` 作业、识别 shell 调用自己的进程作业，并保持被停止轮次的作业 |
 | [`src/jobs-panel.ts`](src/jobs-panel.ts) | 编辑器上方的后台作业行、`/jobs` 的行与详情页，以及作业结束提示行 |
@@ -384,6 +394,9 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 基于真实 Loader 配置树的命令行解析 |
 | [`tests/shortcuts.spec.ts`](tests/shortcuts.spec.ts) | 空输入与草稿中的 `?`、任一区域的 `Ctrl+T`、根会话上的 `Ctrl+P`，以及 `Ctrl+L` 重绘 |
 | [`tests/subagents.spec.ts`](tests/subagents.spec.ts) | 实时子 agent 面板的各行、走查与列表刷新，以及它与 `/subagents` 打开的子 agent 视图：经 `/parent` 与 `Ctrl+P` 离开，并在会话切换与退出时释放 |
+| [`tests/team-panel.spec.ts`](tests/team-panel.spec.ts) | 团队摘要的计数、隐藏、已删除任务与行数上限 |
+| [`tests/team.spec.ts`](tests/team.spec.ts) | 工具可见性行、名册选择行，以及对可选服务的读取 |
+| [`tests/team-app.spec.ts`](tests/team-app.spec.ts) | 终端中的 `/team`、`/team-tools` 与 `/team-panel`：提示、摘要，以及打开 teammate 会话 |
 | [`../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts`](../../../apps/cli/tests/profiles/tui/tests/keyless-smoke.e2e.ts) | 通过真实启动器与免密钥模拟模型运行随附 profile |
 | [`../../../apps/cli/tests/profiles/tui/tests/quit-while-busy.e2e.ts`](../../../apps/cli/tests/profiles/tui/tests/quit-while-busy.e2e.ts) | 已发布的配置文件在命令、后台作业、子代理或忽略 `SIGTERM` 的进程仍在运行时退出，以及收到 `SIGHUP` 与 `SIGINT` 时的表现：stderr 输出行及其顺序、退出码，以及没有进程残留 |
 

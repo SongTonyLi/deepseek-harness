@@ -25420,7 +25420,7 @@
       "digest": "a41636c87362f664550b08d346b231cf57622c324bb272224c1829925cf9d880",
       "names": [],
       "sources": [
-        "packages/bundle/tui-app/src/app.ts:51"
+        "packages/bundle/tui-app/src/app.ts:53"
       ]
     },
     {

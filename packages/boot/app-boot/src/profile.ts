@@ -193,14 +193,22 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
     bundles: ['@deepseek-ai/dsh-sdk-minimal'],
   },
   tui: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app', '@deepseek-ai/dsh-experimental-auto-review'],
+    bundles: [
+      '@deepseek-ai/dsh-base',
+      '@deepseek-ai/dsh-tui-app',
+      '@deepseek-ai/dsh-experimental-auto-review',
+      '@deepseek-ai/dsh-experimental-agent-team-profile',
+    ],
   },
 }
 
-/** Installation-owned bundle tuples normalized to the shipped template. */
-const INSTALLATION_OWNED_PROFILE_TUPLES: Record<string, readonly string[]> = {
-  headless: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless'],
-  tui: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app'],
+/** Earlier installation-owned bundle lists each profile rewrites to its shipped template. */
+const INSTALLATION_OWNED_PROFILE_TUPLES: Record<string, readonly (readonly string[])[]> = {
+  headless: [['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless']],
+  tui: [
+    ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app'],
+    ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app', '@deepseek-ai/dsh-experimental-auto-review'],
+  ],
 }
 
 /**
@@ -220,8 +228,8 @@ export const DEFAULT_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-bas
  * The bundles the dsh installation ships for a person to switch on: each a
  * runtime dependency of the installation that declares `dsh.bundle.patch`,
  * an `icon`, and `./locale/*.json` display metadata, and offered switched off
- * by the plugin manager. The shipped TUI template selects Auto review; no
- * other template does
+ * by the plugin manager. The shipped TUI template selects Auto review and
+ * Agent Teams; no other template does
  * ([rationale](../../../../.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md),
  * [admission](../../../../.agents/notes/implemented/architecture/2026-09-21-experimental-capabilities-as-optional-bundles.md)).
  */
@@ -658,16 +666,16 @@ function withBundles(manifest: ProfileManifest, bundles: readonly string[]): Pro
 }
 
 /**
- * Normalize an exact installation-owned bundle tuple to its shipped template,
- * preserving all other manifest fields. Other bundle lists remain untouched.
+ * Rewrite a bundle list that equals any installation-owned predecessor of
+ * `name`, in listed order, to that profile's shipped template. Other manifest
+ * fields stay in place. Every other list stays unchanged.
  */
 function normalizeShippedProfile(name: string, dir: string, manifest: ProfileManifest): ProfileManifest {
-  const installationOwned = INSTALLATION_OWNED_PROFILE_TUPLES[name]
+  const predecessors = INSTALLATION_OWNED_PROFILE_TUPLES[name]
   const template = PROFILE_TEMPLATES[name]
   const bundles = manifest.dsh?.profile?.bundles
-  if (template === undefined || bundles === undefined) return manifest
-  const isRetiredTuple = installationOwned !== undefined && sameBundles(bundles, installationOwned)
-  if (!isRetiredTuple) return manifest
+  if (template === undefined || bundles === undefined || predecessors === undefined) return manifest
+  if (!predecessors.some(predecessor => sameBundles(bundles, predecessor))) return manifest
   const normalized = withBundles(manifest, template.bundles)
   writeProfileManifest(dir, normalized)
   return normalized

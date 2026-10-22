@@ -2,7 +2,8 @@
  * Keep experimental packages outside default installations, runtime imports, and shipped compositions.
  * The one declared exception is a bundle the launcher names in `OPTIONAL_BUNDLES`: shipped for the person to
  * switch on, with its own dependency graph outside the default product's. The TUI template may select one;
- * every other shipped template leaves it off.
+ * every other shipped template leaves it off. A TUI installation-owned predecessor may repeat that same
+ * bundle. A mention under headless, Web, or `DEFAULT_PROFILE_BUNDLES` fails the check.
  */
 
 import { existsSync, globSync, readFileSync, statSync } from 'node:fs'
@@ -244,8 +245,10 @@ export function verifyDefaultProductIsolation(root: string): ProductIsolationRes
   if (selection !== undefined) {
     for (const name of selection.packages) {
       const tuiCount = selection.tuiBundles.filter(item => item === name).length
+      const tuiOwnedCount = selection.tuiOwnedPackages.filter(item => item === name).length
+      // Predecessor mentions under INSTALLATION_OWNED_PROFILE_TUPLES.tui repeat the template selection.
       const onlyTuiOptional = optionalBundles.has(name) && tuiCount > 0
-        && selection.packages.filter(item => item === name).length === tuiCount
+        && selection.packages.filter(item => item === name).length === tuiCount + tuiOwnedCount
       if (onlyTuiOptional) continue
       reference(name, PROFILE_SOURCE)
       if (packages.get(name)?.manifest.dsh?.bundle?.patch === undefined) {
@@ -360,14 +363,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Read the literal package lists that define installation-owned profile defaults and the optional bundles it ships. */
-function profilePackages(source: string): { packages: string[]; webBundles: string[]; tuiBundles: string[]; optionalBundles: string[] } {
+/**
+ * Read the literal package lists that define installation-owned profile defaults and the optional bundles it ships.
+ * `tuiOwnedPackages` holds the `@` names under `INSTALLATION_OWNED_PROFILE_TUPLES.tui`.
+ */
+function profilePackages(source: string): {
+  packages: string[]
+  webBundles: string[]
+  tuiBundles: string[]
+  tuiOwnedPackages: string[]
+  optionalBundles: string[]
+} {
   const file = ts.createSourceFile(PROFILE_SOURCE, source, ts.ScriptTarget.Latest, true)
   const required = new Set(['PROFILE_TEMPLATES', 'DEFAULT_PROFILE_BUNDLES'])
   const found = new Set<string>()
   const packages: string[] = []
   const webBundles: string[] = []
   const tuiBundles: string[] = []
+  const tuiOwnedPackages: string[] = []
   const optionalBundles: string[] = []
   const literals = (node: ts.Node, path: string[]): void => {
     if (ts.isStringLiteralLike(node)) {
@@ -375,6 +388,9 @@ function profilePackages(source: string): { packages: string[]; webBundles: stri
       else if (node.text.startsWith('@')) packages.push(node.text)
       if (path.join('.') === 'PROFILE_TEMPLATES.web.bundles') webBundles.push(node.text)
       if (path.join('.') === 'PROFILE_TEMPLATES.tui.bundles') tuiBundles.push(node.text)
+      if (path.join('.') === 'INSTALLATION_OWNED_PROFILE_TUPLES.tui' && node.text.startsWith('@')) {
+        tuiOwnedPackages.push(node.text)
+      }
     } else if (ts.isArrayLiteralExpression(node)) node.elements.forEach((child) => { literals(child, path) })
     else if (ts.isObjectLiteralExpression(node)) node.properties.forEach((child) => { literals(child, path) })
     else if (ts.isPropertyAssignment(node)) {
@@ -404,7 +420,7 @@ function profilePackages(source: string): { packages: string[]; webBundles: stri
   }
   if (found.size !== required.size) throw new Error(`${PROFILE_SOURCE}: missing default profile declarations`)
   if (webBundles.length === 0) throw new Error(`${PROFILE_SOURCE}: missing default Web bundle list`)
-  return { packages, webBundles, tuiBundles, optionalBundles }
+  return { packages, webBundles, tuiBundles, tuiOwnedPackages, optionalBundles }
 }
 
 if (import.meta.main) {
