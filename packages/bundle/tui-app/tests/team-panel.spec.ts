@@ -122,8 +122,8 @@ describe('team panel', () => {
       id: `task-${String(index)}`,
       subject: `task ${String(index)}`,
       status: 'pending',
-      ownerName: index === 0 ? 'Ada' : undefined,
       ready: index !== 1,
+      ...(index === 0 ? { ownerName: 'Ada' } : {}),
     }))
     tasks.push(task({ id: 'gone', subject: 'deleted task', status: 'deleted' }))
     const view = teamPanelView({ members, tasks, hidden: false })
