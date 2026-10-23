@@ -17,7 +17,8 @@
  */
 
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import type { SandboxMode } from './index.ts'
+import { escalationDisplayReason } from './locales.ts'
+import type { EscalationNote, SandboxMode } from './index.ts'
 
 /**
  * The strictly-wider table: what a call whose effective mode is the key may
@@ -157,7 +158,7 @@ export interface EscalationRequest {
   /** The family's noun for the escalated action in user-facing texts (`command` for bash, `operation` for fs). */
   subject: string
   /** Localized sentence appended to the approval prompt, such as where the escalated call runs. */
-  note?: { readonly en: string; readonly [locale: string]: string }
+  note?: EscalationNote
 }
 
 /**
@@ -192,10 +193,7 @@ export async function approveEscalation<A, C>(request: EscalationRequest, approv
     toolName: approval.toolName,
     callId: approval.callId,
     reason: `escalate sandbox to ${mode}: ${justification}${note === undefined ? '' : ` (${note.en})`}`,
-    displayReason: {
-      en: `Allow this operation with ${mode} permissions: ${justification}${note === undefined ? '' : ` ${note.en}`}`,
-      zh: `允许本次操作使用 ${mode} 权限：${justification}${note === undefined ? '' : ` ${note.zh ?? note.en}`}`,
-    },
+    displayReason: escalationDisplayReason(mode, justification, note),
     ...approval.signal ? { signal: approval.signal } : {},
   })
   switch (outcome) {

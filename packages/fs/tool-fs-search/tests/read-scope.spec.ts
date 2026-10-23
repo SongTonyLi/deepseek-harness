@@ -13,6 +13,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import * as ToolFsSearch from '@deepseek-ai/dsh-tool-fs-search'
 import { buildGrepCommand } from '@deepseek-ai/dsh-tool-fs-search'
 import { WorkspaceReadSandbox } from '../../../sandbox/sandbox/tests/read-scope-sandbox.ts'
@@ -25,7 +26,7 @@ let ctx: Context
 let calls = 0
 
 function call(name: string, args: Record<string, unknown>, agent?: Agent) {
-  return ctx.tools.execute({
+  return executeToolFixture(ctx, {
     signal: new AbortController().signal,
     callId: ToolCallId(`call-${++calls}`),
     name,

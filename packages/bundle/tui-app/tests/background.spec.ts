@@ -7,6 +7,7 @@ import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import { ToolCallId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
+import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import ToolRuntime, { defineTool, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { movedJobId, movedResultText } from '../src/background.ts'
 import { KEY, bench, type Bench } from './bench.ts'
@@ -89,7 +90,7 @@ function heldTool(ctx: Context, name: 'slow' | 'bash', ownJob?: { output: string
  * @returns the call's outcome.
  */
 function dispatch(test: Bench, name: string, command: string, turn: AbortSignal): Promise<ToolExecutionResult> {
-  return test.ctx.tools.execute({ callId: ToolCallId(`call-${command}`), name, arguments: { command }, agent: test.agent, signal: turn })
+  return executeToolFixture(test.ctx, { callId: ToolCallId(`call-${command}`), name, arguments: { command }, agent: test.agent, signal: turn })
 }
 
 function textOf(content: readonly ContentBlock[]): string {
@@ -155,11 +156,12 @@ describe('TuiApp Ctrl+B background handoff', () => {
 
     held[0]?.finish('built ok')
     await flush(test)
-    expect(test.calls.injections.map(message => textOf(message.content))).toEqual([
-      `background job ${id} (tool: slow) finished [status: completed]. Read its output with job_output.`,
-    ])
+    const [completion] = test.calls.injections.map(message => textOf(message.content))
+    expect(completion).toContain(`background job ${id} (tool: slow) finished [status: completed].`)
+    expect(completion).toContain('built ok')
     expect(test.terminal.text()).toContain(`◇ ${id} completed · slow · agent notified`)
-    expect(test.ctx.jobs.read(id, test.agent.id).result).toBe('built ok')
+    // The completion notice consumed the settlement read, so its result is handed out once.
+    expect(test.ctx.jobs.read(id, test.agent.id).result).toBeUndefined()
     expect(await test.screen()).not.toContain('in background')
   })
 
@@ -205,9 +207,9 @@ describe('TuiApp Ctrl+B background handoff', () => {
     expect(test.terminal.text()).toContain(`◇ ${id} killed · bash`)
     expect(test.ctx.jobs.get(id, test.agent.id)).toMatchObject({ status: 'killed', detail: 'stopped by the user' })
     expect(await screenBelowToast(test)).not.toContain('in background')
-    expect(test.calls.injections.map(message => textOf(message.content))).toEqual([
-      `background job ${id} (tool: bash) finished [status: killed, stopped by the user]. Read its output with job_output.`,
-    ])
+    const [completion] = test.calls.injections.map(message => textOf(message.content))
+    expect(completion).toContain(`background job ${id} (tool: bash) finished [status: killed, stopped by the user].`)
+    expect(completion).toContain('No new output.')
     test.terminal.type(KEY.ctrlK)
     await flush(test)
     expect(test.terminal.text()).toContain(`${id} already finished`)
@@ -350,7 +352,11 @@ describe('TuiApp Ctrl+B background handoff', () => {
     failing[1]?.finish('')
     await flush(test)
     expect(test.ctx.jobs.get(failedId, test.agent.id)).toMatchObject({ status: 'failed', detail: 'network down' })
-    expect(test.ctx.jobs.read(failedId, test.agent.id).result).toBe('Error: network down\n  at fetch')
+    // The settlement notice carries the captured output and consumes the one-time result read.
+    const failureNotice = test.calls.injections.map(message => textOf(message.content)).find(text => text.includes(failedId))
+    expect(failureNotice).toContain('Error: network down')
+    expect(failureNotice).toContain('  at fetch')
+    expect(test.ctx.jobs.read(failedId, test.agent.id).result).toBeUndefined()
     expect(test.ctx.jobs.get(doneId, test.agent.id).status).toBe('completed')
     expect(test.ctx.jobs.read(doneId, test.agent.id).result).toBeUndefined()
   })

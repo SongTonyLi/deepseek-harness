@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
-import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import { defineContentToolFixture, executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { agentEvents } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
@@ -207,7 +207,7 @@ describe('mutating reset and non-mutating tools', () => {
 
   it('ignores a successful mutating call with no agent', async () => {
     const ctx = await harness({ idleTurns: 1, requireGoal: false })
-    const direct = await ctx.tools.execute({
+    const direct = await executeToolFixture(ctx, {
       signal: testToolSignal,
       callId: ToolCallId('d1'),
       name: 'edit',
@@ -401,6 +401,7 @@ describe('turn counting and injection cadence', () => {
     const decision = await agentEvents(ctx, agent).waterfall(
       'agent/pre-step',
       {
+        modelSelection: { provider: 'mock', model: 'mock' },
         messages: [createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } })],
         turn: 1,
         step: 1,
@@ -421,6 +422,7 @@ describe('turn counting and injection cadence', () => {
     await expect(agentEvents(ctx, stale).waterfall(
       'agent/pre-step',
       {
+        modelSelection: { provider: 'mock', model: 'mock' },
         messages: [createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } })],
         turn: 1,
         step: 1,

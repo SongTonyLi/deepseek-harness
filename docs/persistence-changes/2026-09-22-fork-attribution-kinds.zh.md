@@ -27,20 +27,20 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-10-13-user-rpc-principal"
-    after: "8f46cfe00d9b7cef2188da411a30d9088ab0a376ba36f523839c48e5375adc6f"
+    previous: "2026-10-22-action-card-status"
+    after: "aecd7efd2039c07af034cdf97b66e1a80fe2bf51567d5fe27dec4925c0baf505"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-10-13-user-rpc-principal"
-    after: "b3e4411741ee4e0ec5ce40eb2054bac73e66c4586161748c3896ddbf41a0eac1"
+    previous: "2026-10-22-action-card-status"
+    after: "0c346de2cbed1004158179312d21389d424e22168f6b0de154832ed78d19b6d2"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-10-13-user-rpc-principal"
-    after: "a4ccffb0fe337434bfbc4d054d092e0a97c0bbf2049b3a893e75e2434b3a77c1"
+    previous: "2026-10-22-action-card-status"
+    after: "3d50e53da47c6f3b9d98921bcf0f92d1317977cae5ff9d410e35a4e80b247db0"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-10-13-user-rpc-principal"
-    after: "ecff517267d800dd81577a288bf654e14272d2eef1d00003fdb77144cd1b079d"
+    previous: "2026-10-22-action-card-status"
+    after: "7c4c498b64a748d30fb80d9042094c3a2cb0a1ac27169519c28baf03e8f3cece"
     decision: same-version
 ```
 

@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-client-ui-settings-signin",
   "description": "Provider sign-in controls on the Web Models page: subscription and key logins over the authorization seam",
-  "version": "0.2.1-alpha.2",
+  "version": "0.2.1-rc.3",
   "publishConfig": {
     "access": "public"
   },
@@ -54,7 +54,6 @@
     "@deepseek-ai/dsh-client-ui-settings-models": "workspace:*",
     "@deepseek-ai/dsh-client-ui-slots": "workspace:*",
     "@testing-library/react": "^16.1.0",
-    "@types/react": "~18.3.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

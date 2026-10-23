@@ -15,42 +15,47 @@ import { SHIM_FAILURE_EXIT, SHIM_FAILURE_PREFIX, parseShimArgs, runShim } from '
 
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 
-try {
-  const args = parseShimArgs(process.argv.slice(2))
-  process.exitCode = await runShim(args, {
-    token: randomUUID(),
-    cwd: process.cwd(),
-    env: process.env,
-    tty: process.stdin.isTTY,
-    spawn: (executable, spawnArgs) => spawn(executable, spawnArgs, { stdio: 'inherit' }),
-    run: (executable, runArgs) => new Promise((resolve) => {
-      execFile(executable, runArgs, (error) => {
-        resolve(error === null ? 0 : typeof error.code === 'number' ? error.code : SHIM_FAILURE_EXIT)
-      })
-    }),
-    consumeFile: (path) => {
-      try {
-        unlinkSync(path)
-        return true
-      } catch (error: unknown) {
+/** Bind the shim to this process and exit with its outcome; every failure is reported here. */
+async function main(): Promise<void> {
+  try {
+    const args = parseShimArgs(process.argv.slice(2))
+    process.exitCode = await runShim(args, {
+      token: randomUUID(),
+      cwd: process.cwd(),
+      env: process.env,
+      tty: process.stdin.isTTY,
+      spawn: (executable, spawnArgs) => spawn(executable, spawnArgs, { stdio: 'inherit' }),
+      run: (executable, runArgs) => new Promise((resolve) => {
+        execFile(executable, runArgs, (error) => {
+          resolve(error === null ? 0 : typeof error.code === 'number' ? error.code : SHIM_FAILURE_EXIT)
+        })
+      }),
+      consumeFile: (path) => {
+        try {
+          unlinkSync(path)
+          return true
+        } catch (error: unknown) {
         // ENOENT means the guest wrapper never wrote the file; any other failure must surface.
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
-        throw error
-      }
-    },
-    writeEnvFile: (text) => {
-      const path = join(mkdtempSync(join(tmpdir(), 'dsh-container-env-')), 'env')
-      writeFileSync(path, text, { mode: 0o600 })
-      return path
-    },
-    removeEnvFile: (path) => { rmSync(join(path, '..'), { recursive: true, force: true }) },
-    onSignal: (handler) => {
-      for (const signal of SIGNALS) process.on(signal, handler)
-      return () => { for (const signal of SIGNALS) process.off(signal, handler) }
-    },
-    stderr: (text) => { process.stderr.write(text) },
-  })
-} catch (error: unknown) {
-  process.stderr.write(`${SHIM_FAILURE_PREFIX}${error instanceof Error ? error.message : String(error)}\n`)
-  process.exitCode = SHIM_FAILURE_EXIT
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+          throw error
+        }
+      },
+      writeEnvFile: (text) => {
+        const path = join(mkdtempSync(join(tmpdir(), 'dsh-container-env-')), 'env')
+        writeFileSync(path, text, { mode: 0o600 })
+        return path
+      },
+      removeEnvFile: (path) => { rmSync(join(path, '..'), { recursive: true, force: true }) },
+      onSignal: (handler) => {
+        for (const signal of SIGNALS) process.on(signal, handler)
+        return () => { for (const signal of SIGNALS) process.off(signal, handler) }
+      },
+      stderr: (text) => { process.stderr.write(text) },
+    })
+  } catch (error: unknown) {
+    process.stderr.write(`${SHIM_FAILURE_PREFIX}${error instanceof Error ? error.message : String(error)}\n`)
+    process.exitCode = SHIM_FAILURE_EXIT
+  }
 }
+
+void main()

@@ -7,6 +7,7 @@
  * removes it (HMR safety). The carrier and framework are exercised unmodified.
  */
 
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -17,6 +18,7 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
@@ -32,9 +34,10 @@ async function harness(withTodoTool: boolean): Promise<Bench> {
   await ctx.plugin(SessionStore)
   await ctx.plugin(SystemPrompt, { personaPrefix: '' })
   await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   await ctx.plugin(UserQuestionService)
-  await ctx.plugin(AgentRegistry)
   await ctx.plugin(SessionProjectionRegistry)
+  await ctx.plugin(AgentRegistry)
   if (withTodoTool) await ctx.plugin(ToolTodo, { allowParallelInProgress: true })
   const session = ctx.sessions.create()
   await ctx.agents.register({ id: session.id, session, status: 'idle', ctx } as Agent)
@@ -73,7 +76,7 @@ describe('todos projection provider', () => {
     const agent = bench.ctx.agents.get(session.id)
     if (agent === undefined) throw new Error('expected registered agent')
     const signal = new AbortController().signal
-    await bench.ctx.tools.execute({
+    await executeToolFixture(bench.ctx, {
       signal,
       callId: ToolCallId('todo-write'),
       name: 'todo_write',
@@ -82,7 +85,7 @@ describe('todos projection provider', () => {
     })
     const afterWrite = await bench.tailProjections()
     expect(afterWrite?.values.todos).toEqual(list)
-    await bench.ctx.tools.execute({
+    await executeToolFixture(bench.ctx, {
       signal,
       callId: ToolCallId('todo-noop'),
       name: 'todo_write',

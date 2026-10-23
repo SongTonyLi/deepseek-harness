@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
+import type { ProjectionKeySelection, ProjectionSnapshot, SessionProjectionViewValues } from '@deepseek-ai/dsh-session-projection'
 import type { GoalId, GoalProjection } from '@deepseek-ai/dsh-goal/types'
 import type { LlmRetryEventData, RetryId } from '@deepseek-ai/dsh-llm-retry/types'
 import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/types'
@@ -22,12 +22,15 @@ import {
 const session = {} as unknown as Session
 
 /** A registry whose one snapshot serves exactly `values`, recording the keys it was asked for. */
-function registryOf(values: ProjectionSnapshot['values']): StatusProjections & { keys: readonly string[] | undefined } {
+function registryOf(values: Partial<SessionProjectionViewValues>): StatusProjections & { keys: ProjectionKeySelection | undefined } {
   const registry = {
-    keys: undefined as readonly string[] | undefined,
-    snapshot(_session: Session, keys?: readonly string[]): ProjectionSnapshot {
+    keys: undefined as ProjectionKeySelection | undefined,
+    snapshot(_session: Session, keys?: ProjectionKeySelection): ProjectionSnapshot {
       registry.keys = keys
-      return { asOfSeq: -1, values }
+      // A snapshot's value map keeps the type-only summary mark on entries
+      // excluded from Session summaries; this fixture carries only the view
+      // values the terminal reads, which is the same runtime value unmarked.
+      return { asOfSeq: -1, values: values as ProjectionSnapshot['values'] }
     },
   }
   return registry

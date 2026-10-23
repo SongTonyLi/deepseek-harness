@@ -3,7 +3,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, {
+  AgentModel,
   assembleContextFor,
+  modelSelectionProjectionDefinition,
   type Agent,
   type AgentHandle,
   type CreateAgentOptions,
@@ -63,11 +65,14 @@ async function bench(
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
+  // The AgentLoop registers this projection in production; the scripted factory
+  // reads the same durable route through a real AgentModel.
+  const modelProjection = await ctx.sessionProjections.register(modelSelectionProjectionDefinition)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(SystemPrompt)
-  ctx.systemPrompt.variable('provider', context => context.agent?.options.provider)
-  ctx.systemPrompt.variable('model', context => context.agent?.options.model)
+  ctx.systemPrompt.variable('provider', context => context.modelSelection?.provider ?? context.agent?.options.provider)
+  ctx.systemPrompt.variable('model', context => context.modelSelection?.model ?? context.agent?.options.model)
   const terminal = new FakeTerminal()
   const observed: Observed = {
     terminal, err: '', exits: [], order: [], created: [], resumed: [], cancels: 0, signals: new Map(), swallowed: 0, idle: undefined,
@@ -95,14 +100,16 @@ async function bench(
         inbox.splice(event.data.target, event.data.start, event.data.removedCount ?? 0, [...event.data.inserted])
       }
     }
+    const resolvedOptions = {
+      provider: agentOptions?.provider ?? 'test-provider',
+      model: agentOptions?.model ?? 'test-model',
+      ...agentOptions?.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
+    }
     const agent: Agent = {
       id: session.id,
-      options: {
-        provider: agentOptions?.provider ?? 'test-provider',
-        model: agentOptions?.model ?? 'test-model',
-        ...agentOptions?.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
-      },
+      options: resolvedOptions,
       session,
+      model: new AgentModel(() => modelProjection.stateOf(session), session, resolvedOptions),
       inbox,
       status: 'idle',
       ctx: ownerCtx,
@@ -428,7 +435,7 @@ describe('tui runner', () => {
     expect(observed.terminal.text()).toContain('turn was interrupted by an earlier process exit')
   })
 
-  it('resumes with the default route and overlays the logged model for prompt assembly', async () => {
+  it('resumes with the launch route as its fallback and the projection\'s logged route for assembly', async () => {
     const { ctx, observed } = await bench({
       history: [],
       resumeHeader: { config: { provider: 'logged', model: 'logged-model' } },
@@ -438,8 +445,13 @@ describe('tui runner', () => {
     expect(observed.resumed[0]?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
     const agent = ctx.agents.get('session-old' as SessionId)
     if (agent === undefined) throw new Error('resume published no agent')
+    // The loop assembles the next step with the route `agent.model.current()`
+    // resolves, which replays the recorded header over the launch fallback.
+    const selection = agent.model.current()
+    if (selection === undefined) throw new Error('resume resolved no route')
+    expect(selection).toEqual({ provider: 'logged', model: 'logged-model' })
     agent.ctx.systemPrompt.section({ name: 'resume-model-check', order: 0, text: 'You run {{model}}' })
-    const assembly = await agent.ctx.systemPrompt.assemble(assembleContextFor(agent))
+    const assembly = await agent.ctx.systemPrompt.assemble({ ...assembleContextFor(agent), modelSelection: selection })
     expect(assembly.variables).toMatchObject({ provider: 'logged', model: 'logged-model' })
     expect(renderPrompt(assembly)).toContain('You run logged-model')
   })
@@ -451,8 +463,11 @@ describe('tui runner', () => {
     expect(observed.resumed[0]?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
     const agent = ctx.agents.get('session-old' as SessionId)
     if (agent === undefined) throw new Error('resume published no agent')
+    const selection = agent.model.current()
+    if (selection === undefined) throw new Error('resume resolved no route')
+    expect(selection).toEqual({ provider: 'test-provider', model: 'test-model' })
     agent.ctx.systemPrompt.section({ name: 'resume-model-check', order: 0, text: 'You run {{model}}' })
-    const assembly = await agent.ctx.systemPrompt.assemble(assembleContextFor(agent))
+    const assembly = await agent.ctx.systemPrompt.assemble({ ...assembleContextFor(agent), modelSelection: selection })
     expect(assembly.variables).toMatchObject({ provider: 'test-provider', model: 'test-model' })
     expect(renderPrompt(assembly)).toContain('You run test-model')
   })
