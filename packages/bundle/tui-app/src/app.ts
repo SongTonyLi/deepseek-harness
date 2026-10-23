@@ -215,12 +215,13 @@ import {
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt, type ModalPrompt, type PickItem } from './prompts.ts'
 import {
   activityBoardView,
-  activityResultParts,
+  activityNarration,
   activityTurnEndStatus,
-  formatActivitySubagentLine,
   renderActivityBoard,
+  spinningSubagents,
   spinningTodos,
   type ActivityBoardSubagent,
+  type ActivitySubagentState,
 } from './activity-board.ts'
 import { queuePanelRows, renderQueuePanel, type QueuePanelRow } from './queue-panel.ts'
 import { READER_HINTS } from './reader.ts'
@@ -261,7 +262,6 @@ import { editorTheme, paintDiffRows, type Palette, type Style } from './style.ts
 import {
   EMPTY_USAGE,
   addUsage,
-  cardHeadline,
   contentText,
   describeFailure,
   estimateTokens,
@@ -473,10 +473,12 @@ interface WorkflowOwnership {
   readonly jobId?: JobId
 }
 
-/** Latest lifecycle status waiting for the catalog to establish descendant membership. */
-interface PendingSubagentActivity {
-  /** Status the activity board draws after the child appears in the catalog. */
-  readonly status: string
+/** What the activity board draws for one descendant: its state and the note beside its label. */
+interface SubagentActivity {
+  /** Where the child stands in the open turn. */
+  readonly state: ActivitySubagentState
+  /** What the child last said it was doing, or the stop word once it settled. */
+  readonly note?: string
 }
 
 /**
@@ -891,12 +893,10 @@ export class TuiApp {
   private activityTodoStatus = new Map<string, TodoItem['status']>()
   /** Fades of todo rows that are still moving, keyed by content. */
   private activityTodoFades = new Map<string, BlockFade>()
-  /** Latest descendant line the activity board draws; absent before one lands. */
-  private activitySubagent: ActivityBoardSubagent | undefined
-  /** Fade of the descendant line while it is still moving. */
-  private activitySubagentFade: BlockFade | undefined
-  /** The last descendant `tool/call` the board saw, for presenting its result. */
-  private activityChildCall: { name: string; args: unknown } | undefined
+  /** Descendant rows the activity board draws for the open turn, in first-seen order. */
+  private activitySubagents = new Map<SessionId, ActivityBoardSubagent>()
+  /** Fades of descendant rows that are still moving, keyed by child session id. */
+  private activitySubagentFades = new Map<SessionId, BlockFade>()
   /** The turn the last logged `turn/start` opened; 0 before the first one. */
   private turn = 0
   /** Whether a nonempty system prompt has already been drawn in this transcript. */
@@ -922,8 +922,8 @@ export class TuiApp {
   private barSelection: FooterSegmentId = FIRST_FOOTER_SEGMENT
   /** The descendant listing the last reconcile produced, in pre-order. */
   private subagentEntries: readonly SubagentDescendantListEntry[] = []
-  /** Lifecycle status held until a fresh catalog confirms the named descendant. */
-  private pendingSubagentActivity = new Map<SessionId, PendingSubagentActivity>()
+  /** Lifecycle activity held until a fresh catalog confirms the named descendant. */
+  private pendingSubagentActivity = new Map<SessionId, SubagentActivity>()
   /** The rows of the last panel draw. */
   private panelView: SubagentPanelView = EMPTY_PANEL_VIEW
   /** The panel row the selection sits on; absent before the first row is drawn. */
@@ -958,6 +958,11 @@ export class TuiApp {
    * at, by content; a row keeps its phase while it stays in progress.
    */
   private readonly boardSpinners = new Map<string, number>()
+  /**
+   * The phase each running descendant row the activity board last drew spins
+   * at, by child session id; a row keeps its phase while the child runs.
+   */
+  private readonly boardChildSpinners = new Map<SessionId, number>()
   /**
    * Whether the open turn has committed an assistant message, after which a
    * user prompt reaching the log was steered or injected rather than opening
@@ -1208,12 +1213,15 @@ export class TuiApp {
       ctx.on('subagent/start', (info) => {
         this.markSubagentsStale()
         this.refreshWorkflowChildLinks()
-        this.noteSubagentActivity(info.id, 'running')
+        this.noteSubagentActivity(info.id, { state: 'running' })
       }),
       ctx.on('subagent/end', (info) => {
         this.markSubagentsStale()
         this.refreshWorkflowChildLinks()
-        this.noteSubagentActivity(info.id, info.stopReason)
+        this.noteSubagentActivity(info.id, {
+          state: info.stopReason === 'completed' ? 'done' : 'stopped',
+          note: info.stopReason === 'completed' ? 'done' : info.stopReason,
+        })
       }),
       // A prompt waits above the editor from the moment it enters the inbox
       // until the loop claims it for a turn or step, or `/queue clear` drops it.
@@ -1913,26 +1921,29 @@ export class TuiApp {
 
   /**
    * Redraw the activity board above the editor from the open turn's todos and
-   * the latest descendant line. The slot is mounted exactly while a row
+   * the descendants it has seen. The slot is mounted exactly while a row
    * draws, so the editor sits directly under follow-ups or the conversation
    * the rest of the time.
    */
   private refreshActivityBoard(): void {
-    const view = activityBoardView({
-      todos: this.activityTodos,
-      ...this.activitySubagent === undefined ? {} : { subagent: this.activitySubagent },
-    })
-    this.syncBoardSpinners(this.deps.reducedMotion ? [] : spinningTodos(view))
+    const view = activityBoardView({ todos: this.activityTodos, subagents: [...this.activitySubagents.values()] })
+    this.syncBoardSpinners(
+      this.deps.reducedMotion ? [] : spinningTodos(view),
+      this.deps.reducedMotion ? [] : spinningSubagents(view),
+    )
     const now = this.deps.now()
+    const frame = (phase: number): string => spinnerFrame(TOOL_SPINNERS.todo, now, this.deps.spinnerMs, phase)
     const spinners = new Map<string, string>()
-    for (const [content, phase] of this.boardSpinners) {
-      spinners.set(content, spinnerFrame(TOOL_SPINNERS.todo, now, this.deps.spinnerMs, phase))
-    }
+    for (const [content, phase] of this.boardSpinners) spinners.set(content, frame(phase))
+    const subagentSpinners = new Map<SessionId, string>()
+    for (const [id, phase] of this.boardChildSpinners) subagentSpinners.set(id, frame(phase))
     const text = renderActivityBoard(view, {
       palette: this.deps.palette,
       todoFades: this.activityTodoFades,
-      ...this.activitySubagentFade === undefined ? {} : { subagentFade: this.activitySubagentFade },
+      subagentFades: this.activitySubagentFades,
       spinners,
+      subagentSpinners,
+      width: this.contentWidth(),
     })
     this.updateSpinTicker()
     const mounted = this.activitySlot.children.length > 0
@@ -1946,18 +1957,29 @@ export class TuiApp {
   }
 
   /**
-   * Keep the phase of each in-progress todo row that still spins, drop the
-   * rest, and stagger a row that starts spinning against every other tool
-   * indicator on screen.
-   * @param contents - the content of each in-progress row the board draws now.
+   * Keep the phase of each in-progress todo row and each running descendant
+   * row that still spins, drop the rest, and stagger a row that starts
+   * spinning against every other tool indicator on screen.
+   * @param contents - the content of each in-progress todo row the board draws now.
+   * @param children - the session id of each running descendant row the board draws now.
    */
-  private syncBoardSpinners(contents: readonly string[]): void {
-    for (const content of this.boardSpinners.keys()) {
-      if (!contents.includes(content)) this.boardSpinners.delete(content)
+  private syncBoardSpinners(contents: readonly string[], children: readonly SessionId[]): void {
+    this.keepSpinnerPhases(this.boardSpinners, contents)
+    this.keepSpinnerPhases(this.boardChildSpinners, children)
+  }
+
+  /**
+   * Keep the phases of the rows in `keys`, drop the others, and give each new
+   * row a phase that differs from every spinner already drawn.
+   * @param phases - the phase map of one kind of board row.
+   * @param keys - the rows of that kind that spin now.
+   */
+  private keepSpinnerPhases<K>(phases: Map<K, number>, keys: readonly K[]): void {
+    for (const key of phases.keys()) {
+      if (!keys.includes(key)) phases.delete(key)
     }
-    for (const content of contents) {
-      if (this.boardSpinners.has(content)) continue
-      this.boardSpinners.set(content, staggerPhase(this.spinningPhases('todo')))
+    for (const key of keys) {
+      if (!phases.has(key)) phases.set(key, staggerPhase(this.spinningPhases('todo')))
     }
   }
 
@@ -1986,16 +2008,23 @@ export class TuiApp {
   }
 
   /**
-   * Replace the one descendant line, fading it when the text changed.
-   * @param line - the label, status word, and optional summary.
+   * Replace one descendant's row, fading it when its text changed. A new
+   * descendant takes the place after the rows already drawn.
+   * @param id - the descendant session id.
+   * @param activity - the row's state and note.
    */
-  private setActivitySubagent(line: ActivityBoardSubagent): void {
-    const next = formatActivitySubagentLine(line)
-    const previous = this.activitySubagent === undefined ? undefined : formatActivitySubagentLine(this.activitySubagent)
-    this.activitySubagent = line
-    if (next !== previous) {
-      this.activitySubagentFade = undefined
-      this.fadeBlock((fade) => { this.activitySubagentFade = fade })
+  private setActivitySubagent(id: SessionId, activity: SubagentActivity): void {
+    const previous = this.activitySubagents.get(id)
+    const next: ActivityBoardSubagent = {
+      id,
+      label: this.activityLabelFor(id),
+      state: activity.state,
+      ...activity.note === undefined ? {} : { note: activity.note },
+    }
+    this.activitySubagents.set(id, next)
+    if (previous?.label !== next.label || previous.state !== next.state || previous.note !== next.note) {
+      this.activitySubagentFades.delete(id)
+      this.fadeBlock((fade) => { this.activitySubagentFades.set(id, fade) })
     }
     this.refreshActivityBoard()
   }
@@ -2005,9 +2034,8 @@ export class TuiApp {
     this.activityTodos = []
     this.activityTodoStatus = new Map()
     this.activityTodoFades = new Map()
-    this.activitySubagent = undefined
-    this.activitySubagentFade = undefined
-    this.activityChildCall = undefined
+    this.activitySubagents = new Map()
+    this.activitySubagentFades = new Map()
     this.pendingSubagentActivity.clear()
     this.refreshActivityBoard()
   }
@@ -2017,7 +2045,7 @@ export class TuiApp {
    * session. Session lineage also represents ordinary forks, so it cannot
    * establish subagent membership.
    * @param id - the session id a lifecycle event named.
-   * @returns true when the activity board may show that child's status word.
+   * @returns true when the activity board may show that child's row.
    */
   private isBoundDescendantId(id: SessionId): boolean {
     return this.subagentEntries.some(entry => entry.id === id)
@@ -2046,67 +2074,49 @@ export class TuiApp {
   }
 
   /**
-   * Draw a lifecycle status once a catalog confirms its descendant membership.
+   * Draw a lifecycle edge once a catalog confirms its descendant membership.
    * @param id - child identity carried by the lifecycle edge.
-   * @param status - start or terminal status for the activity board.
+   * @param activity - the row the edge's start or end gives the activity board.
    */
-  private noteSubagentActivity(id: SessionId, status: string): void {
-    this.pendingSubagentActivity.set(id, { status })
+  private noteSubagentActivity(id: SessionId, activity: SubagentActivity): void {
+    this.pendingSubagentActivity.set(id, activity)
     this.flushPendingSubagentActivity()
   }
 
-  /** Apply pending lifecycle status only to ids the current catalog owns. */
+  /** Apply pending lifecycle activity only to ids the current catalog owns. */
   private flushPendingSubagentActivity(): void {
     for (const [id, activity] of this.pendingSubagentActivity) {
       if (!this.isBoundDescendantId(id)) continue
-      this.setActivitySubagent({ label: this.activityLabelFor(id), status: activity.status })
+      this.setActivitySubagent(id, activity)
       this.pendingSubagentActivity.delete(id)
     }
   }
 
   /**
-   * Replace the descendant line from a child session event. Assistant prose
-   * is ignored; only tool calls, tool results, and turn ends update the line.
+   * Update a descendant's row from its session events: a turn opens it, an
+   * assistant message's last sentence becomes its note, and a turn end
+   * settles it. Tool calls and results, reasoning, and a message without
+   * text leave the note alone, so a child that has not spoken draws its label
+   * alone.
    * @param session - the descendant that logged `event`.
    * @param event - the durable event.
    */
   private onDescendantActivity(session: Session, event: SessionEvent): void {
     switch (event.type) {
-      case 'tool/call': {
-        const { name, arguments: argumentsJson } = event.data
-        const args = parseArguments(argumentsJson)
-        this.activityChildCall = { name, args }
-        const view = args === undefined ? undefined : this.presentCall(name, args)
-        // The line already names the tool in its status word.
-        const title = view === undefined ? undefined : cardHeadline(name, view.title)
-        this.setActivitySubagent({
-          label: this.activityLabelFor(session.id),
-          status: callingActivity(name),
-          ...title === undefined ? {} : { summary: title },
-        })
+      case 'turn/start':
+        this.setActivitySubagent(session.id, { state: 'running' })
         return
-      }
-      case 'tool/result': {
-        const result = event.data.message
-        const call = this.activityChildCall
-        this.activityChildCall = undefined
-        const view = this.presentResult(
-          call?.name ?? '',
-          call?.args,
-          result.content,
-          result.isError === true,
-          event.data.meta,
-        )
-        this.setActivitySubagent({
-          label: this.activityLabelFor(session.id),
-          ...activityResultParts(toolResultBody(view, result.content).lines[0], result.isError === true),
-        })
+      case 'assistant/message': {
+        const text = event.data.message.content.filter(block => block.type === 'text').map(block => block.text).join('')
+        const narration = activityNarration(text)
+        if (narration !== undefined) this.setActivitySubagent(session.id, { state: 'running', note: narration })
+        else if (this.activitySubagents.get(session.id)?.state !== 'running') this.setActivitySubagent(session.id, { state: 'running' })
         return
       }
       case 'turn/end':
-        this.setActivitySubagent({
-          label: this.activityLabelFor(session.id),
-          status: activityTurnEndStatus(event.data.reason),
+        this.setActivitySubagent(session.id, {
+          state: event.data.reason.kind === 'completed' ? 'done' : 'stopped',
+          note: activityTurnEndStatus(event.data.reason),
         })
         return
       default:
@@ -5268,8 +5278,8 @@ export class TuiApp {
 
   /**
    * The phases of the indicators of `family` spinning right now: running
-   * cards of that family, and the activity board's in-progress todo rows
-   * when `family` is `todo`.
+   * cards of that family, and the activity board's in-progress todo rows and
+   * running descendant rows when `family` is `todo`.
    * @param family - the animation those indicators draw.
    * @returns one phase per spinning indicator of that family.
    */
@@ -5278,7 +5288,7 @@ export class TuiApp {
     for (const [block, phase] of this.spinners) {
       if (block.spinning() && toolFamily(block.name) === family) phases.push(phase)
     }
-    if (family === 'todo') phases.push(...this.boardSpinners.values())
+    if (family === 'todo') phases.push(...this.boardSpinners.values(), ...this.boardChildSpinners.values())
     return phases
   }
 
@@ -5298,7 +5308,7 @@ export class TuiApp {
    */
   private updateSpinTicker(): void {
     const spinning = this.streaming?.spinning() === true
-      || this.spinners.size > 0 || this.boardSpinners.size > 0 || this.workflowSpinners.size > 0
+      || this.spinners.size > 0 || this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0 || this.workflowSpinners.size > 0
     const teamMotion = !this.deps.reducedMotion
       && (this.teamIntro !== undefined || (this.teamPlay !== undefined && !this.teamPlay.paused))
     if (!this.stopped && (this.loaderAnimates() || spinning || teamMotion)) {
@@ -5333,7 +5343,7 @@ export class TuiApp {
       this.teamPlay.advance()
       this.paintTeamPlay()
     }
-    if (this.boardSpinners.size > 0) this.refreshActivityBoard()
+    if (this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0) this.refreshActivityBoard()
     else if (this.streaming?.spinning() === true || this.spinners.size > 0 || this.workflowSpinners.size > 0) this.tui.requestRender()
     this.updateSpinTicker()
   }

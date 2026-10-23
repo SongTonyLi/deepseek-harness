@@ -21,8 +21,8 @@
   en: 312d9a3ea1cbb673
   zh: 937ff76d6bdcca22
 /deepseek-ai-dsh-tui-app/use-this-package/the-screen:
-  en: 6d16c1e12149ace4
-  zh: 24a57b64875568c2
+  en: d1c02b775d2892bd
+  zh: 3e57fbfd6bbe0d5a
 /deepseek-ai-dsh-tui-app/use-this-package/keys-and-commands:
   en: 2bf5e6b8a72663e4
   zh: b2ff69e277c4bdb4
@@ -51,14 +51,14 @@
   en: e6c3923481cbf9e6
   zh: 0bca6c917dd26cbc
 /deepseek-ai-dsh-tui-app/understand-the-implementation/rendering-model:
-  en: 42cc6ac3475fba61
-  zh: 450342bc7b31cb61
+  en: ee593519f59c7a36
+  zh: 351fa58a43b483ff
 /deepseek-ai-dsh-tui-app/understand-the-implementation/patch-surface-over-base:
   en: 142f04bf29e981dd
   zh: a1689297b06c9ca6
 /deepseek-ai-dsh-tui-app/understand-the-implementation/source-map:
-  en: 405fffcf257e13a2
-  zh: 043db02313c45d23
+  en: 67a1ded9d930eabb
+  zh: bbbd75e90d571286
 /deepseek-ai-dsh-tui-app/understand-the-implementation/invariant-ownership:
   en: 0ddf6de8928026d5
   zh: 24feedcbb9e9d676
@@ -111,8 +111,8 @@
   en: 1dadc4a2f1560eaa
   zh: dc4697c269bc16b9
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work:
-  en: 26e125a8a59bd810
-  zh: 63c9e3bd6e8a56a4
+  en: ab0948d41e0eab48
+  zh: 588a49b5c8f82f60
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work/dev-note:
   en: 5629c6159cec997f
   zh: 17f2d7e1f96da7f1
