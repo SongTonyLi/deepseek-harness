@@ -185,6 +185,7 @@ describe('in-process policy inheritance', () => {
       expect(contextText).toContain('Approval prompts are disabled')
       // The statement rides runtime context; the system node (surface node 0) stays uniform.
       expect(contextText).toContain('You are a delegated subagent')
+      expect(contextText).toContain('Before each tool call, say in one short sentence what you are doing and why it serves the task')
       const systemHead = child.session.deriveMessages()[0]
       if (systemHead?.role !== 'system') throw new Error('child surface node 0 is not a system message')
       expect(child.session.surface.nodes[0]).toBe(systemNode.seq)
@@ -194,6 +195,7 @@ describe('in-process policy inheritance', () => {
         .join('\n')
       expect(systemText).not.toContain('Approval prompts are disabled')
       expect(systemText).not.toContain('You are a delegated subagent')
+      expect(systemText).not.toContain('Before each tool call')
       expect(parent.session.snapshotEvents().filter(event => event.type !== 'subagent/catalog')).toHaveLength(parentLogLength)
     } finally {
       await run.dispose()
