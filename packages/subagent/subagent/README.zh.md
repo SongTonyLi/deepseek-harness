@@ -178,17 +178,17 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-每个进程内子 agent 的运行时上下文快照都携带下方的 `subagent:delegation` 声明，位于沙箱策略与审批策略语句之后。
+每个进程内子 agent 的运行时上下文快照都携带下方的 `subagent:delegation` 声明，位于沙箱策略与审批策略语句之后。它说明子 agent 固定的权限范围，并要求在每次工具调用前用一句简短的话叙述进展。跟踪子 agent 工作的宿主读取该子 agent 最新 assistant 消息的最后一句；子 agent 的结果仍是它最后一条非空 assistant 消息。
 
 ##### 委派范围声明
 
 ```markdown
-You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the job needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it.
+You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the task needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it. Before each tool call, say in one short sentence what you are doing and why it serves the task, so your progress can be followed.
 ```
 
 #### Token 影响
 
-每个子 agent 的运行时上下文快照中一条固定声明；父级请求中没有任何新增。
+每个子 agent 的运行时上下文快照中一条固定声明，其中叙述要求约占 30 个 token；父级请求中没有任何新增。
 
 #### KV Cache 影响
 

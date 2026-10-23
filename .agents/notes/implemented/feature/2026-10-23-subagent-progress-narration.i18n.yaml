@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-23-subagent-progress-narration.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-23-subagent-progress-narration.md
+/agent-note-subagent-progress-narration-in-the-delegation-context:
+  en: 80207a7ac2dcb0d6
+  zh: fded3ae61cbc4a97
+/agent-note-subagent-progress-narration-in-the-delegation-context/problem:
+  en: e681bc29286ab729
+  zh: 68247a1271748d7a
+/agent-note-subagent-progress-narration-in-the-delegation-context/decision:
+  en: 36c3ab6642773340
+  zh: 695d6a2868f465a2
+/agent-note-subagent-progress-narration-in-the-delegation-context/alternatives-considered:
+  en: d5f2efb3c208fab4
+  zh: cc4b1f8022a899c5
+/agent-note-subagent-progress-narration-in-the-delegation-context/verification:
+  en: 1f6c259353a4a9f3
+  zh: 36be6e4083f185c2
+/agent-note-subagent-progress-narration-in-the-delegation-context/consequences:
+  en: 8ae0edf1a927b08f
+  zh: 4dd928511f2f36dd

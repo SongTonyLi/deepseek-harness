@@ -164,15 +164,20 @@ export interface ChildComposition {
 }
 
 /**
- * Model-facing delegation-scope statement for every in-process child. A
- * runtime-context contribution rather than a system-prompt section, so the
- * deployment's system prompt stays uniform across parents and children.
+ * Model-facing delegation statement for every in-process child: the fixed
+ * permission scope, and one sentence of progress narration before each tool
+ * call, which hosts that follow a child's work read from its assistant
+ * messages. A runtime-context contribution rather than a system-prompt
+ * section, so the deployment's system prompt stays uniform across parents and
+ * children.
  */
 export const SUBAGENT_DELEGATION_CONTEXT
   = 'You are a delegated subagent: your permission scope was fixed when you were started and cannot be '
     + 'widened from inside this session — operations that require approval are rejected automatically. '
     + 'When the task needs access beyond that scope, do not retry the denied operation; state the '
-    + 'limitation in your reply so the delegating agent can handle it.'
+    + 'limitation in your reply so the delegating agent can handle it. '
+    + 'Before each tool call, say in one short sentence what you are doing and why it serves the task, '
+    + 'so your progress can be followed.'
 
 /**
  * Compose a child before publication and restore historical descriptor overrides.

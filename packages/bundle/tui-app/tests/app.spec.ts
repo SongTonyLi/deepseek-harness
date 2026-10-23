@@ -30,7 +30,7 @@ import { TODO_GLYPH } from '../src/todos.ts'
 import { NO_WORK } from '../src/quit.ts'
 import { NOTHING_TO_READ_TOAST, QUIT_TOAST } from '../src/toast.ts'
 import { foldMarker } from '../src/transcript.ts'
-import { BENCH_NOW, BENCH_SPINNER_MS, KEY, bench, spinning, type Bench } from './bench.ts'
+import { BENCH_NOW, BENCH_SPINNER_MS, KEY, bench, spinning, type Bench, type BenchChild } from './bench.ts'
 import { testContextSource } from './message-sources.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
@@ -1808,6 +1808,31 @@ describe('the running-turn counter', () => {
   })
 })
 
+/**
+ * Log one assistant message on a child session, as the child's model call
+ * commits it.
+ * @param child - the child that speaks.
+ * @param content - the message's content blocks.
+ */
+function narrate(child: BenchChild, content: Parameters<typeof createAssistantMessage>[0]['content']): void {
+  child.session.append('assistant/message', {
+    stream: [],
+    turn: 1,
+    step: 1,
+    message: createAssistantMessage({ content, source: { provider: 'test-provider', model: 'test-model' } }),
+  }, { surfaceOp: 'append' })
+}
+
+/**
+ * The activity-board row of a child that has said nothing yet: its spinner
+ * glyph and label, and nothing after the label.
+ * @param label - the child's label.
+ * @returns a pattern matching that one screen row.
+ */
+function boardRow(label: string): RegExp {
+  return new RegExp(`^\\s*\\S ${label.replaceAll(/[()]/gu, String.raw`\$&`)}\\s*$`, 'mu')
+}
+
 describe('the activity board', () => {
   it('mounts todo rows above the editor, scratches a completed item, and leaves with turn/end', async () => {
     let todos: TodoItem[] = []
@@ -1841,7 +1866,7 @@ describe('the activity board', () => {
     expect(screen).not.toContain('write the layer')
   })
 
-  it('replaces the one-line descendant summary from catalog membership and ignores fork lineage', async () => {
+  it('draws a descendant from its own narration, and only from catalog membership, ignoring fork lineage', async () => {
     const entries: SubagentDescendantListEntry[] = [{
       kind: 'child',
       id: 'session-kid' as SessionId,
@@ -1857,7 +1882,7 @@ describe('the activity board', () => {
     await test.settle()
     test.ctx.emit('subagent/start', { runId: 'run-kid', provider: 'test', id: kid.id, local: true } as never)
     let screen = await test.screen()
-    expect(screen).toContain('session-kid · running')
+    expect(screen).toMatch(boardRow('session-kid'))
 
     kid.session.append('tool/call', {
       turn: 1,
@@ -1866,9 +1891,6 @@ describe('the activity board', () => {
       name: 'bash',
       arguments: '{"command":"ls"}',
     })
-    screen = await test.screen()
-    expect(screen).toContain('session-kid · calling bash')
-
     kid.session.append('tool/result', {
       turn: 1,
       step: 1,
@@ -1879,53 +1901,74 @@ describe('the activity board', () => {
       }),
     }, { surfaceOp: 'append' })
     screen = await test.screen()
-    expect(screen).toContain('session-kid · listed files')
-    expect(screen).not.toContain('calling bash')
+    expect(screen).toMatch(boardRow('session-kid'))
+    expect(screen).not.toContain('listed files')
+    expect(screen).not.toContain('session-kid › calling bash')
 
-    kid.session.append('assistant/message', {
-      stream: [],
-      turn: 1,
-      step: 1,
-      message: createAssistantMessage({
-        content: [{ type: 'text', text: 'child assistant prose' }],
-        source: { provider: 'test-provider', model: 'test-model' },
-      }),
-    }, { surfaceOp: 'append' })
+    narrate(kid, [{ type: 'text', text: 'I read the config. Now merging the sandbox profile.' }])
+    screen = await test.screen()
+    expect(screen).toContain('session-kid › Now merging the sandbox profile.')
+
+    narrate(kid, [{ type: 'reasoning', text: 'Considering whether to rewrite the hook.' }])
+    narrate(kid, [{ type: 'text', text: '' }])
+    screen = await test.screen()
+    expect(screen).toContain('session-kid › Now merging the sandbox profile.')
+    expect(screen).not.toContain('Considering whether')
+
     kid.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     screen = await test.screen()
-    expect(screen).toContain('session-kid · done')
-    expect(screen).not.toContain('child assistant prose')
-    expect(screen).not.toContain('listed files')
+    expect(screen).toContain('✓ session-kid › done')
+    expect(screen).not.toContain('Now merging the sandbox profile.')
 
     const stranger = await test.createChild({ id: 'session-stranger', parent: 'session-other' as SessionId })
     test.ctx.emit('subagent/start', { runId: 'run-stranger', provider: 'test', id: stranger.id, local: true } as never)
+    narrate(stranger, [{ type: 'text', text: 'Stranger narration.' }])
     screen = await test.screen()
-    expect(screen).not.toContain('session-stranger · running')
-    stranger.session.append('tool/result', {
-      turn: 1,
-      step: 1,
-      message: createToolResultMessage({
-        callId: 'call-x' as ToolCallId,
-        content: [{ type: 'text', text: 'stranger output' }],
-        isError: false,
-      }),
-    }, { surfaceOp: 'append' })
-    screen = await test.screen()
-    expect(screen).not.toContain('stranger output')
-    expect(screen).toContain('session-kid · done')
+    expect(screen).not.toContain('session-stranger')
+    expect(screen).not.toContain('Stranger narration.')
+    expect(screen).toContain('✓ session-kid › done')
 
     const orphan = await test.createChild({ id: 'session-orphan' })
-    orphan.session.append('tool/result', {
-      turn: 1,
-      step: 1,
-      message: createToolResultMessage({
-        callId: 'call-orphan' as ToolCallId,
-        content: [{ type: 'text', text: 'result without a call' }],
-        isError: false,
-      }),
-    }, { surfaceOp: 'append' })
+    narrate(orphan, [{ type: 'text', text: 'Orphan narration.' }])
     screen = await test.screen()
-    expect(screen).not.toContain('session-orphan · result without a call')
+    expect(screen).not.toContain('Orphan narration.')
+  })
+
+  it('gives every running child its own row, and settles one without touching the others', async () => {
+    const entries: SubagentDescendantListEntry[] = ['resolver', 'writer', 'silent'].map(label => ({
+      kind: 'child',
+      id: `session-${label}` as SessionId,
+      activity: 'running',
+      mode: 'one-shot',
+      hasChildren: false,
+      parentId: 'session-tui-test' as SessionId,
+      depth: 1,
+      label,
+    }))
+    const test = await bench({ subagents: () => Promise.resolve(entries) })
+    const resolver = await test.createChild({ id: 'session-resolver' })
+    const writer = await test.createChild({ id: 'session-writer' })
+    const silent = await test.createChild({ id: 'session-silent' })
+    test.tick()
+    await test.settle()
+    for (const child of [resolver, writer]) {
+      child.session.append('turn/start', { turn: 1 })
+    }
+    narrate(resolver, [{ type: 'text', text: 'Merging the sandbox profile now.' }])
+    narrate(writer, [{ type: 'text', text: 'Reconciling the README sections.' }])
+    narrate(silent, [{ type: 'text', text: '' }])
+    let screen = await test.screen()
+    expect(screen).toMatch(boardRow('silent'))
+    expect(screen).toContain('resolver › Merging the sandbox profile now.')
+    expect(screen).toContain('writer › Reconciling the README sections.')
+
+    narrate(resolver, [{ type: 'text', text: 'Resolving the auth-review hook.' }])
+    resolver.session.append('turn/end', { turn: 1, reason: { kind: 'error', error: { code: 'E_TEST', message: 'boom' } } })
+    screen = await test.screen()
+    expect(screen).toContain('✗ resolver › turn failed: E_TEST: boom')
+    expect(screen).toContain('writer › Reconciling the README sections.')
+    expect(screen).toMatch(boardRow('silent'))
+    expect(screen.indexOf('writer ›')).toBeLessThan(screen.indexOf('resolver ›'))
   })
 
   it('labels catalog-confirmed external lifecycle work without opening a local child session', async () => {
@@ -1943,9 +1986,9 @@ describe('the activity board', () => {
     test.ctx.emit('subagent/start', { runId: 'run-external', provider: 'codex', id: 'external-run', local: false } as never)
     test.tick()
     await test.settle()
-    expect(await test.screen()).toContain('code review (external task) · running')
+    expect(await test.screen()).toMatch(boardRow('code review (external task)'))
     test.ctx.emit('subagent/end', { runId: 'run-external', provider: 'codex', id: 'external-run', local: false, stopReason: 'completed' } as never)
-    expect(await test.screen()).toContain('code review (external task) · completed')
+    expect(await test.screen()).toContain('✓ code review (external task) › done')
   })
 
   it('names a candidate the listing could not read by its id on the activity line', async () => {
@@ -1960,7 +2003,7 @@ describe('the activity board', () => {
     test.tick()
     await test.settle()
     test.ctx.emit('subagent/start', { runId: 'run-broken', provider: 'test', id: 'session-broken', local: true } as never)
-    expect(await test.screen()).toContain('session-broken · running')
+    expect(await test.screen()).toMatch(boardRow('session-broken'))
   })
 
   it('names a listed descendant and a bound-parent stop reason without the last assistant message', async () => {
@@ -1988,13 +2031,14 @@ describe('the activity board', () => {
       arguments: '{',
     })
     let screen = await test.screen()
-    expect(screen).toContain('reviewer · calling read')
+    expect(screen).not.toMatch(boardRow('reviewer'))
 
     const start = { runId: 'run-1', provider: 'test', id: listed.id, local: true }
     test.ctx.emit('subagent/start', start as never)
     test.ctx.emit('subagent/start', start as never)
     screen = await test.screen()
-    expect(screen).toContain('reviewer · running')
+    expect(screen).toMatch(boardRow('reviewer'))
+    expect(screen).not.toContain('reviewer › calling read')
 
     test.ctx.emit('subagent/end', {
       runId: 'run-1',
@@ -2005,7 +2049,7 @@ describe('the activity board', () => {
       lastAssistantMessage: [{ type: 'text', text: 'secret child reply' }],
     } as never)
     screen = await test.screen()
-    expect(screen).toContain('reviewer · aborted')
+    expect(screen).toContain('✗ reviewer › aborted')
     expect(screen).not.toContain('secret child reply')
 
     test.ctx.emit('subagent/end', {
@@ -2018,7 +2062,7 @@ describe('the activity board', () => {
     } as never)
     screen = await test.screen()
     expect(screen).not.toContain('other parent reply')
-    expect(screen).toContain('reviewer · aborted')
+    expect(screen).toContain('✗ reviewer › aborted')
   })
 
   it('leaves the board unmounted after replaying a finished session', async () => {
@@ -2058,19 +2102,13 @@ describe('the activity board', () => {
     const kid = await test.createChild({ id: 'session-fade' })
     test.tick()
     await test.settle()
-    kid.session.append('tool/call', {
-      turn: 1,
-      step: 1,
-      callId: 'call-fade' as ToolCallId,
-      name: 'bash',
-      arguments: '{}',
-    })
+    narrate(kid, [{ type: 'text', text: 'Rebuilding the fixtures.' }])
     await test.settle()
     expect(test.tickArmed(FADE_TICK_MS)).toBe(true)
     test.runTick(FADE_TICK_MS)
     const screen = await test.screen()
     expect(screen).toContain('○ fade me')
-    expect(screen).toContain('session-fade · calling bash')
+    expect(screen).toContain('session-fade › Rebuilding the fixtures.')
   })
 
   it('draws no todo rows when the projection has not published the list', async () => {

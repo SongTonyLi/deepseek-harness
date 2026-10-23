@@ -1,7 +1,10 @@
 /**
  * The persistent activity board above the editor: the current todo list and
- * one latest-descendant line become the rows of one draw, and a second
- * function renders those rows as the board's text.
+ * one row per descendant become the rows of one draw, and a second function
+ * renders those rows as the board's text.
+ *
+ * A descendant row says what that child last said it was doing, led by the
+ * child's task label, so every running child reads against its own goal.
  *
  * The board is display-only — `/todos` and the subagent panel keep browsing
  * and focus. Membership is the open turn: the caller clears the inputs on
@@ -11,7 +14,8 @@
  * @module @deepseek-ai/dsh-tui-app/activity-board
  */
 
-import type { TurnEndReason } from '@deepseek-ai/dsh-session'
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import type { SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import type { BlockFade } from './blocks.ts'
 import { recolorLines } from './fade.ts'
@@ -27,8 +31,31 @@ import { turnEndNotice } from './transcript.ts'
  */
 export const ACTIVITY_BOARD_MAX_TODOS = 4
 
-/** What separates two facts on the descendant line. */
-const SEPARATOR = ' · '
+/**
+ * Descendant rows the board draws before folding the rest into one `+<n> more`
+ * row, running children first. The board shares its space above the editor
+ * with the todo rows; `/subagents` lists every descendant. A presentation
+ * choice of this terminal surface, not a deployment setting.
+ */
+export const ACTIVITY_BOARD_MAX_SUBAGENTS = 3
+
+/** Narration characters kept per child; the row cuts it to its width again. */
+const NARRATION_MAX_CHARS = 240
+
+/** What separates a descendant's label from what it said. */
+const NOTE_SEPARATOR = ' › '
+
+/** Share of the row a descendant's label may take when it also draws a note. */
+const LABEL_SHARE = 0.4
+
+/** Columns a label keeps however narrow the row is. */
+const LABEL_MIN_COLUMNS = 12
+
+/** Fewest columns a note is worth drawing in; a narrower row draws the label alone. */
+const NOTE_MIN_COLUMNS = 6
+
+/** Glyph a settled descendant row leads with, by outcome. */
+const SUBAGENT_SETTLED_GLYPH = { done: '✓', stopped: '✗' } as const
 
 /** One todo as the board draws it. */
 export interface ActivityBoardTodoRow {
@@ -40,22 +67,30 @@ export interface ActivityBoardTodoRow {
   text: string
 }
 
-/** The latest descendant fact the board shows as one line. */
+/** Where one descendant stands in the open turn. */
+export type ActivitySubagentState = 'running' | 'done' | 'stopped'
+
+/** One descendant as the board tracks it. */
 export interface ActivityBoardSubagent {
+  /** The child session id, which keys the row's fade and spinner. */
+  id: SessionId
   /** Listing label, or the child session id when the listing has none. */
   label: string
-  /** The status word: `calling <name>`, a turn-end notice, `done`, or a stop reason. */
-  status: string
-  /** Presenter title or first result row; omitted when the event carries none. */
-  summary?: string
+  /** `running` while the child's turn is open; `done` or `stopped` once it settled. */
+  state: ActivitySubagentState
+  /**
+   * What the child last said it was doing while running, or the stop word
+   * once it settled; omitted before the child has said anything.
+   */
+  note?: string
 }
 
 /** The plain inputs one board draw is built from. */
 export interface ActivityBoardInputs {
   /** Current todos in write order; the same list `/todos` reads. */
   todos: readonly TodoItem[]
-  /** The latest descendant line; omitted while no descendant event has landed. */
-  subagent?: ActivityBoardSubagent
+  /** The descendants the open turn has seen, in first-seen order; omitted while none has. */
+  subagents?: readonly ActivityBoardSubagent[]
 }
 
 /** The rows one board draw shows and the todos it left out. */
@@ -64,8 +99,10 @@ export interface ActivityBoardView {
   todos: ActivityBoardTodoRow[]
   /** Todos past the drawn rows; 0 when every one of them fits. */
   hidden: number
-  /** The formatted descendant line; absent while the inputs carry none. */
-  subagent?: string
+  /** Drawn descendant rows, running before settled; at most {@link ACTIVITY_BOARD_MAX_SUBAGENTS}. */
+  subagents: ActivityBoardSubagent[]
+  /** Descendants past the drawn rows; 0 when every one of them fits. */
+  hiddenSubagents: number
 }
 
 /** How the board is drawn. */
@@ -74,27 +111,40 @@ export interface ActivityBoardRender {
   palette: Palette
   /** Live fades keyed by todo content; an id with no entry draws settled. */
   todoFades?: ReadonlyMap<string, BlockFade>
-  /** Live fade of the descendant line; omitted draws it settled. */
-  subagentFade?: BlockFade
+  /** Live fades keyed by child session id; a child with no entry draws settled. */
+  subagentFades?: ReadonlyMap<SessionId, BlockFade>
   /**
    * The spinner frame each in-progress todo draws in place of its glyph,
    * keyed by content; an in-progress row with no entry draws the glyph.
    */
   spinners?: ReadonlyMap<string, string>
+  /** The spinner frame each running descendant draws, keyed by child session id. */
+  subagentSpinners?: ReadonlyMap<SessionId, string>
+  /** Terminal columns every row is cut to; a longer row would wrap and raise the repaint boundary. */
+  width: number
 }
 
 /**
  * Build one board draw: todos in write order cut to
- * {@link ACTIVITY_BOARD_MAX_TODOS}, plus the formatted descendant line.
- * @param inputs - the current list and the optional descendant fact.
- * @returns the drawn rows, the count they left out, and the descendant line.
+ * {@link ACTIVITY_BOARD_MAX_TODOS}, plus the descendants, running before
+ * settled and each group in first-seen order, cut to
+ * {@link ACTIVITY_BOARD_MAX_SUBAGENTS}.
+ * @param inputs - the current list and the descendants the turn has seen.
+ * @returns the drawn rows and the count of each kind they left out.
  */
 export function activityBoardView(inputs: ActivityBoardInputs): ActivityBoardView {
   const todos = inputs.todos.slice(0, ACTIVITY_BOARD_MAX_TODOS).map(rowOf)
+  const children = inputs.subagents ?? []
+  const ordered = [
+    ...children.filter(child => child.state === 'running'),
+    ...children.filter(child => child.state !== 'running'),
+  ]
+  const subagents = ordered.slice(0, ACTIVITY_BOARD_MAX_SUBAGENTS)
   return {
     todos,
     hidden: inputs.todos.length - todos.length,
-    ...inputs.subagent === undefined ? {} : { subagent: formatActivitySubagentLine(inputs.subagent) },
+    subagents,
+    hiddenSubagents: ordered.length - subagents.length,
   }
 }
 
@@ -112,30 +162,23 @@ function rowOf(item: TodoItem): ActivityBoardTodoRow {
 }
 
 /**
- * Join the descendant line's parts, dropping an empty summary.
- * @param line - the label, status word, and optional summary.
- * @returns `{label} · {status}` or `{label} · {status} · {summary}`.
+ * What a child said it is doing, from one of its assistant messages: the last
+ * sentence of its text, without markdown or code blocks, on one line.
+ * Reasoning is not narration, so the caller passes text blocks only.
+ * @param text - the message's text blocks joined.
+ * @returns the sentence, or undefined when the text holds no prose to show.
  */
-export function formatActivitySubagentLine(line: ActivityBoardSubagent): string {
-  const parts = [line.label, line.status]
-  if (line.summary !== undefined && line.summary !== '') parts.push(line.summary)
-  return parts.join(SEPARATOR)
-}
-
-/**
- * The status and summary one tool result draws on the descendant line.
- * @param firstRow - the first presented result row, when the result had one.
- * @param isError - whether the result is an error.
- * @returns `error` plus the row, the row alone, or `done` when the result had no row.
- */
-export function activityResultParts(
-  firstRow: string | undefined,
-  isError: boolean,
-): Pick<ActivityBoardSubagent, 'status' | 'summary'> {
-  if (isError) {
-    return firstRow === undefined || firstRow === '' ? { status: 'error' } : { status: 'error', summary: firstRow }
-  }
-  return { status: firstRow === undefined || firstRow === '' ? 'done' : firstRow }
+export function activityNarration(text: string): string | undefined {
+  const prose = text
+    .replace(/```[\s\S]*?(?:```|$)/gu, '\n')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, '$1')
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gmu, '')
+    .replace(/\*\*|__|~~|`/gu, '')
+  const line = prose.split('\n').map(row => row.trim()).findLast(row => row !== '')
+  const sentence = line?.split(/(?<=[.!?])\s+/u).findLast(part => part.trim() !== '')
+  const narration = sentence?.replace(/\s+/gu, ' ').trim()
+  if (narration === undefined || narration === '') return undefined
+  return narration.length > NARRATION_MAX_CHARS ? `${narration.slice(0, NARRATION_MAX_CHARS - 1)}…` : narration
 }
 
 /**
@@ -157,13 +200,23 @@ export function spinningTodos(view: ActivityBoardView): string[] {
 }
 
 /**
+ * The descendant rows of one board draw that a spinner animates.
+ * @param view - the rows one draw produced.
+ * @returns the session id of every drawn running descendant, in draw order.
+ */
+export function spinningSubagents(view: ActivityBoardView): SessionId[] {
+  return view.subagents.filter(child => child.state === 'running').map(child => child.id)
+}
+
+/**
  * Render the board. Todo rows lead with status-colored glyphs, an in-progress
  * one with its spinner frame when one is given; completed content is dim and
  * scratched out. A list past the cap ends on `+<n> more`.
- * The descendant line is last. An empty view returns the empty string so the
- * slot can unmount.
+ * The descendant rows are last, each with its own glyph, label, and note, and
+ * a descendant list past the cap ends on its own `+<n> more`. An empty view
+ * returns the empty string so the slot can unmount.
  * @param view - the rows one draw produced.
- * @param render - the palette and the fades still moving.
+ * @param render - the palette, the fades still moving, and the width.
  * @returns the board text, or the empty string when nothing is drawn.
  */
 export function renderActivityBoard(view: ActivityBoardView, render: ActivityBoardRender): string {
@@ -176,8 +229,38 @@ export function renderActivityBoard(view: ActivityBoardView, render: ActivityBoa
     lines.push(fadedLine(`${paint(glyph)} ${content}`, render.todoFades?.get(row.content)))
   }
   if (view.hidden > 0) lines.push(palette.dim(`+${String(view.hidden)} more`))
-  if (view.subagent !== undefined) lines.push(fadedLine(palette.dim(view.subagent), render.subagentFade))
+  for (const child of view.subagents) {
+    lines.push(fadedLine(subagentLine(child, render), render.subagentFades?.get(child.id)))
+  }
+  if (view.hiddenSubagents > 0) lines.push(palette.dim(`+${String(view.hiddenSubagents)} more subagents`))
   return lines.join('\n')
+}
+
+/**
+ * One descendant as a row that fits one terminal line: glyph, the label cut
+ * to its share of the row, and the note in the room that is left.
+ * @param child - the descendant row.
+ * @param render - the palette, the running spinner frames, and the width.
+ * @returns the styled row.
+ */
+function subagentLine(child: ActivityBoardSubagent, render: ActivityBoardRender): string {
+  const { palette } = render
+  const settled = child.state !== 'running'
+  const glyph = child.state === 'running'
+    ? palette.warning(render.subagentSpinners?.get(child.id) ?? TODO_GLYPH.in_progress)
+    : child.state === 'done' ? palette.success(SUBAGENT_SETTLED_GLYPH.done) : palette.error(SUBAGENT_SETTLED_GLYPH.stopped)
+  const paintLabel = (text: string): string => settled ? palette.dim(text) : text
+  // The glyph and its space.
+  const room = Math.max(0, render.width - 2)
+  const note = child.note
+  const noteless = `${glyph} ${paintLabel(truncateToWidth(child.label, room, '…'))}`
+  if (note === undefined || note === '') return noteless
+  const label = truncateToWidth(child.label, Math.max(LABEL_MIN_COLUMNS, Math.floor(room * LABEL_SHARE)), '…')
+  const noteRoom = room - visibleWidth(label) - visibleWidth(NOTE_SEPARATOR)
+  if (noteRoom < NOTE_MIN_COLUMNS) return noteless
+  const shown = truncateToWidth(note, noteRoom, '…')
+  const paintNote = child.state === 'stopped' ? palette.error : settled ? palette.dim : (text: string) => text
+  return `${glyph} ${paintLabel(label)}${palette.dim(NOTE_SEPARATOR)}${paintNote(shown)}`
 }
 
 /**

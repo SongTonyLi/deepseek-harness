@@ -178,17 +178,17 @@ Append-only in the parent: the notice follows its reusable request prefix. Reach
 
 #### What the model sees
 
-Every in-process child's runtime-context snapshot carries the `subagent:delegation` statement below, after the sandbox-policy and approval-policy sentences.
+Every in-process child's runtime-context snapshot carries the `subagent:delegation` statement below, after the sandbox-policy and approval-policy sentences. It states the child's fixed permission scope and asks for one short sentence of narration before each tool call. A host that follows a child's work reads the last sentence of the child's latest assistant message; the child's result is still its last non-empty assistant message.
 
 ##### The delegation-scope statement
 
 ```markdown
-You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the job needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it.
+You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the task needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it. Before each tool call, say in one short sentence what you are doing and why it serves the task, so your progress can be followed.
 ```
 
 #### Token effect
 
-One fixed statement in each child's runtime-context snapshot; none in the parent's requests.
+One fixed statement in each child's runtime-context snapshot, about 30 tokens of it the narration request; none in the parent's requests.
 
 #### KV Cache effect
 
