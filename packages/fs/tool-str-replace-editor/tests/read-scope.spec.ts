@@ -11,6 +11,7 @@ import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import * as ToolStrReplaceEditor from '@deepseek-ai/dsh-tool-str-replace-editor'
 import { WorkspaceReadSandbox } from '../../../sandbox/sandbox/tests/read-scope-sandbox.ts'
 
@@ -20,7 +21,7 @@ let ctx: Context
 let calls = 0
 
 function call(args: Record<string, unknown>) {
-  return ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`call-${++calls}`), name: 'str_replace_editor', arguments: args })
+  return executeToolFixture(ctx, { signal: new AbortController().signal, callId: ToolCallId(`call-${++calls}`), name: 'str_replace_editor', arguments: args })
 }
 
 function text(result: { content: { type: string; text?: string }[] }): string {

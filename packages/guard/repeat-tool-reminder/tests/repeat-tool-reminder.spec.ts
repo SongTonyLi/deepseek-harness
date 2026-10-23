@@ -1,9 +1,10 @@
+import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, ToolCallId  } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
-import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import { defineContentToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
@@ -328,7 +329,7 @@ describe('chain semantics', () => {
 
   it('ignores direct executes with no agent (they neither crash nor advance any chain)', async () => {
     const ctx = await harness({ thresholds: [2] })
-    const direct = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('d1'), name: 'probe', arguments: { q: 1 } })
+    const direct = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('d1'), name: 'probe', arguments: { q: 1 } })
     expect(direct.isError).toBe(false)
 
     ctx.llm.registerAdapter(['mock'], new MockAdapter([
@@ -469,8 +470,8 @@ describe('blockThreshold', () => {
   it('does not block a direct execute with no agent', async () => {
     const ctx = await harness({ blockProviders: ['mock'], blockThreshold: 2 })
     const counted = registerCounted(ctx, 'loop')
-    const first = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('d1'), name: 'loop', arguments: { q: 1 } })
-    const second = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('d2'), name: 'loop', arguments: { q: 1 } })
+    const first = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('d1'), name: 'loop', arguments: { q: 1 } })
+    const second = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('d2'), name: 'loop', arguments: { q: 1 } })
     expect(first.isError).toBe(false)
     expect(second.isError).toBe(false)
     expect(counted.executions).toBe(2)
@@ -606,14 +607,14 @@ describe('blockProviders Cursor subscription default', () => {
       session: { requestHeader() { return undefined } },
       options: {},
     } as Agent
-    const first = await ctx.tools.execute({
+    const first = await executeToolFixture(ctx, {
       signal: testToolSignal,
       callId: ToolCallId('n1'),
       name: 'loop',
       arguments: { q: 1 },
       agent,
     })
-    const second = await ctx.tools.execute({
+    const second = await executeToolFixture(ctx, {
       signal: testToolSignal,
       callId: ToolCallId('n2'),
       name: 'loop',

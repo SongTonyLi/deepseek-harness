@@ -1,7 +1,9 @@
 /** The Agent Teams start card, `/team-play`, and the roster commands. */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { TeamId } from '@deepseek-ai/dsh-experimental-agent-team'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
 import { KEY, bench, type Bench } from './bench.ts'
 import { TEAM_OFF_COMMAND, TEAM_ON_LINE } from '../src/team-intro.ts'
@@ -208,7 +210,18 @@ describe('team commands', () => {
     expect(await test.screen()).not.toContain('team ·')
 
     members = [lead, ada]
-    test.ctx.emit('session/event', test.session, { type: 'team/member', seq: 1, time: 1, data: {} } as never)
+    test.session.append('team/member', {
+      version: 2,
+      teamId: TeamId('session-tui-test'),
+      member: {
+        id: SessionId('session-ada'),
+        name: 'Ada',
+        description: '',
+        provider: 'test-provider',
+        context: 'fresh',
+        phase: 'active',
+      },
+    })
     await test.settle()
     const screen = await test.screen()
     const teamAt = screen.indexOf('team · 2 members · 0 running · 0 tasks')

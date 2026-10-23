@@ -17,7 +17,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -29,7 +29,7 @@ import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import type { Config as LocalConfig } from '@deepseek-ai/dsh-sandbox-local'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { Session } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-projection'
+import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { ContainerPool } from './pool.ts'
 import type { PoolEntry } from './pool.ts'
@@ -182,6 +182,19 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   private readonly runtime: ContainerRuntime
   private readonly pool: ContainerPool
 
+  /** Reader for the `sandboxBackend` projection, registered during activation. */
+  private backendProjection!: ProjectionHandle<zod.infer<typeof sandboxBackendStateSchema>>
+
+  protected async [Service.init](): Promise<void> {
+    this.backendProjection = await this.ctx.sessionProjections.register({
+      key: 'sandboxBackend',
+      stateVersion: 1,
+      stateSchema: sandboxBackendStateSchema,
+      init: () => null,
+      apply: (state, event) => (event.type === 'sandbox/backend' ? event.data.backend : state),
+    })
+  }
+
   constructor(ctx: Context, config: Config) {
     super(ctx, config)
     // The schema defaults these fields; the casts record that runtime fact.
@@ -219,14 +232,6 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       readOnlyMounts: this.readOnlyMounts,
       hidden: { names: this.hiddenFiles, maxDepth: config.hiddenFilesMaxDepth as number, skipDirs: config.hiddenFilesSkipDirs as string[] },
       runRoot: join(canonicalPath(tmpdir()), 'dsh-container-run'),
-    })
-
-    ctx.sessionProjections.register({
-      key: 'sandboxBackend',
-      stateVersion: 1,
-      stateSchema: sandboxBackendStateSchema,
-      init: () => null,
-      apply: (state, event) => (event.type === 'sandbox/backend' ? event.data.backend : state),
     })
 
     ctx.effect(() => () => this.pool.dispose())
@@ -362,7 +367,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
    * @returns the session's last recorded choice, else the configured default.
    */
   backendFor(session: Session | undefined): SandboxBackend {
-    return (session === undefined ? undefined : this.ctx.sessionProjections.stateOf(session, 'sandboxBackend')) ?? this.defaultBackend
+    return (session === undefined ? undefined : this.backendProjection.stateOf(session)) ?? this.defaultBackend
   }
 
   /** The `/sandbox` status line for `session`. */

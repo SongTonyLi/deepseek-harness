@@ -39,7 +39,7 @@ import {
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, AssistantStreamFrame, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AssistantStreamFrame, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
 import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type ToolResultMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
@@ -498,8 +498,6 @@ function workflowCallArgs(value: unknown): { readonly name: string; readonly bac
 /** One Agent the terminal drives, with the facts the host resolved for it. */
 export interface BoundSession {
   agent: Agent
-  /** The Agent's installed model selection; `/model` writes `current`. */
-  selection: ModelSelectionRef
   /**
    * Persisted events drawn before live input, including closers resume
    * appended; empty for a fresh session.
@@ -3058,10 +3056,12 @@ export class TuiApp {
   }
 
   private currentSelection(bound: BoundSession = this.bound): ModelSelection {
-    const { selection, agent } = bound
-    const selected = selection.current ?? agent.session.requestHeader()?.config
+    const selected = bound.agent.model.current()
     if (selected !== undefined) return selected
-    return { provider: agent.options.provider ?? 'default', model: agent.options.model ?? 'default' }
+    return {
+      provider: bound.agent.options.provider ?? 'default',
+      model: bound.agent.options.model ?? 'default',
+    }
   }
 
   // ── keyboard ────────────────────────────────────────────────────────────
@@ -4465,7 +4465,7 @@ export class TuiApp {
   }
 
   private async chooseModel(argument: string): Promise<void> {
-    const { selection } = this.bound
+    const bound = this.bound
     if (argument === 'save') {
       await this.saveDefaultModel(this.currentSelection())
       return
@@ -4498,7 +4498,7 @@ export class TuiApp {
     const effort = await this.chooseEffort(next)
     if (effort === null) return
     this.cancelEffortOperation()
-    selection.current = effort === undefined ? next : { ...next, reasoningEffort: effort }
+    bound.agent.model.select(effort === undefined ? next : { ...next, reasoningEffort: effort })
     this.notice(`model: ${next.provider}/${next.model}${effort === undefined ? '' : ` · effort ${effort}`} from the next request`, 'success')
     this.refreshFooter()
   }
@@ -4567,8 +4567,11 @@ export class TuiApp {
 
   /**
    * Whether current-model effort work lost either its session or selection.
+   * `agent.model.current()` returns a detached value, so the selection is the
+   * same one only while provider, model, and explicit effort all agree; an
+   * absent effort is its own value.
    * @param bound - the session binding that started the work.
-   * @param selected - that binding's explicit selection when the work began.
+   * @param selected - the selection the binding read when the work began.
    * @param signal - cancellation owned by the effort operation.
    * @returns true when applying the result would overwrite newer state.
    */
@@ -4577,7 +4580,14 @@ export class TuiApp {
     selected: ModelSelection | undefined,
     signal: AbortSignal,
   ): boolean {
-    return bound.selection.current !== selected || this.operationAbandoned(bound, signal)
+    const current = bound.agent.model.current()
+    const same = selected === undefined
+      ? current === undefined
+      : current !== undefined
+        && current.provider === selected.provider
+        && current.model === selected.model
+        && current.reasoningEffort === selected.reasoningEffort
+    return !same || this.operationAbandoned(bound, signal)
   }
 
   /**
@@ -4607,7 +4617,7 @@ export class TuiApp {
    * @param signal - withdraws an empty-argument picker when the session changes.
    */
   private async chooseCurrentEffort(argument: string, bound: BoundSession, signal: AbortSignal): Promise<void> {
-    const selected = bound.selection.current
+    const selected = bound.agent.model.current()
     const current = this.currentSelection(bound)
     const lookup = await this.lookupEfforts(current)
     if (this.effortAbandoned(bound, selected, signal)) return
@@ -4685,9 +4695,9 @@ export class TuiApp {
    * @param effort - the chosen effort, or undefined for the provider default.
    */
   private applyEffort(model: ModelSelection, effort: ReasoningEffortId | undefined): void {
-    this.bound.selection.current = effort === undefined
+    this.bound.agent.model.select(effort === undefined
       ? { provider: model.provider, model: model.model }
-      : { provider: model.provider, model: model.model, reasoningEffort: effort }
+      : { provider: model.provider, model: model.model, reasoningEffort: effort })
     this.notice(effort === undefined
       ? 'effort: provider default from the next request'
       : `effort ${effort} from the next request`, 'success')

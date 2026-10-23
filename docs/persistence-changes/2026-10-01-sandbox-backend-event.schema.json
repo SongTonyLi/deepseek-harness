@@ -1,87 +1,17 @@
 {
   "formatVersion": 2,
   "roots": [
-    {
-      "key": "event:sandbox/backend",
-      "kind": "event",
-      "event": "sandbox/backend",
-      "surface": false,
-      "digest": "d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 5,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 6,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 6,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 7,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "backend",
-                "type": 2,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "union",
-            "types": [
-              3,
-              4
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "container"
-          },
-          {
-            "kind": "literal",
-            "value": "local"
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "literal",
-            "value": "sandbox/backend"
-          }
-        ]
-      }
-    }
+    {"key":"event:sandbox/backend","kind":"event","event":"sandbox/backend","surface":false,"digest":"d4625f12f4753a49ecbd0822fb534207e5d087be05992290cd7eedf23812a9d3"}
   ],
-  "types": []
+  "types": [],
+  "nodes": {
+    "0657d3ca5ac4e7bf": {"kind":"primitive","type":"number"},
+    "30fbc84a8dff6bf2": {"kind":"literal","value":"container"},
+    "37754fa5ccea9aa1": {"kind":"literal","value":"local"},
+    "548cd278c7808ebc": {"kind":"object","properties":[{"name":"backend","type":"56446dcfeddd343e","optional":false}],"indices":[]},
+    "56446dcfeddd343e": {"kind":"union","types":["30fbc84a8dff6bf2","37754fa5ccea9aa1"]},
+    "a7ccd06a53e95b27": {"kind":"literal","value":"sandbox/backend"},
+    "d4625f12f4753a49": {"kind":"object","properties":[{"name":"data","type":"548cd278c7808ebc","optional":false},{"name":"ignorable","type":"dacf3d5f3e4ff619","optional":true},{"name":"seq","type":"0657d3ca5ac4e7bf","optional":false},{"name":"time","type":"0657d3ca5ac4e7bf","optional":false},{"name":"type","type":"a7ccd06a53e95b27","optional":false}],"indices":[]},
+    "dacf3d5f3e4ff619": {"kind":"literal","value":true}
+  }
 }

@@ -77,7 +77,8 @@ describe('tui profile keyless smoke', () => {
         },
         { marker: 'CLI tool round trip complete', keys: SHIFT_TAB },
         { marker: 'Reasoning effort · cli-mock/cli-mock', keys: `${DOWN}${ENTER}` },
-        { marker: 'effort off from the next request', keys: SHIFT_UP },
+        // The cli-mock selects `off` after its tool call, so the picker opens on Off and Down lands on High.
+        { marker: 'effort high from the next request', keys: SHIFT_UP },
         { marker: ' ● READ ', keys: CTRL_G },
         // Closing restores the conversation's own screen rather than drawing
         // it again, so the step that follows walks a section: what the
@@ -93,7 +94,7 @@ describe('tui profile keyless smoke', () => {
       expect(first.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
       expect(first.stdout).toContain('cli-mock/cli-mock')
       expect(first.stdout).toContain('Reasoning effort · cli-mock/cli-mock')
-      expect(first.stdout).toContain('effort off from the next request')
+      expect(first.stdout).toContain('effort high from the next request')
       // Read mode is docked chrome with its own legend; the reader is the
       // full-screen surface that takes the terminal from the conversation.
       expect(first.stdout).toContain(' ● READ ')
@@ -201,7 +202,9 @@ describe('tui profile keyless smoke', () => {
         { marker: 'cli-mock/cli-mock', keys: `first ask${ENTER}` },
         { marker: 'CLI tool round trip complete', keys: `second ask${ENTER}` },
         { marker: '❯ second ask', keys: '' },
-        { marker: 'CLI tool round trip complete', keys: `/compact${ENTER}` },
+        { marker: 'CLI tool round trip complete', keys: '' },
+        // The running footer inserts a turn segment; its absence means the turn ended and /compact is accepted.
+        { marker: 'effort off · …/T/', keys: `/compact${ENTER}` },
         // The summary is folded under the account, so its first row is the last one drawn.
         { marker: 'CLI_COMPACTION_SUMMARY', keys: '' },
       ])

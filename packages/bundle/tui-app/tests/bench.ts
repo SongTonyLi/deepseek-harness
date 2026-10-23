@@ -5,7 +5,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, AssistantStreamFrame, CreateAgentOptions, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, AgentOptions, AssistantStreamFrame, CreateAgentOptions, Model, ModelSelection } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage, type StreamChunk, type ContentBlock, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
@@ -286,7 +286,6 @@ export interface Bench {
   session: Session
   calls: AgentCalls
   terminal: FakeTerminal
-  selection: ModelSelectionRef
   app: TuiApp
   /** The sessions handed to `onQuit`. */
   quits: BoundSession[]
@@ -362,6 +361,41 @@ export interface Bench {
   appendAssistant(content: ContentBlock[], options?: { usage?: { inputTokens: number; outputTokens: number }; interrupted?: true }): void
   appendToolCall(callId: string, name: string, args: unknown): void
   appendToolResult(callId: string, content: ContentBlock[], isError?: boolean, meta?: unknown): void
+}
+
+/**
+ * One scripted Agent's model selection: the app's own choice for the next
+ * request, else the last request header the session logged, else the Agent's
+ * options. The real AgentModel reads the same precedence from its durable
+ * projection.
+ * @param session - the Agent's session, whose request header records the last used route.
+ * @param options - the Agent's route options, used until a selection or request is recorded.
+ * @returns the Model the app reads and writes.
+ */
+function scriptedModel(session: Session, options: AgentOptions | undefined): Model {
+  let selected: ModelSelection | undefined
+  const fallback = (): ModelSelection | undefined => {
+    const header = session.requestHeader()
+    if (header !== undefined) {
+      const { provider, model, reasoningEffort } = header.config
+      return {
+        provider,
+        model,
+        ...reasoningEffort === undefined || header.adapterDefaults?.reasoningEffort === true ? {} : { reasoningEffort },
+      }
+    }
+    const { provider, model, reasoningEffort } = options ?? {}
+    if (provider === undefined || model === undefined) return undefined
+    return {
+      provider,
+      model,
+      ...reasoningEffort === undefined ? {} : { reasoningEffort },
+    }
+  }
+  return {
+    current: () => selected ?? fallback(),
+    select: (next) => { selected = { ...next } },
+  }
 }
 
 /**
@@ -447,10 +481,16 @@ export async function bench(options: {
 } = {}): Promise<Bench> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
-  if (options.projections === undefined) await ctx.plugin(SessionProjectionRegistry)
-  else if (options.projections !== 'none') ctx.provide('sessionProjections', options.projections as never)
-  const agentRegistry = ctx.plugin(AgentRegistry)
-  await agentRegistry
+  // The Agent registry reads a Session projection during activation. Mount it in
+  // a scope whose `sessionProjections` resolves to a real registry, so a spec can
+  // still replace the app-facing projection service with a stub or leave it out.
+  await ctx.plugin(SessionProjectionRegistry)
+  const agentRegistry = await ctx.plugin(AgentRegistry)
+  // The Agent registry keeps the real projection service; the app reads through a
+  // scope that a spec can point at a stub or leave empty.
+  const appCtx = ctx.isolate('sessionProjections')
+  if (options.projections === undefined) appCtx.provide('sessionProjections', ctx.sessionProjections)
+  else if (options.projections !== 'none') appCtx.provide('sessionProjections', options.projections as never)
   if (options.saveDefaultModel === undefined) {
     await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   } else {
@@ -480,6 +520,7 @@ export async function bench(options: {
         id: session.id,
         options: createOptions.agentOptions ?? {},
         session,
+        model: scriptedModel(session, createOptions.agentOptions),
         inbox: createInboxStub(),
         get status() { return childStatuses.get(session.id) ?? hostStatus },
         ctx: ownerCtx,
@@ -507,10 +548,6 @@ export async function bench(options: {
     },
     resume: () => Promise.reject(new Error('not used')),
   })
-  const selection: ModelSelectionRef = {
-    current: options.unselected === true ? undefined : options.selected ?? { provider: 'test-provider', model: 'test-model' },
-    assembled: undefined,
-  }
   const { agent } = await ctx.agents.create({
     sessionId: 'session-tui-test' as Agent['id'],
     meta: { cwd: '/work' },
@@ -534,15 +571,11 @@ export async function bench(options: {
     const handle = await ctx.agents.create({
       sessionId: id,
       meta: { cwd: '/work' },
-      ...modelSelection === undefined ? {} : { agentOptions: modelSelection },
+      agentOptions: modelSelection ?? { provider: 'test-provider', model: 'opened-model' },
     })
     const entry = {
       bound: {
         agent: handle.agent,
-        selection: {
-          current: modelSelection ?? { provider: 'test-provider', model: 'opened-model' },
-          assembled: undefined,
-        },
         history: options.openedHistory ?? [],
         dispose: () => {
           entry.disposed += 1
@@ -566,7 +599,6 @@ export async function bench(options: {
         if (options.hostFailure !== undefined) throw new Error(options.hostFailure)
         return {
           agent: resident,
-          selection: { current: undefined, assembled: undefined },
           history: resident.session.ownEvents(),
           dispose: () => Promise.resolve(),
         }
@@ -581,7 +613,6 @@ export async function bench(options: {
   let disposed = 0
   const initial: BoundSession = {
     agent,
-    selection,
     history: options.history ?? [],
     dispose: () => { disposed += 1; return Promise.resolve() },
   }
@@ -600,7 +631,7 @@ export async function bench(options: {
     }
   }
   const app = new TuiApp({
-    ctx,
+    ctx: appCtx,
     host,
     initial,
     terminal,
@@ -651,7 +682,6 @@ export async function bench(options: {
     session,
     calls,
     terminal,
-    selection,
     app,
     quits,
     requests,

@@ -14,6 +14,7 @@ import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
+import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
@@ -1093,7 +1094,7 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).toContain('usage: /model <provider>/<model>')
     typeLine(test.terminal, '/model other/big')
     await test.settle()
-    expect(test.selection.current).toEqual({ provider: 'other', model: 'big' })
+    expect(test.agent.model.current()).toEqual({ provider: 'other', model: 'big' })
     expect(test.terminal.text()).toContain('other/big')
     typeLine(test.terminal, '/exit')
     expect(test.quits).toHaveLength(1)
@@ -1398,12 +1399,12 @@ describe('TuiApp', () => {
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.selection.current).toEqual({ provider: 'p2', model: 'b' })
+    expect(test.agent.model.current()).toEqual({ provider: 'p2', model: 'b' })
     typeLine(test.terminal, '/model')
     await test.settle()
     test.terminal.type(KEY.escape)
     await test.settle()
-    expect(test.selection.current).toEqual({ provider: 'p2', model: 'b' })
+    expect(test.agent.model.current()).toEqual({ provider: 'p2', model: 'b' })
   })
 
   it('lists models sorted by provider and model id with numeric parts in order', async () => {
@@ -1571,18 +1572,18 @@ describe('the status bar', () => {
     test.terminal.type(KEY.shiftTab)
     await test.settle()
     expect(test.terminal.text()).toContain('Reasoning effort · test-provider/test-model')
-    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model' })
+    expect(test.agent.model.current()).toEqual({ provider: 'test-provider', model: 'test-model' })
     test.terminal.type(KEY.down)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    expect(test.agent.model.current()).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
     test.terminal.type(KEY.shiftDown)
     test.terminal.type(KEY.shiftTab)
     await test.settle()
     // At the bar the same key walks the regions instead, leaving the effort
     // in force; this session draws no panel and has nothing to read, so the
     // walk comes back to the bar itself.
-    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    expect(test.agent.model.current()).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
     test.terminal.type(KEY.left)
     test.terminal.type(KEY.enter)
     await test.settle()
@@ -1718,7 +1719,7 @@ describe('the status bar', () => {
     expect(test.terminal.text()).toContain('reasoning effort: low')
     expect(test.terminal.text()).toContain('Shift+Tab or /effort opens the effort list')
     expect(test.terminal.text()).not.toContain('provider: test-provider')
-    expect(test.selection.current).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
+    expect(test.agent.model.current()).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' })
   })
 
   it('treats a Shift+Right sequence as one move, whatever the bar draws between the ends', async () => {
@@ -2312,7 +2313,7 @@ async function composeShellCalls(ctx: Context): Promise<void> {
  * @param command - the call's command.
  */
 function runShellCall(test: Bench, agent: Agent, command: string): void {
-  void test.ctx.tools.execute({ callId: `call-${command}` as ToolCallId, name: 'bash', arguments: { command }, agent, signal: new AbortController().signal })
+  void executeToolFixture(test.ctx, { callId: `call-${command}` as ToolCallId, name: 'bash', arguments: { command }, agent, signal: new AbortController().signal })
 }
 
 /** A listed child that finished and is not resident, so viewing it resumes it through the host. */

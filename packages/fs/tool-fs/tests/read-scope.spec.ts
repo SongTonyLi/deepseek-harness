@@ -19,6 +19,7 @@ import { SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-sessio
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import { WorkspaceReadSandbox } from '../../../sandbox/sandbox/tests/read-scope-sandbox.ts'
 
@@ -30,7 +31,7 @@ let ctx: Context
 let calls = 0
 
 function call(name: string, args: unknown, agent?: object) {
-  return ctx.tools.execute({
+  return executeToolFixture(ctx, {
     signal: new AbortController().signal,
     callId: ToolCallId(`call-${++calls}`),
     name,

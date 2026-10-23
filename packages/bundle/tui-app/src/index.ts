@@ -14,8 +14,7 @@ import { ProcessTerminal, type Terminal } from '@earendil-works/pi-tui'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { AgentSetup, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import { resumeModelSelection } from './resume-model.ts'
+import type { AgentOptions, AgentSetup, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwSeed, restrictBtwAgent } from './btw.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
@@ -361,11 +360,26 @@ async function forkSeed(ctx: Context, id: SessionId, turn: number | undefined): 
 }
 
 /**
+ * The AgentOptions that carry one selection as the Agent's initial route.
+ * @param selection - the provider, model, and optional explicit effort.
+ * @returns AgentOptions naming the same route.
+ */
+function agentOptionsFor(selection: ModelSelection): AgentOptions {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+  }
+}
+
+/**
  * The terminal's session host over the core Agent registry. Every Agent gets
- * the model selection installed so `/model` applies from the next request.
- * Resume passes the launch default as AgentOptions so assemble has a
- * `{{model}}` value, then overlays the log's last request header onto the
- * selection when one exists, else keeps that default.
+ * the model-switch notice installed, so `/model` writes the durable selection
+ * through `agent.model` and the notice names the new route on the next
+ * admitted request. Each operation supplies its initial route as AgentOptions:
+ * create and fork use the requested or default selection, resume uses the
+ * launch default and lets the session projection replay the route recorded in
+ * the log, and aside uses the parent's current selection.
  * @param ctx - plugin context.
  * @param core - the injected services.
  * @param cwd - the workspace root recorded on new sessions.
@@ -374,49 +388,41 @@ async function forkSeed(ctx: Context, id: SessionId, turn: number | undefined): 
  */
 function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Config, 'btwTools' | 'btwSandboxedTools'>): SessionHost {
   const { agents, defaultModel } = core
+  // `/model` writes the durable selection through `agent.model`; the Agent
+  // scope only needs the pre-step notice that names a changed route.
+  const agentSetup: AgentSetup = (agentCtx) => { installModelSelection(agentCtx) }
   const bind = async (
-    open: (selection: ModelSelectionRef, setup: AgentSetup) => ReturnType<typeof agents.create>,
+    open: (setup: AgentSetup) => ReturnType<typeof agents.create>,
     history: readonly SessionEvent[],
   ): Promise<BoundSession> => {
-    const selection: ModelSelectionRef = { current: undefined, assembled: undefined }
-    const handle = await open(selection, (agentCtx) => { installModelSelection(agentCtx, selection) })
+    const handle = await open(agentSetup)
     await handle.agent.whenIdle()
-    return { agent: handle.agent, selection, history, dispose: () => handle.dispose() }
+    return { agent: handle.agent, history, dispose: () => handle.dispose() }
   }
   const create = (
     seed: SessionEvent[] | undefined,
     parent: SessionId | undefined,
     initialSelection?: ModelSelection,
-  ): Promise<BoundSession> => bind((selection, setup) => {
+  ): Promise<BoundSession> => bind((setup) => {
     const model = initialSelection ?? defaultModel.currentSelection()
-    selection.current = model
     return agents.create({
       sessionId: brandString<SessionId>(`session-${randomUUID()}`),
       ...seed === undefined ? {} : { seed, inheritedEventCount: SessionLogOffset(seed.length) },
       meta: { cwd, ...parent === undefined ? {} : { parentSession: parent, isSeeded: true } },
-      agentOptions: {
-        provider: model.provider,
-        model: model.model,
-        ...model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort },
-      },
+      agentOptions: agentOptionsFor(model),
       setup,
     })
   }, seed ?? [])
   const resume = async (id: SessionId): Promise<BoundSession> => {
-    const fallback = defaultModel.currentSelection()
-    const selection: ModelSelectionRef = { current: fallback, assembled: undefined }
+    const launch = defaultModel.currentSelection()
     const handle = await agents.resume({
       resumeSessionId: id,
-      agentOptions: { provider: fallback.provider, model: fallback.model },
-      setup: (agentCtx, agent) => {
-        selection.current = resumeModelSelection(agent.session.requestHeader(), fallback)
-        installModelSelection(agentCtx, selection)
-      },
+      agentOptions: agentOptionsFor(launch),
+      setup: agentSetup,
     })
     await handle.agent.whenIdle()
     return {
       agent: handle.agent,
-      selection,
       history: await observeBoundHistory(ctx, id),
       dispose: () => handle.dispose(),
     }
@@ -435,9 +441,8 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
         events = observed.events
       }
       const { seed, inheritedEventCount } = btwSeed(events)
-      const model = resumeModelSelection(session.requestHeader(), parent.selection.current ?? defaultModel.currentSelection())
-      const aside = await bind((selection, installSelection) => {
-        selection.current = model
+      const model = parent.agent.model.current() ?? defaultModel.currentSelection()
+      const aside = await bind((setup) => {
         // No parent Agent and no subagent catalog entry: the working Agent
         // neither owns nor lists the side agent, and the side agent is not
         // its continuable child, so it cannot message it.
@@ -447,13 +452,9 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
           sessionId: brandString<SessionId>(`session-${randomUUID()}`),
           ...seed.length === 0 ? {} : { seed, inheritedEventCount },
           meta: { cwd: workdir, parentSession: session.id, isSeeded: true, origin: 'subagent' },
-          agentOptions: {
-            provider: model.provider,
-            model: model.model,
-            ...model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort },
-          },
+          agentOptions: agentOptionsFor(model),
           setup: async (agentCtx, agent) => {
-            await installSelection(agentCtx, agent)
+            await setup(agentCtx, agent)
             restrictBtwAgent(agentCtx, agent, btw)
           },
         })
@@ -472,7 +473,6 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
         // that has already left this process.
         return {
           agent: resident,
-          selection: { current: undefined, assembled: undefined },
           history: await observeBoundHistory(ctx, id),
           dispose: () => Promise.resolve(),
         }
