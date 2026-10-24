@@ -1229,11 +1229,13 @@ describe('headless stream-json snapshots', () => {
         "deliveredMessages": 0,
         "identities": [
           "You are teammate "implementer".
+      Your role: Own deterministic implementation.
       Your Team Lead is named "lead".
       To message your Team Lead, use send_message({ target: "lead", message: "..." }).
       Use list_agents({}) to find your teammates and their names.
       To message another teammate, use send_message({ target: "<teammate name>", message: "..." }).",
           "You are teammate "researcher".
+      Your role: Own deterministic research.
       Your Team Lead is named "lead".
       To message your Team Lead, use send_message({ target: "lead", message: "..." }).
       Use list_agents({}) to find your teammates and their names.

@@ -10,7 +10,7 @@ A teammate identity embedded in its initial task depends on ordinary history ret
 
 ## Decision
 
-`tool-agent-team` contributes `team:identity` through the Agent-scoped `systemPrompt.context()` registry with `required: true`. Its provider reads the existing Team membership and renders the member's role, name, and addressing instructions. Optional-context suppression cannot remove it. Fixed collaboration policy stays in the system prompt; roster and task state remain tool queries. Initial tasks contain only their supplied content.
+`tool-agent-team` contributes `team:identity` through the Agent-scoped `systemPrompt.context()` registry with `required: true`. Its provider reads the existing Team membership and renders the member's role, name, and addressing instructions; a teammate's context also states the role description from its roster row. Optional-context suppression cannot remove it. Fixed collaboration policy stays in the system prompt; roster and task state remain tool queries. Initial tasks contain only their supplied content.
 
 The loop owns logging, retained-snapshot comparison, and re-admission after compaction. A changed role appends the current full runtime-context snapshot after inherited history; unchanged retained context adds no message. No Team-specific retention state, event type, or log migration is introduced. Existing recorded reminders remain historical messages.
 
