@@ -16,4 +16,4 @@ description: "原样 tui profile 挂载 Agent Teams，此前的两份组合包�
 ## 迁移
 
 1. 若要保留原先的工具，从 `$DSH_HOME/profiles/tui/package.json` 的 `dsh.profile.bundles` 中移除 `@deepseek-ai/dsh-experimental-agent-team-profile`。
-2. 用 `dsh tui` 启动确认。空会话的起始卡片写着 `Agent Teams is on by default`，并给出 `/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile`。在会话还没有 teammate 消息时，`/team-play` 播放一个示例；`Esc` 关闭它。移除了该组合包的 profile 没有起始卡片，`/team-play` 报告 `Agent Teams are not enabled in this composition`。
+2. 用 `dsh tui` 启动确认。空会话的起始卡片写着 `Agent Teams is on`，说明 lead 与 teammate 各做什么，并给出 `/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile`。`/team-play` 打开团队室：每名成员的角色与当前工作、共享任务，以及成员之间的消息；`Enter` 打开所选 teammate 的会话，`f` 把消息收窄到该成员，`Esc` 关闭团队室。移除了该组合包的 profile 没有起始卡片，`/team-play` 报告 `Agent Teams are not enabled in this composition`。

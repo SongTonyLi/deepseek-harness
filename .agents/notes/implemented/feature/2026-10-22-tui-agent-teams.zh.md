@@ -24,8 +24,9 @@ Status: implemented
 
 - 原样 TUI 会话可以用 `spawn_teammate` 委派。
 - 已经另加过组合包的 profile 不会获得这一层。
-- 空的根会话会画出一张起始卡片，写明 Agent Teams 已开启，并给出 `/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile`。
-- `/team-play` 播放成员之间如何互相发消息。`/subagents` 仍然打开某一个 teammate 的对话记录。
+- 空的根会话会画出一张静态起始卡片，写明 Agent Teams 已开启、lead 与 teammate 各做什么、哪些命令可以查看团队，并给出 `/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile`。
+- `/team-play` 在独立画面打开团队室：每名成员及其角色与当前工作、共享任务，以及成员之间的消息。在 teammate 上按 `Enter` 会像 `/team` 一样打开它的会话。`/subagents` 仍然列出每一个子会话。
+- 主页面上每个 teammate 只出现一次：团队行列出谁在工作，activity board 把 teammate 的行标为 `<name> · <role>`，子 agent 面板不列名册成员。
 
 ## Related decisions
 

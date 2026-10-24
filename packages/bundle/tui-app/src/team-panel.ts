@@ -1,42 +1,35 @@
 /**
- * The docked Agent Teams summary between the editor and the status bar.
- * Member and task rows plus a hidden flag become one draw, and a second
- * function renders that draw as text.
+ * The docked Agent Teams summary between the editor and the status bar: the
+ * roster and the shared tasks become one dim line.
  *
- * The summary is one line while a teammate or a shared task that is not
- * deleted exists. The app never gives this panel the keyboard; a selected
- * index is only for a test that reads the capped rows. Everything here is
+ * The line is the only team summary on the main page. The subagent panel does
+ * not list or count teammates, and the activity board labels a teammate by name
+ * and role. The line names the teammates whose turn is running, so it is also
+ * the live indicator. It is drawn while a teammate or a shared task that is not
+ * deleted exists, and the app never gives it the keyboard. Everything here is
  * pure — no Context, no services, no clock.
  * @module @deepseek-ai/dsh-tui-app/team-panel
  */
 
-import { visibleWidth } from '@earendil-works/pi-tui'
-import { fitLegend } from './frame.ts'
-import { paintKeys } from './key-chips.ts'
-import { HINTS } from './keys.ts'
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import type { Palette } from './style.ts'
-
-/**
- * Rows a focused draw keeps before folding the rest into one `+<n> more`
- * row. The summary the app mounts is one line; the cap applies only when a
- * caller passes a selected index. A presentation choice of this terminal
- * surface, not a deployment setting.
- */
-export const TEAM_PANEL_MAX_ROWS = 6
 
 /** Drawn when the user forces the panel on and the roster has nothing to list. */
 export const TEAM_PANEL_EMPTY = 'team · no teammates or shared tasks yet'
 
-/** What separates two facts inside one row. */
+/** What separates two facts inside the line. */
 const SEPARATOR = ' · '
 
-/** One roster row the panel counts and, when focused, may draw. */
+/** The command the line points at; it plays the exchanges between the lead and its teammates. */
+const TEAM_PLAY_HINT = '/team-play'
+
+/** One roster row the summary counts and the app labels sessions with. */
 export interface TeamMemberRow {
   /** Session id of the member. */
   id: string
   /** Model-facing name. */
   name: string
-  /** Lead or teammate. The lead counts in the summary and is not a session the panel opens. */
+  /** Lead or teammate. The summary counts teammates only, and the lead is not a session the app opens. */
   role: 'lead' | 'teammate'
   /** Runtime status of the member. */
   status: 'running' | 'inactive' | 'provisioning' | 'failed'
@@ -48,7 +41,7 @@ export interface TeamMemberRow {
   diagnostics: string[]
 }
 
-/** One shared task the panel counts unless its status is `deleted`. */
+/** One shared task the summary counts unless its status is `deleted`. */
 export interface TeamTaskRow {
   /** Team-local task id. */
   id: string
@@ -58,7 +51,7 @@ export interface TeamTaskRow {
   subject: string
   /** Task body. */
   description: string
-  /** Lifecycle status. `deleted` tasks are omitted from the summary and the rows. */
+  /** Lifecycle status. `deleted` tasks are omitted from the summary. */
   status: 'pending' | 'in_progress' | 'completed' | 'deleted'
   /** Task ids that still block this one. */
   blockedBy: string[]
@@ -72,59 +65,22 @@ export interface TeamTaskRow {
   writeScopeWarnings: string[]
 }
 
-/** The plain inputs one panel draw is built from. */
-export interface TeamPanelInputs {
+/** The plain inputs one summary line is built from. */
+export interface TeamLineInputs {
   /** Roster rows, lead included. */
   members: readonly TeamMemberRow[]
-  /** Shared tasks, deleted rows included; the draw drops those. */
+  /** Shared tasks, deleted rows included; the line drops those. */
   tasks: readonly TeamTaskRow[]
-  /** Whether the user hid the panel. A hidden draw is empty even when rows exist. */
-  hidden: boolean
-}
-
-/** The rows one panel draw shows and the ones it left out. */
-export interface TeamPanelView {
-  /**
-   * Focused row texts, members then non-deleted tasks, at most
-   * {@link TEAM_PANEL_MAX_ROWS}. Empty when the summary draws nothing.
-   */
-  rows: string[]
-  /** Rows past {@link TEAM_PANEL_MAX_ROWS}; 0 when every one of them fits or the summary is empty. */
-  hidden: number
-  /** Every member, the lead included. */
-  memberCount: number
-  /** Members whose status is `running`. */
-  running: number
-  /** Tasks whose status is not `deleted`. */
-  taskCount: number
-  /** Whether the unfocused summary has a line to draw. */
-  shown: boolean
-}
-
-/** How the panel is drawn. */
-export interface TeamPanelRender {
-  /** The palette the summary and any focused rows are styled with. */
-  palette: Palette
-  /**
-   * Terminal columns a focused heading fits its legend into. The app draws
-   * the unfocused summary, which does not use the width.
-   */
+  /** Terminal columns the line is fitted to. */
   width: number
-  /**
-   * Index of the selected focused row. Absent for the summary the app
-   * mounts, which never takes the keyboard.
-   */
-  selected?: number
-  /**
-   * Line drawn when {@link TeamPanelView.shown} is false because the roster
-   * has no teammate and no live task. The app passes {@link TEAM_PANEL_EMPTY}
-   * only while the user forced the panel on.
-   */
-  forcedEmpty?: string
+  /** Whether the user hid the line. A hidden line is empty even when rows exist. */
+  hidden?: boolean
+  /** Whether the user forced the line on, which draws {@link TEAM_PANEL_EMPTY} for a roster with nothing to list. */
+  forced?: boolean
 }
 
 /**
- * Tasks the summary and the focused rows count.
+ * Tasks the summary counts.
  * @param tasks - the roster's tasks, deleted rows included.
  * @returns the tasks whose status is not `deleted`, in input order.
  */
@@ -133,103 +89,66 @@ function liveTasks(tasks: readonly TeamTaskRow[]): TeamTaskRow[] {
 }
 
 /**
- * Whether the roster has anything the summary lists.
- * @param members - the roster rows.
- * @param tasks - the non-deleted tasks.
- * @returns true when a teammate or a live task exists.
+ * The ways the running teammates can be named, longest first: every name, then
+ * fewer names ended by `+<n>` for the ones left out, then only their number.
+ * @param names - the names of the teammates whose status is `running`, in roster order.
+ * @returns one candidate per step, or `undefined` alone when no teammate is running, which leaves the segment out.
  */
-function hasContent(members: readonly TeamMemberRow[], tasks: readonly TeamTaskRow[]): boolean {
-  return members.some(member => member.role === 'teammate') || tasks.length > 0
-}
-
-/**
- * One member as a focused row.
- * @param member - the roster row.
- * @returns `name · role · status`, plus ` · model` when a model is present.
- */
-function memberLine(member: TeamMemberRow): string {
-  const parts = [member.name, member.role, member.status]
-  if (member.model !== undefined) parts.push(member.model)
-  return parts.join(SEPARATOR)
-}
-
-/**
- * One task as a focused row.
- * @param task - a non-deleted task.
- * @returns `subject · status · owner|unowned · ready|blocked`.
- */
-function taskLine(task: TeamTaskRow): string {
-  const owner = task.ownerName ?? 'unowned'
-  return [task.subject, task.status, owner, task.ready ? 'ready' : 'blocked'].join(SEPARATOR)
-}
-
-/**
- * The unfocused summary.
- * @param view - the draw.
- * @returns `team · <n> members · <running> running · <tasks> tasks`.
- */
-function summaryLine(view: TeamPanelView): string {
-  return `team · ${String(view.memberCount)} members · ${String(view.running)} running · ${String(view.taskCount)} tasks`
-}
-
-/**
- * Build one panel draw. A hidden flag, or a roster with no teammate and no
- * task that is not deleted, yields an empty draw. Otherwise the counts
- * include every member and every non-deleted task, and the focused rows are
- * those members then those tasks, cut to {@link TEAM_PANEL_MAX_ROWS}.
- * @param inputs - the roster, the tasks, and whether the user hid the panel.
- * @returns the counts, the drawn rows, and how many rows the cap left out.
- */
-export function teamPanelView(inputs: TeamPanelInputs): TeamPanelView {
-  const tasks = liveTasks(inputs.tasks)
-  const memberCount = inputs.members.length
-  const running = inputs.members.filter(member => member.status === 'running').length
-  const taskCount = tasks.length
-  if (inputs.hidden || !hasContent(inputs.members, tasks)) {
-    return { rows: [], hidden: 0, memberCount, running, taskCount, shown: false }
+function workingSegments(names: readonly string[]): (string | undefined)[] {
+  if (names.length === 0) return [undefined]
+  const segments: string[] = []
+  for (let shown = names.length; shown >= 1; shown--) {
+    const rest = names.length - shown
+    segments.push(`working: ${names.slice(0, shown).join(', ')}${rest === 0 ? '' : ` +${String(rest)}`}`)
   }
-  const listed = [...inputs.members.map(memberLine), ...tasks.map(taskLine)]
-  const rows = listed.slice(0, TEAM_PANEL_MAX_ROWS)
-  return { rows, hidden: listed.length - rows.length, memberCount, running, taskCount, shown: true }
+  segments.push(`${String(names.length)} working`)
+  return segments
+}
+
+/**
+ * The summary text.
+ * @param teammates - the roster rows whose role is `teammate`.
+ * @param tasks - the tasks that are not deleted.
+ * @param width - columns the text should fit.
+ * @returns `team · <n> teammates · working: <names> · tasks <completed>/<total> done · /team-play`
+ * with the `working` segment left out while nobody runs. The first segment step that fits
+ * `width` is used, and the shortest one when none does.
+ */
+function summaryText(teammates: readonly TeamMemberRow[], tasks: readonly TeamTaskRow[], width: number): string {
+  const completed = tasks.filter(task => task.status === 'completed').length
+  const count = `${String(teammates.length)} ${teammates.length === 1 ? 'teammate' : 'teammates'}`
+  const running = teammates.filter(member => member.status === 'running').map(member => member.name)
+  let text = ''
+  for (const segment of workingSegments(running)) {
+    text = [
+      'team',
+      count,
+      ...segment === undefined ? [] : [segment],
+      `tasks ${String(completed)}/${String(tasks.length)} done`,
+      TEAM_PLAY_HINT,
+    ].join(SEPARATOR)
+    if (visibleWidth(text) <= width) break
+  }
+  return text
 }
 
 /**
  * The one-line summary the app mounts. `hidden` draws nothing. `forced`
  * draws {@link TEAM_PANEL_EMPTY} when the roster has no teammate and no task
- * that is not deleted. Otherwise the line counts every member, the running
- * ones, and the tasks that are not deleted.
- * @param inputs - the roster, the tasks, and whether the line is hidden or forced.
+ * that is not deleted. Otherwise the line counts the teammates (the lead is
+ * not one), names the running ones, and counts the completed tasks among the
+ * tasks that are not deleted. A line wider than `width` drops names from the
+ * running list first, then ends with `…`.
+ * @param inputs - the roster, the tasks, the width, and whether the line is hidden or forced.
  * @param palette - the palette the line is dimmed with.
  * @returns the summary line, or `''` when the slot should stay empty.
  */
-export function teamPanelLine(
-  inputs: Pick<TeamPanelInputs, 'members' | 'tasks'> & { readonly hidden?: boolean; readonly forced?: boolean },
-  palette: Palette,
-): string {
+export function teamPanelLine(inputs: TeamLineInputs, palette: Palette): string {
   if (inputs.hidden === true) return ''
-  const view = teamPanelView({ members: inputs.members, tasks: inputs.tasks, hidden: false })
-  if (!view.shown) return inputs.forced === true ? palette.dim(TEAM_PANEL_EMPTY) : ''
-  return palette.dim(summaryLine(view))
-}
-
-/**
- * Render the panel. The app omits `selected`, so the result is the one dim
- * summary line, or empty when the draw has nothing to show. A selected index
- * draws the heading, the capped rows, and `+<hidden> more · /team lists them all`.
- * @param view - the rows one draw produced.
- * @param render - the palette, the width, the optional selected row, and the forced-empty line.
- * @returns the panel text, empty when the summary stays unmounted.
- */
-export function renderTeamPanel(view: TeamPanelView, render: TeamPanelRender): string {
-  if (!view.shown) return render.forcedEmpty === undefined ? '' : render.palette.dim(render.forcedEmpty)
-  const { palette, selected } = render
-  if (selected === undefined) return palette.dim(summaryLine(view))
-  const counts = `team · ${String(view.memberCount)} members · ${String(view.taskCount)} tasks`
-  const hints = fitLegend(HINTS.panel, render.width - visibleWidth(counts) - visibleWidth(SEPARATOR))
-  const lines = [`${palette.dim(`${counts}${SEPARATOR}`)}${paintKeys(palette, hints)}`]
-  for (const [index, row] of view.rows.entries()) {
-    lines.push(index === selected ? palette.accent(row) : palette.dim(row))
-  }
-  if (view.hidden > 0) lines.push(palette.dim(`+${String(view.hidden)} more${SEPARATOR}/team lists them all`))
-  return lines.join('\n')
+  const teammates = inputs.members.filter(member => member.role === 'teammate')
+  const tasks = liveTasks(inputs.tasks)
+  const text = teammates.length === 0 && tasks.length === 0
+    ? inputs.forced === true ? TEAM_PANEL_EMPTY : ''
+    : summaryText(teammates, tasks, inputs.width)
+  return text === '' ? '' : palette.dim(truncateToWidth(text, inputs.width, '…'))
 }

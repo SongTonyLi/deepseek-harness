@@ -72,7 +72,10 @@ export interface SubagentLiveFacts {
 
 /** The plain inputs one panel draw is built from. */
 export interface SubagentPanelInputs {
-  /** The descendant listing, in pre-order. */
+  /**
+   * The descendant listing, in pre-order. The caller leaves out the entries
+   * another surface accounts for, such as Agent Teams roster members.
+   */
   entries: readonly SubagentDescendantListEntry[]
   /** Live facts by child session id; an id with no entry draws without them. */
   facts: ReadonlyMap<SessionId, SubagentLiveFacts>

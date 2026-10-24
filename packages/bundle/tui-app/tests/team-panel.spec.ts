@@ -1,13 +1,12 @@
-/** The docked team summary: counts, a hidden roster, deleted tasks, and the capped rows. */
+/** The docked team summary: teammate count, running names, task progress, hiding, and fitting to the width. */
 
+import { stripVTControlCharacters } from 'node:util'
 import { describe, expect, it } from 'vitest'
+import { visibleWidth } from '@earendil-works/pi-tui'
 import { createPalette } from '../src/style.ts'
 import {
   TEAM_PANEL_EMPTY,
-  TEAM_PANEL_MAX_ROWS,
-  renderTeamPanel,
   teamPanelLine,
-  teamPanelView,
   type TeamMemberRow,
   type TeamTaskRow,
 } from '../src/team-panel.ts'
@@ -30,120 +29,105 @@ function task(row: Pick<TeamTaskRow, 'id' | 'subject' | 'status'> & Partial<Team
   }
 }
 
-function draw(members: readonly TeamMemberRow[], tasks: readonly TeamTaskRow[], hidden = false): string {
-  return renderTeamPanel(teamPanelView({ members, tasks, hidden }), { palette, width: 100 })
+const lead = member({ id: 'lia', name: 'Lia', role: 'lead', status: 'running' })
+
+function teammate(name: string, status: TeamMemberRow['status'] = 'inactive'): TeamMemberRow {
+  return member({ id: `session-${name.toLowerCase()}`, name, role: 'teammate', status })
+}
+
+function line(
+  members: readonly TeamMemberRow[],
+  tasks: readonly TeamTaskRow[],
+  options: { width?: number; hidden?: boolean; forced?: boolean } = {},
+): string {
+  return stripVTControlCharacters(teamPanelLine({ members, tasks, width: options.width ?? 100, ...options }, palette))
 }
 
 describe('teamPanelLine', () => {
-  const lead = member({ id: 'lia', name: 'Lia', role: 'lead', status: 'inactive' })
-  const ada = member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive' })
   const pending = task({ id: 'task-1', subject: 'write tests', status: 'pending' })
 
   it('draws nothing until a teammate or a live task exists', () => {
-    expect(teamPanelLine({ members: [], tasks: [] }, palette)).toBe('')
-    expect(teamPanelLine({ members: [lead], tasks: [] }, palette)).toBe('')
-    expect(teamPanelLine({
-      members: [lead],
-      tasks: [task({ id: 'gone', subject: 'gone', status: 'deleted' })],
-    }, palette)).toBe('')
+    expect(line([], [])).toBe('')
+    expect(line([lead], [])).toBe('')
+    expect(line([lead], [task({ id: 'gone', subject: 'gone', status: 'deleted' })])).toBe('')
   })
 
-  it('counts every member, the running ones, and tasks that are not deleted', () => {
-    expect(teamPanelLine({
-      members: [lead, member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'running' })],
-      tasks: [pending, task({ id: 'gone', subject: 'gone', status: 'deleted' })],
-    }, palette)).toBe('team · 2 members · 1 running · 1 tasks')
+  it('counts teammates without the lead and counts completed tasks among the live ones', () => {
+    expect(line(
+      [lead, teammate('Ada'), teammate('Ben')],
+      [
+        task({ id: 'task-1', subject: 'a', status: 'completed' }),
+        task({ id: 'task-2', subject: 'b', status: 'in_progress' }),
+        pending,
+        task({ id: 'gone', subject: 'gone', status: 'deleted' }),
+        task({ id: 'gone-too', subject: 'gone too', status: 'deleted' }),
+      ],
+    )).toBe('team · 2 teammates · tasks 1/3 done · /team-play')
+  })
+
+  it('says teammate for exactly one', () => {
+    expect(line([lead, teammate('Ada')], [])).toBe('team · 1 teammate · tasks 0/0 done · /team-play')
+  })
+
+  it('draws a shared task when the roster has no teammate', () => {
+    expect(line([lead], [pending])).toBe('team · 0 teammates · tasks 0/1 done · /team-play')
+  })
+
+  it('names the running teammates and leaves the segment out when none runs', () => {
+    expect(line([lead, teammate('Ada', 'running'), teammate('Ben'), teammate('Cy', 'running')], []))
+      .toBe('team · 3 teammates · working: Ada, Cy · tasks 0/0 done · /team-play')
+    expect(line([teammate('Ada', 'provisioning'), teammate('Ben', 'failed')], []))
+      .toBe('team · 2 teammates · tasks 0/0 done · /team-play')
+    expect(line([{ ...lead, status: 'running' }, teammate('Ada')], []))
+      .not.toContain('working')
   })
 
   it('hides a roster and forces the empty line', () => {
-    expect(teamPanelLine({ members: [ada], tasks: [pending], hidden: true, forced: true }, palette)).toBe('')
-    expect(teamPanelLine({ members: [lead], tasks: [], forced: true }, palette)).toBe(TEAM_PANEL_EMPTY)
-    expect(teamPanelLine({ members: [ada], tasks: [], forced: true }, palette)).toBe('team · 1 members · 0 running · 0 tasks')
-  })
-})
-
-describe('team panel', () => {
-  it('draws nothing for an empty roster', () => {
-    expect(draw([], [])).toBe('')
+    expect(line([teammate('Ada')], [pending], { hidden: true, forced: true })).toBe('')
+    expect(line([lead], [], { forced: true })).toBe(TEAM_PANEL_EMPTY)
+    expect(line([lead], [], { forced: false })).toBe('')
+    expect(line([teammate('Ada')], [], { forced: true })).toBe('team · 1 teammate · tasks 0/0 done · /team-play')
   })
 
-  it('draws nothing when the only member is the lead and there is no task', () => {
-    expect(draw([member({ id: 'lia', name: 'Lia', role: 'lead', status: 'inactive' })], [])).toBe('')
+  it('dims the line', () => {
+    const colored = teamPanelLine({ members: [teammate('Ada')], tasks: [], width: 100 }, createPalette(true))
+    expect(colored).not.toBe(stripVTControlCharacters(colored))
+    expect(stripVTControlCharacters(colored)).toBe('team · 1 teammate · tasks 0/0 done · /team-play')
   })
 
-  it('counts every member and leaves the teammate name off the summary', () => {
-    const text = draw([
-      member({ id: 'lia', name: 'Lia', role: 'lead', status: 'inactive' }),
-      member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive' }),
-    ], [])
-    expect(text).toBe('team · 2 members · 0 running · 0 tasks')
-    expect(text).not.toContain('Ada')
-  })
+  describe('at a narrow width', () => {
+    const roster = [
+      lead,
+      teammate('Ada', 'running'),
+      teammate('Bartholomew', 'running'),
+      teammate('Cy', 'running'),
+      teammate('Di'),
+    ]
+    const full = 'team · 4 teammates · working: Ada, Bartholomew, Cy · tasks 0/0 done · /team-play'
 
-  it('counts a shared task when the roster has no teammate', () => {
-    expect(draw([
-      member({ id: 'lia', name: 'Lia', role: 'lead', status: 'inactive' }),
-    ], [task({ id: 'task-1', subject: 'write tests', status: 'pending' })])).toBe('team · 1 members · 0 running · 1 tasks')
-  })
-
-  it('counts a running member and a task that is not deleted', () => {
-    const text = draw([
-      member({ id: 'lia', name: 'Lia', role: 'lead', status: 'running' }),
-      member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive' }),
-    ], [
-      task({ id: 'task-1', subject: 'write tests', status: 'pending' }),
-      task({ id: 'task-2', subject: 'gone', status: 'deleted' }),
-    ])
-    expect(text).toBe('team · 2 members · 1 running · 1 tasks')
-  })
-
-  it('draws nothing when the user hid the panel', () => {
-    const text = draw([
-      member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'running' }),
-    ], [task({ id: 'task-1', subject: 'write tests', status: 'pending' })], true)
-    expect(text).toBe('')
-  })
-
-  it('draws the forced-empty line only while the summary has nothing to show', () => {
-    const empty = teamPanelView({ members: [], tasks: [], hidden: false })
-    expect(renderTeamPanel(empty, { palette, width: 100, forcedEmpty: TEAM_PANEL_EMPTY })).toBe(TEAM_PANEL_EMPTY)
-    expect(renderTeamPanel(empty, { palette, width: 100 })).toBe('')
-    const shown = teamPanelView({
-      members: [member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive' })],
-      tasks: [],
-      hidden: false,
+    it('keeps every running name while it fits', () => {
+      expect(line(roster, [], { width: visibleWidth(full) })).toBe(full)
     })
-    expect(renderTeamPanel(shown, { palette, width: 100, forcedEmpty: TEAM_PANEL_EMPTY })).toBe('team · 1 members · 0 running · 0 tasks')
-  })
 
-  it('keeps six focused rows and reports the rest', () => {
-    const members = [member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive', model: 'glm' })]
-    const tasks = Array.from({ length: 7 }, (_, index) => task({
-      id: `task-${String(index)}`,
-      subject: `task ${String(index)}`,
-      status: 'pending',
-      ready: index !== 1,
-      ...(index === 0 ? { ownerName: 'Ada' } : {}),
-    }))
-    tasks.push(task({ id: 'gone', subject: 'deleted task', status: 'deleted' }))
-    const view = teamPanelView({ members, tasks, hidden: false })
-    expect(view.rows).toHaveLength(TEAM_PANEL_MAX_ROWS)
-    expect(view.hidden).toBe(2)
-    expect(view.taskCount).toBe(7)
-    const focused = renderTeamPanel(view, { palette, selected: 0, width: 120 })
-    expect(focused).toContain('Ada · teammate · inactive · glm')
-    expect(focused).toContain('task 0 · pending · Ada · ready')
-    expect(focused).toContain('task 1 · pending · unowned · blocked')
-    expect(focused).toContain('+2 more · /team lists them all')
-    expect(focused).not.toContain('deleted task')
-    const fitted = teamPanelView({
-      members: [member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive' })],
-      tasks: [task({ id: 'task-1', subject: 'write tests', status: 'in_progress' })],
-      hidden: false,
+    it('drops names from the end and counts them as +<n>', () => {
+      expect(line(roster, [], { width: visibleWidth(full) - 1 }))
+        .toBe('team · 4 teammates · working: Ada, Bartholomew +1 · tasks 0/0 done · /team-play')
+      expect(line(roster, [], { width: 70 }))
+        .toBe('team · 4 teammates · working: Ada +2 · tasks 0/0 done · /team-play')
     })
-    const open = renderTeamPanel(fitted, { palette, selected: 1, width: 120 })
-    expect(open).toContain('Ada · teammate · inactive')
-    expect(open).toContain('write tests · in_progress · unowned · ready')
-    expect(open).not.toContain('more · /team')
+
+    it('shrinks the running names to their number before it cuts the line', () => {
+      expect(line(roster, [], { width: 62 })).toBe('team · 4 teammates · 3 working · tasks 0/0 done · /team-play')
+    })
+
+    it('ends a line that still does not fit with an ellipsis', () => {
+      const text = line(roster, [], { width: 30 })
+      expect(text).toBe('team · 4 teammates · 3 workin…')
+      expect(visibleWidth(text)).toBe(30)
+    })
+
+    it('cuts the forced-empty line to the width as well', () => {
+      expect(line([lead], [], { forced: true, width: 12 })).toBe('team · no t…')
+    })
   })
 })

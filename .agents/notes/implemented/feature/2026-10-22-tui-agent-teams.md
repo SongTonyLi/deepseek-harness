@@ -24,8 +24,9 @@ The bundle disables `subagent`, `subagent_fork`, and the overlapping global chil
 
 - A stock TUI session can delegate with `spawn_teammate`.
 - A profile that already added another bundle does not gain the layer.
-- An empty root session draws a start card that says Agent Teams is on and names `/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile`.
-- `/team-play` plays how teammates message each other. `/subagents` still opens one teammate's transcript.
+- An empty root session draws a static start card that says Agent Teams is on, what the lead and its teammates do, which commands show the team, and `/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile`.
+- `/team-play` opens the team room on the alternate screen: each member with its role and current work, the shared tasks, and the messages between them. `Enter` on a teammate opens its session as `/team` does. `/subagents` still lists every child session.
+- The main page shows each teammate once: the team line names who is working, the activity board labels a teammate's row `<name> · <role>`, and the subagent panel leaves roster members out.
 
 ## Related decisions
 

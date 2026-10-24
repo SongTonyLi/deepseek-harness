@@ -6,6 +6,7 @@
  * @module @deepseek-ai/dsh-tui-app/team
  */
 
+import { truncateToWidth } from '@earendil-works/pi-tui'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -232,6 +233,55 @@ export function teamToolRows(
       return typeof description === 'string' && description !== '' ? `${tool.name}  ${description}` : tool.name
     })
     .sort((left, right) => left.localeCompare(right))
+}
+
+/** What the lead's role reads as; the lead plans the work and delegates subtasks. */
+export const LEAD_ROLE_TEXT = 'orchestrator'
+
+/**
+ * The role a roster row plays, as the terminal names it.
+ * @param member - the roster row.
+ * @returns the lead's {@link LEAD_ROLE_TEXT}, a teammate's description (the responsibility
+ * the lead gave it), or `teammate` when it has none.
+ */
+export function memberRoleText(member: Pick<TeamMemberRow, 'role' | 'description'>): string {
+  if (member.role === 'lead') return LEAD_ROLE_TEXT
+  const description = member.description?.trim()
+  return description === undefined || description === '' ? 'teammate' : description
+}
+
+/**
+ * Columns of a teammate's role that a view title keeps. The role is the
+ * responsibility text the lead wrote, so it can be a paragraph; `/team` prints
+ * it whole. A presentation choice of this terminal surface, not a deployment setting.
+ */
+export const TEAMMATE_TITLE_ROLE_COLUMNS = 28
+
+/**
+ * A member's role on one line.
+ * @param member - the roster row.
+ * @returns {@link memberRoleText} with every run of whitespace, line breaks included, collapsed to one space.
+ */
+function roleOneLine(member: Pick<TeamMemberRow, 'role' | 'description'>): string {
+  return memberRoleText(member).replace(/\s+/gu, ' ')
+}
+
+/**
+ * How the activity board labels a roster member.
+ * @param member - the roster row.
+ * @returns `<name> · <role>`; the board cuts it to its own width.
+ */
+export function memberLabel(member: Pick<TeamMemberRow, 'name' | 'role' | 'description'>): string {
+  return `${member.name} · ${roleOneLine(member)}`
+}
+
+/**
+ * What the header and the view banner call an open teammate session.
+ * @param member - the teammate's roster row.
+ * @returns `teammate <name> · <role>`, with the role cut to {@link TEAMMATE_TITLE_ROLE_COLUMNS} columns and `…`.
+ */
+export function teammateViewTitle(member: Pick<TeamMemberRow, 'name' | 'role' | 'description'>): string {
+  return `teammate ${member.name} · ${truncateToWidth(roleOneLine(member), TEAMMATE_TITLE_ROLE_COLUMNS, '…')}`
 }
 
 /**

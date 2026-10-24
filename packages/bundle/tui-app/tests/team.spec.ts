@@ -1,15 +1,19 @@
 /** Agent Teams tool lines, roster rows, and the optional service read. */
 
+import { stripVTControlCharacters } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { describe, expect, it } from 'vitest'
 import {
+  TEAMMATE_TITLE_ROLE_COLUMNS,
   isTeamPanelEvent,
+  memberLabel,
   readAgentTeams,
   readTeam,
   readTeamSnapshot,
   teamBrowseRows,
   teamToolRows,
+  teammateViewTitle,
 } from '../src/team.ts'
 import type { TeamMemberRow, TeamTaskRow } from '../src/team-panel.ts'
 
@@ -64,7 +68,7 @@ describe('team rows', () => {
     const rows = teamBrowseRows([
       member({ id: 'lia', name: 'Lia', role: 'lead', status: 'inactive', description: 'keeps the roster' }),
       member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive', model: 'glm', diagnostics: ['slow start'], specialty: 'review' } as TeamMemberRow),
-      member({ id: 'bea', name: 'Bea', role: 'teammate', status: 'running' }),
+      member({ id: 'bea', name: 'Bea', role: 'teammate', status: 'running', diagnostics: [], slots: 2, remote: true, tags: ['a'] } as TeamMemberRow),
       member({ id: 'cy', name: 'Cy', role: 'teammate', status: 'provisioning' }),
       member({ id: 'dee', name: 'Dee', role: 'teammate', status: 'failed', description: 'could not start' }),
     ], [
@@ -93,6 +97,7 @@ describe('team rows', () => {
       enterable: true,
     })
     expect(rows[2]?.choice).toMatchObject({ id: 'bea', mode: 'continuable', enterable: true })
+    expect(rows[2]?.lines).toEqual(['Bea', 'teammate', 'running', 'remote: true', 'slots: 2'])
     expect(rows[3]?.choice).toBeUndefined()
     expect(rows[4]?.choice).toBeUndefined()
     expect(rows[5]?.choice).toBeUndefined()
@@ -168,5 +173,31 @@ describe('team rows', () => {
     }), agent)).toEqual({ kind: 'not-member' })
     expect(readTeam(reader({ listMembers: () => 'nope' }), agent)).toEqual({ kind: 'not-member' })
     expect(readTeam(reader({ listTasks: () => 'nope' }), agent)).toEqual({ kind: 'not-member' })
+  })
+})
+
+describe('team member names', () => {
+  const lead = member({ id: 'lia', name: 'lead', role: 'lead', status: 'running' })
+  const reviewer = member({ id: 'rae', name: 'Rae', role: 'teammate', status: 'running', description: 'reviews the lockfile' })
+  const bare = member({ id: 'bo', name: 'Bo', role: 'teammate', status: 'inactive' })
+
+  it('labels a member by name and role for the activity board', () => {
+    expect(memberLabel(lead)).toBe('lead · orchestrator')
+    expect(memberLabel(reviewer)).toBe('Rae · reviews the lockfile')
+    expect(memberLabel(bare)).toBe('Bo · teammate')
+    expect(memberLabel({ ...bare, description: '  ' })).toBe('Bo · teammate')
+  })
+
+  it('puts a role written over several lines on one line', () => {
+    expect(memberLabel({ ...reviewer, description: 'reviews the lockfile.\n\n  Reports   once' }))
+      .toBe('Rae · reviews the lockfile. Reports once')
+  })
+
+  it('titles a teammate view and cuts a long role', () => {
+    expect(teammateViewTitle(reviewer)).toBe('teammate Rae · reviews the lockfile')
+    expect(teammateViewTitle(bare)).toBe('teammate Bo · teammate')
+    const role = 'audits every dependency the lead added since the last release and reports'
+    const title = stripVTControlCharacters(teammateViewTitle({ ...reviewer, description: role }))
+    expect(title).toBe(`teammate Rae · ${role.slice(0, TEAMMATE_TITLE_ROLE_COLUMNS - 1)}…`)
   })
 })

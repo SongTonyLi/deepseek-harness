@@ -55,7 +55,7 @@ declare module '@deepseek-ai/dsh-llm' {
 }
 import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
-import type { Session, SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import { SessionId, type Session, type SessionEvent, type SessionSeq } from '@deepseek-ai/dsh-session'
 import { formatSessionReferenceMention } from '@deepseek-ai/dsh-session-reference'
 import { AppleContainerSandboxProvider } from '@deepseek-ai/dsh-sandbox-apple-container'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
@@ -85,20 +85,22 @@ import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import { AlternateScreen } from './alt-screen.ts'
 import { TeamIntro, agentTeamsMounted } from './team-intro.ts'
-import { TeamPlay, beatsFromEvents, type TeamBeat } from './team-play.ts'
+import { TeamPlay, beatsFromEvents, type TeamRoomSource } from './team-play.ts'
 import {
   TEAM_ABSENT_NOTICE,
   TEAM_EMPTY_NOTICE,
   TEAM_NOT_MEMBER_NOTICE,
   TEAM_PANEL_USAGE,
   isTeamPanelEvent,
+  memberLabel,
   readTeam,
   teamBrowseRows,
   teamToolRows,
+  teammateViewTitle,
   type TeamBrowseRow,
   type TeamSnapshot,
 } from './team.ts'
-import { teamPanelLine } from './team-panel.ts'
+import { teamPanelLine, type TeamMemberRow } from './team-panel.ts'
 import { ToolBackgrounder, movedJobId, type ForegroundCall } from './background.ts'
 import {
   BACKGROUND_GLYPH,
@@ -149,6 +151,7 @@ import { foldWorkflowRun, projectWorkflowRun, type WorkflowRunEvent, type Workfl
 import {
   ACTIVITY_SPINNERS,
   COMPACTING_ACTIVITY,
+  SPINNER_CYCLE,
   THINKING_SPINNER,
   TOOL_SPINNERS,
   activityStatus,
@@ -676,7 +679,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'deliverables', description: 'List the files the agent presented in this session' },
   { name: 'changes', description: 'Browse the files the last turn changed (/changes <turn> for an earlier one; Enter shows a file\'s diff)' },
   { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter opens one as a live session view)' },
-  { name: 'team-play', description: 'Play how Agent Teams teammates message each other (Esc closes; /plugins disable @deepseek-ai/dsh-experimental-agent-team-profile turns teams off)' },
+  { name: 'team-play', description: 'Open the team room: each member\'s role and current work, the shared tasks, and the messages between them (Enter opens a teammate, f filters, Esc closes)' },
   { name: 'team', description: 'Browse the team roster and shared tasks (Enter opens a teammate session)' },
   { name: 'team-tools', description: 'List the Agent Teams tools and whether this agent can call them' },
   { name: 'team-panel', description: 'Show or hide the team panel (/team-panel on, /team-panel off)' },
@@ -989,11 +992,11 @@ export class TuiApp {
   private reader: { pane: ReaderPane } | undefined
   /** The empty-session card shown while Agent Teams is mounted. */
   private teamIntro: TeamIntro | undefined
-  /** The teammate-exchange page on the alternate screen, while one is open. */
+  /** The team room on the alternate screen, while one is open. */
   private teamPlay: TeamPlay | undefined
   /**
    * Team-relevant events of the bound session: the history at bind, then
-   * events that arrive after it. `/team-play` reads this list.
+   * events that arrive after it. `/team-play` lists the exchanges in this log.
    */
   private teamLog: SessionEvent[] = []
   /** Set while a paint of the open reader is already queued for this turn of the loop. */
@@ -1492,7 +1495,7 @@ export class TuiApp {
     this.refreshHeader()
     this.banner.setViews(this.viewLabels, this.asides.has(next)
       ? BTW_VIEW_TITLE
-      : this.readOnlyViews.has(next) ? ONE_SHOT_VIEW_TITLE : undefined)
+      : this.readOnlyViews.has(next) ? ONE_SHOT_VIEW_TITLE : this.openTeammateTitle())
     this.refreshQueue()
     this.refreshFooter()
     this.refreshSubagentPanel()
@@ -1779,27 +1782,54 @@ export class TuiApp {
     const title = this.deps.ctx.get('sessionTitle')?.get(session)?.title
     const name = title === undefined ? `session ${session.id}` : `${title} ${palette.dim(`(${session.id})`)}`
     const teamsOn = this.parents.length === 0 && agentTeamsMounted(this.deps.ctx.get('agentTeams'))
+    const teammate = this.openTeammateTitle()
     const trail = this.parents.length === 0
       ? palette.dim(teamsOn ? '· Agent Teams on · /team-play · /help' : '· /help for commands')
       : this.asides.has(this.bound)
         ? `${palette.accent(`◆ ${BTW_VIEW_TITLE}`)} ${paintKeys(palette, '· Ctrl+P ends it and returns')}`
-        : `${palette.accent(`◆ subagent view ${'›'.repeat(this.parents.length)}`)} ${paintKeys(palette, '· Ctrl+P returns')}`
+        : teammate === undefined
+          ? `${palette.accent(`◆ subagent view ${'›'.repeat(this.parents.length)}`)} ${paintKeys(palette, '· Ctrl+P returns')}`
+          : `${palette.accent(`◆ ${teammate}`)} ${paintKeys(palette, '· Ctrl+P returns')}`
     this.header.setText(`${palette.bold(palette.accent('dsh'))} ${palette.dim('·')} ${name} ${trail}`)
     this.tui.requestRender()
   }
 
   /**
-   * Exchanges `/team-play` can play. An empty list means the page shows its example.
-   * @returns the logged exchanges, and whether they are the example.
+   * What the open view calls the bound session when the team roster lists it
+   * as a teammate.
+   * @returns `teammate <name> · <role>`, or undefined for any other session.
    */
-  private teamBeats(): { beats: readonly TeamBeat[]; example: boolean } {
+  private openTeammateTitle(): string | undefined {
+    const id = this.agent.session.id
+    const member = this.teamMembers().find(row => row.role === 'teammate' && row.id === id)
+    return member === undefined ? undefined : teammateViewTitle(member)
+  }
+
+  /**
+   * What the team room draws right now: the roster and the shared tasks from
+   * the service, the exchanges the bound session logged, and what each child
+   * last narrated. A roster the service cannot read yields no members.
+   * @returns the reads for one key or frame.
+   */
+  private teamRoomSource(): TeamRoomSource {
+    const snapshot = readTeam(this.deps.ctx.get('agentTeams'), this.agent)
+    const members = snapshot.kind === 'team' ? snapshot.members : []
     const names = this.scopedTeamToolNames()
-    const beats = beatsFromEvents(
-      this.teamLog.map(event => ({ type: event.type, data: event.data })),
-      'lead',
-      names.size > 0 ? names : undefined,
-    )
-    return beats.length > 0 ? { beats, example: false } : { beats: [], example: true }
+    const speaker = members.find(row => row.id === this.agent.session.id)?.name ?? 'lead'
+    return {
+      members,
+      tasks: snapshot.kind === 'team' ? snapshot.tasks : [],
+      beats: beatsFromEvents(
+        this.teamLog.map(event => ({ type: event.type, data: event.data })),
+        speaker,
+        names.size > 0 ? names : undefined,
+        new Map(members.map(row => [row.id, row.name])),
+      ),
+      note: id => this.activitySubagents.get(SessionId(id))?.note,
+      spinner: slot => this.deps.reducedMotion
+        ? undefined
+        : spinnerFrame(TOOL_SPINNERS.subagent, this.deps.now(), this.deps.spinnerMs, slot % SPINNER_CYCLE),
+    }
   }
 
   /**
@@ -1809,25 +1839,20 @@ export class TuiApp {
   private mountTeamIntro(): void {
     if (this.parents.length > 0 || !agentTeamsMounted(this.deps.ctx.get('agentTeams'))) return
     if (this.teamLog.some(event => event.type === 'user/message' || event.type === 'tool/call' || event.type === 'assistant/message')) return
-    this.teamIntro = new TeamIntro(this.deps.palette, this.deps.reducedMotion)
+    this.teamIntro = new TeamIntro(this.deps.palette)
     this.chat.addChild(this.teamIntro)
-    this.updateSpinTicker()
     this.tui.requestRender()
   }
 
-  /** Open the teammate-exchange page on the alternate screen. */
+  /** Open the team room on the alternate screen. */
   private openTeamPlay(): void {
-    if (!agentTeamsMounted(this.deps.ctx.get('agentTeams'))) {
-      this.notice(TEAM_ABSENT_NOTICE)
-      return
-    }
-    if (this.reader !== undefined) this.dropReader()
+    if (this.loadedTeam() === undefined) return
+    this.dropReader()
+    /* v8 ignore next -- the open room consumes every key, so no second /team-play reaches here */
     if (this.teamPlay !== undefined) return
     this.teamPlay = new TeamPlay({
       palette: this.deps.palette,
-      reducedMotion: this.deps.reducedMotion,
-      beats: () => this.teamBeats().beats,
-      example: () => this.teamBeats().example,
+      source: () => this.teamRoomSource(),
     })
     this.tui.renderNow()
     this.tui.suspend(() => { this.paintTeamPlay() })
@@ -1836,7 +1861,7 @@ export class TuiApp {
     this.updateSpinTicker()
   }
 
-  /** Draw the open teammate-exchange page. */
+  /** Draw the open team room. */
   private paintTeamPlay(): void {
     const play = this.teamPlay
     if (play === undefined || !this.readerScreen.active) return
@@ -1844,9 +1869,37 @@ export class TuiApp {
     this.readerScreen.paint(play.render(this.deps.terminal.columns, rows))
   }
 
-  /** Leave the teammate-exchange page and give the conversation its screen back. */
-  private closeTeamPlay(): void {
+  /**
+   * Draw the open team room after the team changed, and keep the spinner tick
+   * running exactly while a member works. A room that is not open is left alone.
+   */
+  private repaintTeamPlay(): void {
     if (this.teamPlay === undefined) return
+    this.paintTeamPlay()
+    this.updateSpinTicker()
+  }
+
+  /**
+   * Answer one key while the team room holds the terminal: `Ctrl+C` and the
+   * room's own close keys give the conversation its screen back, and `Enter`
+   * on a teammate leaves the room for that teammate's session.
+   * @param play - the open room.
+   * @param data - the raw key bytes.
+   */
+  private onTeamPlayKey(play: TeamPlay, data: string): void {
+    const action = matchesKey(data, 'ctrl+c') ? { kind: 'close' } as const : play.handleInput(data)
+    if (action === undefined) {
+      this.paintTeamPlay()
+      return
+    }
+    this.closeTeamPlay()
+    if (action.kind === 'open') {
+      this.navigate('teammate session', () => this.enterSubagent(action.choice, this.teamBrowseEntry(action.entry)))
+    }
+  }
+
+  /** Leave the team room and give the conversation its screen back. */
+  private closeTeamPlay(): void {
     this.teamPlay = undefined
     this.readerScreen.leave()
     this.tui.resume()
@@ -1856,8 +1909,8 @@ export class TuiApp {
   }
 
   /**
-   * Take the teammate-exchange page down without moving focus, for a session
-   * switch or a quit. A page that is not open is left alone.
+   * Take the team room down without moving focus, for a session switch or a
+   * quit. A room that is not open is left alone.
    */
   private dropTeamPlay(): void {
     if (this.teamPlay === undefined) return
@@ -2029,6 +2082,17 @@ export class TuiApp {
     this.refreshActivityBoard()
   }
 
+  /**
+   * Relabel the board's descendant rows from the current roster, so a member
+   * that joined after its row was drawn stops drawing under its listing label.
+   */
+  private relabelActivityBoard(): void {
+    for (const [id, row] of this.activitySubagents) {
+      if (this.activityLabelFor(id) === row.label) continue
+      this.setActivitySubagent(id, { state: row.state, ...row.note === undefined ? {} : { note: row.note } })
+    }
+  }
+
   /** Drop the open-turn board so bind and turn edges leave no stale rows. */
   private clearActivityBoard(): void {
     this.activityTodos = []
@@ -2061,12 +2125,15 @@ export class TuiApp {
   }
 
   /**
-   * The listing label for a descendant, or its session id when the listing
-   * has not named it. External work has no local Session, so the line says so.
+   * The board's label for a descendant: `<name> · <role>` for a team roster
+   * member, else the listing label, or its session id when the listing has
+   * not named it. External work has no local Session, so the line says so.
    * @param id - the descendant session id.
    * @returns the board's label for that child.
    */
   private activityLabelFor(id: SessionId): string {
+    const member = this.teamMembers().find(row => row.id === id)
+    if (member !== undefined) return memberLabel(member)
     const entry = this.subagentEntries.find(candidate => candidate.id === id)
     if (entry?.kind !== 'child') return id
     const label = entry.label ?? id
@@ -2140,12 +2207,15 @@ export class TuiApp {
    * Redraw the panel from the last listing and a fresh sample of the live
    * facts. The panel is mounted exactly while it has a row, so the last
    * resident child leaving takes the panel with it — and the keyboard back to
-   * the editor when the panel held it.
+   * the editor when the panel held it. Team roster members are not rows: the
+   * team line and the activity board account for them.
    */
   private refreshSubagentPanel(): void {
+    const members = new Set<string>(this.teamMembers().map(member => member.id))
+    const entries = this.subagentEntries.filter(entry => !members.has(entry.id))
     const view = subagentPanelView({
-      entries: this.subagentEntries,
-      facts: this.subagentFacts(),
+      entries,
+      facts: this.subagentFacts(entries),
       now: this.deps.now(),
     })
     this.panelView = view
@@ -2174,10 +2244,10 @@ export class TuiApp {
   }
 
   /**
-   * Redraw the team summary from the optional service. `auto` draws the count
-   * line only when a teammate or a shared task exists, `on` forces the line,
-   * and `off` hides it. The summary stays ahead of the subagent panel when
-   * both are mounted.
+   * Redraw the team summary from the optional service. `auto` draws the line
+   * only when a teammate or a shared task exists, `on` forces the line, and
+   * `off` hides it. The summary stays ahead of the subagent panel when both
+   * are mounted.
    */
   private refreshTeamPanel(): void {
     const snapshot = readTeam(this.deps.ctx.get('agentTeams'), this.agent)
@@ -2185,10 +2255,31 @@ export class TuiApp {
     this.mountTeamLine(teamPanelLine({
       members: roster === undefined ? [] : roster.members,
       tasks: roster === undefined ? [] : roster.tasks,
+      width: this.contentWidth(),
       hidden: this.teamPanelMode === 'off',
       forced: this.teamPanelMode === 'on',
     }, this.deps.palette))
     this.tui.requestRender()
+  }
+
+  /**
+   * Redraw every surface that reads the team roster after a `team/` event:
+   * the summary, the subagent panel that leaves members out, and the board
+   * labels of members that joined after their rows were drawn.
+   */
+  private refreshTeamSurfaces(): void {
+    this.refreshTeamPanel()
+    this.refreshSubagentPanel()
+    this.relabelActivityBoard()
+  }
+
+  /**
+   * The roster rows of the bound session's team.
+   * @returns the members, the lead included; empty when Agent Teams is absent or the bound session is not on a team.
+   */
+  private teamMembers(): readonly TeamMemberRow[] {
+    const snapshot = readTeam(this.deps.ctx.get('agentTeams'), this.agent)
+    return snapshot.kind === 'team' ? snapshot.members : []
   }
 
   /**
@@ -2294,6 +2385,7 @@ export class TuiApp {
         || (this.teamPanelMode === 'auto' && teamPanelLine({
           members: snapshot.members,
           tasks: snapshot.tasks,
+          width: this.contentWidth(),
         }, this.deps.palette) !== '')
       this.teamPanelMode = showing ? 'off' : 'on'
     } else {
@@ -2308,14 +2400,15 @@ export class TuiApp {
    * its Agent is running a turn, and one projection read for its timing and
    * token totals. Both reads are synchronous and touch no session log; a
    * child with no live Agent here contributes no facts.
+   * @param entries - the listing entries the panel draws from.
    * @returns the facts by child session id.
    */
-  private subagentFacts(): Map<SessionId, SubagentLiveFacts> {
+  private subagentFacts(entries: readonly SubagentDescendantListEntry[]): Map<SessionId, SubagentLiveFacts> {
     const facts = new Map<SessionId, SubagentLiveFacts>()
     const { ctx } = this.deps
     const agents = ctx.get('agents')
     const projections = ctx.get('sessionProjections')
-    for (const entry of this.subagentEntries) {
+    for (const entry of entries) {
       const child = agents?.get(entry.id)
       if (child === undefined) continue
       const live: SubagentLiveFacts = { running: child.status === 'running' }
@@ -3109,8 +3202,7 @@ export class TuiApp {
     // back here. Nothing is left for the editor, so the renderer is never
     // asked for a frame of a conversation the terminal is not showing.
     if (this.teamPlay !== undefined && this.readerScreen.active) {
-      if (matchesKey(data, 'ctrl+c') || this.teamPlay.handleInput(data) === 'close') this.closeTeamPlay()
-      else this.paintTeamPlay()
+      this.onTeamPlayKey(this.teamPlay, data)
       return { consume: true }
     }
     const reading = this.reader
@@ -5309,8 +5401,7 @@ export class TuiApp {
   private updateSpinTicker(): void {
     const spinning = this.streaming?.spinning() === true
       || this.spinners.size > 0 || this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0 || this.workflowSpinners.size > 0
-    const teamMotion = !this.deps.reducedMotion
-      && (this.teamIntro !== undefined || (this.teamPlay !== undefined && !this.teamPlay.paused))
+    const teamMotion = this.teamPlay?.animates() === true
     if (!this.stopped && (this.loaderAnimates() || spinning || teamMotion)) {
       this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, this.deps.spinnerMs)
       return
@@ -5335,14 +5426,7 @@ export class TuiApp {
       if (!block.spinning()) this.workflowSpinners.delete(block)
     }
     if (this.loaderAnimates()) this.refreshLoader()
-    if (this.teamIntro !== undefined) {
-      this.teamIntro.advance()
-      this.tui.requestRender()
-    }
-    if (this.teamPlay !== undefined) {
-      this.teamPlay.advance()
-      this.paintTeamPlay()
-    }
+    this.paintTeamPlay()
     if (this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0) this.refreshActivityBoard()
     else if (this.streaming?.spinning() === true || this.spinners.size > 0 || this.workflowSpinners.size > 0) this.tui.requestRender()
     this.updateSpinTicker()
@@ -5657,7 +5741,7 @@ export class TuiApp {
   private onSessionEvent(session: Session, event: SessionEvent): void {
     if (!this.replaying && session === this.agent.session) {
       this.teamLog.push(event)
-      if (this.teamPlay !== undefined) this.paintTeamPlay()
+      this.repaintTeamPlay()
     }
     if (session !== this.agent.session) {
       // Every live session of this process reaches here, the subagent
@@ -5666,13 +5750,14 @@ export class TuiApp {
       // under the bound session.
       this.markSubagentsStale()
       if (this.isBoundDescendant(session)) this.onDescendantActivity(session, event)
+      this.repaintTeamPlay()
       return
     }
     // A logged event is drawn after the streamed text that preceded it.
     this.pacer?.flush()
     // Roster, task, and team-message events are not on this package's session-event union.
     const loggedType: string = event.type
-    if (isTeamPanelEvent(loggedType)) this.refreshTeamPanel()
+    if (isTeamPanelEvent(loggedType)) this.refreshTeamSurfaces()
     const compaction = this.compactions.observe(event, this.turn)
     if (compaction !== undefined) this.showCompaction(compaction)
     switch (event.type) {

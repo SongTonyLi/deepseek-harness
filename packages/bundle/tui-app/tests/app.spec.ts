@@ -24,6 +24,7 @@ import { SET_TERMINAL_DEFAULT_CURSOR } from '../src/editor.ts'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, ESCAPE_HANDOFF_MS, FOCUS_REGIONS, HINTS, KEY_LINES, QUEUE_ENTRY_HINT, REGION_LABELS, entryHints, widestHint } from '../src/keys.ts'
 import { READER_HINTS, TOO_SMALL } from '../src/reader.ts'
+import { TEAM_PLAY_HINTS } from '../src/team-play.ts'
 import { ACTIVITY_SPINNERS, SPINNER_CYCLE, TOOL_SPINNERS, shimmer, spinnerFrame, type ActivityStatus } from '../src/spinner.ts'
 import { createPalette } from '../src/style.ts'
 import { TODO_GLYPH } from '../src/todos.ts'
@@ -1152,6 +1153,7 @@ describe('TuiApp', () => {
         ...KEY_LINES.editor.filter(line => !line.startsWith(ENTRY_HINTS[0] as string))]
         .map(step => [step, 'keys.ts'] as const),
       ...[...READER_HINTS.list, ...READER_HINTS.pane].map(step => [step, 'reader.ts'] as const),
+      ...TEAM_PLAY_HINTS.map(step => [step, 'team-play.ts'] as const),
       ['terminal too small for the reader (needs ', 'reader.ts'],
       [QUIT_TOAST, 'toast.ts'],
       [NOTHING_TO_READ_TOAST, 'toast.ts'],

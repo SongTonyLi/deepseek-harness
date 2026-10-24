@@ -4,7 +4,8 @@
  * renders those rows as the board's text.
  *
  * A descendant row says what that child last said it was doing, led by the
- * child's task label, so every running child reads against its own goal.
+ * child's task label (a teammate's name and role), so every running child
+ * reads against its own goal.
  *
  * The board is display-only — `/todos` and the subagent panel keep browsing
  * and focus. Membership is the open turn: the caller clears the inputs on
@@ -74,7 +75,10 @@ export type ActivitySubagentState = 'running' | 'done' | 'stopped'
 export interface ActivityBoardSubagent {
   /** The child session id, which keys the row's fade and spinner. */
   id: SessionId
-  /** Listing label, or the child session id when the listing has none. */
+  /**
+   * The row's label: `<name> · <role>` for a team roster member, else the
+   * listing label, or the child session id when the listing has none.
+   */
   label: string
   /** `running` while the child's turn is open; `done` or `stopped` once it settled. */
   state: ActivitySubagentState
