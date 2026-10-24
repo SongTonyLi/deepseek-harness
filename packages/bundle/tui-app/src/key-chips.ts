@@ -23,7 +23,7 @@ export type KeyVocabulary =
   /**
    * A legend, picker hint, or key list the terminal surface writes: every
    * named key, chord, and arrow, plus the single-character keys the legends
-   * name (`E`, `I`, `q`, `b`, `jk`, `?`, `/`, `@`, `[`, `]`).
+   * name (`E`, `I`, `q`, `b`, `f`, `jk`, `?`, `/`, `@`, `[`, `]`).
    */
   | 'legend'
   /**
@@ -43,7 +43,7 @@ const NAMED = 'Esc|Enter|Tab|Space|PgUp|PgDn|Home|End'
 const ARROWS = '[↑↓←→]{1,2}'
 
 /** The single-character keys a legend names, and the `jk` pair the reader draws as one token. */
-const CHARACTERS = String.raw`jk|[EIqb?/@[\]]`
+const CHARACTERS = String.raw`jk|[EIqbf?/@[\]]`
 
 /** A key token starts the text or follows whitespace or an opening parenthesis. */
 const BEFORE = String.raw`(?<=^|[\s(])`
@@ -85,7 +85,7 @@ const CTRL_LETTER = /^Ctrl\+([A-Z])$/u
 const ARROW_KEY = /^(Shift\+)?([↑↓←→])$/u
 
 /** A single-character key, which sends itself. */
-const CHARACTER_KEY = /^[jkEIqb?/@[\]]$/u
+const CHARACTER_KEY = /^[jkEIqbf?/@[\]]$/u
 
 /** Offset between an uppercase letter's code and the control code `Ctrl` with it sends. */
 const CONTROL_OFFSET = 64

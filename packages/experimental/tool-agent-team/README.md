@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package lets the model create named teammates, send them messages, inspect availability, wait for progress, interrupt stuck work, and coordinate through a shared task board. Every team member receives the same nine tools and guidance for coordinating in a shared workspace. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions. The package is published under its experimental name and provides no stability guarantee.
+This package lets the model create named teammates, send them messages, inspect availability, wait for progress, interrupt stuck work, and coordinate through a shared task board. Every team member receives the same nine tools and guidance for coordinating in a shared workspace, including how the Lead decides which subtasks to delegate and to which role. It replaces legacy subagent controls with the same tool names, so compositions that need both must disable the legacy definitions. The package is published under its experimental name and provides no stability guarantee.
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ This package lets the model create named teammates, send them messages, inspect 
 <a id="use-this-package"></a>
 ## Use this package
 
-Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. Once mounted, every team member — the Lead and each teammate — gets the same nine tools plus the same coordination policy. Each member receives its current role and name through required runtime context; `spawn_teammate` sends the initial task unchanged.
+Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. Once mounted, every team member — the Lead and each teammate — gets the same nine tools plus the same coordination policy. Each member receives its current role and name through required runtime context, and a teammate also receives the role description its Lead gave it; `spawn_teammate` sends the initial task unchanged.
 
 ### When to choose it
 
@@ -56,7 +56,7 @@ Try it by asking the Lead model: "create a teammate named reviewer to check the 
 
 The nine tools group into four capabilities:
 
-- **Create a teammate** — `spawn_teammate` takes a name, a description, and the initial task; only the Lead can call it.
+- **Create a teammate** — `spawn_teammate` takes a role-revealing name, a description of the teammate's role, and the initial task; only the Lead can call it.
 - **Send messages** — `send_message` steers a running member at its nearest step boundary, starts or resumes an inactive member.
 - **See and wait** — `list_agents` returns each member’s `target` and availability; `wait_agent` waits for the next team change; `interrupt_agent` stops a teammate's current turn (Lead only).
 - **Manage the task board** — `team_task_create`, `team_task_list`, `team_task_get`, and `team_task_update` add, browse, read, and update shared tasks.
@@ -95,7 +95,7 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 ### Policy and tools
 
-One `team:policy` section on the member scope states the shared coordination rules; the fixed text and the nine tool registrations are declared in [`src/index.ts`](src/index.ts). The nine tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
+One `team:policy` section on the member scope states the shared coordination rules and the Lead's orchestration guidance; the fixed text and the nine tool registrations are declared in [`src/index.ts`](src/index.ts). The nine tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
 
 ### Scoped registration and teardown
 
@@ -124,15 +124,15 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-One shared system policy covers Team availability, shared-cwd safety, task coordination, Steer delivery, inbox acceptance, and the Lead’s duty to wait. All nine schemas are identical for Leads and teammates; execution enforces Lead-only operations. Required runtime context states `You are the Team Lead named "lead".` or `You are teammate "<name>".` with `Your Team Lead is named "lead".`, plus roster and messaging instructions. Identity comes from current Team membership, survives optional-context suppression, and is restored when compaction removes its snapshot. An ordinary fork from a teammate receives its current Lead identity.
+One shared system policy covers Team availability, shared-cwd safety, Lead orchestration, task coordination, Steer delivery, inbox acceptance, and the Lead’s duty to wait. The orchestration paragraph is written about the Team Lead in the third person, so it reads correctly for teammates too: the Lead classifies the request’s subtasks by kind of work, keeps small, sequential, or tightly coupled ones, delegates independent, parallel, or disjoint-write ones to a teammate with exactly one role, records each delegated subtask on the shared task board, and verifies the results itself before the final answer. All nine schemas are identical for Leads and teammates; execution enforces Lead-only operations. `spawn_teammate` asks for a role-revealing `name` and a `description` that states the teammate’s role and responsibility. Required runtime context states `You are the Team Lead named "lead".` or `You are teammate "<name>".`, followed for a teammate by `Your role: <description>` (omitted when the roster has no description) and `Your Team Lead is named "lead".`, plus roster and messaging instructions. Identity comes from current Team membership and the roster row, survives optional-context suppression, and is restored when compaction removes its snapshot. An ordinary fork from a teammate receives its current Lead identity.
 
 #### Token effect
 
-Fixed policy and schema cost on every Team member request. Identity is part of the complete runtime-context snapshot. An unchanged retained snapshot adds no message; changed or removed context causes the loop to append a complete snapshot, including identity. Tool calls add compact JSON roster, task, wait, or receipt results. Peer content is retained by the Team domain in the target's history.
+Fixed policy and schema cost on every Team member request; the orchestration paragraph adds about 190 words to that policy. Identity is part of the complete runtime-context snapshot, and a teammate’s role line adds its description (at most 200 characters). An unchanged retained snapshot adds no message; changed or removed context causes the loop to append a complete snapshot, including identity. Tool calls add compact JSON roster, task, wait, or receipt results. Peer content is retained by the Team domain in the target's history.
 
 #### KV Cache effect
 
-With the same provider/model, shared system policy, and tool schemas, a fork retains the parent request prefix and appends its task and current runtime context. Tool results and peer messages append after the reusable request prefix. Sessions recorded with identity inside the system prompt can change that prefix on their first request under this layout; actual provider cache hits remain best-effort.
+With the same provider/model, shared system policy, and tool schemas, a fork retains the parent request prefix and appends its task and current runtime context. The policy is identical for the Lead and every teammate, so role-specific text lives only in runtime context after that prefix. Tool results and peer messages append after the reusable request prefix. Sessions recorded with identity inside the system prompt can change that prefix on their first request under this layout; actual provider cache hits remain best-effort.
 
 ## Known Limitations and Deferred Work
 

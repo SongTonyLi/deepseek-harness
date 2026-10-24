@@ -2438,11 +2438,11 @@ subagent_oar 工具在为外部提供方配置的别名之间选择。本目录�
   "properties": {
     "name": {
       "type": "string",
-      "description": "Unique lower-kebab-case teammate name."
+      "description": "Unique lower-kebab-case teammate name that reveals its role, such as reviewer or test-writer."
     },
     "description": {
       "type": "string",
-      "description": "Short description of the delegated responsibility."
+      "description": "The teammate's role: the kind of work it owns and its responsibility, in at most 200 characters. The teammate receives it as its role, and list_agents shows it."
     },
     "prompt": {
       "type": "string",

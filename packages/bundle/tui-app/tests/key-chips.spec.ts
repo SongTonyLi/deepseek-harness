@@ -50,7 +50,7 @@ describe('keyBytes', () => {
   })
 
   it('types a single-character key as itself', () => {
-    for (const key of ['j', 'k', 'E', 'I', 'q', 'b', '?', '/', '@', '[', ']']) expect(keyBytes(key)).toBe(key)
+    for (const key of ['j', 'k', 'E', 'I', 'q', 'b', 'f', '?', '/', '@', '[', ']']) expect(keyBytes(key)).toBe(key)
   })
 
   it('presses nothing for a name outside the vocabulary', () => {

@@ -30,15 +30,39 @@ export const Config: z<Config> = z.object({
   forkProvider: z.string().default('fork'),
 })
 
-/** Model-facing collaboration guidance shared by Lead and teammates. */
+/**
+ * Model-facing collaboration guidance, identical for the Lead and every
+ * teammate so a fork reuses the Lead's request prefix. Lead-specific guidance
+ * is therefore written about the Lead in the third person.
+ * @param interrupt - whether `interrupt_agent` is registered and named in the text.
+ * @returns the complete `team:policy` section text.
+ */
 function teamPolicy(interrupt: boolean): string {
   return `Agent Teams is available in this session
 
 The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
 
+The Team Lead orchestrates the work and is the only member that calls spawn_teammate. The Lead first breaks the request into subtasks and classifies each by kind of work: exploration or research, implementation of a separable part, review or verification, or testing. The Lead keeps a subtask when it is small, sequential, tightly coupled to the Lead's current reasoning, or needs the whole conversation. It delegates a subtask that is independent and can run in parallel, has a write scope disjoint from other work, or benefits from a focused role with fresh context. It does not spawn a teammate for trivial work, and it prefers send_message to an inactive teammate whose role matches over spawning a new one. Each teammate gets exactly one role matched to its kind of work: a role-revealing name and a description that states the role and responsibility. The Lead records every delegated subtask as a shared task with acceptance criteria, write scopes, and blocked_by dependencies, then assigns it to the teammate's target with team_task_update reassign or tells the teammate to claim it. The Lead integrates and verifies the teammates' results itself before the final answer.
+
 Prefer read/edit/write for file changes. If a file operation returns FS_STALE_VERSION, read the current file, rebase your intended change onto the new content, and retry. Bash, formatters, code generators, and scripts are not fully protected by the filesystem version guard; coordinate them explicitly and have the Lead review the final diff and run tests.
 
 Use the target returned by spawn_teammate or list_agents for send_message${interrupt ? ' and interrupt_agent' : ''}, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A peer message starts with its sender name. A successful send does not mean the recipient has processed it. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
+}
+
+/**
+ * Render the teammate-specific identity lines of the `team:identity` context.
+ * @param name - the teammate's roster name.
+ * @param description - the role the Lead gave at creation; blank or absent omits the role line.
+ * @returns the lines that precede the shared roster and messaging instructions.
+ */
+function teammateIdentity(name: string, description: string | undefined): string {
+  const role = description?.trim()
+  return [
+    `You are teammate "${name}".`,
+    ...role === undefined || role === '' ? [] : [`Your role: ${role}`],
+    'Your Team Lead is named "lead".',
+    'To message your Team Lead, use send_message({ target: "lead", message: "..." }).',
+  ].join('\n')
 }
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
@@ -181,9 +205,8 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       required: true,
       text: () => {
         const { role, name } = ctx.agentTeams.membership(agent)
-        return `${role === 'lead'
-          ? 'You are the Team Lead named "lead".'
-          : `You are teammate "${name}".\nYour Team Lead is named "lead".\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).`}
+        const description = ctx.agentTeams.listMembers(agent).find(member => member.id === agent.id)?.description
+        return `${role === 'lead' ? 'You are the Team Lead named "lead".' : teammateIdentity(name, description)}
 Use list_agents({}) to find your teammates and their names.
 To message another teammate, use send_message({ target: "<teammate name>", message: "..." }).`
       },
@@ -193,8 +216,12 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       name: 'spawn_teammate',
       description: 'Create one named, durable teammate. Only the Team Lead may call this tool.',
       parameters: {
-        name: { type: 'string', required: true, description: 'Unique lower-kebab-case teammate name.' },
-        description: { type: 'string', required: true, description: 'Short description of the delegated responsibility.' },
+        name: { type: 'string', required: true, description: 'Unique lower-kebab-case teammate name that reveals its role, such as reviewer or test-writer.' },
+        description: {
+          type: 'string',
+          required: true,
+          description: 'The teammate\'s role: the kind of work it owns and its responsibility, in at most 200 characters. The teammate receives it as its role, and list_agents shows it.',
+        },
         prompt: { type: 'string', required: true, description: 'Complete initial task for the teammate.' },
         context: {
           type: 'string',

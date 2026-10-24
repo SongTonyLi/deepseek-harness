@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`tool-agent-team` 通过 Agent 作用域的 `systemPrompt.context()` 注册 `team:identity`，并设置 `required: true`。提供方读取现有 Team membership，渲染成员角色、名字与寻址说明。关闭可选 context 不能移除它。固定协作策略保留在 system prompt；roster 和 task 状态仍通过工具查询。初始任务只包含传入的正文。
+`tool-agent-team` 通过 Agent 作用域的 `systemPrompt.context()` 注册 `team:identity`，并设置 `required: true`。提供方读取现有 Team membership，渲染成员角色、名字与寻址说明；teammate 的 context 还会写出其 roster 行中的角色描述。关闭可选 context 不能移除它。固定协作策略保留在 system prompt；roster 和 task 状态仍通过工具查询。初始任务只包含传入的正文。
 
 Loop 负责日志记录、保留快照比较和压缩后的重新接纳。角色变化会在继承历史之后追加当前完整 runtime-context 快照；保留的 context 未变化时不追加消息。不引入 Team 专属的保留状态、事件类型或日志迁移。已有身份提醒仍作为历史消息保留。
 

@@ -1,15 +1,11 @@
-/** The Agent Teams start card, `/team-play`, and the roster commands. */
+/** The Agent Teams roster commands and the team summary. */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { TeamId } from '@deepseek-ai/dsh-experimental-agent-team'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
 import { KEY, bench, type Bench } from './bench.ts'
-import { TEAM_OFF_COMMAND, TEAM_ON_LINE } from '../src/team-intro.ts'
 import type { TeamMemberRow, TeamTaskRow } from '../src/team-panel.ts'
-
-const LEAVE = '\u001b[?1049l'
 
 const ABSENT = 'Agent Teams are not enabled in this composition'
 
@@ -74,7 +70,7 @@ describe('team commands', () => {
         } as never)
       },
     })
-    expect(await test.screen()).toContain('team · 2 members · 0 running · 1 tasks')
+    expect(await test.screen()).toContain('team · 1 teammate · tasks 0/1 done · /team-play')
 
     typeLine(test, '/team-panel')
     await test.settle()
@@ -82,7 +78,7 @@ describe('team commands', () => {
 
     typeLine(test, '/team-panel')
     await test.settle()
-    expect(await test.screen()).toContain('team · 2 members · 0 running · 1 tasks')
+    expect(await test.screen()).toContain('team · 1 teammate · tasks 0/1 done · /team-play')
 
     typeLine(test, '/team-panel off')
     await test.settle()
@@ -90,7 +86,7 @@ describe('team commands', () => {
 
     typeLine(test, '/team-panel on')
     await test.settle()
-    expect(await test.screen()).toContain('team · 2 members · 0 running · 1 tasks')
+    expect(await test.screen()).toContain('team · 1 teammate · tasks 0/1 done · /team-play')
 
     typeLine(test, '/team-tools')
     await test.settle()
@@ -101,7 +97,7 @@ describe('team commands', () => {
 
     test.appendPrompt('hello')
     await test.settle()
-    expect(await test.screen()).toContain('team · 2 members · 0 running · 1 tasks')
+    expect(await test.screen()).toContain('team · 1 teammate · tasks 0/1 done · /team-play')
   })
 
   it('forces an empty roster on and rejects another argument', async () => {
@@ -224,17 +220,17 @@ describe('team commands', () => {
     })
     await test.settle()
     const screen = await test.screen()
-    const teamAt = screen.indexOf('team · 2 members · 0 running · 0 tasks')
+    const teamAt = screen.indexOf('team · 1 teammate · tasks 0/0 done · /team-play')
     const subAt = screen.indexOf('subagents ·')
     expect(teamAt).toBeGreaterThanOrEqual(0)
     expect(subAt).toBeGreaterThan(teamAt)
 
     typeLine(test, '/team-panel on')
     await test.settle()
-    expect(await test.screen()).toContain('team · 2 members · 0 running · 0 tasks')
+    expect(await test.screen()).toContain('team · 1 teammate · tasks 0/0 done · /team-play')
     test.setStatus('idle')
     await test.settle()
-    expect(await test.screen()).toContain('team · 2 members · 0 running · 0 tasks')
+    expect(await test.screen()).toContain('team · 1 teammate · tasks 0/0 done · /team-play')
   })
 
   it('leaves the list when the picker is cancelled', async () => {
@@ -248,62 +244,6 @@ describe('team commands', () => {
     test.terminal.type(KEY.escape)
     await test.settle()
     expect(test.hostCalls.some(call => call.startsWith('observe'))).toBe(false)
-    expect(await test.screen()).toContain('team · 2 members · 0 running · 0 tasks')
-  })
-
-  it('draws the start card and the header only while the service is mounted', async () => {
-    const bare = await bench()
-    const bareScreen = await bare.screen()
-    expect(bareScreen).not.toContain(TEAM_ON_LINE)
-    expect(bareScreen).toContain('/help for commands')
-
-    const mounted = await bench({
-      before(ctx) {
-        ctx.provide('agentTeams', { listMembers: () => [] })
-      },
-    })
-    const screen = await mounted.screen()
-    expect(screen).toContain(TEAM_ON_LINE)
-    expect(screen).toContain(TEAM_OFF_COMMAND)
-    expect(screen).toContain('Agent Teams on')
-    expect(screen).toContain('/team-play')
-  })
-
-  it('refuses /team-play when Agent Teams is not mounted', async () => {
-    const test = await bench()
-    typeLine(test, '/team-play')
-    await test.settle()
-    expect(await test.screen()).toContain(ABSENT)
-    expect(test.terminal.written).not.toContain('\u001b[?1049h')
-  })
-
-  it('plays a logged exchange and Esc returns to the conversation', async () => {
-    const test = await bench({
-      before(ctx) {
-        ctx.provide('agentTeams', { listMembers: () => [] })
-      },
-      history: [{
-        type: 'tool/call',
-        seq: 1,
-        time: 1,
-        data: {
-          turn: 1,
-          step: 1,
-          callId: ToolCallId('call-1'),
-          name: 'spawn_teammate',
-          arguments: '{"name":"reviewer","prompt":"inspect the lockfile"}',
-        },
-      }] as never[],
-    })
-    await test.settle()
-    expect(await test.screen()).not.toContain(TEAM_ON_LINE)
-    typeLine(test, '/team-play')
-    await test.settle()
-    expect(test.terminal.written).toContain('inspect the lockfile')
-    expect(test.terminal.written).toContain('team play')
-    const playing = test.terminal.written.length
-    test.terminal.type(KEY.escape)
-    await test.settle()
-    expect(test.terminal.written.slice(playing)).toContain(LEAVE)
+    expect(await test.screen()).toContain('team · 1 teammate · tasks 0/0 done · /team-play')
   })
 })

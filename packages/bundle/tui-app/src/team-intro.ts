@@ -1,26 +1,36 @@
 /**
- * The empty-session card that says Agent Teams is on, how to turn it off,
- * and a short collaboration animation.
+ * The empty-session card that says Agent Teams is on, what it does, which
+ * commands show the team, and how to turn it off.
  *
- * Pure aside from the component's frame counter. The application advances
- * that counter on the spinner tick; reduced motion draws every beat settled.
+ * Static text: the card draws the same lines at every frame, so it needs no
+ * spinner tick and has no reduced-motion variant.
  * @module @deepseek-ai/dsh-tui-app/team-intro
  */
 
 import type { Component } from '@earendil-works/pi-tui'
 import { truncateToWidth } from '@earendil-works/pi-tui'
 import type { Palette } from './style.ts'
-import {
-  PLAY_PHASES,
-  SHOWCASE_BEATS,
-  TEAM_OFF_COMMAND,
-  TEAM_ON_LINE,
-  TEAM_PLAY_LINE,
-  laneParts,
-  type TeamBeat,
-} from './team-play.ts'
 
-export { TEAM_OFF_COMMAND, TEAM_ON_LINE, TEAM_PLAY_LINE }
+/** What the start card and the header call the feature. */
+export const TEAM_ON_LINE = 'Agent Teams is on'
+
+/** What the lead and its teammates do, in one sentence. */
+export const TEAM_EXPLAIN_LINE = 'The lead plans the work and delegates independent subtasks to teammates, each with one role.'
+
+/** Disable command printed on the start card. */
+export const TEAM_OFF_COMMAND = '/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile'
+
+/** What the start card says about turning the feature off. */
+export const TEAM_OFF_LINE = 'Turn it off, then start dsh tui again:'
+
+/** The commands the start card names, with what each shows. */
+export const TEAM_COMMAND_LINES: readonly (readonly [command: string, summary: string])[] = [
+  ['/team-play', 'live team room: roles, current work, tasks, and messages'],
+  ['/team', 'roster and shared task board'],
+]
+
+/** Columns the command column takes, so the summaries line up. */
+const COMMAND_COLUMNS = 13
 
 /**
  * Whether `service` is the Agent Teams service this terminal can read.
@@ -34,73 +44,39 @@ export function agentTeamsMounted(service: unknown): boolean {
 
 /** How the start card is drawn. */
 export interface TeamIntroDraw {
-  /** The palette the title and the moving lane are styled with. */
+  /** The palette the title and the commands are styled with. */
   palette: Palette
-  /** Spinner frames since the card was mounted; ignored while motion is reduced. */
-  frame: number
   /** Columns the card fits. */
   width: number
-  /** Draw every showcase beat settled, with the marker at the receiver. */
-  reducedMotion: boolean
 }
 
 /**
  * The start card's lines.
- * @param draw - the palette, the frame, the width, and whether motion is reduced.
+ * @param draw - the palette and the width.
  * @returns one line per row, each fitting `draw.width`.
  */
 export function teamIntroLines(draw: TeamIntroDraw): string[] {
   const width = Math.max(draw.width, 1)
   const fit = (line: string): string => truncateToWidth(line, width, '…')
   const palette = draw.palette
-  const lines = [
+  return [
     fit(palette.bold(palette.accent(TEAM_ON_LINE))),
-    fit(palette.dim('Turn it off, then start dsh tui again:')),
+    fit(TEAM_EXPLAIN_LINE),
+    ...TEAM_COMMAND_LINES.map(([command, summary]) =>
+      fit(`${palette.accent(command.padEnd(COMMAND_COLUMNS))}${palette.dim(summary)}`)),
+    fit(palette.dim(TEAM_OFF_LINE)),
     fit(palette.warning(TEAM_OFF_COMMAND)),
-    fit(palette.dim(TEAM_PLAY_LINE)),
-    '',
   ]
-  const playing = SHOWCASE_BEATS[Math.floor(draw.frame / PLAY_PHASES) % SHOWCASE_BEATS.length] ?? SHOWCASE_BEATS[0]
-  const beats = draw.reducedMotion || playing === undefined ? SHOWCASE_BEATS : [playing]
-  for (const beat of beats) {
-    const phase = draw.reducedMotion ? PLAY_PHASES - 1 : draw.frame % PLAY_PHASES
-    lines.push(fit(paintLane(palette, beat, phase)))
-    lines.push(fit(palette.dim(`  ${beat.text}`)))
-  }
-  return lines
-}
-
-/**
- * One collaboration lane with the sender and receiver colored.
- * @param palette - the palette the names are styled with.
- * @param beat - the exchange the lane shows.
- * @param phase - the marker's step, 0 at the sender through 7 at the receiver.
- * @returns the lane.
- */
-function paintLane(palette: Palette, beat: TeamBeat, phase: number): string {
-  const parts = laneParts(beat.from, beat.to, phase)
-  return `${palette.accent(parts.from)}${palette.dim(parts.track)}${palette.success(parts.to)}`
 }
 
 /**
  * The start card mounted in an empty root transcript while Agent Teams is on.
  */
 export class TeamIntro implements Component {
-  private frame = 0
-
   /**
    * @param palette - the palette the card is styled with.
-   * @param reducedMotion - draw the storyboard settled instead of stepping it.
    */
-  constructor(
-    private readonly palette: Palette,
-    private readonly reducedMotion: boolean,
-  ) {}
-
-  /** Step the showcase to its next frame. A reduced-motion card stays settled. */
-  advance(): void {
-    if (!this.reducedMotion) this.frame += 1
-  }
+  constructor(private readonly palette: Palette) {}
 
   invalidate(): void {}
 
@@ -110,11 +86,6 @@ export class TeamIntro implements Component {
    * @returns the card's lines.
    */
   render(width: number): string[] {
-    return teamIntroLines({
-      palette: this.palette,
-      frame: this.frame,
-      width,
-      reducedMotion: this.reducedMotion,
-    })
+    return teamIntroLines({ palette: this.palette, width })
   }
 }

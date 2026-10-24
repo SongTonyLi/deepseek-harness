@@ -2432,11 +2432,11 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
   "properties": {
     "name": {
       "type": "string",
-      "description": "Unique lower-kebab-case teammate name."
+      "description": "Unique lower-kebab-case teammate name that reveals its role, such as reviewer or test-writer."
     },
     "description": {
       "type": "string",
-      "description": "Short description of the delegated responsibility."
+      "description": "The teammate's role: the kind of work it owns and its responsibility, in at most 200 characters. The teammate receives it as its role, and list_agents shows it."
     },
     "prompt": {
       "type": "string",

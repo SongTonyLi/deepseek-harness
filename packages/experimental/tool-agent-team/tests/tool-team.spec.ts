@@ -49,6 +49,9 @@ const TOOL_NAMES = [
   'team_task_update',
 ].sort()
 
+/** Lead orchestration guidance in the shared `team:policy` section, pinned verbatim. */
+const ORCHESTRATION_PARAGRAPH = "The Team Lead orchestrates the work and is the only member that calls spawn_teammate. The Lead first breaks the request into subtasks and classifies each by kind of work: exploration or research, implementation of a separable part, review or verification, or testing. The Lead keeps a subtask when it is small, sequential, tightly coupled to the Lead's current reasoning, or needs the whole conversation. It delegates a subtask that is independent and can run in parallel, has a write scope disjoint from other work, or benefits from a focused role with fresh context. It does not spawn a teammate for trivial work, and it prefers send_message to an inactive teammate whose role matches over spawning a new one. Each teammate gets exactly one role matched to its kind of work: a role-revealing name and a description that states the role and responsibility. The Lead records every delegated subtask as a shared task with acceptance criteria, write scopes, and blocked_by dependencies, then assigns it to the teammate's target with team_task_update reassign or tells the teammate to claim it. The Lead integrates and verifies the teammates' results itself before the final answer."
+
 const roots: string[] = []
 const contexts = new Set<Context>()
 let callNumber = 0
@@ -256,7 +259,22 @@ describe('dsh-tool-team', () => {
     expect(leadPrompt).toContain('Task readiness never starts an owner')
     expect(leadPrompt).toContain('returns noProgress immediately')
     expect(leadPrompt).not.toContain('Your Team role')
+    expect(leadPrompt).toContain(`\n\n${ORCHESTRATION_PARAGRAPH}\n\n`)
     expect(renderContextSnapshot(leadAssembly)).toContain('You are the Team Lead named "lead".')
+    expect(renderContextSnapshot(leadAssembly)).not.toContain('Your role:')
+    const spawnSchema = leadAssembly.tools.find(schema => schema.name === 'spawn_teammate')
+    expect(spawnSchema?.parameters).toMatchObject({
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Unique lower-kebab-case teammate name that reveals its role, such as reviewer or test-writer.',
+        },
+        description: {
+          type: 'string',
+          description: "The teammate's role: the kind of work it owns and its responsibility, in at most 200 characters. The teammate receives it as its role, and list_agents shows it.",
+        },
+      },
+    })
 
     const spawned = await execute(ctx, lead, 'spawn_teammate', {
       name: 'tool-worker',
@@ -270,7 +288,9 @@ describe('dsh-tool-team', () => {
     expect(childAssembly.tools.map(schema => schema.name).filter(name => TOOL_NAMES.includes(name)).sort())
       .toEqual(TOOL_NAMES)
     expect(renderPrompt(childAssembly)).toBe(leadPrompt)
-    expect(renderContextSnapshot(childAssembly)).toContain('You are teammate "tool-worker".')
+    expect(renderContextSnapshot(childAssembly)).toContain(
+      'You are teammate "tool-worker".\nYour role: exercise scoped tools\nYour Team Lead is named "lead".\n',
+    )
     expect(childAssembly.contexts).toContainEqual(expect.objectContaining({ name: 'team:identity' }))
     const initialPrompt = child.session.snapshotEvents().find(event => event.type === 'user/message'
       && event.data.source.kind === 'user')
@@ -311,7 +331,7 @@ describe('dsh-tool-team', () => {
     } else {
       expect(JSON.stringify(childRequest.messages)).not.toContain('Parent task')
     }
-    expect(runtimeContextText(adapter.requests[1]!)).toContain('You are teammate "reviewer".')
+    expect(runtimeContextText(adapter.requests[1]!)).toContain('You are teammate "reviewer".\nYour role: review\nYour Team Lead is named "lead".')
     expect(childRequest.messages.at(-1)?.content).toContainEqual({ type: 'text', text: 'Review the work' })
     await using persisted = await ctx.sessionPersistence.open(childId, 'read')
     const { events } = await persisted.read()
@@ -764,6 +784,30 @@ describe('dsh-tool-team', () => {
     expect('default' in toolTeam).toBe(false)
     expect(toolTeam.name).toBe('tool-agent-team')
     expect(toolTeam.inject).toEqual(['agents', 'agentTeams', 'tools', 'systemPrompt'])
+  })
+
+  it.each([
+    ['absent', undefined],
+    ['blank', '  '],
+  ] as const)('omits the teammate role line when the roster description is %s', async (_label, description) => {
+    const { ctx, lead } = await setup(['hang'])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'role-less', description: 'finish the task', prompt: 'wait',
+    })
+    const child = await waitRunning(ctx, spawnedChildId(ctx, lead, spawned))
+    const roster = ctx.agentTeams.listMembers(child)
+    const row = roster.find(member => member.id === child.id)!
+    const { description: _description, ...withoutDescription } = row
+    vi.spyOn(ctx.agentTeams, 'listMembers').mockReturnValue([
+      ...roster.filter(member => member !== row),
+      description === undefined ? withoutDescription : { ...row, description },
+    ])
+    const identity = renderContextSnapshot(await assembly(ctx, child))
+    expect(identity).toContain('You are teammate "role-less".\nYour Team Lead is named "lead".\n')
+    expect(identity).not.toContain('Your role:')
+    vi.restoreAllMocks()
+    expect(renderContextSnapshot(await assembly(ctx, child))).toContain('Your role: finish the task')
+    ctx.agentTeams.interrupt(lead, 'role-less')
   })
 
   it('uses configured fresh and fork provider names', async () => {
