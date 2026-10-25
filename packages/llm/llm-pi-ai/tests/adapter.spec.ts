@@ -757,6 +757,27 @@ describe('provider profile lifecycle', () => {
     expect(server.requests[0]).toMatchObject({ reasoning_effort: 'none' })
   })
 
+  it('sends OpenRouter effort none for Off and for an unnamed effort on Kimi K3.1 Pro', async () => {
+    vi.stubEnv('PI_TEST_KEY', 'test-key')
+    const server = await mockServer([{ events: textEvents }, { events: textEvents }, { events: textEvents }])
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(LlmPiAi, {
+      providers: {
+        openrouter: { apiKeyEnv: 'PI_TEST_KEY', baseURL: `${server.url}/api/v1` },
+      },
+    })
+    const model = 'moonshotai/kimi-k3.1-pro'
+
+    await assemble(ctx, { provider: 'openrouter', model, messages: [] })
+    await assemble(ctx, { provider: 'openrouter', model, reasoningEffort: ReasoningEffortId('off'), messages: [] })
+    await assemble(ctx, { provider: 'openrouter', model, reasoningEffort: ReasoningEffortId('high'), messages: [] })
+
+    expect(server.requests[0]).toMatchObject({ reasoning: { effort: 'none' } })
+    expect(server.requests[1]).toMatchObject({ reasoning: { effort: 'none' } })
+    expect(server.requests[2]).toMatchObject({ reasoning: { effort: 'high' } })
+  })
+
   it('holds back reasoning_effort when the endpoint cannot take it', async () => {
     vi.stubEnv('PI_TEST_KEY', 'test-key')
     const server = await mockServer([{ events: textEvents }])

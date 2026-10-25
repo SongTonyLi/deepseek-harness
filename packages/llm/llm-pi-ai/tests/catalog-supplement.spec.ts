@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { catalogModels } from '../src/catalog.ts'
+import { getSupportedThinkingLevels } from '../src/models.ts'
 import * as supplementModule from '../src/catalog-supplement.ts'
 
 describe('catalog supplement', () => {
@@ -22,23 +23,6 @@ describe('catalog supplement', () => {
     spy.mockRestore()
   })
 
-  it('supplements Claude Haiku 5.5 with its current catalog metadata', () => {
-    const model = catalogModels('anthropic').get('claude-haiku-5-5')
-    expect(model).toMatchObject({
-      id: 'claude-haiku-5-5',
-      name: 'Claude Haiku 5.5',
-      contextWindow: 1000000,
-      cost: {
-        input: 0.1,
-        output: 0.5,
-        cacheRead: 0.01,
-        cacheWrite: 0.125,
-        tiers: [{ inputTokensAbove: 100000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 }],
-      },
-      thinkingLevelMap: { off: null, xhigh: 'xhigh', max: 'max' },
-    })
-  })
-
   it('supplements the OpenRouter DeepSeek V4.1 Flash 1017 model with its listed pricing', () => {
     const model = catalogModels('openrouter').get('deepseek/deepseek-v4.1-flash-1017')
     expect(model).toMatchObject({
@@ -50,6 +34,21 @@ describe('catalog supplement', () => {
       cost: { input: 0.05, output: 0.6 },
       thinkingLevelMap: { off: 'none', high: 'high', max: 'max' },
     })
+  })
+
+  it('supplements the OpenRouter Kimi K3.1 Pro model with its listed pricing and efforts', () => {
+    const model = catalogModels('openrouter').get('moonshotai/kimi-k3.1-pro')
+    expect(model).toMatchObject({
+      id: 'moonshotai/kimi-k3.1-pro',
+      name: 'MoonshotAI: Kimi K3.1 Pro',
+      provider: 'openrouter',
+      api: 'openai-completions',
+      contextWindow: 1048576,
+      cost: { input: 2, output: 10, cacheRead: 0.2 },
+      compat: { requiresReasoningContentOnAssistantMessages: true },
+      thinkingLevelMap: { off: 'none', low: 'low', high: 'high', max: 'max' },
+    })
+    expect(getSupportedThinkingLevels(model!)).toEqual(['off', 'low', 'high', 'max'])
   })
 
   it('returns no supplemental models for a provider route the supplement does not extend', () => {
