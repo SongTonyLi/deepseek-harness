@@ -225,9 +225,9 @@ export function describeFailure(error: unknown): string {
 export interface CodeSpan {
   /** The language hint the highlighter resolves; unknown hints draw plain. */
   lang: string
-  /** The row's own text before the source: a line number, a diff sign, an indent. */
+  /** The row's own text before the source, which leads its first line only: a line number, a diff sign, an indent. */
   prefix: string
-  /** The source text, one line without its newline. */
+  /** The source text: one line without its newline, or several joined by `\n` when one row holds a multi-line command. */
   source: string
 }
 
@@ -236,8 +236,8 @@ export const SHELL_COMMAND_PREFIX = '$ '
 
 /**
  * The transcript row for one shell command, with the prompt outside the source.
- * @param command - the command text, one logical line or the first of several.
- * @returns `$ ${command}`.
+ * @param command - the command text, which may hold several lines.
+ * @returns `$ ${command}`, still one row: the prompt leads the first line only.
  */
 export function shellCommandRow(command: string): string {
   return `${SHELL_COMMAND_PREFIX}${command}`
@@ -569,8 +569,8 @@ export function toolResultBody(view: ToolResultView | undefined, content: readon
  * Draw card rows in syntax colour where a highlighter and a span allow it.
  * Consecutive spans of one language are coloured as one block, so a comment
  * or string that spans rows keeps its colour; a group the highlighter cannot
- * colour yet, or colours to a different row count, draws plain and is drawn
- * again once its grammar lands.
+ * colour yet, or colours to a different number of lines than its sources
+ * hold, draws plain and is drawn again once its grammar lands.
  * @param lines - the plain rows.
  * @param code - the span behind each row, aligned by index; absent rows draw plain.
  * @param highlight - the highlighter; absent draws every row plain.
@@ -593,10 +593,16 @@ export function paintCodeRows(
     let end = index + 1
     while (end < lines.length && code[end]?.lang === span.lang) end += 1
     const group = code.slice(index, end) as CodeSpan[]
+    // The highlighter answers one line per source line, and a row may hold several.
+    const heights = group.map(row => row.source.split('\n').length)
     const coloured = highlight.lines(group.map(row => row.source).join('\n'), span.lang)
-    if (coloured !== undefined && coloured.length === group.length) {
-      // One coloured line per row, as the length check just established.
-      coloured.forEach((text, offset) => { out[index + offset] = `${(group[offset] as CodeSpan).prefix}${text}` })
+    if (coloured !== undefined && coloured.length === heights.reduce((total, height) => total + height, 0)) {
+      let taken = 0
+      for (const [offset, row] of group.entries()) {
+        const height = heights[offset] as number
+        out[index + offset] = `${row.prefix}${coloured.slice(taken, taken + height).join('\n')}`
+        taken += height
+      }
     }
     index = end
   }

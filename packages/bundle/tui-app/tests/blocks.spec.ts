@@ -6,7 +6,7 @@ import { AssistantBlock, ContextBlock, NoticeBlock, SUBAGENT_RUNNING_GLYPH, TOOL
 import type { FadeStyle } from '../src/fade.ts'
 import { jsonTreeText } from '../src/json-tree.ts'
 import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
-import type { CodeSpan } from '../src/transcript.ts'
+import { toolCallText, type CodeSpan } from '../src/transcript.ts'
 import { CardFlow } from '../src/pace.ts'
 
 const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 6 }
@@ -809,6 +809,22 @@ const READ_CODE: CodeSpan[] = [
 describe('render reuse', () => {
   const RULES = Array.from({ length: 30 }, (_, index) => `rule ${String(index)}`)
 
+  it('colours every line of a multi-line terminal command, with the prompt on the first line only', () => {
+    const { highlight } = countingHighlighter()
+    const call = toolCallText('{}', { card: 'terminal', title: 'python3 -c "\nprint(1)\n"', description: 'run it', cwd: '/w' }, 'bash')
+    const block = new ToolBlock({ ...theme, toolPreviewLines: 10, codeHighlight: highlight }, 'bash', call, 1)
+    block.setResult(['ok'], false)
+    expect(block.render(40)).toEqual([
+      '',
+      '◆ bash run it',
+      '  │ $ «python3 -c "»',
+      '  │ «print(1)»',
+      '  │ «"»',
+      '  │ cwd: /w',
+      '  │ ok',
+    ])
+  })
+
   it('colours a tool card once and hands back the same lines while nothing changed', () => {
     const { highlight, counter } = countingHighlighter()
     const block = new ToolBlock({ ...theme, codeHighlight: highlight }, 'read', { title: 'a.ts', lines: [] }, 1)
@@ -887,6 +903,12 @@ describe('render reuse', () => {
     const plain = new UserShellBlock(theme, 'true', ['$ true'])
     expect(plain.render(20)).toEqual(['', '$ true', ''])
     plain.invalidate()
+  })
+
+  it('colours every line of a multi-line user-shell command, with the prompt on the first line only', () => {
+    const { highlight } = countingHighlighter()
+    const block = new UserShellBlock({ ...theme, codeHighlight: highlight }, 'echo a\necho b', ['$ echo a\necho b', 'out'])
+    expect(block.render(40)).toEqual(['', '$ «echo a»', '«echo b»', 'out', ''])
   })
 
   it('dims user-shell output and renders complete JSON output as a colored tree', () => {
