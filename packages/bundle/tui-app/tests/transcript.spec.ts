@@ -336,6 +336,33 @@ describe('transcript', () => {
     expect(paintCodeRows(lines, code, undefined)).toEqual(lines)
   })
 
+  it('colours a row that holds several source lines, with the prefix on its first line only', () => {
+    const asked: string[] = []
+    const highlight = {
+      lines: (code: string) => {
+        asked.push(code)
+        // One styled line per source line, which is what the real highlighter answers.
+        return code.split('\n').map(line => `<${line}>`)
+      },
+    }
+    const lines = ['$ a\nb\nc', 'cwd: /w', '1 d', '2 e\nf']
+    const code = [
+      { lang: 'sh', prefix: '$ ', source: 'a\nb\nc' }, undefined,
+      { lang: 'sh', prefix: '1 ', source: 'd' }, { lang: 'sh', prefix: '2 ', source: 'e\nf' },
+    ]
+    expect(paintCodeRows(lines, code, highlight)).toEqual(['$ <a>\n<b>\n<c>', 'cwd: /w', '1 <d>', '2 <e>\n<f>'])
+    // Consecutive rows are still one block, however many lines each holds.
+    expect(asked).toEqual(['a\nb\nc', 'd\ne\nf'])
+  })
+
+  it('draws a multi-line row plain when the highlighter answers another number of lines than the source holds', () => {
+    // One styled line for a three-line source would drop two lines of the command.
+    const highlight = { lines: () => ['<joined>'] }
+    const lines = ['$ a\nb\nc']
+    const code = [{ lang: 'sh', prefix: '$ ', source: 'a\nb\nc' }]
+    expect(paintCodeRows(lines, code, highlight)).toEqual(lines)
+  })
+
   it('cuts rows to a maximum and names what one fold left out', () => {
     const lines = ['a', 'b', 'c', 'd']
     const marker = (hidden: number): string => `${String(hidden)} left`

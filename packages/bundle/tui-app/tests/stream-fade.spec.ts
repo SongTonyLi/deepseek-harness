@@ -686,6 +686,43 @@ describe('syntax colour', () => {
     expect(card).toMatch(/\$ \u001b\[/u)
   }, 20_000)
 
+  it('repaints every line of a multi-line terminal command once the shell grammar has landed', async () => {
+    const test = await bench({
+      ...TRUECOLOR,
+      reducedMotion: true,
+      before: async (ctx) => {
+        await ctx.plugin(SystemPrompt)
+        await ctx.plugin(ToolRuntime)
+        ctx.tools.register({
+          name: 'bash',
+          description: 'run',
+          parameters: { type: 'object', properties: {} },
+          output: { schema: { type: 'string' as const }, render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: String(value) }] },
+          execute: () => Promise.resolve('unused'),
+          presentCall: () => ({ card: 'terminal' as const, title: 'python3 -c "\nimport zipfile\nprint(1)\n"; ls', cwd: '/w' }),
+        })
+      },
+    })
+    await test.settle()
+    const since = writesFrom(test)
+    test.appendToolCall('call-1', 'bash', {})
+    await test.settle()
+    // The command is one card row that spans lines; the grammar colours the
+    // lines after the first as it does the first, once it has landed.
+    let opening: string | undefined
+    let continuation: string | undefined
+    for (let pass = 0; pass < 200 && (opening === undefined || continuation === undefined); pass += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await test.settle()
+      const rows = since().split('\n')
+      opening ??= rows.findLast(row => row.includes('python3') && hasSyntaxColor(row))
+      continuation ??= rows.findLast(row => row.includes('zipfile') && hasSyntaxColor(row))
+    }
+    expect(opening, 'the first command line was never painted').toBeDefined()
+    expect(continuation, 'the later command lines were never painted').toBeDefined()
+    expect(opening).toMatch(/\$ \u001b\[/u)
+  }, 20_000)
+
   it('draws every fence plain where the setting is off', async () => {
     const test = await bench({ ...TRUECOLOR, codeHighlight: false })
     await test.settle()

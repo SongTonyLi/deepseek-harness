@@ -637,6 +637,35 @@ describe('the turn panel\'s styling', () => {
     expect(render(COLOR, true).map(stripTerminalSequences)).toEqual(render(PLAIN, false))
   })
 
+  it('colours every line of a multi-line terminal command in a call section without moving a row', () => {
+    const highlight: CodeHighlighter = {
+      lines: code => code.split('\n').map(line => `\u001b[35m${line}\u001b[39m`),
+    }
+    const command = 'echo a\necho "b\nc"'
+    const blocks = [
+      source('user', [{ kind: 'user', rows: ['run it'] }], { turn: 0 }),
+      source('tool', [
+        { kind: 'call', rows: ['list', `$ ${command}`], code: [undefined, { lang: 'shellscript', prefix: '$ ', source: command }] },
+        { kind: 'result', rows: ['ok'] },
+      ], { turn: 1, name: 'bash', title: 'list' }),
+    ]
+    const groups = turnGroups(blocks)
+    const render = (palette: typeof COLOR, withHighlight: boolean): string[] => readerRows({ cursor: { block: 1, part: 0 }, column: 'pane', offset: 0 }, groups, {
+      palette,
+      blocks,
+      width: 95,
+      rows: 30,
+      minColumns: READER_MIN_COLUMNS,
+      totalTurns: groups.length,
+      ...withHighlight ? { highlight } : {},
+    })
+    const lines = render(COLOR, true).join('\n')
+    expect(lines).toContain('$ \u001b[35mecho a\u001b[39m')
+    expect(lines).toContain('\u001b[35mecho "b\u001b[39m')
+    expect(lines).toContain('\u001b[35mc"\u001b[39m')
+    expect(render(COLOR, true).map(stripTerminalSequences)).toEqual(render(PLAIN, false))
+  })
+
   it('draws only visible sections, reuses cached rows, and refreshes when highlighting changes', () => {
     const asked: string[] = []
     let colored = false
