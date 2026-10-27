@@ -5,6 +5,7 @@ import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui'
 import { turnGroups, type SectionPart, type SectionSource, type TranscriptCursor } from '../src/navigation.ts'
 import type { CodeSpan } from '../src/transcript.ts'
 import type { FadeStyle } from '../src/fade.ts'
+import { jsonTreeText } from '../src/json-tree.ts'
 import {
   READER_MIN_COLUMNS,
   TOO_SMALL,
@@ -705,6 +706,23 @@ describe('the turn panel\'s styling', () => {
       totalTurns: groups.length,
     }
     expect(readerRows(state, groups, render)).toEqual(readerRows(state, groups, render))
+  })
+
+  it('colors JSON trees and dims the remaining shell output', () => {
+    const tree = jsonTreeText('{"ok":true}')
+    if (tree === undefined) throw new Error('expected JSON tree')
+    const rows = [...tree.lines, 'exit 2']
+    const blocks = [source('tool', [
+      { kind: 'call', rows: ['$ false'] },
+      { kind: 'result', rows, json: [...tree.json, undefined], shellOutput: true },
+    ], { turn: 1, name: 'bash' })]
+    const groups = turnGroups(blocks)
+    const render: ReaderRender = { palette: COLOR, blocks, width: 95, rows: 30, minColumns: READER_MIN_COLUMNS, totalTurns: groups.length }
+    const state: ReaderState = { cursor: { block: 0, part: 1 }, column: 'pane', offset: 0 }
+    const lines = readerRows(state, groups, render).join('\n')
+    expect(lines).toContain(`${COLOR.dim('╰─ ')}${COLOR.tool('ok')}: ${COLOR.link('true')}`)
+    expect(lines).toContain(COLOR.dim('exit 2'))
+    expect(readerRows(state, groups, render).join('\n')).toBe(lines)
   })
 
   it('accents the section the reader holds and draws the rest the way the conversation does', () => {

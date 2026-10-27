@@ -19,6 +19,7 @@
 
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import type { JsonRowStyle } from './json-tree.ts'
 import type { MotionLevel } from './motion.ts'
 import type { CodeSpan } from './transcript.ts'
 
@@ -51,6 +52,10 @@ export interface SectionPart {
   rows: readonly string[]
   /** The code span behind each row, aligned with `rows` by index; absent draws every row plain. */
   code?: readonly (CodeSpan | undefined)[]
+  /** JSON token ranges behind tree rows, aligned with `rows` by index. */
+  json?: readonly (JsonRowStyle | undefined)[]
+  /** Whether non-JSON result rows are shell output to dim. */
+  shellOutput?: boolean
   /** Strip and heading label when it is not the kind name, e.g. a snapshot contribution. */
   label?: string
 }

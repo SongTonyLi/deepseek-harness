@@ -33,6 +33,7 @@ import { maskCredentialText } from '@deepseek-ai/dsh-client-ui-secret-mask'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { sliceColumns } from './columns.ts'
 import { fadeInSlice, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
+import { jsonTreeText, paintJsonRows, type JsonRowStyle } from './json-tree.ts'
 import { paintKeys } from './key-chips.ts'
 import { pulse, type MotionLevel } from './motion.ts'
 import type { AssistantSection, ContextSection, SectionPart, ToolSection, UserSection } from './navigation.ts'
@@ -271,9 +272,9 @@ class FenceMemo implements CodeHighlighter {
 }
 
 /**
- * A finished `!` / `!!` run: `$ command` in shellscript colour, then the
- * output rows. Re-paints when a grammar lands because {@link LastDrawn}
- * drops on `invalidate()`.
+ * A finished `!` / `!!` run: `$ command` in shellscript colour, then dimmed
+ * output rows or a semantic-colour JSON tree. Re-paints when a grammar lands
+ * because {@link LastDrawn} drops on `invalidate()`.
  */
 export class UserShellBlock implements Component {
   /** The wrapped rows, by width. */
@@ -301,8 +302,15 @@ export class UserShellBlock implements Component {
    */
   render(width: number): string[] {
     return this.drawn.get(String(width), () => {
-      const { lines, code } = shellCommandBody(this.command, this.rows.slice(1))
-      const painted = paintCodeRows(lines, code, this.theme.codeHighlight)
+      const extra = this.rows.slice(1)
+      const tree = extra[0] === undefined ? undefined : jsonTreeText(extra[0])
+      const displayed = tree === undefined ? extra : [...tree.lines, ...extra.slice(1)]
+      const { lines, code } = shellCommandBody(this.command, displayed)
+      const json: (JsonRowStyle | undefined)[] | undefined = tree === undefined
+        ? undefined
+        : [undefined, ...tree.json, ...extra.slice(1).map(() => undefined)]
+      const highlighted = paintCodeRows(lines, code, this.theme.codeHighlight)
+      const painted = paintJsonRows(highlighted, json, lines.map((_, index) => index > 0), this.theme.palette)
       const inner = Math.max(1, width)
       const [command = '', ...output] = painted
       const prompt = `${this.theme.palette.accent(SHELL_COMMAND_PREFIX.trimEnd())} ${command.slice(SHELL_COMMAND_PREFIX.length)}`
@@ -1028,8 +1036,12 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   private resultLines: string[] = []
   /** The code span behind each result row, for a `read` or `diff` result; absent otherwise. */
   private resultCode: (CodeSpan | undefined)[] | undefined
+  /** JSON token ranges behind result rows that form a tree; absent otherwise. */
+  private resultJson: (JsonRowStyle | undefined)[] | undefined
   /** Which result rows are diff additions or removals, for a `diff` result; absent otherwise. */
   private resultDiff: (DiffMark | undefined)[] | undefined
+  /** Whether non-JSON result rows are shell output, dimmed apart from the command. */
+  private shellOutput = false
   /** The facts a folded subagent card draws as one row; absent for every other tool. */
   private subagent: SubagentRowFacts | undefined
   private expanded = false
@@ -1093,11 +1105,22 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     const call = [...title, ...this.call.lines]
     const parts: SectionPart[] = [call.length === 0
       ? { kind: 'call', rows: [NO_ARGUMENTS] }
-      : { kind: 'call', rows: call, ...this.call.code === undefined ? {} : { code: [...title.map(() => undefined), ...this.call.code] } }]
+      : {
+        kind: 'call',
+        rows: call,
+        ...this.call.code === undefined ? {} : { code: [...title.map(() => undefined), ...this.call.code] },
+        ...this.call.json === undefined ? {} : { json: [...title.map(() => undefined), ...this.call.json] },
+      }]
     if (this.status !== 'running') {
       parts.push(this.resultLines.length === 0
         ? { kind: 'result', rows: [NO_OUTPUT] }
-        : { kind: 'result', rows: this.resultLines, ...this.resultCode === undefined ? {} : { code: this.resultCode } })
+        : {
+          kind: 'result',
+          rows: this.resultLines,
+          ...this.resultCode === undefined ? {} : { code: this.resultCode },
+          ...this.resultJson === undefined ? {} : { json: this.resultJson },
+          ...this.shellOutput ? { shellOutput: true } : {},
+        })
     }
     this.sections = { revision: this.revision, parts }
     return parts
@@ -1191,14 +1214,23 @@ export class ToolBlock implements Component, ToolSection, Foldable {
    * @param isError - whether the tool reported failure.
    * @param code - the span behind each row, for a result the card colours as code.
    * @param diff - which rows are diff additions or removals, for a result the card boxes as a diff.
+   * @param presentation - JSON token ranges and whether the rows are shell output.
    */
-  setResult(lines: string[], isError: boolean, code?: (CodeSpan | undefined)[], diff?: (DiffMark | undefined)[]): void {
+  setResult(
+    lines: string[],
+    isError: boolean,
+    code?: (CodeSpan | undefined)[],
+    diff?: (DiffMark | undefined)[],
+    presentation: Pick<ToolCallText, 'json' | 'shellOutput'> = {},
+  ): void {
     // The applied hunks say everything the call-time diff did, with file
     // lines and context, so they take its place in the card.
     if (diff !== undefined && this.call.diff !== undefined) this.call = { title: this.call.title, lines: [] }
     this.resultLines = lines
     this.resultCode = code
+    this.resultJson = presentation.json
     this.resultDiff = diff
+    this.shellOutput = presentation.shellOutput === true
     this.status = isError ? 'error' : 'done'
     this.revision += 1
     this.measured = false
@@ -1212,7 +1244,9 @@ export class ToolBlock implements Component, ToolSection, Foldable {
   setBackground(lines: string[]): void {
     this.resultLines = lines
     this.resultCode = undefined
+    this.resultJson = undefined
     this.resultDiff = undefined
+    this.shellOutput = false
     this.status = 'background'
     this.revision += 1
     this.measured = false
@@ -1388,6 +1422,14 @@ export class ToolBlock implements Component, ToolSection, Foldable {
         ...new Array<undefined>(loading.length).fill(undefined),
         ...this.resultCode ?? new Array<undefined>(this.resultLines.length).fill(undefined),
       ]
+    const json = this.call.json === undefined && this.resultJson === undefined
+      ? undefined
+      : [
+        ...this.call.json ?? new Array<undefined>(this.call.lines.length).fill(undefined),
+        ...new Array<undefined>(loading.length).fill(undefined),
+        ...this.resultJson ?? new Array<undefined>(this.resultLines.length).fill(undefined),
+      ]
+    const output = body.map((_, index) => this.shellOutput && index >= this.call.lines.length + loading.length)
     // Truncation runs over the whole body, so the kept rows can stop inside
     // the call rows; how many of them survived splits the two fade groups.
     // The fold marker is past every span, so it always draws plain. The
@@ -1399,7 +1441,9 @@ export class ToolBlock implements Component, ToolSection, Foldable {
     // A changed row keeps its own syntax colour and takes the tint filling it
     // from the mark instead, so nothing paints it twice. The fold marker keeps
     // the terminal's own colour around the key it names.
-    const painted = paintCodeRows(kept, code, this.theme.codeHighlight)
+    const presentationLength = cut ? kept.length - 1 : kept.length
+    const highlighted = paintCodeRows(kept, code, this.theme.codeHighlight)
+    const painted = paintJsonRows(highlighted, json?.slice(0, presentationLength), output.slice(0, presentationLength), palette)
     const shown = cut ? [...painted.slice(0, -1), paintKeys(palette, kept.at(-1) as string, text => text)] : painted
     const callCount = Math.min(this.call.lines.length + loading.length, shown.length)
     // Marks align with the body like the spans; the fold marker, the last

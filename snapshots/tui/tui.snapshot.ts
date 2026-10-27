@@ -42,9 +42,18 @@ describe('TUI recorded-session replay', () => {
         { marker: 'Shift+↑ read · Shift+↓ status', keys: '\u001b' },
         { marker: 'Shift+↑ read · Shift+↓ status', keys: '' },
       ], cliPatch, { LINES: '40', DSH_CLI_MOCK_MALFORMED_REVIEW_ONCE: malformedJson ? '1' : '0',
+        ...malformedJson ? {} : { NO_COLOR: '', FORCE_COLOR: '1', COLORTERM: '' },
         ...mode === 'record' ? {} : { DSH_TUI_SNAPSHOT_SESSION: join(root, name) } })
       expect(run.exitCode, `${run.stderr}\n${run.stdout}`).toBe(0)
       expect(run.stdout).toContain('CLI tool round trip complete: CLI_TOOL_ROUND_TRIP')
+      expect(run.stdout).toContain('├─ status: "CLI_TOOL_ROUND_TRIP"')
+      expect(run.stdout).toContain('╰─ items:')
+      expect(run.stdout).toContain('├─ [0]: 1')
+      expect(run.stdout).toContain('╰─ [1]: true')
+      if (!malformedJson) {
+        expect(run.raw).toContain('\u001b[38;5;117mstatus\u001b[39m')
+        expect(run.raw).toContain('\u001b[38;5;149m"CLI_TOOL_ROUND_TRIP"\u001b[39m')
+      }
       expect(run.stdout).toMatch(/[⠁⠈⠐⠠⢀⡀⠄⠂] calling bash/u)
       expect(run.stdout).toContain(`❯ ${task}`)
       expect(run.stdout).toContain('row 2/')

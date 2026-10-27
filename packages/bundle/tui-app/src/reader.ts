@@ -24,6 +24,7 @@ import { Markdown, fuzzyFilter, truncateToWidth, visibleWidth, wrapTextWithAnsi,
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { mixFadeColor, nearestAnsi256, recolorLines, type FadeStyle } from './fade.ts'
 import { bottomRule, chip, fitLegend, legendRule, ruleRoom, topRule } from './frame.ts'
+import { paintJsonRows, type JsonRowStyle } from './json-tree.ts'
 import { paintKeys } from './key-chips.ts'
 import {
   cursorAt,
@@ -478,6 +479,8 @@ const MEASURING = createPalette(false)
 interface BodySource {
   rows: readonly string[]
   code?: readonly (CodeSpan | undefined)[] | undefined
+  json?: readonly (JsonRowStyle | undefined)[] | undefined
+  shellOutput?: boolean | undefined
 }
 
 /**
@@ -490,9 +493,9 @@ interface BodySource {
  */
 function bodySource(block: SectionSource, part: SectionPart): BodySource {
   if (block.blockKind === 'tool' && part.kind === 'call' && block.title !== '' && part.rows[0] === block.title) {
-    return { rows: part.rows.slice(1), code: part.code?.slice(1) }
+    return { rows: part.rows.slice(1), code: part.code?.slice(1), json: part.json?.slice(1) }
   }
-  return { rows: part.rows, code: part.code }
+  return { rows: part.rows, code: part.code, json: part.json, shellOutput: part.shellOutput }
 }
 
 /**
@@ -643,7 +646,9 @@ function drawSection(block: SectionSource, part: SectionPart, width: number, loo
       rows = [header, ...replyRows(part.rows, room, look).map(line => `${indent}${line}`)]
     } else {
       const source = bodySource(block, part)
-      const painted = paintCodeRows(source.rows, source.code, look.highlight)
+      const highlighted = paintCodeRows(source.rows, source.code, look.highlight)
+      const output = source.shellOutput === true ? source.rows.map(() => true) : undefined
+      const painted = paintJsonRows(highlighted, source.json, output, look.palette)
       // The tone is read from the plain row, which `painted` aligns with by index.
       rows = [header, ...painted.flatMap((row, index) => {
         const tone = rowTone(block, part, source.rows[index] as string)
@@ -664,6 +669,8 @@ interface DrawnSection {
   header: string
   rows: readonly string[]
   code: readonly (CodeSpan | undefined)[] | undefined
+  json: readonly (JsonRowStyle | undefined)[] | undefined
+  shellOutput: boolean | undefined
   lines: string[]
 }
 
@@ -673,6 +680,8 @@ interface MeasuredSection {
   kind: SectionPart['kind']
   rows: readonly string[]
   code: readonly (CodeSpan | undefined)[] | undefined
+  json: readonly (JsonRowStyle | undefined)[] | undefined
+  shellOutput: boolean | undefined
   count: number
 }
 
@@ -767,9 +776,13 @@ function sectionRowCount(cursor: TranscriptCursor, blocks: readonly SectionSourc
     && known.kind === part.kind
     && sameEntries(known.rows, part.rows)
     && sameEntries(known.code, part.code)
+    && sameEntries(known.json, part.json)
+    && known.shellOutput === part.shellOutput
   ) return known.count
   const lines = drawSection(block, part, width, { palette: MEASURING, held: false }, '')
-  cache.measured = { width, kind: part.kind, rows: part.rows, code: part.code, count: lines.length }
+  cache.measured = {
+    width, kind: part.kind, rows: part.rows, code: part.code, json: part.json, shellOutput: part.shellOutput, count: lines.length,
+  }
   return lines.length
 }
 
@@ -800,6 +813,8 @@ function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[],
     && known.look.held === look.held
     && sameEntries(known.rows, part.rows)
     && sameEntries(known.code, part.code)
+    && sameEntries(known.json, part.json)
+    && known.shellOutput === part.shellOutput
   ) {
     drawnSections.delete(known)
     drawnSections.set(known, cache)
@@ -814,6 +829,8 @@ function sectionRows(cursor: TranscriptCursor, blocks: readonly SectionSource[],
     header,
     rows: part.rows,
     code: part.code,
+    json: part.json,
+    shellOutput: part.shellOutput,
     lines,
   })
   return lines
