@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui'
 import { AssistantBlock, ContextBlock, NoticeBlock, SUBAGENT_RUNNING_GLYPH, TOOL_RUNNING_ROW, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
+import { jsonTreeText } from '../src/json-tree.ts'
 import { createPalette, markdownTheme, type CodeHighlighter } from '../src/style.ts'
 import type { CodeSpan } from '../src/transcript.ts'
 import { CardFlow } from '../src/pace.ts'
@@ -886,6 +887,39 @@ describe('render reuse', () => {
     const plain = new UserShellBlock(theme, 'true', ['$ true'])
     expect(plain.render(20)).toEqual(['', '$ true', ''])
     plain.invalidate()
+  })
+
+  it('dims user-shell output and renders complete JSON output as a colored tree', () => {
+    const palette = createPalette(true)
+    const { highlight } = countingHighlighter()
+    const shell = new UserShellBlock({ ...theme, palette, codeHighlight: highlight }, 'echo hi', ['$ echo hi', 'out'])
+    expect(shell.render(40)).toEqual(['', `${palette.accent('$')} «echo hi»`, palette.dim('out'), ''])
+    const json = new UserShellBlock({ ...theme, palette }, 'echo json', ['$ echo json', '{"ok":true}', '(exit 2)'])
+    expect(json.render(40)).toEqual([
+      '',
+      `${palette.accent('$')} echo json`,
+      `${palette.dim('╰─ ')}${palette.tool('ok')}: ${palette.link('true')}`,
+      palette.dim('(exit 2)'),
+      '',
+    ])
+  })
+
+  it('dims model-shell output and keeps JSON styling off the fold marker', () => {
+    const palette = createPalette(true)
+    const shell = new ToolBlock({ ...theme, palette }, 'bash', { title: '', lines: [] }, 1)
+    shell.setResult(['out'], false, undefined, undefined, { shellOutput: true })
+    expect(shell.render(40)[2]).toBe(`  ${palette.dim('│')} ${palette.dim('out')}`)
+
+    const tree = jsonTreeText('{"ok":true,"items":[1,2]}')
+    if (tree === undefined) throw new Error('expected JSON tree')
+    const json = new ToolBlock({ ...theme, palette, toolPreviewLines: 2 }, 'mystery', { title: '', lines: [] }, 1)
+    json.setResult(tree.lines, false, undefined, undefined, { json: tree.json, shellOutput: true })
+    const rendered = json.render(80)
+    expect(rendered[2]).toBe(`  ${palette.dim('│')} ${palette.dim('├─ ')}${palette.tool('ok')}: ${palette.link('true')}`)
+    expect(rendered.at(-1)).toBe(`  ${palette.dim('│')} … 2 more rows · ${palette.italic(palette.accent('Ctrl+O'))} expands`)
+    expect(json.parts()[1]).toMatchObject({ kind: 'result', rows: tree.lines, json: tree.json, shellOutput: true })
+    const titledCall = new ToolBlock({ ...theme, palette }, 'mystery', { title: 'JSON', lines: tree.lines, json: tree.json }, 1)
+    expect(titledCall.parts()[0]).toMatchObject({ kind: 'call', json: [undefined, ...tree.json] })
   })
 
   it('hands back the same prompt lines while nothing changed', () => {

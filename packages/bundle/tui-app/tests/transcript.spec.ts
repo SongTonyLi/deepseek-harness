@@ -294,7 +294,22 @@ describe('transcript', () => {
       .toEqual([undefined, undefined, { lang: 'rs', prefix: '  ', source: '5' }, { lang: 'rs', prefix: '  ', source: '6' }, { lang: 'rs', prefix: '- ', source: '7' }, { lang: 'rs', prefix: '+ ', source: 'X' }])
     expect(toolResultBody({ card: 'diff', diffs: [{ path: '.gitignore', oldText: null, newText: 'lib\n' }] }, text))
       .toEqual({ lines: ['.gitignore', '+ lib'], code: [undefined, undefined], diff: [undefined, 'added'] })
-    expect(toolResultBody({ card: 'terminal', output: 'a' }, text)).toEqual({ lines: ['a'] })
+    expect(toolResultBody({ card: 'terminal', output: 'a' }, text)).toEqual({ lines: ['a'], shellOutput: true })
+  })
+
+  it('turns complete JSON result objects and arrays into trees, including terminal output', () => {
+    const json = [{ type: 'text' as const, text: '{"ok":true,"items":["a",2]}' }]
+    const tree = toolResultBody({ card: 'generic' }, json)
+    expect(tree.lines).toEqual(['├─ ok: true', '╰─ items:', '   ├─ [0]: "a"', '   ╰─ [1]: 2'])
+    expect(tree.json).toHaveLength(4)
+    expect(tree.shellOutput).toBeUndefined()
+    expect(toolResultBody(undefined, json).lines).toEqual(tree.lines)
+    expect(toolResultBody({ card: 'terminal', output: '{"ok":true}', exitCode: 2, signal: 'SIGTERM' }, json)).toMatchObject({
+      lines: ['╰─ ok: true', 'exit 2', 'signal SIGTERM'],
+      shellOutput: true,
+    })
+    expect(toolResultBody({ card: 'terminal', output: '{"ok":true}', exitCode: 2 }, json).json).toHaveLength(2)
+    expect(toolResultBody({ card: 'generic', content: [{ type: 'text', text: 'own' }] }, json).lines).toEqual(['own'])
   })
 
   it('paints consecutive spans of one language as one block and leaves the rest plain', () => {

@@ -5813,7 +5813,7 @@ export class TuiApp {
         if (moved === undefined) {
           const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
           const body = toolResultBody(view, result.content)
-          block.setResult(body.lines, isError, body.code, body.diff)
+          block.setResult(body.lines, isError, body.code, body.diff, body)
         } else {
           block.setBackground([`${BACKGROUND_GLYPH} moved to the background as ${moved} · /jobs lists it`])
         }

@@ -10,6 +10,7 @@ import type { TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { diffLines, hunks, type DiffLine, type DiffMark } from './diff.ts'
+import { jsonTreeText, type JsonRowStyle } from './json-tree.ts'
 import { rawInputLines } from './stream-args.ts'
 
 /** Unchanged rows shown around each diff hunk. */
@@ -271,8 +272,12 @@ export interface ToolBody {
   lines: string[]
   /** One entry per row; absent, or undefined at an index, for a row that is not code. */
   code?: (CodeSpan | undefined)[]
+  /** One entry per row; absent, or undefined at an index, for a row that is not a JSON tree row. */
+  json?: (JsonRowStyle | undefined)[]
   /** One entry per row; absent, or undefined at an index, for a row that is not a diff addition or removal. */
   diff?: (DiffMark | undefined)[]
+  /** Whether these rows are shell output to distinguish from the syntax-colored command. */
+  shellOutput?: boolean
 }
 
 /** A tool card's call half. */
@@ -357,7 +362,7 @@ export function diffRows(diff: FileDiff): string[] {
  * @param diff - one file's old and new text.
  * @returns the rows and their spans; the `…` gap markers carry no span.
  */
-export function diffBody(diff: FileDiff): Required<ToolBody> {
+export function diffBody(diff: FileDiff): Required<Pick<ToolBody, 'lines' | 'code' | 'diff'>> {
   const lang = extensionOf(diff.path)
   const rows = hunks(numberDiffLines(diffLines(diff.oldText, diff.newText), diff.oldStart, diff.newStart), DIFF_CONTEXT_LINES)
   const digits = rows.reduce((widest, row) => Math.max(widest, row?.number === undefined ? 0 : String(row.number).length), 0)
@@ -485,6 +490,14 @@ export function toolCallText(argumentsJson: string, view: ToolCallView | undefin
   }
 }
 
+/** Plain text or a structured tree when the complete result is a JSON object or array. */
+function contentResultBody(content: readonly ContentBlock[]): ToolBody {
+  const text = contentText(content)
+  const tree = jsonTreeText(text)
+  if (tree !== undefined) return tree
+  return { lines: text.split('\n').filter(line => line !== '') }
+}
+
 /**
  * Text rows for a completed tool call from its presentation view, falling
  * back to the model-facing result content.
@@ -497,23 +510,32 @@ export function toolResultLines(view: ToolResultView | undefined, content: reado
 }
 
 /**
- * {@link toolResultLines} with the code span behind each row of a `read` or
- * `diff` card, so the card draws the file's own language in colour.
+ * {@link toolResultLines} with code spans for `read` and `diff` cards, JSON
+ * token ranges for complete object or array output, and the shell-output
+ * marker for terminal cards.
  * @param view - the tool's `presentResult` view, when it has one.
  * @param content - the model-facing result content.
- * @returns the rows and, for the two code cards, their spans.
+ * @returns the rows and their aligned presentation metadata.
  */
 export function toolResultBody(view: ToolResultView | undefined, content: readonly ContentBlock[]): ToolBody {
-  if (view === undefined) return { lines: contentText(content).split('\n').filter(line => line !== '') }
+  if (view === undefined) return contentResultBody(content)
   switch (view.card) {
     case 'generic':
-      return { lines: contentText(view.content ?? content).split('\n').filter(line => line !== '') }
+      return contentResultBody(view.content ?? content)
     case 'terminal': {
-      const lines = (view.output ?? '').split('\n')
-      while (lines.length > 0 && lines.at(-1) === '') lines.pop()
-      if (view.exitCode !== undefined && view.exitCode !== 0) lines.push(`exit ${String(view.exitCode)}`)
-      if (view.signal !== undefined) lines.push(`signal ${view.signal}`)
-      return { lines }
+      const tree = jsonTreeText(view.output ?? '')
+      const lines = tree?.lines ?? (view.output ?? '').split('\n')
+      const json: (JsonRowStyle | undefined)[] | undefined = tree === undefined ? undefined : [...tree.json]
+      while (tree === undefined && lines.length > 0 && lines.at(-1) === '') lines.pop()
+      if (view.exitCode !== undefined && view.exitCode !== 0) {
+        lines.push(`exit ${String(view.exitCode)}`)
+        json?.push(undefined)
+      }
+      if (view.signal !== undefined) {
+        lines.push(`signal ${view.signal}`)
+        json?.push(undefined)
+      }
+      return { lines, shellOutput: true, ...json === undefined ? {} : { json } }
     }
     case 'diff':
       return diffsBody(view.diffs)
