@@ -5,17 +5,34 @@
  */
 
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { jsonTreeText, type JsonRowStyle } from './json-tree.ts'
 
 /** Keys whose completed text is shown as a size, not as the text itself. */
 const SIZED_KEYS = ['content', 'old_string', 'new_string'] as const
 
+/** A generic card's raw input rows, with token ranges when they are a JSON tree. */
+export interface RawInputBody {
+  lines: string[]
+  json?: JsonRowStyle[]
+}
+
 /**
- * Lines for a generic card's raw input when the presenter supplied no content.
+ * Rows for a generic card's raw input when the presenter supplied no content.
  * A todo list becomes one status line per item. A string is the program or path.
+ * Any other object or array is drawn as a JSON tree.
  * @param value - the presenter's raw input.
- * @returns the lines, empty when the value is absent or an empty string.
+ * @returns the rows, empty when the value is absent or an empty string.
  */
-export function rawInputLines(value: unknown): string[] {
+export function rawInputBody(value: unknown): RawInputBody {
+  const lines = textLines(value)
+  if (lines !== undefined) return { lines }
+  const text = jsonText(value)
+  if (text === undefined) return { lines: [] }
+  return jsonTreeText(text) ?? { lines: [text] }
+}
+
+/** Rows for raw input that is text, a scalar, a todo list, or a string list; undefined for any other value. */
+function textLines(value: unknown): string[] | undefined {
   if (value === undefined) return []
   if (typeof value === 'string') return value === '' ? [] : value.split('\n')
   if (typeof value === 'number' || typeof value === 'boolean') return [String(value)]
@@ -24,8 +41,7 @@ export function rawInputLines(value: unknown): string[] {
   if (Array.isArray(value) && value.every(item => typeof item === 'string')) {
     return value.flatMap(item => item === '' ? [] : item.split('\n'))
   }
-  const text = jsonText(value)
-  return text === undefined ? [] : [text]
+  return undefined
 }
 
 /** `JSON.stringify` yields undefined for values with no JSON form, which its declared return type omits. */
