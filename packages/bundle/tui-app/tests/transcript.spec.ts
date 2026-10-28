@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { diffLines, hunks } from '../src/diff.ts'
+import { jsonTreeText } from '../src/json-tree.ts'
 import {
   EMPTY_USAGE,
   addUsage,
@@ -171,7 +172,7 @@ describe('transcript', () => {
   it('renders raw arguments, terminal, and diff call text', () => {
     expect(toolCallText('{}', undefined, 'read')).toEqual({ title: '', lines: [] })
     expect(toolCallText('', undefined, 'read')).toEqual({ title: '', lines: [] })
-    expect(toolCallText('{"a": 1}', undefined, 'read')).toEqual({ title: '', lines: ['{"a":1}'] })
+    expect(toolCallText('5', undefined, 'read')).toEqual({ title: '', lines: ['5'] })
     expect(toolCallText('{bad', undefined, 'read')).toEqual({ title: '', lines: ['{bad'] })
     // The command is the card's `$` row alone: the headline carries the
     // call's summary, so the header never repeats the command.
@@ -217,8 +218,30 @@ describe('transcript', () => {
       .toEqual({ title: 'Read x', lines: [] })
     expect(toolCallText('{}', { card: 'generic', title: 'Workflow', rawInput: null }, 'workflow'))
       .toEqual({ title: '', lines: ['null'] })
-    expect(toolCallText('{}', { card: 'generic', title: 'Workflow', rawInput: { script: 'return 1' } }, 'workflow'))
-      .toEqual({ title: '', lines: ['{"script":"return 1"}'] })
+    // A string is the program itself, even when it happens to be JSON.
+    expect(toolCallText('{}', { card: 'generic', title: 'Workflow', rawInput: '{"a":1}' }, 'workflow'))
+      .toEqual({ title: '', lines: ['{"a":1}'] })
+  })
+
+  it('draws a JSON object or array call as a tree wherever no presenter text supplies the rows', () => {
+    const questions = '{"questions":[{"id":"npm_login_approval","question":"Approve?"}]}'
+    const noPresenter = toolCallText(questions, undefined, 'ask_user_question')
+    expect(noPresenter.title).toBe('')
+    expect(noPresenter.lines).toEqual([
+      '╰─ questions:',
+      '   ╰─ [0]:',
+      '      ├─ id: "npm_login_approval"',
+      '      ╰─ question: "Approve?"',
+    ])
+    expect(noPresenter.json).toEqual(jsonTreeText(questions)?.json)
+    expect(noPresenter.json).toHaveLength(noPresenter.lines.length)
+
+    const rawInput = { action: 'list_plugins' }
+    const generic = toolCallText('{}', { card: 'generic', title: 'Manage profile plugins', rawInput }, 'plugin_manager')
+    expect(generic.lines).toEqual(['╰─ action: "list_plugins"'])
+    expect(generic.json).toEqual(jsonTreeText(JSON.stringify(rawInput))?.json)
+    expect(toolCallText('{}', { card: 'generic', title: 'Todos', rawInput: [{ content: 'a', status: 'pending' }] }, 'todo_write'))
+      .toEqual({ title: 'Todos', lines: ['pending  a'] })
   })
 
   it('drops a tool name the headline repeats, and only a whole one', () => {

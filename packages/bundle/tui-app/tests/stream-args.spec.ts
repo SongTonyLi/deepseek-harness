@@ -1,35 +1,41 @@
-/** Generic raw-input lines and the live argument rows a tool card can show. */
+/** Generic raw-input rows and the live argument rows a tool card can show. */
 
 import { describe, expect, it } from 'vitest'
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
-import { completedArguments, rawInputLines, streamedArgumentLines } from '../src/stream-args.ts'
+import { jsonTreeText } from '../src/json-tree.ts'
+import { completedArguments, rawInputBody, streamedArgumentLines } from '../src/stream-args.ts'
 
-describe('raw input lines', () => {
-  it('renders absent, scalar, script, todo, and list values', () => {
-    expect(rawInputLines(undefined)).toEqual([])
-    expect(rawInputLines('')).toEqual([])
-    expect(rawInputLines('return 1\nreturn 2')).toEqual(['return 1', 'return 2'])
-    expect(rawInputLines(0)).toEqual(['0'])
-    expect(rawInputLines(false)).toEqual(['false'])
-    expect(rawInputLines([
+describe('raw input body', () => {
+  it('renders absent, scalar, script, todo, and list values as plain rows', () => {
+    expect(rawInputBody(undefined)).toEqual({ lines: [] })
+    expect(rawInputBody('')).toEqual({ lines: [] })
+    expect(rawInputBody('return 1\nreturn 2')).toEqual({ lines: ['return 1', 'return 2'] })
+    // A string is the program or path itself, even when it parses as JSON.
+    expect(rawInputBody('{"a":1}')).toEqual({ lines: ['{"a":1}'] })
+    expect(rawInputBody(0)).toEqual({ lines: ['0'] })
+    expect(rawInputBody(false)).toEqual({ lines: ['false'] })
+    expect(rawInputBody([
       { content: 'read the log', status: 'pending' },
       { content: 'write the note', status: 'done' },
-    ])).toEqual(['pending  read the log', 'done  write the note'])
-    expect(rawInputLines([])).toEqual([])
-    expect(rawInputLines(['keep\nme', '', 'tail'])).toEqual(['keep', 'me', 'tail'])
-    expect(rawInputLines([''])).toEqual([])
-    expect(rawInputLines({ script: 'return 1' })).toEqual(['{"script":"return 1"}'])
-    expect(rawInputLines(null)).toEqual(['null'])
-    expect(rawInputLines(Symbol('skip'))).toEqual([])
+    ])).toEqual({ lines: ['pending  read the log', 'done  write the note'] })
+    expect(rawInputBody([])).toEqual({ lines: [] })
+    expect(rawInputBody(['keep\nme', '', 'tail'])).toEqual({ lines: ['keep', 'me', 'tail'] })
+    expect(rawInputBody([''])).toEqual({ lines: [] })
+    expect(rawInputBody(null)).toEqual({ lines: ['null'] })
+    expect(rawInputBody(Symbol('skip'))).toEqual({ lines: [] })
   })
 
-  it('falls through when a list is not todos or strings', () => {
-    expect(rawInputLines([null])).toEqual(['[null]'])
-    expect(rawInputLines([{ content: 'only' }])).toEqual(['[{"content":"only"}]'])
-    expect(rawInputLines([{ status: 'pending' }])).toEqual(['[{"status":"pending"}]'])
-    expect(rawInputLines([{ content: 1, status: 'pending' }])).toEqual(['[{"content":1,"status":"pending"}]'])
-    expect(rawInputLines([{ content: 'read', status: 1 }])).toEqual(['[{"content":"read","status":1}]'])
-    expect(rawInputLines([1, 'text'])).toEqual(['[1,"text"]'])
+  it('draws an object or a list that is not todos or strings as a JSON tree', () => {
+    const script = rawInputBody({ script: 'return 1' })
+    expect(script.lines).toEqual(['╰─ script: "return 1"'])
+    expect(script.json).toEqual(jsonTreeText('{"script":"return 1"}')?.json)
+    expect(rawInputBody([null]).lines).toEqual(['╰─ [0]: null'])
+    expect(rawInputBody([{ content: 'only' }]).lines).toEqual(['╰─ [0]:', '   ╰─ content: "only"'])
+    expect(rawInputBody([{ status: 'pending' }]).lines).toEqual(['╰─ [0]:', '   ╰─ status: "pending"'])
+    expect(rawInputBody([{ content: 1, status: 'pending' }]).lines).toEqual(['╰─ [0]:', '   ├─ content: 1', '   ╰─ status: "pending"'])
+    expect(rawInputBody([{ content: 'read', status: 1 }]).lines).toEqual(['╰─ [0]:', '   ├─ content: "read"', '   ╰─ status: 1'])
+    expect(rawInputBody([1, 'text']).lines).toEqual(['├─ [0]: 1', '╰─ [1]: "text"'])
+    expect(rawInputBody({}).lines).toEqual(['(empty object)'])
   })
 })
 

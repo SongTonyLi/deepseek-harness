@@ -11,7 +11,7 @@ import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-to
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { diffLines, hunks, type DiffLine, type DiffMark } from './diff.ts'
 import { jsonTreeText, type JsonRowStyle } from './json-tree.ts'
-import { rawInputLines } from './stream-args.ts'
+import { rawInputBody } from './stream-args.ts'
 
 /** Unchanged rows shown around each diff hunk. */
 const DIFF_CONTEXT_LINES = 2
@@ -466,14 +466,15 @@ export function toolCallText(argumentsJson: string, view: ToolCallView | undefin
   if (view === undefined) {
     const parsed = parseArguments(argumentsJson)
     const summary = parsed === undefined ? argumentsJson : JSON.stringify(parsed)
-    return { title: '', lines: summary === '{}' || summary === '' ? [] : [summary] }
+    if (summary === '{}' || summary === '') return { title: '', lines: [] }
+    return { title: '', ...jsonTreeText(summary) ?? { lines: [summary] } }
   }
   switch (view.card) {
     case 'generic': {
-      const lines = view.content === undefined
-        ? rawInputLines(view.rawInput)
-        : contentText(view.content).split('\n')
-      return { title: cardHeadline(toolName, view.title), lines }
+      const body = view.content === undefined
+        ? rawInputBody(view.rawInput)
+        : { lines: contentText(view.content).split('\n') }
+      return { title: cardHeadline(toolName, view.title), ...body }
     }
     case 'terminal': {
       // The command is the card's own `$` row, so the headline carries the
