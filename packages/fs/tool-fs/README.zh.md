@@ -75,7 +75,7 @@ kind: "package-reference"
 
 `read` 与 `read_image` 的路径授权由 `ctx.fs` 负责，并受沙箱读取范围收窄：当挂载的 `ctx.sandbox` 提供方限制读取时（Apple container 后端即如此），`read`、`read_image`、`edit` 与 `write` 会在观察路径之前，以 `FS_SANDBOX_DENIED` 拒绝被隐藏的密钥文件。对于范围之外的其他路径，`read` 与 `read_image` 会通过 `ctx.approval` 询问用户，只有“仅允许一次”的答复才允许该次调用读取它；该授权既不放宽后续读取，也不放宽受限命令。拼写在范围根目录之外或包含 `..` 的路径会在任何文件系统调用之前询问；通向外部的工作区符号链接则在解析之后询问。拒绝、取消和缺少审批通道都会以 `FS_SANDBOX_DENIED` 失败。除非应用了 `danger-full-access` 升级，`edit` 与 `write` 会拒绝外部路径。媒体类型声明和文件签名只决定 `read_image` 是否接受该后端返回的字节。
 
-挂载策略插件后，`write` 与 `edit` 从 `fs/*` 意图槽位取得防护，因此未读目标或陈旧观察会以 `FS_NOT_OBSERVED` 或 `FS_STALE_VERSION` 及恢复指令失败。使用施加沙箱限制的后端（`fs-sandbox`）时，`write`/`edit` 还会公开 `sandbox_permissions` 与 `justification`；被拒绝的变更返回 `[sandbox: file access denied under <mode> mode]` 标记与同轮次升级提示，获批的重试可以在该次调用中加盖严格更宽的模式。理由字段提示模型使用用户当前提问的语言。
+挂载策略插件后，`write` 与 `edit` 从 `fs/*` 意图槽位取得防护，因此未读目标或陈旧观察会以 `FS_NOT_OBSERVED` 或 `FS_STALE_VERSION` 及恢复指令失败。使用施加沙箱限制的后端（`fs-sandbox`）时，`write`/`edit` 还会公开 `sandbox_permissions` 与 `justification`；被拒绝的变更返回 `[sandbox: file access denied under <mode> mode]` 标记与同轮次升级提示，获批的重试可以在该次调用中加盖严格更宽的模式。省略 `sandbox_permissions` 或重复当前调用的生效模式时，`justification` 可以省略、为空字符串或仅含空白，且不会请求审批。不同模式仍需非空理由，升权还需审批。没有模式却提供非空理由会被拒绝。这些例外不会绕过观察检查或文件系统拒绝。理由字段提示模型使用用户当前提问的语言。
 
 ### 失败与恢复
 
@@ -142,7 +142,7 @@ kind: "package-reference"
 
 #### 模型看到的内容
 
-组装时，每个指导段落通过 `ctx.tools.get(name, scope)` 检查对应工具，仅在该 agent 可见时输出。write 段落仅在 edit 可见时推荐 edit。三个工具都可用时，下方原文保持不变；限制的施加、解除和工具注册变化在下次组装时生效。同一检查适用于直接限制 agent 和从历史 descriptor 恢复的 subagent 过滤器，也适用于通过 `run_code` 暴露的 PTC 能力。 write/edit 中的先读后改句子描述观察策略，并非要求调用名为 `read` 的工具。隐藏 `read` 时仍保留这些句子：策略继续保护修改操作，其他产生观察记录的操作（例如 `str_replace_editor` 的 `command: view`）也能建立同一文件观察记录。工具可见性不会禁用该前置条件。
+组装时，每个指导段落通过 `ctx.tools.get(name, scope)` 检查对应工具，仅在该 agent 可见时输出。write 段落仅在 edit 可见时推荐 edit。三个工具都可用时，下方原文保持不变；限制的施加、解除和工具注册变化在下次组装时生效。同一检查适用于直接限制 agent 和从历史 descriptor 恢复的 subagent 过滤器，也适用于通过 `run_code` 暴露的 PTC 能力。write/edit 中的先读后改句子描述观察策略，并非要求调用名为 `read` 的工具。隐藏 `read` 时仍保留这些句子：策略继续保护修改操作，其他产生观察记录的操作（例如 `str_replace_editor` 的 `command: view`）也能建立同一文件观察记录。工具可见性不会禁用该前置条件。
 
 ##### Read 指导
 
@@ -210,7 +210,7 @@ Read a file before editing it (the default fs-observation-policy requires it), u
 
 #### KV Cache 影响
 
-仅追加；新可见内容跟在可复用请求前缀之后，不会使既有 KV 缓存条目失效。
+仅追加；新增可见内容位于可复用请求前缀之后，不会使现有 KV Cache 条目失效。
 
 ### 写入与编辑结果
 

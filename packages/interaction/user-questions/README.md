@@ -41,7 +41,7 @@ Call `ask()` when work cannot continue without the answer. Call `askTimed()` whe
 - `AskUserQuestionAnswer` — `{ answers: [{ id, selected, custom? }] }`.
 - `UserQuestionError` — `HarnessError` subclass with codes such as `EMPTY_QUESTIONS`, `BAD_INTENT`, `NO_PROVIDER`, `ASK_ABORTED`, `CALLER_NOT_LIVE`, and `DELEGATED_CALLER`.
 
-For a single-select question, `custom` overrides the selected choice and `selected` is empty. For a multi-select question, `custom` may supplement the labels in `selected`. A UI may preserve a skipped item as `{ id, selected: [] }`, keeping the existing answer shape while retaining other answers in the batch.
+For a single-select question, `custom` overrides the selected choice and `selected` is empty. For a multi-select question, `custom` may supplement the labels in `selected`. A UI may preserve a skipped item as `{ id, selected: [] }`, keeping the existing answer shape while retaining other answers in the batch. The `ask_user_question` tool tells the model that an item with empty `selected` and no `custom` is a user skip, so an answerer must not use that form for any other answer.
 
 A question may carry a presentation `intent`. `plan-review` names the approve option and uses `detail` as the plan. `approval` presents one blocking question as fixed reject, allow and optional always-allow actions; it may include subject metadata and localized copy. Its action labels must be distinct and cover exactly the offered options, with no multi-select or timed wait. `ask()` rejects invalid intents with `BAD_INTENT`. Both presentations return the original option labels, and an older UI can render the same options generically. The caller continues to own authorization and persistence.
 

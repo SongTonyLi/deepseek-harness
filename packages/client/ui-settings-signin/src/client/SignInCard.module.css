@@ -79,7 +79,13 @@
   text-decoration: none;
 }
 
-.link:hover,
+@media (hover: hover) {
+  .link:hover {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+  }
+}
+
 .link:focus-visible {
   text-decoration: underline dotted;
   text-underline-offset: 3px;
@@ -152,8 +158,10 @@
   cursor: pointer;
 }
 
-.option:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+@media (hover: hover) {
+  .option:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
 }
 
 .option:focus-visible {

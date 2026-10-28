@@ -41,7 +41,7 @@ kind: "package-reference"
 - `AskUserQuestionAnswer`：`{ answers: [{ id, selected, custom? }] }`。
 - `UserQuestionError`：`HarnessError` 的子类，包含 `EMPTY_QUESTIONS`、`BAD_INTENT`、`NO_PROVIDER`、`ASK_ABORTED`、`CALLER_NOT_LIVE` 和 `DELEGATED_CALLER` 等代码。
 
-对于单选题，`custom` 会覆盖选中的选项，且 `selected` 为空。对于多选题，`custom` 可以补充 `selected` 中的标签。UI 可以把跳过的条目保留为 `{ id, selected: [] }`，既维持现有回答形态，也保留该批次中的其他回答。
+对于单选题，`custom` 会覆盖选中的选项，且 `selected` 为空。对于多选题，`custom` 可以补充 `selected` 中的标签。UI 可以把跳过的条目保留为 `{ id, selected: [] }`，既维持现有回答形态，也保留该批次中的其他回答。`ask_user_question` 工具告诉模型，`selected` 为空且没有 `custom` 的条目表示用户跳过，因此回答方不能用这种形式表示其他回答。
 
 问题可以携带呈现意图 `intent`。`plan-review` 指定批准选项，并将 `detail` 作为待审阅计划。`approval` 将一个阻塞式问题显示为拒绝、允许和可选的始终允许操作，可附带对象信息和本地化文案。操作标签必须互不相同，并完整对应已提供的选项，不支持多选或计时等待。`ask()` 以 `BAD_INTENT` 拒绝无效意图。两种呈现都返回原始选项标签，旧界面仍可显示通用选项列表。授权与持久化仍由调用方负责。
 

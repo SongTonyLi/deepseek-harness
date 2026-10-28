@@ -22,7 +22,7 @@ import type { SignInCardFace } from './SignInCard.tsx'
 import { SignInFooter } from './SignInFooter.tsx'
 import type { SignInFooterFace } from './SignInFooter.tsx'
 import { createSignInOperations, SignInController } from './store.ts'
-import { en, zh, type SignInKey } from './locales.ts'
+import { en, zh, ja, es, fr, de, ru, pt, type SignInKey } from './locales.ts'
 
 export type { SignInCardFace, SignInCardProps } from './SignInCard.tsx'
 export type { SignInFooterFace, SignInFooterProps } from './SignInFooter.tsx'
@@ -54,7 +54,7 @@ export const inject = ['slots', 'locale', 'remote', 'remote.authorization']
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-signin: copy dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { zh, en, ja, es, fr, de, ru, pt }), 'ui-settings-signin: copy dictionaries')
 
   const controller = new SignInController(createSignInOperations(ctx))
   void controller.load()

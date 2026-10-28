@@ -27,20 +27,20 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-10-22-action-card-status"
-    after: "aecd7efd2039c07af034cdf97b66e1a80fe2bf51567d5fe27dec4925c0baf505"
+    previous: "2026-10-13-liveshare-share-viewer-principal"
+    after: "f30e21e5dbfa4c7f586d07a57f96369623f28c769bae749d65d959c2203573c1"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-10-22-action-card-status"
-    after: "0c346de2cbed1004158179312d21389d424e22168f6b0de154832ed78d19b6d2"
+    previous: "2026-10-13-liveshare-share-viewer-principal"
+    after: "539c3143f612577377ade523ea6ea4e6ea2f2e5103030044f4b7cd85f7d58a0a"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-10-22-action-card-status"
-    after: "3d50e53da47c6f3b9d98921bcf0f92d1317977cae5ff9d410e35a4e80b247db0"
+    previous: "2026-10-13-liveshare-share-viewer-principal"
+    after: "918542b820e233c2702ad17e9c2880d3ed6ba53bd9f5855b3f99adbb6ad231d0"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-10-22-action-card-status"
-    after: "7c4c498b64a748d30fb80d9042094c3a2cb0a1ac27169519c28baf03e8f3cece"
+    previous: "2026-10-13-liveshare-share-viewer-principal"
+    after: "ff33de90563854acb88cac07943a7ca8510b7c1a4648ed5a43a35598e0439166"
     decision: same-version
 ```
 
