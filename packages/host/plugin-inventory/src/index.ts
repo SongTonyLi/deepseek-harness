@@ -95,11 +95,18 @@ export async function readPluginInventory(ctx: Context): Promise<PluginInventory
     if (entry.options.group) continue
     const base = entry.parent.tree.ctx.baseUrl
     const meta = base === undefined ? undefined : packages?.metaOf(entry.options.name, base)
+    const fiber = entry.fiber
+    const fiberPhase = pluginFiberPhase(fiber?.state)
+    let diagnostic: string | undefined
+    if (fiber !== undefined && fiberPhase === 'failed') {
+      try { await fiber.await() } catch (error) { diagnostic = error instanceof Error ? error.message : String(error) }
+    }
     entries.push({
       entryId: pluginEntryId(entry.id),
       moduleName: entry.options.name,
       enabled: !entry.disabled,
-      fiberPhase: pluginFiberPhase(entry.fiber?.state),
+      fiberPhase,
+      ...diagnostic === undefined ? {} : { diagnostic },
       ...meta === undefined ? {} : { meta },
     })
   }
