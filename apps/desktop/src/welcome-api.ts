@@ -66,7 +66,8 @@ export interface WelcomeAuthentication {
 }
 
 /**
- * Decide whether a startup or sign-out requires the welcome entry.
+ * Decide whether sign-out or session expiry opens the welcome window.
+ * Startup does not consult this and opens the workspace with no DeepSeek account and no API key.
  * @param authentication - current account and independently stored API-key facts.
  * @returns true only when neither authentication route is configured.
  */

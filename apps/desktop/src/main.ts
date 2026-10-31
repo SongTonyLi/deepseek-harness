@@ -1308,13 +1308,9 @@ async function main(): Promise<void> {
     writeDesktopLocaleCache(app.getPath('userData'), locale.id)
     windowsLanguage = locale.id
     refreshApplicationMenu()
-    if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey })) {
-      // A later login must retain its own activation policy instead of replaying startup focus.
-      raiseAfterUpdate = false
-      await showWelcome()
-    } else {
-      await enterWorkspace()
-    }
+    // Startup does not wait on a DeepSeek account or an API key. Sign-out and
+    // session expiry still open the welcome window through needsWelcome.
+    await enterWorkspace()
   }
   focusPrimaryWindow = () => {
     if (quitting) return
