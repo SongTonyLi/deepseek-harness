@@ -173,7 +173,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it.each([false, true])('starts welcome onboarding without carrying update focus into login or skip (Windows update=%s)', async (updated) => {
+it.each([false, true])('opens the workspace on startup without a login (Windows update=%s)', async (updated) => {
   vi.resetModules()
   vi.clearAllMocks()
   state.preference = 'zh'
@@ -193,67 +193,36 @@ it.each([false, true])('starts welcome onboarding without carrying update focus 
   vi.stubEnv('DSH_DESKTOP_MANDATORY_UPDATE_CONFIG', undefined)
   vi.stubEnv('DSH_DESKTOP_UPDATE_JOURNAL_DIR', undefined)
   const reading = Promise.withResolvers<undefined>()
-  const loading = Promise.withResolvers<undefined>()
   state.beforeRead.mockReturnValueOnce(reading.promise)
-  state.beforeWelcome.mockReturnValueOnce(loading.promise)
   const activate = () => {
     state.appListeners.get('second-instance')!()
     state.appListeners.get('open-url')!({ preventDefault: vi.fn() }, 'dsh://open')
   }
   await import('../src/main.ts')
   await vi.waitFor(() => { expect(state.beforeRead).toHaveBeenCalledOnce() })
-  try {
-    activate()
-    expect(state.showWorkspace).not.toHaveBeenCalled()
-    reading.resolve(undefined)
-    await vi.waitFor(() => { expect(state.beforeWelcome).toHaveBeenCalledOnce() })
-    activate()
-    expect(state.showWorkspace).not.toHaveBeenCalled()
-  } finally {
-    reading.resolve(undefined)
-    loading.resolve(undefined)
-  }
-  await vi.waitFor(() => { expect(state.operations).toBeDefined() })
+  activate()
+  expect(state.showWorkspace).not.toHaveBeenCalled()
+  expect(state.beforeWelcome).not.toHaveBeenCalled()
+  reading.resolve(undefined)
+  await vi.waitFor(() => { expect(state.showWorkspace).toHaveBeenCalledOnce() })
+  expect(state.beforeWelcome).not.toHaveBeenCalled()
   expect(state.startHost).toHaveBeenCalledOnce()
   expect(state.loadWorkspace).toHaveBeenCalledExactlyOnceWith('dsh-app://app/')
-  expect(state.showWorkspace).not.toHaveBeenCalled()
-  state.loadWorkspace.mockClear()
-  expect(state.welcomeLocale).toMatchObject({ id: 'zh-CN' })
-  expect(await state.operations!.takeNotice()).toBeUndefined()
-  expect(state.dialogLocale!().id).toBe('zh-CN')
-  const attemptId = 'login' as NonNullable<AccountView['attempt']>['id']
-  const account: AccountView = { status: 'signed-out', links: { usageUrl: '', topUpUrl: '' },
-    attempt: { id: attemptId, phase: 'waiting-browser', authorizeUrl: 'https://example.test/login' } }
-  state.accountState.mockResolvedValue(account)
-  await state.operations!.copySignInLink(attemptId)
-  expect(state.copy).toHaveBeenCalledExactlyOnceWith('https://example.test/login?theme=light')
-  state.nativeTheme.shouldUseDarkColors = true
-  await state.operations!.copySignInLink(attemptId)
-  expect(state.copy).toHaveBeenLastCalledWith('https://example.test/login?theme=dark')
-  state.nativeTheme.shouldUseDarkColors = false
-  await expect(state.operations!.copySignInLink('stale' as typeof attemptId)).rejects.toThrow('login link is unavailable')
-  state.accountState.mockResolvedValue({ ...account, attempt: { id: attemptId, phase: 'expired' } })
-  await expect(state.operations!.copySignInLink(attemptId)).rejects.toThrow('login link is unavailable')
-  expect(state.copy).toHaveBeenCalledTimes(2)
-  await state.operations!.skip()
-  expect(state.loadWorkspace).not.toHaveBeenCalled()
-  expect(state.showWorkspace).toHaveBeenCalledOnce()
-  expect(state.moveTopWorkspace).not.toHaveBeenCalled()
-  expect(state.focusWorkspace).not.toHaveBeenCalled()
-  expect(state.windowOptions).toMatchObject({
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 18 }, vibrancy: 'sidebar' } : {}),
-    webPreferences: { contextIsolation: true, sandbox: true },
-  })
-  expect(state.closeWelcome).toHaveBeenCalledOnce()
-  activate()
-  expect(state.showWorkspace).toHaveBeenCalledTimes(3)
   expect(state.quit).not.toHaveBeenCalled()
   expect(state.stopHost).not.toHaveBeenCalled()
+  if (updated) {
+    expect(state.moveTopWorkspace).toHaveBeenCalledOnce()
+    expect(state.focusWorkspace).toHaveBeenCalledOnce()
+  } else {
+    expect(state.moveTopWorkspace).not.toHaveBeenCalled()
+    expect(state.focusWorkspace).not.toHaveBeenCalled()
+  }
   const contents = state.contents as { mainFrame: { url: string }; send: ReturnType<typeof vi.fn> }
-  expect(contents.send).toHaveBeenCalledWith(DESKTOP_IPC.enterWorkspace)
+  expect(contents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.enterWorkspace)
   const event = { sender: contents, senderFrame: contents.mainFrame }
   const bootstrap = state.handlers.get(DESKTOP_IPC.localeBootstrap)!
   expect(await bootstrap(event)).toEqual({ languages: ['en-US'], preference: 'zh' })
+  expect(state.dialogLocale!().id).toBe('zh-CN')
   state.preference = 'en'
   expect(await bootstrap(event)).toEqual({ languages: ['en-US'], preference: 'en' })
   const changed = state.listeners.get(DESKTOP_IPC.localeChanged)!
@@ -265,6 +234,43 @@ it.each([false, true])('starts welcome onboarding without carrying update focus 
   expect(state.dialogLocale!().id).toBe('en')
   expect(state.menu).toHaveBeenCalledTimes(initialMenus + 1)
   expect(await bootstrap(event)).toEqual({ languages: ['en-US'], preference: 'en' })
+  const attemptId = 'login' as NonNullable<AccountView['attempt']>['id']
+  const account: AccountView = { status: 'signed-out', links: { usageUrl: '', topUpUrl: '' },
+    attempt: { id: attemptId, phase: 'waiting-browser', authorizeUrl: 'https://example.test/login' } }
+  state.hasApiKey = true
+  state.accountListener!({ ...account, status: 'credential-stored', attempt: null })
+  state.accountListener!({ ...account, status: 'signed-out', attempt: null })
+  state.expiryListener!()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(state.beforeWelcome).not.toHaveBeenCalled()
+  state.hasApiKey = false
+  state.accountState.mockResolvedValue(account)
+  state.accountListener!({ ...account, status: 'credential-stored', attempt: null })
+  state.accountListener!({ ...account, status: 'signed-out', attempt: null })
+  await vi.waitFor(() => { expect(state.operations).toBeDefined() })
+  expect(state.beforeWelcome).toHaveBeenCalledOnce()
+  expect(state.welcomeLocale).toMatchObject({ id: 'en' })
+  expect(await state.operations!.takeNotice()).toBeUndefined()
+  await state.operations!.copySignInLink(attemptId)
+  expect(state.copy).toHaveBeenCalledExactlyOnceWith(`https://example.test/login?theme=${state.nativeTheme.shouldUseDarkColors ? 'dark' : 'light'}`)
+  state.nativeTheme.shouldUseDarkColors = true
+  await state.operations!.copySignInLink(attemptId)
+  expect(state.copy).toHaveBeenLastCalledWith('https://example.test/login?theme=dark')
+  state.nativeTheme.shouldUseDarkColors = false
+  await expect(state.operations!.copySignInLink('stale' as typeof attemptId)).rejects.toThrow('login link is unavailable')
+  state.accountState.mockResolvedValue({ ...account, attempt: { id: attemptId, phase: 'expired' } })
+  await expect(state.operations!.copySignInLink(attemptId)).rejects.toThrow('login link is unavailable')
+  expect(state.copy).toHaveBeenCalledTimes(2)
+  expect(state.windowOptions).toMatchObject({
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 18 }, vibrancy: 'sidebar' } : {}),
+    webPreferences: { contextIsolation: true, sandbox: true },
+  })
+  state.loadWorkspace.mockClear()
+  state.showWorkspace.mockClear()
+  await state.operations!.skip()
+  expect(state.loadWorkspace).not.toHaveBeenCalled()
+  expect(state.showWorkspace).toHaveBeenCalledOnce()
+  expect(state.closeWelcome).toHaveBeenCalledOnce()
   const welcomeCount = state.beforeWelcome.mock.calls.length
   state.hasApiKey = true
   state.accountListener!({ ...account, status: 'credential-stored', attempt: null })
@@ -289,6 +295,7 @@ it.each([false, true])('starts welcome onboarding without carrying update focus 
   expect(await state.operations!.takeNotice()).toBeUndefined()
   state.showWorkspace.mockClear()
   state.focusWorkspace.mockClear()
+  state.moveTopWorkspace.mockClear()
   vi.stubEnv('DSH_DESKTOP_OPEN_DEVTOOLS', '1')
   state.accountListener!({ ...account, status: 'credential-stored', attempt: { id: attemptId, phase: 'succeeded' } })
   await vi.waitFor(() => { expect(state.showInactiveWorkspace).toHaveBeenCalledOnce() })
@@ -296,8 +303,8 @@ it.each([false, true])('starts welcome onboarding without carrying update focus 
   expect(state.focusWorkspace).not.toHaveBeenCalled()
   expect(state.moveTopWorkspace).not.toHaveBeenCalled()
   expect(state.openDevTools).not.toHaveBeenCalled()
+  expect(contents.send).toHaveBeenCalledWith(DESKTOP_IPC.enterWorkspace)
   state.appListeners.get('open-url')!({ preventDefault: vi.fn() }, 'dsh://open')
   expect(state.showWorkspace).toHaveBeenCalledOnce()
   expect(state.focusWorkspace).toHaveBeenCalledOnce()
-
 })
