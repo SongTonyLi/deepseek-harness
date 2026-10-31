@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/experimental/auto-review/README.md
 /:
-  en: 69a05f8df88e7a24
-  zh: d278a12427f2c62b
+  en: fdb9237f7c9ddfa6
+  zh: 3bb572e4a945183f
 /deepseek-ai-dsh-experimental-auto-review:
   en: 566562e610f1b52b
   zh: 88796a19ab0b98b8
 /deepseek-ai-dsh-experimental-auto-review/summary:
-  en: 6ba6e26f5bdce51a
-  zh: eb757a0d466cc237
+  en: 10e8e61034f7706a
+  zh: 439e21bcff62a12d
 /deepseek-ai-dsh-experimental-auto-review/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -24,14 +24,11 @@
   en: 599d308cb426b48d
   zh: 946e5d2dae183b2e
 /deepseek-ai-dsh-experimental-auto-review/use-this-package/what-you-get:
-  en: e06aef3b1fe805b0
-  zh: 9484f7b4325ef2ab
-/deepseek-ai-dsh-experimental-auto-review/use-this-package/auto-on-the-container-backend:
-  en: b441182c5bcf944e
-  zh: 9f53b679e51832d6
+  en: 68fbe81265de3d55
+  zh: ad41f2353ba94a07
 /deepseek-ai-dsh-experimental-auto-review/understand-the-implementation:
-  en: 1b13bf052142cad2
-  zh: 7818248e8940441f
+  en: 0d76e9a60573ee84
+  zh: 3297ae0898852b7d
 /deepseek-ai-dsh-experimental-auto-review/further-exploration:
   en: 8b81d32ea370ecd3
   zh: dc53ff4da78232ac
@@ -42,14 +39,14 @@
   en: 7ec217b1012cd8fa
   zh: 6188796b4990f2ef
 /deepseek-ai-dsh-experimental-auto-review/model-experience/per-call-reviewer/what-the-model-sees:
-  en: 75427a7926c30990
-  zh: 577d682574a4aaff
+  en: d1670b32b5be6795
+  zh: d6a6456f415b0daa
 /deepseek-ai-dsh-experimental-auto-review/model-experience/per-call-reviewer/token-effect:
-  en: 20e4c3f67beb3955
-  zh: a6974d8361f3e31b
+  en: 9c3e575c061d53fe
+  zh: 74db1c5a77b2d2a7
 /deepseek-ai-dsh-experimental-auto-review/model-experience/per-call-reviewer/kv-cache-effect:
-  en: ecf540350ca3483f
-  zh: 94cef1f1590fdc5f
+  en: ec9e16640f1ea1bc
+  zh: 8052d486d61807c6
 /deepseek-ai-dsh-experimental-auto-review/model-experience/tool-denial:
   en: f9b4d7b686f14fc5
   zh: a2fac9a8eaf5e2a3
@@ -63,8 +60,8 @@
   en: 8da1089dee147f94
   zh: 87361347bfd10c6c
 /deepseek-ai-dsh-experimental-auto-review/known-limitations-and-deferred-work:
-  en: 20ed4d4de57860b5
-  zh: 2b420e5615ed84e5
+  en: a48835d5113cbcfd
+  zh: 243ff731c27270b7
 /deepseek-ai-dsh-experimental-auto-review/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98
