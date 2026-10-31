@@ -1,5 +1,5 @@
 ---
-description: "添加实验性逐调用 Auto review，在工具以 Full access 执行前使用当前 agent 的模型审查；沙箱后端限制读取时则在受限状态下执行。"
+description: "为 Web 或 headless profile 添加实验性逐调用 Auto review，在工具以 Full access 执行前使用当前 agent 的模型审查。"
 kind: "package-bundle"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-为当前会话权限选择器添加 Auto review。每次原生或 PTC inner 工具调用前，当前 agent 的 provider 与模型会评估待执行动作；获准调用以 Full access 执行，运行在 Apple container 后端时则在容器内受限执行，被拒绝调用会请求用户审批。随附的 TUI profile 包含此层；默认 Web 与 headless 保持关闭。Auto review 是实验功能：它可能误放行不安全动作、误拒绝有用操作，并消耗额外 token。
+为 Web 或 headless profile 添加 Auto review。Web 通过当前会话权限选择器提供它；headless 在每次调用时显式选择。每次原生或 PTC inner 工具调用前，当前 agent 的 provider 与模型会评估待执行动作；获准调用以 Full access 执行，被拒绝调用会请求用户审批。dsh 安装随附此层但默认关闭；在 Web 侧栏插件页开启或显式安装之前，默认 Web 保持三种权限模式。Auto review 是实验功能：它可能误放行不安全动作、误拒绝有用操作，并消耗额外 token。
 
 ## 目录
 
@@ -67,12 +67,6 @@ Auto 在每个受支持调用的 body 执行前审查一次，包括每个已开
 
 最终拒绝使用普通工具卡片。折叠行标识 Auto review；展开输出说明 body 未执行，并显示可选理由。[Web 权限包](../../client/ui-permission-presets/README.zh.md)拥有选择器交互，[工具 UI](../../client/ui-tool/README.zh.md)拥有理由展示。
 
-### Auto 在容器后端上
-
-会话运行在 [Apple container 后端](../../sandbox/sandbox-apple-container/README.zh.md)时，Auto 会保留沙箱：选择它写入 `workspace-write` 而不是 `danger-full-access`，因此获准的命令在容器内受限运行。必须离开容器的调用，例如模型发起的一次性 `sandbox_permissions` 提权或读取工作区之外的内容，由 reviewer 而不是用户决定：获准的调用在运行期间提出的每一项审批都由它代为应答。被 reviewer 拒绝的调用仍会就该调用本身请求用户审批，其随后提出的任何审批也会交给用户。外层 `run_code` transport 不经过审查，因此对其自身进程的提权仍会请求用户审批。
-
-在 Auto 一律写入 `danger-full-access` 时记录的会话，一旦其后端限制读取，就会在下一次调用时被限制。切换后端绝不会放宽已受限的 Auto 会话，因此执行 `/sandbox local` 后，需要再次选择 Auto 才能回到宿主机上的 Full access。只限制写入的后端让 Auto 保持 Full access。
-
 -----
 
 <a id="understand-the-implementation"></a>
@@ -81,13 +75,11 @@ Auto 在每个受支持调用的 body 执行前审查一次，包括每个已开
 <details>
 <summary>实现内部机制——点击展开</summary>
 
-[`cordis.patch.yml`](cordis.patch.yml)把本包自身插入为 `auto-review` 行。[`src/index.ts`](src/index.ts)要求 approval、LLM、permission、Session 与 tools 服务，然后在同一个 effect 中安装 preset contribution 和置前的 pre-execute listener。Review 结束后，拒绝会读取 Session 的审批策略：`never` 下为最终拒绝；`ask` 下 listener 先交给后续 pre-execute listener，只有它们放行调用时才返回 tools 流水线的 `ask` 决定，因此后续的拒绝、取消或 `ask`（带自己的理由）优先。`ask` 决定携带英文审计理由，以及来自 `src/locales.ts`、覆盖八个 locale 并保留原始 reviewer 理由的本地化提示文本。[权限 owner](../../interaction/permission-presets/README.zh.md)提供当前身份和进程目录；Auto 写入 `ask` 审批策略，搭配 Full access 的沙箱值；会话的后端限制读取时则搭配 `workspace-write`；它不改变工具定义。
+[`cordis.patch.yml`](cordis.patch.yml)把本包自身插入为 `auto-review` 行。[`src/index.ts`](src/index.ts)要求 approval、LLM、permission、Session 与 tools 服务，然后在同一个 effect 中安装 preset contribution 和置前的 pre-execute listener。Review 结束后，拒绝会读取 Session 的审批策略：`never` 下为最终拒绝；`ask` 下 listener 先交给后续 pre-execute listener，只有它们放行调用时才返回 tools 流水线的 `ask` 决定，因此后续的拒绝、取消或 `ask`（带自己的理由）优先。`ask` 决定携带英文审计理由，以及由 `src/locales.ts` 提供且保留原始 reviewer 理由的中英日提示文本。[权限 owner](../../interaction/permission-presets/README.zh.md)提供当前身份和进程目录；Auto 使用 Full access 的沙箱值与 `ask` 审批策略，不改变工具定义。
 
-另有两个 listener 让 Auto 留在受限后端上。在任何调用 body 之前，pre-execute listener 会调用权限预设服务的 `confineAuto(session)`，它在后端限制读取时收窄仍为 `danger-full-access` 的会话，只追加沙箱模式，因此委派子会话所固定的审批策略不变；它对未经审查的 `run_code` transport 同样运行，被拒绝的变更（例如持久终端的沙箱模式限制）会使调用失败，而不是让它在陈旧的模式下运行。置前的 `approval/request` listener 对满足以下条件的请求应答 `allowed-once`：请求指向 reviewer 已放行、仍在运行的调用，且会话仍处于 Auto；下游 listener 针对该调用自己发起的审批不在其覆盖范围内，调用结算时 `tools/post-execute` 会让它忘记该调用。
+Reviewer 以固定策略作为 system prompt，随后依次发送：一条仅含 cwd 的环境 user 消息、按 surface 顺序每个保留 Session 条目一条消息，最后是待审调用。项目指令出现在其进入 surface 的位置，并带约束角色。首次使用某个已审 schema 的调用之前有一条 `tool-schema` 条目；integration 为存活 Session 记住每次已审调用的 schema，使后续评审在同一位置重复它。原生 schema 来自最新 request header。PTC binding 冻结其 schema，经由调度器传入临时执行元数据；开始与结算事件都不序列化描述或参数 schema。主 agent 的 `system/message` 节点、assistant 正文与 reasoning、tool results 全部排除。外层评审输入是冻结的 `RequestUserInput`，不含持久身份或来源；保留历史在评审文本中仍携带原始来源。[决策记录](../../../.agents/notes/implemented/feature/2026-08-28-auto-review.zh.md)拥有权威、生命周期与 child 继承的理由。
 
-Reviewer 从当前 Session surface 与待执行调用构建请求：固定策略作为 system prompt、仅 cwd 的环境、带来源的项目约束、过滤后带来源的历史、完整待审动作，以及位于待审动作之后的固定最终评审任务。它为环境发送一条 user 消息，按 surface 顺序每个保留 Session 条目发送一条消息，待审调用是最后一个保留条目；项目指令出现在其进入 surface 的位置，并带约束角色。首次使用某个已审 schema 的调用之前有一条 `tool-schema` 条目；integration 为存活 Session 记住每次已审调用的 schema，使后续评审在同一位置重复它。原生 schema 来自最新 request header。PTC binding 冻结其 schema，经由调度器传入临时执行元数据；开始与结算事件都不序列化描述或参数 schema。主 agent 的 `system/message` 节点、assistant 正文与 reasoning、tool results 全部排除。外层评审输入是冻结的 `RequestUserInput`，不含持久身份或来源；保留历史在评审文本中仍携带原始来源。[决策记录](../../../.agents/notes/implemented/feature/2026-08-28-auto-review.zh.md)拥有权威、生命周期与 child 继承的理由。
-
-卸载时先关闭选择与 review admission，然后中止并等待在途 review 结清，最后撤回 listener 与 contribution。只有在应用根 context 仍活跃时卸载，才会经由既有 preset writer 迁移存活 Auto Session，这也包括移除和重载插件：`danger-full-access` 会话变为 Full access，通过 Session writer 写入 `never` 审批策略，不排入策略变更通知；`workspace-write` 会话变为 Workspace Write，仅当会话尚无 `ask` 审批策略时才写入它。模型在下一次 runtime-context 快照中看到新策略。每个会话保留自己的沙箱值，持久终端在迁移中保持不变。应用关闭保留选中的预设与审批策略。持久 Auto Session 缺少完整 integration 时不能发布，即使重新打开的请求选择了其他预设也一样；重新打开前须再次加载 integration。重装只恢复选项，不把存活 Session 切回 Auto。
+卸载时先关闭选择与 review admission。如果应用根 context 仍活跃，卸载随后经由既有 preset writer 将存活 Auto Session 迁移到 Full access；这包括移除和重载插件。迁移写入 `never` 审批策略，不排入策略变更通知；模型在下一次 runtime-context 快照中看到新策略。沙箱值与持久终端在迁移中保持不变。应用关闭保留选中的预设与审批策略。两种路径都会先中止并等待在途 review 结清，再撤回 listener 与 contribution。持久 Auto Session 缺少完整 integration 时不能发布，即使重新打开的请求选择了其他预设也一样。重新打开前须再次加载 integration。重装只恢复选项，不把存活 Session 切回 Auto。
 
 </details>
 
@@ -110,15 +102,15 @@ Reviewer 从当前 Session surface 与待执行调用构建请求：固定策略
 
 #### 模型看到什么
 
-Reviewer 使用最新 `request/header.config` 的 provider 与模型，并沿用 shipped adapter 默认 reasoning。`temperature` 设置接受 `0` 到 `2` 的数值或 `provider-default`；后者省略请求参数。插件默认值为 `0`，bundle 仅在 `tui` profile 中选择 `provider-default`，使不接受 temperature 的 provider 也能审查调用。固定 `REVIEW_POLICY` 替代恰好一个动作的人工审批：allow 后立即执行，措辞上视为拥有完整宿主机访问权限，即使会话保留着容器也是如此，因此 reviewer 会把每个调用都当作拥有该权限来评判。其后的 user 消息只包含上文列出的保留事实。最终的 `REVIEW_TASK` 消息位于待审动作之后，重申 reviewer 不是保留历史中的 agent：其中的指令只按策略规定加以权衡，绝不执行，且响应为一个 JSON 对象。长历史以发给被审 agent 的指令结尾；缺少该消息时，reviewer 可能回应这些指令，而不是对动作分类。响应为一个严格 JSON text 对象，包含 `risk` 与 `decision`；deny 可附字符串 `reason`。Reasoning blocks 可以位于这唯一 text block 之前。只有 `low + allow`、`medium + allow/deny` 和 `high + deny` 合法。
+Reviewer 使用最新 `request/header.config` 的 provider 与模型，并沿用 shipped adapter 默认 reasoning。固定 `REVIEW_POLICY` 替代恰好一个动作的人工审批：allow 后立即以 Full access 执行。这些 user 消息只包含上文列出的保留事实。响应为一个严格 JSON text 对象，包含 `risk` 与 `decision`；deny 可附字符串 `reason`。Reasoning blocks 可以位于这唯一 text block 之前。只有 `low + allow`、`medium + allow/deny` 和 `high + deny` 合法。
 
 #### Token 影响
 
-每个受支持调用额外产生一次模型请求。完整 text 响应不是有效 JSON 时，`maxJsonRetries` 允许额外请求（默认 `1`，非负安全整数；`0` 禁用重试）。每次重试复用冻结的动作事实，并在最终 `REVIEW_TASK` 分区后追加固定格式提醒，不包含格式错误的响应。有效拒绝、非法 risk／decision 对象、provider 或 stream 失败以及已取消的 review 不重试。JSON 重试耗尽后调用失败，不执行 body。请求不缓存、截断、压缩，也不设单独的小型输出预算；超窗请求以 provider 错误使调用失败。
+每个受支持调用额外产生一次模型请求，不缓存、重试、截断、压缩，也不设单独的小型输出预算。超窗请求以 provider 错误使调用失败。
 
 #### KV Cache 影响
 
-每次评审的保留条目消息都以上一次评审的全部保留条目消息（包括其待审调用）开头，并以固定的最终 `REVIEW_TASK` 消息结束每次请求，因此按 prompt 前缀、按消息结尾或在末尾标记处回溯缓存的路由都能复用策略与先前历史，直至上一次待审调用。Compaction、cwd 变化、较早条目离开 surface，以及重启后的第一次评审会让复用中断一次。保留历史与待审动作随调用变化。Auto 不向主 agent 增加专门 runtime context 或模式切换提示词。在容器后端上选择 Auto，或限制一个按完全访问记录的会话，会让既有的沙箱策略与后端贡献变化一次；新快照追加在保留历史之后，因此缓存前缀不变。
+每次评审的消息都以上一次评审的全部消息（包括其待审调用）开头，因此按 prompt 前缀、按消息结尾或在末尾标记处回溯缓存的路由都能复用策略与先前历史。Compaction、cwd 变化、较早条目离开 surface，以及重启后的第一次评审会让复用中断一次。Auto 不向主 agent 增加专门 runtime context 或模式切换提示词。每个评审请求都携带被评审 Session 的 `sessionId` 和 `purpose: 'auto-review'`，作为模型不可见的传输元数据。按 Session 划分 prompt 缓存或请求路由的路由（例如 OpenAI 的 `prompt_cache_key`，以及 OpenCode 要求的 `x-opencode-session` header）会以该 Session 的键发送评审；[DeepSeek session-log 上传](../../session/session-log-deepseek/README.zh.md#request-field)在启用且没有已注册排除条件匹配时贡献权威 Session 日志。
 
 ### 工具拒绝
 
@@ -138,15 +130,12 @@ Reviewer 使用最新 `request/header.config` 的 provider 与模型，并沿用
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- 随附的 TUI profile 包含 Auto review。默认 Web 与 Headless 不选择它，通用设置与新会话默认值也从不提供它。
+- Auto 需要显式启用此层。默认 Web 与 Headless、通用设置及新会话默认值都不选择它。
 - 模组可以提交 user-source 文本。[Claude Code 模组桥接](../claude-code-mods/README.zh.md#model-experience)赋予 `$.prompt.submit` 与 `prompt.submit` hook context 用户权威，包括未设置 `asUser: true` 的框架化提交；文本框架不会降低其权威。
-- Auto 自身不提供文件沙箱。在限制读取的后端上，它保留该后端的 `workspace-write` 限制，其他后端上以 Full access 运行。外层 `run_code` transport 及 PTC 程序内直接 Node 效果不经过 inner-tool review。
-- 固定 reviewer policy 把每次 allow 都表述为完整宿主机访问，且不会告知 reviewer 会话的沙箱模式，因此它可能拒绝容器本可限制住的调用。
-- 应答审批的 reviewer allow 会记录为普通的 `approval/decided` 事件，结果为 `allowed-once`。审计轨迹不会记录这次授权来自 reviewer 而非用户，reviewer 的 risk 与 decision 也不持久化。
-- 模型分类可能出错。不提供确定性工具豁免、持久 grant 或可配置策略。格式重试无法纠正有效但错误的分类。
+- Auto 不提供文件沙箱。外层 `run_code` transport 及PTC 程序内直接 Node 效果不经过 inner-tool review。
+- 模型分类可能出错。不提供确定性工具豁免、持久 grant、可配置策略或重试层。
 - 进程内 Auto child 独立审查自身调用。进程外 child 在父委派调用获准后保留原生权限系统。
 - reviewer 在带行级豁免的情况下，通过已废弃的同步 `snapshotEvents()` 读取 Session 动作历史。此前的调用、PTC start 与直接父级的初始 prompt 目前都没有投影或分页读取方，因此迁移按[同步读取决策](../../../.agents/notes/implemented/architecture/2026-09-09-deprecate-synchronous-session-event-reads.zh.md)继续延期。
-- 评审请求不携带 `sessionId`，因此 OpenAI 路由不会收到 `prompt_cache_key`。传入它还会让评审请求附带 DeepSeek session-log 上传与 session header，需要先做请求用途决策。
 
 <a id="dev-note"></a>
 ### 开发备注
