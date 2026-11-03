@@ -40,12 +40,14 @@ kind: "package-reference"
     reuseInstalledCursorLogin: true
 ```
 
-请求用 `provider: cursor` 选择该路由。模型 id 原样通过；捆绑的回退名称包括 `composer-2`、`composer-2-fast`、`composer-1.5`、`claude-4.5-sonnet`、`claude-4.6-opus-high` 和 `gpt-5.1`。登录后 `GetUsableModels` 替换该列表，并缓存到 `$DSH_HOME/cache/llm-cursor/usable-models.json`。未列出的 id 仍作为仅文本路由解析。
+请求用 `provider: cursor` 选择该路由。模型 id 原样通过；捆绑的回退名称包括 `composer-2`、`composer-2-fast`、`composer-1.5`、`claude-4.5-sonnet`、`claude-4.6-opus-high` 和 `gpt-5.1`。登录后 `GetUsableModels` 替换该列表，并缓存到 `$DSH_HOME/cache/llm-cursor/usable-models.json`。未列出的 id 仍作为仅文本路由解析。上下文容量依次取自 `modelContextWindows[modelId]`、目录（包括在账户刷新后保留的捆绑限制）和 `defaultContextWindow`（200,000 token）。这些预算用于压缩，不会改变 Cursor 服务端限制；模型可用窗口不同时，应配置精确模型覆盖。
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
 | `apiKeyEnv` | `CURSOR_ACCESS_TOKEN` | 每次请求先解析的凭据引用，然后才是已存授权或采集 |
 | `reuseInstalledCursorLogin` | `true` | 请求是否可以复用本机已有的 Cursor IDE 或 CLI 登录 |
+| `defaultContextWindow` | `200,000` | 模型没有目录限制时使用的压缩容量 |
+| `modelContextWindows` | `{}` | 按精确模型 id 设置的正整数 token 容量；覆盖目录限制和默认值 |
 | `streamIdleTimeoutMs` | `300,000` | 单次未完成的流式读取允许的最长提供方空闲时间 |
 | `parkedRunTimeoutMs` | `1,800,000` | 因工具调用而挂起的 Run 等待其结果的时长，超时即取消 |
 | `toolCallSettleMs` | `1,000` | Cursor 尚未发送结束模型消息的检查点时，等待更多并行工具调用的时长 |

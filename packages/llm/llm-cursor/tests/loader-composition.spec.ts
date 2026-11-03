@@ -31,7 +31,7 @@ afterEach(async () => {
   vi.unstubAllEnvs()
 })
 
-async function loadComposition(): Promise<Context> {
+async function loadComposition(extraConfig: readonly string[] = []): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-cursor-composition-'))
   vi.stubEnv('DSH_HOME', root)
   vi.stubEnv('CURSOR_ACCESS_TOKEN', '')
@@ -51,6 +51,7 @@ async function loadComposition(): Promise<Context> {
     "  name: '@deepseek-ai/dsh-llm-cursor'",
     '  config:',
     '    reuseInstalledCursorLogin: false',
+    ...extraConfig,
     '',
   ].join('\n'))
 
@@ -81,6 +82,20 @@ async function loadComposition(): Promise<Context> {
 }
 
 describe('llm-cursor real composition', () => {
+  it('resolves destination compaction budgets from profile configuration', async () => {
+    const ctx = await loadComposition([
+      '    defaultContextWindow: 160000',
+      '    modelContextWindows:',
+      '      grok-4.7-high-fast: 256000',
+    ])
+    await expect(ctx.llm.resolveModelInfo('cursor', 'grok-4.7-high-fast')).resolves.toMatchObject({
+      context: { contextWindow: 256_000 },
+    })
+    await expect(ctx.llm.resolveModelInfo('cursor', 'new-live-model')).resolves.toMatchObject({
+      context: { contextWindow: 160_000 },
+    })
+  })
+
   it('boots the always-on cursor route and lists the oauth flow', async () => {
     const ctx = await loadComposition()
     expect(ctx.llm.listProviders()).toEqual([{ id: 'cursor', name: 'Cursor' }])

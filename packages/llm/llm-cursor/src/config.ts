@@ -23,6 +23,10 @@ export interface Config {
   apiKeyEnv?: string
   /** Whether a request may reuse a Cursor IDE or CLI login (default true). */
   reuseInstalledCursorLogin?: boolean
+  /** Compaction capacity for models without catalog limits (default 200,000 tokens); does not change Cursor's server limit. */
+  defaultContextWindow?: number
+  /** Positive token capacities by exact Cursor model id; override catalog limits and `defaultContextWindow`. */
+  modelContextWindows?: Record<string, number>
   /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
   streamIdleTimeoutMs?: number
   /**
@@ -41,10 +45,15 @@ export interface Config {
   retryPolicy?: RetryPolicyConfig
 }
 
+const DEFAULT_CONTEXT_WINDOW = 200_000
+const contextWindowSchema = z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER)
+
 /** Runtime schema for {@link Config}. */
 export const Config: z<Config> = z.object({
   apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_API_KEY_ENV),
   reuseInstalledCursorLogin: z.boolean().default(true),
+  defaultContextWindow: contextWindowSchema.default(DEFAULT_CONTEXT_WINDOW),
+  modelContextWindows: z.dict(contextWindowSchema),
   streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
   parkedRunTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_PARKED_RUN_TIMEOUT_MS),
   toolCallSettleMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_TOOL_CALL_SETTLE_MS),
@@ -57,6 +66,10 @@ export interface ResolvedCursorOptions {
   apiKeyEnv: CredentialRef
   /** Whether harvest is allowed. */
   reuseInstalledCursorLogin: boolean
+  /** Capacity used when the catalog has no model limit. */
+  defaultContextWindow: number
+  /** Validated exact-model capacity overrides. */
+  modelContextWindows: Readonly<Record<string, number>>
   /** Positive idle watchdog interval. */
   streamIdleTimeoutMs: number
   /** Positive lifetime of a Run parked on tool calls. */
@@ -73,14 +86,27 @@ export interface ResolvedCursorOptions {
  * @returns validated connection facts.
  */
 export function resolveAdapterOptions(config: Config): ResolvedCursorOptions {
+  const defaultContextWindow = contextCapacity('defaultContextWindow', config.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW)
+  const modelContextWindows = Object.fromEntries(Object.entries(config.modelContextWindows ?? {}).map(([model, capacity]) => [
+    model, contextCapacity(`modelContextWindows.${model}`, capacity),
+  ]))
   return {
     apiKeyEnv: credentialRef(config.apiKeyEnv ?? DEFAULT_API_KEY_ENV),
     reuseInstalledCursorLogin: config.reuseInstalledCursorLogin !== false,
+    defaultContextWindow,
+    modelContextWindows,
     streamIdleTimeoutMs: timerDelay('streamIdleTimeoutMs', config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS),
     parkedRunTimeoutMs: timerDelay('parkedRunTimeoutMs', config.parkedRunTimeoutMs ?? DEFAULT_PARKED_RUN_TIMEOUT_MS),
     toolCallSettleMs: timerDelay('toolCallSettleMs', config.toolCallSettleMs ?? DEFAULT_TOOL_CALL_SETTLE_MS),
     retryPolicy: resolveRetryPolicy(config.retryPolicy, 'llm-cursor: retryPolicy'),
   }
+}
+
+function contextCapacity(field: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`llm-cursor: ${field} must be a positive safe integer`)
+  }
+  return value
 }
 
 function timerDelay(field: string, value: number): number {

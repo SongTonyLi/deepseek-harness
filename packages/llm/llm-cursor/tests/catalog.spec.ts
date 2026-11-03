@@ -50,6 +50,22 @@ function unaryConnect(status: number, body: Uint8Array): ConnectHttp2 {
 }
 
 describe('CursorCatalog', () => {
+  it('retains bundled capacity after a metadata-free cache and refresh', async () => {
+    const path = await cacheFile(JSON.stringify({ models: [{ id: 'composer-2', name: 'Live Composer' }] }))
+    const proto = toBinary(GetUsableModelsResponseSchema, create(GetUsableModelsResponseSchema, {
+      models: [create(ModelDetailsSchema, { modelId: 'composer-2', displayName: 'Refreshed Composer' })],
+    }))
+    const catalog = new CursorCatalog(unaryConnect(200, proto), path)
+    await catalog.hydrate()
+    expect(catalog.resolve('composer-2')).toMatchObject({
+      name: 'Live Composer', context: { contextWindow: 200_000 }, defaultMaxTokens: 8_192,
+    })
+    await catalog.refresh('tok')
+    expect(catalog.resolve('composer-2')).toMatchObject({
+      name: 'Refreshed Composer', context: { contextWindow: 200_000 }, defaultMaxTokens: 8_192,
+    })
+  })
+
   it('lists fallback models and resolves unlisted ids as text-only routes', async () => {
     const catalog = new CursorCatalog(undefined, await cacheFile())
     expect(catalog.list()).toEqual(FALLBACK_MODELS.map(model => ({

@@ -1957,6 +1957,10 @@ export interface Config {
   apiKeyEnv?: string
   /** Whether a request may reuse a Cursor IDE or CLI login (default true). */
   reuseInstalledCursorLogin?: boolean
+  /** Compaction capacity for models without catalog limits (default 200,000 tokens); does not change Cursor's server limit. */
+  defaultContextWindow?: number
+  /** Positive token capacities by exact Cursor model id; override catalog limits and `defaultContextWindow`. */
+  modelContextWindows?: Record<string, number>
   /** Maximum provider idle time while one stream read is outstanding (default five minutes). */
   streamIdleTimeoutMs?: number
   /**

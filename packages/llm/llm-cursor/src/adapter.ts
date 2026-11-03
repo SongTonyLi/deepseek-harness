@@ -74,12 +74,14 @@ export class CursorAdapter extends LlmAdapter {
   /**
    * @param provider - registered route.
    * @param model - exact model id.
-   * @returns resolved metadata.
+   * @returns metadata with configured exact-model capacity, catalog capacity, or the configured default, in that order.
    */
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     await this.config.catalog.hydrate()
     const resolved = this.config.catalog.resolve(model)
-    return { ...resolved, provider }
+    const options = this.config.options()
+    const contextWindow = options.modelContextWindows[model] ?? resolved.context?.contextWindow ?? options.defaultContextWindow
+    return { ...resolved, provider, context: { contextWindow } }
   }
 
   /**

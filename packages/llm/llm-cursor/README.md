@@ -40,12 +40,14 @@ Choose this adapter to use a Cursor subscription from TUI, Web, or headless with
     reuseInstalledCursorLogin: true
 ```
 
-A request selects the route with `provider: cursor`. Model ids pass through; bundled fallback names include `composer-2`, `composer-2-fast`, `composer-1.5`, `claude-4.5-sonnet`, `claude-4.6-opus-high`, and `gpt-5.1`. After sign-in, `GetUsableModels` replaces that list and caches it under `$DSH_HOME/cache/llm-cursor/usable-models.json`. Unlisted ids still resolve as text-only routes.
+A request selects the route with `provider: cursor`. Model ids pass through; bundled fallback names include `composer-2`, `composer-2-fast`, `composer-1.5`, `claude-4.5-sonnet`, `claude-4.6-opus-high`, and `gpt-5.1`. After sign-in, `GetUsableModels` replaces that list and caches it under `$DSH_HOME/cache/llm-cursor/usable-models.json`. Unlisted ids still resolve as text-only routes. Context capacity resolves from `modelContextWindows[modelId]`, then the catalog (including bundled limits retained across account refreshes), then `defaultContextWindow` (200,000 tokens). These budgets drive compaction and do not change Cursor’s server limits; configure an exact-model override when its available window differs.
 
 | Field | Default | Meaning |
 |---|---|---|
 | `apiKeyEnv` | `CURSOR_ACCESS_TOKEN` | Credential reference resolved per request before a stored grant or harvest |
 | `reuseInstalledCursorLogin` | `true` | Whether a request may reuse a Cursor IDE or CLI login already on this machine |
+| `defaultContextWindow` | `200,000` | Compaction capacity when the model has no catalog limit |
+| `modelContextWindows` | `{}` | Positive token capacities by exact model id; override catalog limits and the default |
 | `streamIdleTimeoutMs` | `300,000` | Maximum provider idle time per outstanding stream read |
 | `parkedRunTimeoutMs` | `1,800,000` | How long a Run parked on tool calls waits for their results before it is cancelled |
 | `toolCallSettleMs` | `1,000` | Wait for further parallel tool calls when Cursor has not yet sent the checkpoint that ends the model message |

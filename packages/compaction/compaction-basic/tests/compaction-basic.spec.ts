@@ -1718,16 +1718,21 @@ describe('model-switch pressure', () => {
     void new TokenMeter(ctx)
     onTestFinished(() => ctx.fiber.dispose())
     const adapter = new ScriptedAdapter([{ type: 'text', text: 'checkpoint' }], finish)
-    ctx.llm.registerAdapter(['small'], new ContextAdapter(1_000))
+    const destination = new ScriptedAdapter([{ type: 'text', text: 'checkpoint' }])
+    destination.resolveModel = (provider, model) => new ContextAdapter(1_000).resolveModel(provider, model)
+    ctx.llm.registerAdapter(['small'], destination)
     ctx.llm.registerAdapter([MODEL], adapter)
     const compact = new BasicCompactionEngine(ctx, {
       headroomTokens: 0, maxTokens: 32, thresholdRatio: 0.5, retainTokens: 100, ...config,
     })
-    return { ctx, adapter, compact }
+    return { ctx, adapter: destination, previousAdapter: adapter, compact }
   }
 
-  it('checks the newly routed window and summarizes with the previous model before returning it', async () => {
-    const { ctx, adapter } = harness()
+  it('summarizes with the destination when the previous subscription is exhausted', async () => {
+    const { ctx, adapter, previousAdapter } = harness({}, {
+      kind: 'error', failure: { code: 'RATE_LIMIT', message: 'subscription exhausted' },
+    })
+    const previousCalls = vi.spyOn(previousAdapter, 'stream')
     const session = conversation(4, 'fixture '.repeat(80))
     const previous = session.requestHeader()
     const selected = { provider: 'small', model: 'small' }
@@ -1737,7 +1742,8 @@ describe('model-switch pressure', () => {
 
     await expect(request(ctx, session, { provider: MODEL, model: MODEL })).resolves.toEqual(selected)
 
-    expect(adapter.lastOptions).toMatchObject({ provider: MODEL, model: MODEL, purpose: 'compaction' })
+    expect(adapter.lastOptions).toMatchObject({ provider: 'small', model: 'small', purpose: 'compaction' })
+    expect(previousCalls).not.toHaveBeenCalled()
     expect(ctx.tokenMeter.measure(session, { config: selected }).totalTokens).toBeLessThan(500)
     expect(session.requestHeader()).toEqual(previous)
     expect(session.snapshotEvents().filter(event => event.type === 'compaction/summary'))
@@ -1771,7 +1777,7 @@ describe('model-switch pressure', () => {
     expect(adapter.lastOptions).toBeUndefined()
   })
 
-  it('repeatedly summarizes on the previous route until destination pressure is below threshold', async () => {
+  it('repeatedly summarizes on the destination route until its pressure is below threshold', async () => {
     const { ctx, adapter } = harness()
     const first = new ScriptedAdapter([{ type: 'text', text: 'm'.repeat(1_600) }])
     const calls = vi.spyOn(adapter, 'stream').mockImplementationOnce(options => first.stream(options))
@@ -1782,7 +1788,7 @@ describe('model-switch pressure', () => {
     await expect(request(ctx, session, selected)).resolves.toEqual(selected)
 
     expect(calls).toHaveBeenCalledTimes(2)
-    for (const [options] of calls.mock.calls) expect(options).toMatchObject({ provider: MODEL, model: MODEL })
+    for (const [options] of calls.mock.calls) expect(options).toMatchObject(selected)
     expect(session.snapshotEvents().filter(event => event.type === 'compaction/summary')).toHaveLength(2)
     expect(ctx.tokenMeter.measure(session, { config: selected }).totalTokens).toBeLessThan(500)
     expect(session.requestHeader()).toEqual(previous)
@@ -1866,9 +1872,10 @@ describe('model-switch pressure', () => {
   })
 
   it('rejects a failed summary without committing the destination model', async () => {
-    const { ctx } = harness({}, {
+    const { ctx, adapter } = harness()
+    vi.spyOn(adapter, 'stream').mockImplementation(options => new ScriptedAdapter([], {
       kind: 'error', failure: { code: 'AUTH', message: 'summary credentials expired' },
-    })
+    }).stream(options))
     const session = conversation(4)
     const previous = session.requestHeader()
     const nodes = [...session.surface.nodes]
@@ -1939,10 +1946,29 @@ describe('model-switch pressure', () => {
 describe('automatic listener and loader composition', () => {
   function preStep(ctx: Context, owner: Agent, signal = SIGNAL) {
     return agentEvents(ctx, owner).waterfall(
-      'agent/pre-step', { modelSelection: { provider: 'mock', model: 'mock' }, messages: [], turn: 1, step: 1, signal },
+      'agent/pre-step', {
+        modelSelection: owner.session.requestHeader()?.config ?? { provider: 'mock', model: 'mock' },
+        messages: [], turn: 1, step: 1, signal,
+      },
       () => Promise.resolve({ kind: 'enter' as const, messages: [] }),
     )
   }
+
+  it('defers pressure to the destination check when a step switches models', async () => {
+    const ctx = createContext()
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0, maxTokens: 32, thresholdRatio: 0.5, retainTokens: 180,
+    })
+    const pressure = vi.spyOn(compact, 'compactIfNeeded')
+    const session = conversation(4)
+    const before = session.snapshotEvents()
+    await agentEvents(ctx, agent(session, MODEL)).waterfall('agent/pre-step', {
+      modelSelection: { provider: 'destination', model: 'available' },
+      messages: [], turn: 5, step: 1, signal: SIGNAL,
+    }, () => Promise.resolve({ kind: 'enter' as const, messages: [] }))
+    expect(pressure).not.toHaveBeenCalled()
+    expect(session.snapshotEvents()).toEqual(before)
+  })
 
   function recover(
     ctx: Context,
