@@ -884,6 +884,13 @@ export class SubagentManager {
           await applyChildComposition(childCtx, parent, inputs.composition)
         }
         if (create !== undefined) {
+          const { provider, model, reasoningEffort } = inputs.agentOptions
+          const inherited = child.model.current()
+          // A fork's inherited request headers must not override its resolved child route.
+          if (provider !== undefined && model !== undefined
+            && (inherited?.provider !== provider || inherited.model !== model)) {
+            child.model.select({ provider, model, ...reasoningEffort === undefined ? {} : { reasoningEffort } })
+          }
           if (inputs.composition.agentPreset !== undefined) {
             child.session.append('agent-preset/selected', { agentPreset: inputs.composition.agentPreset })
           }

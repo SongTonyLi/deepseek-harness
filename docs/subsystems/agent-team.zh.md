@@ -156,8 +156,9 @@ listMembers(agent: Agent): TeamMemberView[]
 /**
  * Create one named, continuable direct child of the Team Lead.
  * @param caller - exact live Lead Agent.
- * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
+ * @param request - name, description, prompt, context mode, subagent provider, optional catalog model, and cancellation.
  * @returns the active roster row.
+ * @throws {TeamError} when the selection is absent from the catalog; no member name is reserved.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 

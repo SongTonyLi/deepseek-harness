@@ -39,6 +39,7 @@ function runtimeContextText(request: GenerateOptions) {
 const SIGNAL = new AbortController().signal
 const TOOL_NAMES = [
   'spawn_teammate',
+  'list_teammate_models',
   'send_message',
   'list_agents',
   'wait_agent',
@@ -144,6 +145,53 @@ async function waitRunning(ctx: Context, id: SessionId): Promise<Agent> {
 async function waitNoAgent(ctx: Context, id: SessionId): Promise<void> {
   await vi.waitFor(() => { expect(ctx.agents.get(id)).toBeUndefined() }, { timeout: 5_000 })
 }
+
+describe('teammate model selection', () => {
+  it('lists the composed providers before looking up their models', async () => {
+    const { ctx, lead } = await setup([])
+    const listed = await execute(ctx, lead, 'list_teammate_models', {})
+    expect(listed.isError, text(listed)).toBe(false)
+    expect(JSON.parse(text(listed))).toEqual([{ id: 'mock', name: 'mock' }])
+  })
+
+  it.each(['fresh', 'fork'] as const)('runs a %s teammate on a requested catalog model and retains it on resume', async (context) => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), 'hang', 'hang'])
+    await runTurn(lead, 'establish Lead history')
+    const selectedAdapter = new MockAdapter(['hang', 'hang'])
+    ctx.llm.registerAdapter(['cursor'], selectedAdapter)
+    vi.spyOn(selectedAdapter, 'listModels').mockImplementation(async provider => [
+      { provider, id: 'claude-opus-5-5-max', name: 'Opus' },
+    ])
+
+    const models = await execute(ctx, lead, 'list_teammate_models', { provider: 'cursor' })
+    expect(models.isError, text(models)).toBe(false)
+    expect(text(models)).toContain('cursor/claude-opus-5-5-max')
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'opus-reviewer', description: 'review changes', prompt: 'review', context,
+      model: 'cursor/claude-opus-5-5-max',
+    })
+    expect(spawned.isError, text(spawned)).toBe(false)
+    const childId = spawnedChildId(ctx, lead, spawned)
+    await vi.waitFor(() => { expect(selectedAdapter.requests[0]).toMatchObject({ provider: 'cursor', model: 'claude-opus-5-5-max' }) })
+    expect(ctx.agentTeams.listMembers(lead)[1]?.model).toBe('claude-opus-5-5-max')
+    expect(lead.model.current()?.model).toBe('mock')
+
+    ctx.agentTeams.interrupt(lead, 'opus-reviewer')
+    await waitNoAgent(ctx, childId)
+    await ctx.agentTeams.sendMessage(lead, { target: 'opus-reviewer', content: [{ type: 'text', text: 'continue' }], signal: SIGNAL })
+    await vi.waitFor(() => { expect(selectedAdapter.requests[1]).toMatchObject({ provider: 'cursor', model: 'claude-opus-5-5-max' }) })
+  })
+
+  it.each(['mock/not-listed', 'mock', '/model', 'mock/'])('rejects unavailable model %s before reserving a teammate name', async (model) => {
+    const { ctx, lead } = await setup([])
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'unknown-model', description: 'review changes', prompt: 'review', model,
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('model')
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+  })
+})
 
 describe('dsh-tool-team', () => {
   it.each(['running', 'inactive', 'provisioning', 'failed'] as const)(
@@ -783,7 +831,7 @@ describe('dsh-tool-team', () => {
     expect(text(result)).toContain('unknown tool "list_agents"')
     expect('default' in toolTeam).toBe(false)
     expect(toolTeam.name).toBe('tool-agent-team')
-    expect(toolTeam.inject).toEqual(['agents', 'agentTeams', 'tools', 'systemPrompt'])
+    expect(toolTeam.inject).toEqual(['agents', 'agentTeams', 'tools', 'systemPrompt', 'llm'])
   })
 
   it.each([

@@ -3,6 +3,7 @@
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
+import type { ModelSelection } from '@deepseek-ai/dsh-agent/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 /** Identifies the implicit team rooted at one top-level Session. */
@@ -64,6 +65,7 @@ export interface TeamMemberView {
   readonly description?: string
   readonly provider?: string
   readonly context?: 'fresh' | 'fork'
+  /** Current selected model id; omitted when the member has no live Agent or resolved selection. */
   readonly model?: string
   readonly diagnostics: string[]
 }
@@ -168,6 +170,8 @@ export interface SpawnTeammateRequest {
   readonly prompt: ContentBlock[]
   readonly context: 'fresh' | 'fork'
   readonly provider: string
+  /** Explicit LLM selection from the model catalog; omitted inherits the Lead's request model. */
+  readonly model?: ModelSelection
   readonly signal: AbortSignal
 }
 

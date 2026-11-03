@@ -61,6 +61,8 @@ kind: "package-reference"
 
 roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`inactive`（当前没有执行轮次，包括已加载和仅存储的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
 
+创建 fresh 或 fork teammate 时可指定目录中的模型；省略时继承 Lead 请求所用的模型。无效的选择会在保留名字之前失败。在线 roster 行报告每个 Agent 当前选择的模型 id，包括会话内的模型变更；未加载的成员省略模型。
+
 只有 Lead 可以创建 teammate 或中断它们。
 
 ### teammate 之间的消息

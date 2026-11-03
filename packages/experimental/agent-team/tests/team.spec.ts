@@ -7,7 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SubagentService from '@deepseek-ai/dsh-subagent'
@@ -90,6 +90,7 @@ function content(text: string) {
 interface TeamServiceInternals {
   readonly lifecycle: TeamRuntimeLifecycle
   readonly roster: {
+    readonly ctx: Context
     checkpointInitialPrompt(childId: SessionId, messageId: string, signal: AbortSignal): Promise<void>
     reconcileProvisioning(root: Agent, signal: AbortSignal): Promise<void>
     recoverFor(agent: Agent, signal: AbortSignal): Promise<void>
@@ -142,6 +143,68 @@ async function waitRunning(ctx: Context, id: SessionId): Promise<Agent> {
 }
 
 describe('Team identity and provisioning', () => {
+  it('rejects explicit model selection when the model service is unavailable', async () => {
+    const { ctx, lead } = await setup([])
+    vi.spyOn(teamInternals(ctx).roster.ctx, 'get').mockReturnValueOnce(undefined)
+    await expect(ctx.agentTeams.spawnTeammate(lead, {
+      name: 'unavailable-model', description: 'review changes', prompt: content('review'),
+      context: 'fresh', provider: 'spawn', model: { provider: 'mock', model: 'selected' }, signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_MODEL_UNAVAILABLE' })
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+  })
+
+  it('records the explicit model and reasoning effort after a fork inherits Lead history', async () => {
+    const { ctx, lead } = await setup([textResponse('Lead history'), 'hang'])
+    lead.followup(createUserMessage({ content: content('lead turn'), source: { kind: 'user' } }))
+    await lead.whenIdle()
+    const adapter = new MockAdapter(['hang'], {
+      efforts: [{ id: ReasoningEffortId('high'), name: 'High' }], defaultEffort: ReasoningEffortId('high'),
+    })
+    ctx.llm.registerAdapter(['selected'], adapter)
+    vi.spyOn(adapter, 'listModels').mockResolvedValue([{ provider: 'selected', id: 'selected', name: 'Selected' }])
+    await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'selected-fork', description: 'review changes', prompt: content('review'),
+      context: 'fork', provider: 'fork',
+      model: { provider: 'selected', model: 'selected', reasoningEffort: ReasoningEffortId('high') }, signal: SIGNAL,
+    })
+    await vi.waitFor(() => { expect(adapter.requests[0]).toMatchObject({ model: 'selected', reasoningEffort: 'high' }) })
+  })
+
+  it('reports the Lead model selection used for requests instead of its launch default', async () => {
+    const { ctx, lead, adapter } = await setup([textResponse('selected model answer')])
+    expect(ctx.agentTeams.listMembers(lead)[0]?.model).toBe('mock')
+    lead.model.select({ provider: 'mock', model: 'selected-model' })
+
+    expect(ctx.agentTeams.listMembers(lead)[0]?.model).toBe('selected-model')
+    lead.followup(createUserMessage({ content: content('lead turn'), source: { kind: 'user' } }))
+    await lead.whenIdle()
+
+    expect(adapter.requests[0]?.model).toBe('selected-model')
+    expect(lead.options.model).toBe('mock')
+    expect(ctx.agentTeams.listMembers(lead)[0]?.model).toBe('selected-model')
+  })
+
+  it('reports each live teammate selection without substituting the Lead model for inactive members', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const stop = ctx.on('agent/created', ({ agent }) => {
+      if (agent.session.header.parentSession === lead.id) {
+        agent.model.select({ provider: 'mock', model: 'teammate-model' })
+      }
+    })
+    const spawned = await spawn(ctx, lead, 'selected-worker')
+    stop()
+    expect(spawned.member.model).toBe('teammate-model')
+    expect(ctx.agentTeams.listMembers(lead)[1]?.model).toBe('teammate-model')
+
+    const child = await waitRunning(ctx, spawned.member.id)
+    child.model.select({ provider: 'mock', model: 'next-teammate-model' })
+    expect(ctx.agentTeams.listMembers(lead)[1]?.model).toBe('next-teammate-model')
+
+    ctx.agentTeams.interrupt(lead, 'selected-worker')
+    await waitNoAgent(ctx, spawned.member.id)
+    expect(ctx.agentTeams.listMembers(lead)[1]).not.toHaveProperty('model')
+  })
+
   it('rejects reads and mutations after a Team projection fails', async () => {
     const { ctx, lead } = await setup([])
     lead.session.append('team/message/delivered', {

@@ -1,0 +1,6 @@
+# Keep the launch fallback distinct from the session-selected model.
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-v4-flash

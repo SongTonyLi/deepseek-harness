@@ -57,3 +57,5 @@
       name: '@deepseek-ai/dsh-experimental-agent-team'
     - id: tool-agent-team
       name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+    - id: team-model-selection-driver
+      name: './model-selection-driver.mjs'
