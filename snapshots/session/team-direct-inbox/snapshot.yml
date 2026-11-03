@@ -7,5 +7,6 @@ header:
   class: team-targets
   systemPromptSource: team-targets
   toolSchemasSource: team-targets
+  childSystemPrompts: [1]
 workspace:
   final: true

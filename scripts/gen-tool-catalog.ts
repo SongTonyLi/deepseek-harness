@@ -607,7 +607,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
     pkg: '@deepseek-ai/dsh-experimental-tool-agent-team',
     dir: 'tool-agent-team',
     source: 'packages/experimental/tool-agent-team/src/index.ts',
-    requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agentTeams', 'an exact live Team member Agent'],
+    requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agentTeams', 'ctx.llm', 'an exact live Team member Agent'],
     writes: ['tool/call', 'team/member', 'team/task', 'agent/inbox/spliced', 'user/message on inbox claim', 'tool/result'],
     async mount(ctx) {
       await ctx.plugin(AgentRegistry)
@@ -634,12 +634,13 @@ const TOOL_PACKAGES: ToolPackage[] = [
         Object.assign(agent, { ctx: createScope(inner, agent).ctx })
         await inner.agents.register(agent)
       }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
+      await ctx.plugin(LlmRuntime)
       await ctx.plugin(ToolTeam)
       catalogChildScopes.set(ctx, agent)
     },
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
-      'All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.',
+      'All ten tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-todo',

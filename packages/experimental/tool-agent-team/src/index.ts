@@ -11,7 +11,7 @@ import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
 /** Services required by the Team tool plugin. */
-export const inject = ['agents', 'agentTeams', 'tools', 'systemPrompt']
+export const inject = ['agents', 'agentTeams', 'tools', 'systemPrompt', 'llm']
 
 /** Tool routing configuration. */
 export interface Config {
@@ -228,20 +228,52 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           enum: ['fresh', 'fork'],
           description: 'fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.',
         },
+        model: {
+          type: 'string',
+          description: 'Optional provider/model id from list_teammate_models. Use the requested model when specified; omit to inherit the Lead model.',
+        },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
         const context = args.context ?? 'fresh'
+        const slash = args.model?.indexOf('/') ?? -1
+        if (args.model !== undefined && (slash < 1 || slash === args.model.length - 1)) {
+          throw new Error('model must be a provider/model id from list_teammate_models')
+        }
         const result = await ctx.agentTeams.spawnTeammate(agent, {
           name: args.name,
           description: args.description,
           prompt: [{ type: 'text', text: args.prompt }],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
+          ...args.model === undefined ? {} : {
+            model: { provider: args.model.slice(0, slash), model: args.model.slice(slash + 1) },
+          },
           signal: exec.signal,
         })
         return { member: modelMember(result.member) }
+      },
+    })))
+
+    register(scoped.tools.register(defineTool({
+      name: 'list_teammate_models',
+      description: 'Inspect available teammate models. No arguments lists providers; provider lists its model ids. Use a returned provider/model id in spawn_teammate.',
+      parameters: {
+        provider: { type: 'string', description: 'Provider id returned by this tool; omit to list providers.' },
+      },
+      output: jsonOutput({
+        type: 'array',
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: { id: { type: 'string', required: true }, name: { type: 'string', required: true } },
+        },
+      }),
+      async execute(args) {
+        if (args.provider === undefined) return ctx.llm.listProviders().map(({ id, name }) => ({ id, name }))
+        return (await ctx.llm.listModels(args.provider)).map(model => ({
+          id: `${args.provider}/${model.id}`, name: model.name,
+        }))
       },
     })))
 

@@ -61,6 +61,8 @@ Ask the Lead to create a teammate: give it a unique lowercase name such as `revi
 
 The roster shows every member with its role (`lead` or `teammate`) and current status: `running`, `inactive` (no turn is executing, whether loaded or stored), `provisioning`, or `failed`. A member that is not loaded receives its messages when it wakes.
 
+Creation accepts an optional catalog model selection for fresh and fork teammates; omission inherits the Lead request model. Invalid selections fail before reserving a name. Live roster rows report each Agent's current selected model id, including session model changes; unloaded members omit the model.
+
 Only the Lead can create teammates or interrupt them.
 
 ### Messages between teammates

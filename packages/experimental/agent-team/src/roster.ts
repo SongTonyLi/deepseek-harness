@@ -126,17 +126,18 @@ export class TeamRoster {
   list(membership: TeamMembership): TeamMemberView[] {
     const { root } = membership
     const state = this.journal.state(root)
+    const leadModel = root.model.current()?.model
     const result: TeamMemberView[] = [{
       id: root.id,
       name: 'lead',
       role: 'lead',
       status: availability(root),
-      ...root.options.model === undefined ? {} : { model: root.options.model },
+      ...leadModel === undefined ? {} : { model: leadModel },
       diagnostics: [],
     }]
     for (const member of state.members) {
       const live = this.ctx.agents.get(member.id)
-      const model = live?.options.model ?? root.options.model
+      const model = live?.model.current()?.model
       result.push({
         id: member.id,
         name: member.name,
@@ -159,7 +160,7 @@ export class TeamRoster {
   /**
    * Create one named, continuable direct child of the Team Lead.
    * @param caller - exact live Lead Agent.
-   * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
+   * @param request - name, description, prompt, context mode, subagent provider, optional catalog model, and cancellation.
    * @returns the active roster row.
    */
   async spawn(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult> {
@@ -237,6 +238,20 @@ export class TeamRoster {
     const signal = AbortSignal.any([request.signal, this.lifecycle.signal])
     signal.throwIfAborted()
     const root = membership.root
+    const selectedModel = request.model
+    if (selectedModel !== undefined) {
+      const llm = this.ctx.get('llm')
+      if (llm === undefined) throw new TeamError('model selection requires the llm service', 'TEAM_MODEL_UNAVAILABLE')
+      const models = await llm.listModels(selectedModel.provider)
+      if (!models.some(model => model.id === selectedModel.model)) {
+        throw new TeamError(
+          `model "${selectedModel.provider}/${selectedModel.model}" is not in the model catalog`,
+          'TEAM_MODEL_NOT_FOUND',
+        )
+      }
+      await llm.resolveModelInfo(selectedModel.provider, selectedModel.model, signal)
+      signal.throwIfAborted()
+    }
     const name = this.memberName(request.name)
     const description = requiredText(request.description, 'description', 200)
     const childId = brandString<SessionId>(randomUUID())
@@ -269,6 +284,7 @@ export class TeamRoster {
         request: {
           prompt: request.prompt,
           parent: root,
+          ...request.model === undefined ? {} : { agentOptions: request.model },
         },
         signal,
       })
@@ -419,6 +435,7 @@ export class TeamRoster {
   /** Build one runtime member row after successful creation. */
   private memberView(member: TeamMemberSnapshot & { readonly phase: 'active' }): TeamMemberView {
     const live = this.ctx.agents.get(member.id)
+    const model = live?.model.current()?.model
     return {
       id: member.id,
       name: member.name,
@@ -427,7 +444,7 @@ export class TeamRoster {
       description: member.description,
       provider: member.provider,
       context: member.context,
-      ...live?.options.model === undefined ? {} : { model: live.options.model },
+      ...model === undefined ? {} : { model },
       diagnostics: [],
     }
   }

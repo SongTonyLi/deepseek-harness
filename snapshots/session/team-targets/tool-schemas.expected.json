@@ -236,6 +236,19 @@
       }
     },
     {
+      "name": "list_teammate_models",
+      "description": "Inspect available teammate models. No arguments lists providers; provider lists its model ids. Use a returned provider/model id in spawn_teammate.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "Provider id returned by this tool; omit to list providers."
+          }
+        }
+      }
+    },
+    {
       "name": "read",
       "description": "Read a UTF-8 text file and return line-numbered content.",
       "parameters": {
@@ -337,6 +350,10 @@
               "fresh",
               "fork"
             ]
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional provider/model id from list_teammate_models. Use the requested model when specified; omit to inherit the Lead model."
           }
         },
         "required": [

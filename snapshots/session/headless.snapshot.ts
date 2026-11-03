@@ -954,6 +954,7 @@ async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly Se
 
   const childPrompts = new Map<number, string>()
   const childSchemas = new Map<number, unknown[][]>()
+  const recordedSessions = await fixtureSessions(scenario)
   for (const index of scenario.manifest.header.childSystemPrompts ?? []) {
     childPrompts.set(index, await readFile(join(scenario.dir, `system-prompt.${index}.expected.md`), 'utf8'))
   }
@@ -965,6 +966,10 @@ async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly Se
   for (const [logIndex, log] of actualLogs.entries()) {
     const headers = normalizedHeaders(log.content, ctx)
     const prompts = normalizedSystemPrompts(log.content, ctx)
+    const recordedSession = recordedSessions[logIndex]
+    if (recordedSession === undefined) throw new Error(`${scenario.name}: missing recorded Session ${logIndex}`)
+    const recordedHeaders = normalizedHeaders(recordedSession, fixtureContext(recordedSession))
+    expect(headers, `${scenario.name}: Session ${logIndex} request header count`).toHaveLength(recordedHeaders.length)
     if (headers.length > 0) {
       expect(systemPromptPrecedesRequests(log.content), `${scenario.name}: a system/message precedes the first request/header`).toBe(true)
       expect(prompts.length, `${scenario.name}: system/message count`)
@@ -972,7 +977,8 @@ async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly Se
     }
     for (const [index, header] of headers.entries()) {
       const selectedSchemas = childSchemas.get(logIndex)?.[index]
-      const base = reconstructed[index] ?? reconstructed[0]
+      const base = logIndex === 0 ? reconstructed[index] ?? reconstructed[0]
+        : restorePinnedToolSchemas(recordedHeaders[index], schemaSets[index] ?? schemaSets[0]!)
       const expected = selectedSchemas === undefined ? base : { ...base as JsonObject, tools: selectedSchemas }
       expect(header, `${scenario.name}: request header ${index + 1}`).toEqual(expected)
     }
