@@ -18,6 +18,31 @@ function catalog(): CursorCatalog {
 }
 
 describe('CursorAdapter', () => {
+  it('supplies compaction capacity for live ids and honors configured overrides', async () => {
+    let options = resolveAdapterOptions({})
+    const adapter = new CursorAdapter({
+      options: () => options,
+      resolveAccessToken: () => Promise.resolve('tok'),
+      catalog: catalog(),
+    })
+    expect(await adapter.resolveModel('cursor', 'grok-4.7-high-fast')).toMatchObject({
+      context: { contextWindow: 200_000 },
+    })
+    options = resolveAdapterOptions({
+      defaultContextWindow: 160_000,
+      modelContextWindows: { 'grok-4.7-high-fast': 256_000, 'composer-2': 100_000 },
+    })
+    expect(await adapter.resolveModel('cursor', 'grok-4.7-high-fast')).toMatchObject({
+      context: { contextWindow: 256_000 },
+    })
+    expect(await adapter.resolveModel('cursor', 'unlisted')).toMatchObject({
+      context: { contextWindow: 160_000 },
+    })
+    expect(await adapter.resolveModel('cursor', 'composer-2')).toMatchObject({
+      context: { contextWindow: 100_000 }, defaultMaxTokens: 8_192,
+    })
+  })
+
   it('reports Cursor metadata, hydrates the catalog, and rejects stop', async () => {
     const adapter = new CursorAdapter({
       options: () => resolveAdapterOptions({}),

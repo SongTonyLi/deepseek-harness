@@ -157,9 +157,13 @@ export class BasicCompactionEngine extends CompactionEngine {
     }
 
     ctx.on('agent/pre-step', async (
-      { agent, signal },
+      { agent, signal, modelSelection },
       next,
     ): Promise<PreStepDecision> => {
+      const previous = routedTarget(agent.session)
+      // Changed routes are priced at agent/request, without calling the previous subscription first.
+      if (previous !== undefined
+        && (previous.provider !== modelSelection.provider || previous.model !== modelSelection.model)) return next()
       if (!signal.aborted) {
         try {
           const result = await this.compactIfNeeded(agent, 'pressure', signal)
@@ -180,8 +184,7 @@ export class BasicCompactionEngine extends CompactionEngine {
       if (status === 'idle') this.overflowRetries.delete(agent)
     })
 
-    // Prepend wraps routing listeners: await their final selection while the
-    // committed header still identifies the model that can summarize the history.
+    // Prepend wraps routing listeners so capacity and summary routing use their final selection.
     ctx.on('agent/request', async ({ agent, signal }, next) => {
       const config = await next()
       const previous = agent.session.requestHeader()
@@ -274,7 +277,7 @@ export class BasicCompactionEngine extends CompactionEngine {
     agent: Agent,
     signal?: AbortSignal,
   ): Promise<SummaryResult> {
-    const target = conversationTarget(agent)
+    const target = input.target ?? conversationTarget(agent)
     const config = target === undefined
       ? this.config
       : resolveTargetPolicy(this.config, target)
@@ -361,7 +364,12 @@ export class BasicCompactionEngine extends CompactionEngine {
           + `(${measurement.totalTokens} estimated tokens >= threshold ${spec.thresholdTokens})`,
         )
       }
-      result = await this.compactRegion(range.start, range.end, agent, signal)
+      result = requireBelowThreshold
+        ? await compactSurfaceRegion(
+          this.regionDependencies(target), agent.session, range.start, range.end, agent,
+          { owner: 'current-turn', stability: 'whole-surface' }, signal,
+        )
+        : await this.compactRegion(range.start, range.end, agent, signal)
       measurement = meter.measure(agent.session, header)
       if (measurement.totalTokens < spec.thresholdTokens) return result
     }
@@ -399,7 +407,7 @@ export class BasicCompactionEngine extends CompactionEngine {
   }
 
   /**
-   * Force one useful idle-session compaction below the pressure threshold, and
+   * Force one useful idle-session compaction using the selected model, and
    * resolve only after its standalone marker pair is durably checkpointed.
    * @param agent - idle agent whose next-turn admission this call reserves.
    * @param signal - cancellation scoped to this compaction request.
@@ -424,7 +432,7 @@ export class BasicCompactionEngine extends CompactionEngine {
           )
           if (range === null) return null
           return await compactSurfaceRegion(
-            this.regionDependencies(),
+            this.regionDependencies(agent.model.current()),
             agent.session,
             range.start,
             range.end,
@@ -461,10 +469,10 @@ export class BasicCompactionEngine extends CompactionEngine {
   }
 
   /** Bind the effective token meter and dynamically dispatched summarizer hook. */
-  private regionDependencies(): Parameters<typeof compactSurfaceRegion>[0] {
+  private regionDependencies(target?: Pick<LlmCallConfig, 'provider' | 'model'>): Parameters<typeof compactSurfaceRegion>[0] {
     return {
       meter: this.ctx.tokenMeter,
-      summarize: (input, owner, abort) => this.summarize(input, owner, abort),
+      summarize: (input, owner, abort) => this.summarize(target === undefined ? input : { ...input, target }, owner, abort),
       recover: (error, agent, sourceEventSeqs, signal) => this.ctx.waterfall('compaction/summary-error', {
         session: agent.session,
         sourceEventSeqs,

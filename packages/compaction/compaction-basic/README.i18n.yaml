@@ -24,17 +24,17 @@
   en: 4cb73d7a57908948
   zh: 7ba2ddc4c76e4957
 /deepseek-ai-dsh-compaction-basic/use-this-package/tuning-when-condensation-starts:
-  en: 3446c54c062d7e34
-  zh: fb502c941e508ae0
+  en: d09109d599d3ebcf
+  zh: 04619d2a5b92e417
 /deepseek-ai-dsh-compaction-basic/use-this-package/what-happens-when-condensation-runs:
   en: c872a8ef069596f0
   zh: b3a48e309ae830d4
 /deepseek-ai-dsh-compaction-basic/use-this-package/switching-models:
-  en: 48978abc46da1afa
-  zh: 11931af05db7b41f
+  en: dfa786d46b8103ca
+  zh: d093e968523ecef3
 /deepseek-ai-dsh-compaction-basic/use-this-package/on-demand-condensation-with-compact:
-  en: 4c5067e4c57ca708
-  zh: 1c0e70319b9b2112
+  en: 1349096e69be764f
+  zh: a77a984ebff43f8f
 /deepseek-ai-dsh-compaction-basic/use-this-package/trimming-oversized-tool-outputs:
   en: 1d6a74c0dc874dc8
   zh: bcfa95549308c030
@@ -48,8 +48,8 @@
   en: 9e6e472b0f3977d3
   zh: fdc0e827c19ba401
 /deepseek-ai-dsh-compaction-basic/understand-the-implementation/summarization-mechanics:
-  en: 967531b71453eb88
-  zh: c7919b46e36763e6
+  en: 4e233853c609045c
+  zh: 10fe4dbe0efbe172
 /deepseek-ai-dsh-compaction-basic/understand-the-implementation/the-region-transaction:
   en: f4330f6bff22d400
   zh: 46e16c51bb66a0f7
@@ -57,8 +57,8 @@
   en: 313e019b1a9f8aa8
   zh: 3c75d11b02adb693
 /deepseek-ai-dsh-compaction-basic/understand-the-implementation/source-map:
-  en: 747bad235fbb04ad
-  zh: 02e6562f3d745d4f
+  en: 6ffbe51e0416804e
+  zh: 6b7357931635bd1a
 /deepseek-ai-dsh-compaction-basic/further-exploration:
   en: 84b5b81eb9b5965d
   zh: 7000af0fa502fcc1
@@ -69,11 +69,17 @@
   en: 2e1148dd0f39a281
   zh: cd68c9fff63534af
 /deepseek-ai-dsh-compaction-basic/model-experience/conversation-history/what-the-model-sees:
-  en: 8d4325e6659bc314
-  zh: f80e69305b39f4a3
+  en: 66fece410ff42ff2
+  zh: e6e43284225b66e9
 /deepseek-ai-dsh-compaction-basic/model-experience/conversation-history/what-the-model-sees/conversation-checkpoint-preamble:
   en: 129d1eaba2519330
   zh: 3ec517bdc6cb5ae3
+/deepseek-ai-dsh-compaction-basic/model-experience/conversation-history/what-the-model-sees/model-switch-work-state-notice-with-a-checkpoint:
+  en: bb0f43147ae2f915
+  zh: ed82b2bda6195212
+/deepseek-ai-dsh-compaction-basic/model-experience/conversation-history/what-the-model-sees/model-switch-work-state-notice-without-a-checkpoint:
+  en: 080eff4d6367494a
+  zh: fb07bedec0338e11
 /deepseek-ai-dsh-compaction-basic/model-experience/conversation-history/token-effect:
   en: 872515a75b5a9726
   zh: c0045e1972bbac4e

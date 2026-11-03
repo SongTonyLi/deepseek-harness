@@ -5,6 +5,17 @@ import { Config, resolveAdapterOptions } from '../src/config.ts'
 import { DEFAULT_API_KEY_ENV, DEFAULT_STREAM_IDLE_TIMEOUT_MS } from '../src/protocol.ts'
 
 describe('resolveAdapterOptions', () => {
+  it('validates default and exact-model context budgets', () => {
+    expect(resolveAdapterOptions({}).defaultContextWindow).toBe(200_000)
+    expect(Config({}).defaultContextWindow).toBe(200_000)
+    for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => resolveAdapterOptions({ defaultContextWindow: invalid })).toThrow(/defaultContextWindow/)
+      expect(() => resolveAdapterOptions({ modelContextWindows: { grok: invalid } })).toThrow(/modelContextWindows.*grok/)
+      expect(() => Config({ defaultContextWindow: invalid })).toThrow()
+      expect(() => Config({ modelContextWindows: { grok: invalid } })).toThrow()
+    }
+  })
+
   it('applies defaults including harvest-on and CURSOR_ACCESS_TOKEN', () => {
     const resolved = resolveAdapterOptions({})
     expect(resolved.apiKeyEnv).toBe(DEFAULT_API_KEY_ENV)

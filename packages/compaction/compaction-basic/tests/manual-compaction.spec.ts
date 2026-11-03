@@ -210,6 +210,7 @@ function fakeAgent(
   return {
     session,
     options: { provider: MODEL, model: MODEL },
+    model: { current: () => ({ provider: MODEL, model: MODEL }), select: () => {} },
     runMaintenance<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> {
       const release = reserve()
       if (release === undefined) throw new Error('agent already has active work')
@@ -239,6 +240,22 @@ function compactEvents(session: Session): SessionEvent[] {
 }
 
 describe('compactNow through the real loop', () => {
+  it('uses the pending model selection for a manual summary before a new request succeeds', async () => {
+    const harness = await loopHarness()
+    const { ctx, agent, compact } = harness
+    try {
+      await seedHistory(harness)
+      const previous = agent.session.requestHeader()
+      agent.model.select({ provider: 'available', model: 'replacement' })
+      expect(await compact.compactNow(agent, SIGNAL)).not.toBeNull()
+      expect(compact.calls[0]?.target).toEqual({ provider: 'available', model: 'replacement' })
+      expect(agent.session.requestHeader()).toEqual(previous)
+      expect(agent.model.current()).toEqual({ provider: 'available', model: 'replacement' })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('passes logged image omissions to the summarizer without changing the original message', async () => {
     const { ctx, agent, compact } = await loopHarness()
     try {

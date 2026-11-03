@@ -107,13 +107,16 @@ export class CursorCatalog {
   }
 
   /**
-   * Exact-model metadata. Unlisted ids still resolve as text-only routes.
+   * Exact-model metadata, retaining bundled limits when account listings omit them.
+   * Unlisted ids still resolve as text-only routes.
    * @param model - GenerateOptions.model.
    * @returns resolved metadata.
    */
   resolve(model: string): LlmResolvedModelInfo {
     const found = this.models.find(entry => entry.id === model)
-    if (found !== undefined) return toResolved(found)
+    const bundled = FALLBACK_MODELS.find(entry => entry.id === model)
+    if (found !== undefined) return toResolved({ ...bundled, ...found })
+    if (bundled !== undefined) return toResolved(bundled)
     return { provider: PROVIDER, id: model, name: model, inputModalities: ['text'] }
   }
 
