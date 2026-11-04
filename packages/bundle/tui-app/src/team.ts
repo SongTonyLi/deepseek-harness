@@ -1,14 +1,14 @@
 /**
  * Agent Teams as terminal rows: tool visibility, the roster picker, and the
- * read of the optional `agentTeams` service. The service is absent from the
- * typed Context, so `ctx.get('agentTeams')` is `any` until a type guard
- * narrows it. The panel text lives in `./team-panel.ts`.
+ * task-board mode and subagent catalog. The panel text lives in `./team-panel.ts`.
  * @module @deepseek-ai/dsh-tui-app/team
  */
 
 import { truncateToWidth } from '@earendil-works/pi-tui'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-agent-team'
+import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentChoice } from './catalog.ts'
 import type { TeamMemberRow, TeamTaskRow } from './team-panel.ts'
@@ -41,36 +41,7 @@ const TASK_FIELDS = new Set([
   'id', 'revision', 'subject', 'description', 'status', 'blockedBy', 'writeScopes', 'ownerName', 'ready', 'writeScopeWarnings',
 ])
 
-/**
- * The optional service the terminal reads when membership and both lists are functions.
- * `readTeam` still accepts a service that has not grown a `listTasks` method yet.
- */
-export interface AgentTeamsReader {
-  /**
-   * Membership of one agent, or undefined when that agent is not on a team.
-   * @param agent - the bound agent.
-   * @returns a membership value, or undefined.
-   */
-  tryMembership(agent: Agent): unknown
-  /**
-   * Roster rows visible to one member.
-   * @param agent - the bound agent.
-   * @returns the member rows.
-   */
-  listMembers(agent: Agent): unknown
-  /**
-   * Shared tasks visible to one member.
-   * @param agent - the bound agent.
-   * @returns the task rows.
-   */
-  listTasks(agent: Agent): unknown
-}
-
-/**
- * What a command or the summary can do with the service.
- * `absent` means the service is missing, or `tryMembership` or `listMembers` is not a function.
- * `not-member` means membership is undefined or a list read threw.
- */
+/** Current Team presentation rows, or the reason the view is unavailable. */
 export type TeamSnapshot =
   | { kind: 'absent' }
   | { kind: 'not-member' }
@@ -93,123 +64,57 @@ export interface TeamBrowseRow {
 
 /**
  * Whether a logged event should redraw the team summary.
- * @param type - the session event type, widened because team events are not on this package's `SessionEvent` union.
- * @returns true for a roster, task, or team-message event.
+ * @param type - the session event type.
+ * @returns true for a Team mode, task, or historical Team event.
  */
 export function isTeamPanelEvent(type: string): boolean {
   return type.startsWith('team/')
 }
 
 /**
- * Narrow a service value to a reader that exposes membership and both lists.
- * @param value - the raw `ctx.get('agentTeams')` value.
- * @returns true when membership and both lists are functions.
+ * Read Team mode, current task owners, and continuable catalog descendants.
+ * The catalog carries labels; a separate Team roster is not maintained.
+ * @param ctx - context carrying the task board and subagent runtime.
+ * @param agent - exact live caller.
+ * @param entries - the terminal's latest descendant listing.
+ * @returns current presentation rows, or the reason Team rows are unavailable.
  */
-function isAgentTeamsReader(value: unknown): value is AgentTeamsReader {
-  if (typeof value !== 'object' || value === null) return false
-  return 'tryMembership' in value && typeof value.tryMembership === 'function'
-    && 'listMembers' in value && typeof value.listMembers === 'function'
-    && 'listTasks' in value && typeof value.listTasks === 'function'
-}
-
-/**
- * The Agent Teams service when this composition mounted a reader with both lists.
- * @param ctx - plugin context. `agentTeams` is not a typed Context property.
- * @returns the reader, or undefined when the service is missing or has no reader methods.
- */
-export function readAgentTeams(ctx: Context): AgentTeamsReader | undefined {
-  const service: unknown = ctx.get('agentTeams')
-  return isAgentTeamsReader(service) ? service : undefined
-}
-
-/**
- * Whether a value is a non-null object the reader can look up methods on.
- * @param value - the raw `ctx.get('agentTeams')` value.
- * @returns true for an object the method checks can read.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-/**
- * Whether a list read returned an array. Element fields are the reader's own
- * rows; this only rejects a missing list.
- * @param value - the value a list method returned.
- * @returns true when `value` is an array.
- */
-function isRowList<T>(value: unknown): value is T[] {
-  return Array.isArray(value)
-}
-
-/**
- * Call one service method with the service as `this`.
- * @param service - the Agent Teams service.
- * @param name - `tryMembership`, `listMembers`, or `listTasks`.
- * @param agent - the bound agent.
- * @returns the method's return value. The caller only passes a name whose value is a function.
- */
-function callTeam(service: Record<string, unknown>, name: string, agent: Agent): unknown {
-  const method = service[name] as (this: Record<string, unknown>, agent: Agent) => unknown
-  return method.call(service, agent)
-}
-
-/**
- * Read the roster for one agent.
- * A missing service, or a service whose `tryMembership` or `listMembers` is
- * not a function, is `absent`. A membership of `undefined`, or a
- * `listMembers` call that throws, is `not-member`. `listTasks` is optional:
- * a missing method yields an empty task list, and a throw or a non-array is
- * `not-member`.
- * @param service - `ctx.get('agentTeams')`, absent when the bundle is off.
- * @param agent - the bound agent.
- * @returns the snapshot the commands and the summary share.
- */
-export function readTeam(service: unknown, agent: Agent): TeamSnapshot {
-  if (!isRecord(service) || typeof service.listMembers !== 'function' || typeof service.tryMembership !== 'function') {
-    return { kind: 'absent' }
-  }
-  let membership: unknown
+export function readTeamSnapshot(
+  ctx: Context,
+  agent: Agent,
+  entries: readonly SubagentDescendantListEntry[] = [],
+): TeamSnapshot {
+  const teams = ctx.get('agentTeams')
+  const subagents = ctx.get('subagents')
+  if (teams === undefined || subagents === undefined) return { kind: 'absent' }
   try {
-    membership = callTeam(service, 'tryMembership', agent)
-  } catch (error: unknown) {
-    // A membership read that throws cannot place this session on the team.
-    void error
-    return { kind: 'not-member' }
-  }
-  if (membership === undefined) return { kind: 'not-member' }
-  let members: unknown
-  try {
-    members = callTeam(service, 'listMembers', agent)
-  } catch (error: unknown) {
-    // listMembers throws when this agent cannot read the roster.
-    void error
-    return { kind: 'not-member' }
-  }
-  if (!isRowList<TeamMemberRow>(members)) return { kind: 'not-member' }
-  let tasks: unknown
-  if (typeof service.listTasks !== 'function') {
-    tasks = []
-  } else {
-    try {
-      tasks = callTeam(service, 'listTasks', agent)
-    } catch (error: unknown) {
-      // A task-board read that throws leaves the roster unread as well.
-      void error
-      return { kind: 'not-member' }
+    if (!teams.isEnabled(agent)) return { kind: 'not-member' }
+    const root = subagents.rootOf(agent)
+    const row = (live: Agent | undefined, id: string, name: string, role: TeamMemberRow['role']): TeamMemberRow => {
+      const model = live?.model.current()?.model
+      return {
+        id, name, role,
+        status: live?.status === 'running' ? 'running' : 'inactive',
+        ...model === undefined ? {} : { model },
+        diagnostics: [],
+      }
     }
+    const members = [row(root, root.id, 'lead', 'lead')]
+    for (const entry of entries) {
+      if (entry.kind !== 'child' || entry.mode !== 'continuable') continue
+      members.push(row(ctx.get('agents')?.get(entry.id), entry.id, entry.label, 'teammate'))
+    }
+    const names = new Map(members.map(member => [member.id, member.name]))
+    const tasks = teams.listTasks(agent).map(task => ({
+      ...task,
+      ...task.ownerId === undefined ? {} : { ownerName: names.get(task.ownerId) ?? task.ownerId },
+    }))
+    return { kind: 'team', members, tasks }
+  } catch (error: unknown) {
+    // A missing root or failed projection cannot supply a current Team view.
+    void error
+    return { kind: 'not-member' }
   }
-  if (!isRowList<TeamTaskRow>(tasks)) return { kind: 'not-member' }
-  return { kind: 'team', members, tasks }
-}
-
-/**
- * Read the roster for one agent from plugin context.
- * @param ctx - plugin context carrying the optional service.
- * @param agent - the bound agent.
- * @returns the snapshot {@link readTeam} produces for `ctx.get('agentTeams')`.
- */
-export function readTeamSnapshot(ctx: Context, agent: Agent): TeamSnapshot {
-  return readTeam(ctx.get('agentTeams'), agent)
 }
 
 /**

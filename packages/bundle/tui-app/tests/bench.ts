@@ -500,10 +500,12 @@ export async function bench(options: {
       saveSelection,
     } as never)
   }
-  if (options.subagents !== undefined) {
-    const listDescendants = options.subagents
-    ctx.provide('subagents', { listDescendants: (sessionId: SessionId) => listDescendants(sessionId) } as never)
+  const runtimeRoots = new Map<Agent, Agent>()
+  const runtime = {
+    listDescendants: (sessionId: SessionId) => options.subagents?.(sessionId) ?? Promise.resolve([]),
+    rootOf: (caller: Agent): Agent => runtimeRoots.get(caller) ?? caller,
   }
+  if (options.subagents !== undefined) ctx.provide('subagents', runtime as never)
   await options.before?.(ctx)
   const calls: AgentCalls = { followups: [], steers: [], injections: [], cancels: 0, cancelOptions: undefined }
   // Every Agent the host binds shares the status `setStatus` moves, so a spec
@@ -537,13 +539,7 @@ export async function bench(options: {
         whenIdle: () => Promise.resolve(),
       }
       await createOptions.setup?.(ownerCtx, agent)
-      if (createOptions.parentAgent === undefined) {
-        ctx.agents.register(agent)
-      } else {
-        // A child created for a live parent enters the registry owned by it, as a subagent provider's child does.
-        ctx.agents.enter(agent, createOptions.parentAgent)
-        await ctx.agents.announce(agent, 'startup')
-      }
+      await ctx.agents.register(agent)
       return { agent, dispose: () => Promise.resolve() }
     },
     resume: () => Promise.reject(new Error('not used')),
@@ -696,7 +692,6 @@ export async function bench(options: {
       childStatuses.set(id, 'idle')
       const handle = await ctx.agents.create({
         sessionId: id,
-        ...childOptions.owner === undefined ? {} : { parentAgent: childOptions.owner },
         meta: {
           cwd: '/work',
           parentSession: childOptions.parent ?? agent.session.id,
@@ -705,6 +700,10 @@ export async function bench(options: {
         },
       })
       const child = handle.agent
+      if (childOptions.owner !== undefined) {
+        runtimeRoots.set(child, runtimeRoots.get(childOptions.owner) ?? childOptions.owner)
+        if (ctx.get('subagents') === undefined) ctx.provide('subagents', runtime as never)
+      }
       return {
         agent: child,
         session: child.session,

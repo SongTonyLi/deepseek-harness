@@ -176,7 +176,7 @@ export function ConversationSessionHeader({
                   // base.css) and leave the title inert for dragging too.
                   const title = last
                     ? (
-                      <span className={clsx(css.crumb, summary.subagent && css.crumbSubagent, css.crumbCurrent)}>
+                      <span className={clsx(css.crumb, css.crumbCurrent)}>
                         {summary.displayTitle}
                       </span>
                     )

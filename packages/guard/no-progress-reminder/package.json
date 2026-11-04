@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-no-progress-reminder",
   "description": "No-progress guard plugin: advisory reminders when an agent spends turns on a goal without mutating the tree",
-  "version": "0.2.1-rc.3",
+  "version": "0.2.2-alpha.3",
   "publishConfig": {
     "access": "public"
   },

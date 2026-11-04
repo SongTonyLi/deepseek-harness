@@ -738,6 +738,8 @@ export async function* streamCursorRun(
   openStream: OpenCursorStream = input => openConnectStream(input),
   registry?: CursorRunRegistry,
 ): AsyncIterable<StreamChunk> {
+  // The purpose map is extended by plugins loaded with the provider.
+  // eslint-disable-next-line typescript/no-unnecessary-condition
   const sessionId = options.purpose === undefined ? options.sessionId : undefined
   const resumed = sessionId === undefined ? undefined : registry?.take(sessionId, options)
   if (resumed !== undefined) {

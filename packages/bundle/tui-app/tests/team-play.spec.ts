@@ -137,6 +137,21 @@ describe('beats from the session log', () => {
   })
 })
 
+describe('ordinary subagent exchanges', () => {
+  it('uses role labels and id-based message attribution', () => {
+    const beats = beatsFromEvents([
+      { type: 'tool/call', data: { name: 'subagent', arguments: JSON.stringify({ description: 'reviewer', prompt: 'Review the diff' }) } },
+      { type: 'tool/call', data: { name: 'send_message', arguments: JSON.stringify({ agent_id: 'child', message: 'Check tests' }) } },
+      { type: 'user/message', data: { message: { source: { kind: 'agent-message', senderSessionId: 'child' }, content: [{ type: 'text', text: 'Done' }] } } },
+    ], 'lead', undefined, new Map([['child', 'reviewer']]))
+    expect(beats).toEqual([
+      { from: 'lead', to: 'reviewer', kind: 'spawn', text: 'Review the diff' },
+      { from: 'lead', to: 'reviewer', kind: 'message', text: 'Check tests' },
+      { from: 'reviewer', to: 'lead', kind: 'message', text: 'Done' },
+    ])
+  })
+})
+
 describe('beats from unusual events', () => {
   function summarize(events: Parameters<typeof beatsFromEvents>[0], names?: ReadonlySet<string>): string[] {
     return beatsFromEvents(events, 'lead', names).map(item => `${item.kind} ${item.from}→${item.to} ${item.text}`)
@@ -451,9 +466,9 @@ describe('the start card', () => {
     for (const line of teamIntroLines({ palette, width: 0 })) expect(visibleWidth(line)).toBeLessThanOrEqual(1)
   })
 
-  it('is mounted only when the service exposes listMembers', () => {
-    expect(agentTeamsMounted({ listMembers: () => [] })).toBe(true)
-    expect(agentTeamsMounted({ listMembers: 4 })).toBe(false)
+  it('is mounted only when the service exposes isEnabled', () => {
+    expect(agentTeamsMounted({ isEnabled: () => [] })).toBe(true)
+    expect(agentTeamsMounted({ isEnabled: 4 })).toBe(false)
     expect(agentTeamsMounted({})).toBe(false)
     expect(agentTeamsMounted(null)).toBe(false)
     expect(agentTeamsMounted(undefined)).toBe(false)

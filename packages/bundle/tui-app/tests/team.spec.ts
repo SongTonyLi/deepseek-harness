@@ -3,13 +3,13 @@
 import { stripVTControlCharacters } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { SessionId } from '@deepseek-ai/dsh-session'
+import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
 import { describe, expect, it } from 'vitest'
 import {
   TEAMMATE_TITLE_ROLE_COLUMNS,
   isTeamPanelEvent,
   memberLabel,
-  readAgentTeams,
-  readTeam,
   readTeamSnapshot,
   teamBrowseRows,
   teamToolRows,
@@ -36,15 +36,6 @@ function task(row: Pick<TeamTaskRow, 'id' | 'subject' | 'status'> & Partial<Team
     ready: false,
     writeScopeWarnings: [],
     ...row,
-  }
-}
-
-function reader(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    tryMembership: () => ({}),
-    listMembers: () => [],
-    listTasks: () => [],
-    ...overrides,
   }
 }
 
@@ -119,60 +110,12 @@ describe('team rows', () => {
     expect(rows[6]?.item.description).toBe('in_progress · unowned · blocked')
   })
 
-  it('reads a mounted reader and reports a missing one', () => {
-    expect(isTeamPanelEvent('team/member')).toBe(true)
+  it('refreshes Team views for Team mode, task, and historical events', () => {
+    expect(isTeamPanelEvent('team/mode')).toBe(true)
     expect(isTeamPanelEvent('team/task')).toBe(true)
+    expect(isTeamPanelEvent('team/member')).toBe(true)
     expect(isTeamPanelEvent('team/message/queued')).toBe(true)
-    expect(isTeamPanelEvent('team/message/delivered')).toBe(true)
-    expect(isTeamPanelEvent('team/vote')).toBe(true)
     expect(isTeamPanelEvent('user/message')).toBe(false)
-    const ada = member({ id: 'ada', name: 'Ada', role: 'teammate', status: 'inactive' })
-    const pending = task({ id: 'task-1', subject: 'write tests', status: 'pending' })
-    const service = {
-      rows: [ada],
-      tryMembership() { return this.rows.length > 0 ? {} : undefined },
-      listMembers() { return this.rows },
-      listTasks: () => [pending],
-    }
-    expect(readAgentTeams(ctx(service))).toBe(service)
-    expect(readTeam(service, agent)).toEqual({ kind: 'team', members: [ada], tasks: [pending] })
-    expect(readTeamSnapshot(ctx(service), agent)).toEqual({ kind: 'team', members: [ada], tasks: [pending] })
-    expect(readAgentTeams(ctx(undefined))).toBeUndefined()
-    expect(readAgentTeams(ctx(null))).toBeUndefined()
-    expect(readAgentTeams(ctx(4))).toBeUndefined()
-    expect(readAgentTeams(ctx({ listMembers() { return [] } }))).toBeUndefined()
-    expect(readAgentTeams(ctx(reader({ tryMembership: 'no' })))).toBeUndefined()
-    expect(readAgentTeams(ctx(reader({ listMembers: 'no' })))).toBeUndefined()
-    expect(readAgentTeams(ctx(reader({ listTasks: 'no' })))).toBeUndefined()
-    expect(readAgentTeams(ctx({ tryMembership: () => ({}), listTasks: () => [] }))).toBeUndefined()
-    expect(readAgentTeams(ctx({ tryMembership: () => ({}), listMembers: () => [] }))).toBeUndefined()
-    expect(readTeam(undefined, agent)).toEqual({ kind: 'absent' })
-    expect(readTeam(null, agent)).toEqual({ kind: 'absent' })
-    expect(readTeam(4, agent)).toEqual({ kind: 'absent' })
-    expect(readTeam({ listMembers() { return [] } }, agent)).toEqual({ kind: 'absent' })
-    expect(readTeam(reader({ tryMembership: 'no' }), agent)).toEqual({ kind: 'absent' })
-    expect(readTeam(reader({ listMembers: 'no' }), agent)).toEqual({ kind: 'absent' })
-    expect(readTeam(reader({ listTasks: 'no' }), agent)).toEqual({ kind: 'team', members: [], tasks: [] })
-    expect(readTeam({
-      tryMembership: () => ({}),
-      listTasks: () => [],
-    }, agent)).toEqual({ kind: 'absent' })
-    expect(readTeam({
-      tryMembership: () => ({}),
-      listMembers: () => [],
-    }, agent)).toEqual({ kind: 'team', members: [], tasks: [] })
-    expect(readTeam(reader({ tryMembership: () => undefined }), agent)).toEqual({ kind: 'not-member' })
-    expect(readTeam(reader({
-      tryMembership: () => { throw new Error('down') },
-    }), agent)).toEqual({ kind: 'not-member' })
-    expect(readTeam(reader({
-      listMembers: () => { throw new Error('down') },
-    }), agent)).toEqual({ kind: 'not-member' })
-    expect(readTeam(reader({
-      listTasks: () => { throw new Error('down') },
-    }), agent)).toEqual({ kind: 'not-member' })
-    expect(readTeam(reader({ listMembers: () => 'nope' }), agent)).toEqual({ kind: 'not-member' })
-    expect(readTeam(reader({ listTasks: () => 'nope' }), agent)).toEqual({ kind: 'not-member' })
   })
 })
 
@@ -199,5 +142,46 @@ describe('team member names', () => {
     const role = 'audits every dependency the lead added since the last release and reports'
     const title = stripVTControlCharacters(teammateViewTitle({ ...reviewer, description: role }))
     expect(title).toBe(`teammate Rae · ${role.slice(0, TEAMMATE_TITLE_ROLE_COLUMNS - 1)}…`)
+  })
+})
+
+
+describe('Team task boards and subagent catalogs', () => {
+  it('uses current model selections and resolves task owners through continuable labels', () => {
+    const root = { id: SessionId('root'), status: 'running', model: { current: () => ({ provider: 'route', model: 'switched' }) } } as Agent
+    const child = { id: SessionId('child'), status: 'idle', model: { current: () => ({ provider: 'route', model: 'override' }) } } as Agent
+    const entries: SubagentDescendantListEntry[] = [
+      { kind: 'child', id: child.id, parentId: root.id, depth: 1, mode: 'continuable', label: 'reviewer', activity: 'running', hasChildren: false },
+      { kind: 'child', id: SessionId('cold'), parentId: root.id, depth: 1, mode: 'continuable', label: 'tester', activity: 'inactive', hasChildren: false },
+      { kind: 'child', id: SessionId('one-shot'), parentId: root.id, depth: 1, mode: 'one-shot', activity: 'inactive', hasChildren: false },
+    ]
+    let enabled = true
+    const services = {
+      agentTeams: { isEnabled: () => enabled, listTasks: () => [
+        { ...task({ id: 'task-1', subject: 'Review', status: 'pending' }), ownerId: child.id },
+        { ...task({ id: 'task-2', subject: 'Offline owner', status: 'pending' }), ownerId: 'unavailable' },
+      ] },
+      subagents: { rootOf: () => root },
+      agents: { get: (id: string) => id === child.id ? child : undefined },
+    }
+    const context = { get: (key: keyof typeof services) => services[key] } as Context
+    const snapshot = readTeamSnapshot(context, child, entries)
+    expect(snapshot).toMatchObject({ kind: 'team', members: [
+      { id: 'root', name: 'lead', role: 'lead', status: 'running', model: 'switched' },
+      { id: 'child', name: 'reviewer', role: 'teammate', status: 'inactive', model: 'override' },
+      { id: 'cold', name: 'tester', role: 'teammate', status: 'inactive' },
+    ], tasks: [{ ownerName: 'reviewer' }, { ownerName: 'unavailable' }] })
+    if (snapshot.kind !== 'team') throw new Error('expected Team snapshot')
+    expect(snapshot.members[2]).not.toHaveProperty('model')
+    enabled = false
+    expect(readTeamSnapshot(context, child, entries)).toEqual({ kind: 'not-member' })
+  })
+
+  it('reports missing services and unavailable root or task projections', () => {
+    expect(readTeamSnapshot(ctx(undefined), agent)).toEqual({ kind: 'absent' })
+    const context = { get: (key: string) => key === 'subagents' ? {} : {
+      isEnabled: () => { throw new Error('root unavailable') },
+    } } as Context
+    expect(readTeamSnapshot(context, agent)).toEqual({ kind: 'not-member' })
   })
 })
