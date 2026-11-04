@@ -89,6 +89,9 @@
       "path": "../../session/session-persistence"
     },
     {
+      "path": "../../session/session-continuation"
+    },
+    {
       "path": "../../session/session-projection"
     },
     {
@@ -126,6 +129,9 @@
     },
     {
       "path": "../../session/working-directory"
+    },
+    {
+      "path": "../../util/brand"
     }
   ]
 }

@@ -21,6 +21,7 @@
     { "path": "../../core/session" },
     { "path": "../../jobs/jobs" },
     { "path": "../../llm/llm" },
+    { "path": "../../session/session-continuation" },
     { "path": "../../session/session-projection" },
     { "path": "../../session/session-title" },
     { "path": "../../subagent/subagent" },

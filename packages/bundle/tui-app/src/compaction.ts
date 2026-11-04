@@ -22,7 +22,7 @@ import { isSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
 // checkpoint into `MessageSourceMap`.
 import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { contextGroup, injectedContextTitle, type ContextGroup } from './context.ts'
+import { contextGroup, injectedContextTitle, isEmptyRetry, type ContextGroup } from './context.ts'
 import type { SectionPart } from './navigation.ts'
 import { contentText, formatTokens } from './transcript.ts'
 
@@ -246,6 +246,7 @@ export class CompactionLedger {
         const { source, content } = event.data
         if (isCompactCheckpointSource(source)) return { kind: 'summary', turn }
         if (source.kind === 'user') return { kind: 'prompt', turn, text: firstLine(contentText(content)) }
+        if (isEmptyRetry(source, content)) return { kind: 'context', turn, title: 'continuing failed turn' }
         return { kind: 'context', turn, title: injectedContextTitle(source) ?? source.kind }
       }
       case 'assistant/message':

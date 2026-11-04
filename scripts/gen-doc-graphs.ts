@@ -680,6 +680,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Durably checkpoints projection unit states per session (throttled + turn/end/detach mandatory points), serves cached projection views, and accelerates prepared-Session projection hydration.',
   },
   {
+    key: 'sessionContinuation',
+    pkg: 'session-continuation',
+    title: 'Failed-turn continuation',
+    mode: 'core',
+    consumers: ['api-session-controller', 'tui-app'],
+    note: 'Admits an empty retry of an eligible failed model turn while the Agent is idle and keeps non-waking injected context.',
+  },
+  {
     key: 'skills',
     pkg: 'skill',
     title: 'Skill provider registry',

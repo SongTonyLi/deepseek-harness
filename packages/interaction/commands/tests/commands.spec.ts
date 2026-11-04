@@ -4,8 +4,26 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import type { Scope } from '@deepseek-ai/dsh-scope'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import CommandRuntime, { CommandDefinitionId, parseCommand, type CommandDefinition } from '@deepseek-ai/dsh-commands'
-import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import CommandRuntime, { CommandDefinitionId, parseCommand, type CommandDefinition, type CommandInvocation } from '@deepseek-ai/dsh-commands'
+import { AttachmentId, AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentLimits, ImageAttachmentRef, SaveImageAttachment, StoredImageAttachment } from '@deepseek-ai/dsh-attachment/types'
+
+class ComposedAttachmentStore extends AttachmentStore {
+  readonly imageLimits: ImageAttachmentLimits = {
+    maxImageBytes: 10, maxImagesPerMessage: 2, maxMessageImageBytes: 6,
+    maxImagePixels: 100, maxImageDimension: 10, mediaTypes: ['image/png'],
+  }
+
+  async validateImage(_input: SaveImageAttachment): Promise<void> {}
+
+  async saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef> {
+    return { attachmentId: AttachmentId('image'), mediaType: input.mediaType, bytes: input.data.length, width: 1, height: 1 }
+  }
+
+  async readImage(ref: ImageAttachmentRef): Promise<StoredImageAttachment> {
+    return { ref, data: new Uint8Array(ref.bytes) }
+  }
+}
 
 function command(name: string, text = `ran:${name}`): CommandDefinition {
   return {
@@ -480,6 +498,7 @@ describe('command attachments', () => {
         maxImageBytes: 1024, maxImagesPerMessage: 2, maxMessageImageBytes: 1024,
         maxImagePixels: 1_000_000, maxImageDimension: 2000, mediaTypes: ['image/png'],
       },
+      admitPromptContent: AttachmentStore.prototype.admitPromptContent,
       validateImage: vi.fn(() => Promise.resolve()),
       saveImage: vi.fn((input: { mediaType: string; name?: string }) => {
         saved += 1
@@ -656,6 +675,128 @@ describe('command attachments', () => {
       type: 'command/done',
       data: { kind: 'error', text: 'operator cancelled during admission' },
     })
+  })
+
+  it('composes command execution with a real attachment service', async () => {
+    const ctx = await mount()
+    await ctx.plugin(ComposedAttachmentStore)
+    const { agent } = await mintAgentScope(ctx, 'stored-composed')
+    const seen = vi.fn((_invocation: CommandInvocation) => ({ kind: 'success' as const }))
+    ctx.commands.register(accepting(seen))
+    const [image] = await ctx.attachments.saveImages([{ data: Uint8Array.of(1), mediaType: 'image/png' }])
+    if (image === undefined) throw new Error('image was not saved')
+    const file = { attachmentId: AttachmentId('file'), name: 'notes.txt', bytes: 3 }
+    const signal = new AbortController().signal
+    const stored = { type: 'image' as const, attachment: image, encodedBytes: 4 }
+    expect((await ctx.commands.executeStored(agent, '/vision x', [stored, { type: 'file', attachment: file }], signal))?.result.kind)
+      .toBe('success')
+    expect(seen.mock.calls[0]?.[0].attachments).toEqual([
+      { type: 'image', attachment: image }, { type: 'file', attachment: file },
+    ])
+    expect((await ctx.commands.executeStored(agent, '/vision x', [stored, stored], signal))?.result)
+      .toEqual({ kind: 'error', text: 'Image batch exceeds the configured aggregate image-byte limit.' })
+    expect(seen).toHaveBeenCalledTimes(1)
+  })
+
+  it('admits stored files and images in order without writing them again', async () => {
+    const ctx = await mount()
+    const store = storeOf()
+    ctx.provide('attachments', store)
+    const { agent } = await mintAgentScope(ctx, 'stored')
+    const handler = vi.fn((_invocation: CommandInvocation) => ({ kind: 'success' as const }))
+    ctx.commands.register(accepting(handler))
+    const file = { attachmentId: AttachmentId('file'), name: 'notes.txt', bytes: 4 }
+    const image = { attachmentId: AttachmentId('image'), mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1 }
+    const result = await ctx.commands.executeStored(agent, '/vision x', [
+      { type: 'image', attachment: image, encodedBytes: 700 },
+      { type: 'file', attachment: file },
+      { type: 'image', attachment: image, encodedBytes: 324 },
+    ], new AbortController().signal)
+    expect(result?.result.kind).toBe('success')
+    expect(handler.mock.calls[0]?.[0].attachments).toEqual([
+      { type: 'image', attachment: image }, { type: 'file', attachment: file }, { type: 'image', attachment: image },
+    ])
+    expect(Object.isFrozen(handler.mock.calls[0]?.[0].attachments)).toBe(true)
+    expect(store.saveImage).not.toHaveBeenCalled()
+    expect(store.saveFile).not.toHaveBeenCalled()
+    expect(lifecycleOf(agent)).toMatchObject([
+      { type: 'command/run', data: { name: 'vision' } },
+      { type: 'command/done', data: { kind: 'success' } },
+    ])
+  })
+
+  it('enforces stored image count and original encoded-byte limits before the handler', async () => {
+    const ctx = await mount()
+    ctx.provide('attachments', storeOf())
+    const { agent } = await mintAgentScope(ctx, 'stored-limits')
+    const handler = vi.fn(() => ({ kind: 'success' as const }))
+    ctx.commands.register(accepting(handler))
+    const image = { type: 'image' as const, attachment: {
+      attachmentId: AttachmentId('image'), mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1,
+    }, encodedBytes: 513 }
+    const signal = new AbortController().signal
+    expect((await ctx.commands.executeStored(agent, '/vision x', [image, image], signal))?.result)
+      .toEqual({ kind: 'error', text: 'Image batch exceeds the configured aggregate image-byte limit.' })
+    expect((await ctx.commands.executeStored(agent, '/vision x', [image, image, image], signal))?.result)
+      .toEqual({ kind: 'error', text: 'Image batch exceeds the configured image-count limit.' })
+    expect(handler).not.toHaveBeenCalled()
+    expect(lifecycleOf(agent).filter(event => event.type === 'command/done')).toMatchObject([
+      { data: { kind: 'error' } }, { data: { kind: 'error' } },
+    ])
+  })
+
+  it('refuses stored attachments for undeclared commands and preserves unknown-command behavior', async () => {
+    const ctx = await mount()
+    const { agent } = await mintAgentScope(ctx, 'stored-refusal')
+    const handler = vi.fn(() => ({ kind: 'success' as const }))
+    ctx.commands.register({ ...command('plain'), handler })
+    const file = { type: 'file' as const, attachment: { attachmentId: AttachmentId('file'), name: 'a', bytes: 1 } }
+    const signal = new AbortController().signal
+    expect(await ctx.commands.executeStored(agent, '/missing', [file], signal)).toBeUndefined()
+    expect(lifecycleOf(agent)).toEqual([])
+    expect((await ctx.commands.executeStored(agent, '/plain', [file], signal))?.result)
+      .toEqual({ kind: 'error', text: '/plain does not accept attachments' })
+    expect(handler).not.toHaveBeenCalled()
+    expect(lifecycleOf(agent)).toMatchObject([
+      { type: 'command/run', data: { name: 'plain' } }, { type: 'command/done', data: { kind: 'error' } },
+    ])
+  })
+
+  it('reports missing storage and logs unexpected stored admission failures', async () => {
+    const ctx = await mount()
+    const { agent } = await mintAgentScope(ctx, 'stored-errors')
+    const handler = vi.fn(() => ({ kind: 'success' as const }))
+    ctx.commands.register(accepting(handler))
+    const file = { type: 'file' as const, attachment: { attachmentId: AttachmentId('file'), name: 'a', bytes: 1 } }
+    const signal = new AbortController().signal
+    expect((await ctx.commands.executeStored(agent, '/vision', [file], signal))?.result)
+      .toEqual({ kind: 'error', text: '/vision: attachments are unavailable because no attachment store is composed' })
+    const store = storeOf()
+    store.admitPromptContent = async () => { throw new Error('store failed') }
+    ctx.provide('attachments', store)
+    await expect(ctx.commands.executeStored(agent, '/vision', [file], signal)).rejects.toThrow('store failed')
+    expect(handler).not.toHaveBeenCalled()
+    expect(lifecycleOf(agent).filter(event => event.type === 'command/done')).toMatchObject([
+      { data: { kind: 'error' } }, { data: { kind: 'error', text: 'store failed' } },
+    ])
+  })
+
+  it('honors cancellation during stored admission before entering the handler', async () => {
+    const ctx = await mount()
+    const controller = new AbortController()
+    const store = storeOf()
+    store.admitPromptContent = async () => {
+      controller.abort('cancelled during admission')
+      return []
+    }
+    ctx.provide('attachments', store)
+    const { agent } = await mintAgentScope(ctx, 'stored-abort')
+    const handler = vi.fn(() => ({ kind: 'success' as const }))
+    ctx.commands.register(accepting(handler))
+    const file = { type: 'file' as const, attachment: { attachmentId: AttachmentId('file'), name: 'a', bytes: 1 } }
+    await expect(ctx.commands.executeStored(agent, '/vision', [file], controller.signal)).rejects.toThrow('cancelled during admission')
+    expect(handler).not.toHaveBeenCalled()
+    expect(lifecycleOf(agent).at(-1)).toMatchObject({ type: 'command/done', data: { kind: 'error' } })
   })
 
   it('logs and rethrows a non-attachment admission failure', async () => {

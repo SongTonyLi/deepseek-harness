@@ -848,6 +848,28 @@ type SessionLogUploadExclusion = (request: SessionLogUploadRequest) => boolean
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxsessioncontinuation--sessioncontinuation"></a>
+
+### `ctx.sessionContinuation` — `SessionContinuation`
+
+Owns the continuation projection and admits an empty retry while the Agent is idle.
+
+```ts cordis-catalog
+/**
+ * Admit an empty retry if the last failed turn is eligible and no human input is pending.
+ * @param agent - exact live Agent whose maintenance lock guards admission.
+ * @param source - durable retry identity and caller attribution.
+ * @returns `accepted` or `unavailable`; an unavailable request adds no input.
+ * @throws {SessionContinuationBusyError} if another Agent activity holds maintenance.
+ * @throws if reading the projection or queuing the retry fails.
+ */
+async retry(agent: Agent, source: RetrySource): Promise<'accepted' | 'unavailable'>
+```
+
+Types: [Agent](core.md)
+
+Source: [`packages/session/session-continuation/src/index.ts`](../../packages/session/session-continuation/src/index.ts)
+
 <a id="ctxsessioncontroller--sessioncontroller"></a>
 
 ### `ctx.sessionController` — `SessionController`

@@ -9,7 +9,7 @@ kind: persistence-change
 
 ## 概述
 
-记录终端、续跑、提醒与工作状态提示的归属 kind。
+在 `retry` 消息源之外记录终端、续跑、提醒与工作状态提示的归属 kind。
 
 ## 目录
 
@@ -27,32 +27,32 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "2c8a1d2db845f53f79de0eaf79b149d5d821bf31d186880a94642c0de8d9109b"
+    previous: "2026-10-27-retry-control-input"
+    after: "3a9f532fdce6b1065b89c210760639e13897c3b9780ae1aed38d58f1862464f8"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "1288035c34b3a630c6992672f16ea19c3e336a15c9ded5af24b114e1dbf0e59a"
+    previous: "2026-10-27-retry-control-input"
+    after: "c72bb925c77731c0c53faaf1c4734cf6090829c6cdcd781d23491da76d3f02a7"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "5c8b5610277b8600b418e3790ea80c3dcedcced5bb0bcffff3945d66d20fa29c"
+    previous: "2026-10-27-retry-control-input"
+    after: "576e5323de7e752ffb4dfac8abd756976f0cfce7cbea116b77f3f654fe5755c8"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "adc3a3ecaf30c00e5d2c32ce70b986a9450b979a8121263849a526b2b8ab4c8b"
+    previous: "2026-10-27-retry-control-input"
+    after: "c2574cff7c7c777baa5ee06efb5fee3e610f978642c78a0b8e08212918b16e4a"
     decision: same-version
 ```
 
 <a id="compatibility"></a>
 ## 兼容性
 
-新增的每个 kind 都是 user 或 developer 源槽位上仅表示归属的 `MessageSourceMap` 条目，并以 `@persistenceAttribution` 限定。既有记录的 kind 保持不变，Session header 仍为 V4。缺少该生产者的读取器会保留 kind 及其 `form`/`summary` 元数据，仅凭内容还原消息，无需任何校验、回放或授权投影；只有生产该 kind 的插件会读取自身 kind，用于避免重复注入同一条提示。
+已有 `retry` 及更早的消息记录仍可读取，Session header 保持 V4。每个新增 kind 都是以 `@persistenceAttribution` 限定的仅表示归属的 `MessageSourceMap` 条目。缺少对应生产者的读取器会保留 kind 及 `form`/`summary` 元数据，仅凭内容还原消息，无需归属专用的校验、回放或授权投影。生产者仅读取自身 kind，以避免重复注入同一条提示。
 
 <a id="verification"></a>
 ## 验证
 
-各生产者插件的单元测试断言每条注入提示上记录的 source；终端转录测试仅凭记录的 kind，就把无所属插件的提示绘制为注入上下文。
+no-progress reminder、goal-round driver、压缩、终端旁路 agent、retry 输入和 V3 到 V4 迁移的聚焦测试通过：七个文件共 279 个测试。
 
 <a id="dev-note"></a>
 ## 开发备注

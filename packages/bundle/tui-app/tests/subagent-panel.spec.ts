@@ -41,9 +41,11 @@ function child(id: string, extra: Partial<SubagentDescendantListEntry> = {}): Su
 function view(
   entries: readonly SubagentDescendantListEntry[],
   facts: Record<string, SubagentLiveFacts> = {},
+  addresses?: ReadonlyMap<SessionId, string>,
 ): SubagentPanelView {
   const inputs: SubagentPanelInputs = {
     entries,
+    ...addresses === undefined ? {} : { addresses },
     facts: new Map(Object.entries(facts) as [SessionId, SubagentLiveFacts][]),
     now: NOW,
   }
@@ -83,6 +85,25 @@ describe('subagentPanelView', () => {
     ])
   })
 
+  it('shows supplied root addresses beside duplicate descriptions', () => {
+    const entries = [
+      child('first', { mode: 'continuable', path: 'reviewer', label: 'Review code' }),
+      child('nested', { depth: 2, mode: 'continuable', path: 'reviewer/checker', label: 'Review code' }),
+      child('old', { mode: 'continuable', label: 'Old work' }),
+      child('external', { mode: 'external', path: 'external', label: 'External work' }),
+    ]
+    const addresses = new Map<SessionId, string>([['first' as SessionId, 'parent/reviewer'], ['nested' as SessionId, 'parent/reviewer/checker']])
+    const built = view(entries, {}, addresses)
+    expect(built.rows.map(row => [row.id, row.text])).toEqual([
+      ['first', 'parent/reviewer · Review code · continuable · resident · idle'],
+      ['nested', '  parent/reviewer/checker · Review code · continuable · resident · idle'],
+      ['old', 'Old work · continuable · resident · idle'],
+    ])
+    expect(renderSubagentPanel(built, { palette: createPalette(false), width: WIDE }))
+      .toBe('subagents · 3 listed · parent/reviewer')
+    expect(view(entries).rows[1]?.text).toBe('  Review code · continuable · resident · idle')
+  })
+
   it('times the open turn from its start and falls back to the settled total between turns', () => {
     const running = view([child('session-kid')], { 'session-kid': { running: true, settledMs: 60_000, activeSince: NOW - 5000 } })
     expect(running.rows[0]?.text).toContain('5s')
@@ -104,6 +125,8 @@ describe('subagentPanelView', () => {
     expect(built.rows[0]?.text).toBe('  session-broken · unreadable: corrupt')
     expect(built.rows[0]?.enterable).toBe(false)
     expect(built.rows[0]?.ticking).toBe(false)
+    const named = view(entries, {}, new Map([['session-broken' as SessionId, 'reviewer/checker']]))
+    expect(named.rows[0]).toMatchObject({ id: 'session-broken', enterable: false, text: '  reviewer/checker · session-broken · unreadable: corrupt' })
   })
 
   it('draws the first rows and counts the children it left out', () => {

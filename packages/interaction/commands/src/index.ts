@@ -7,7 +7,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
-import type { EncodedImageAttachment, FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment/types'
+import type { AttachmentAdmissionPart, EncodedImageAttachment, FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment/types'
 import type { FileBlock, ImageBlock } from '@deepseek-ai/dsh-llm'
 import { NamedEntries, ScopedLayers } from '@deepseek-ai/dsh-scope'
 import type { ScopeKey, ScopeLayer } from '@deepseek-ai/dsh-scope'
@@ -33,6 +33,9 @@ const COMMAND_NAME = /^[a-z][a-z0-9_-]*$/u
 
 /** Shared frozen attachments value for attachment-free invocations. */
 const NO_ATTACHMENTS: readonly (ImageBlock | FileBlock)[] = Object.freeze([])
+
+/** Stored attachments owned by a trusted same-process command adapter. Images carry their original upload byte length. */
+export type StoredCommandAttachment = Extract<AttachmentAdmissionPart, { readonly attachment: FileAttachmentRef | ImageAttachmentRef }>
 
 /** Host resolver for Session-scoped staged file-upload receipts. */
 export type CommandFileReceiptResolver = (agent: Agent, receiptId: string) => FileAttachmentRef | undefined
@@ -368,6 +371,42 @@ export class CommandRuntime extends TypertRemoteService {
     if (parsed === undefined) return undefined
     const command = this.view(agent).get(parsed.name)
     if (command === undefined) return undefined
+    return this.executeInput(agent, parsed, command, { kind: 'wire', attachments: submittedAttachments }, signal)
+  }
+
+  /**
+   * Execute a command with already-stored attachments from a trusted same-process adapter.
+   * Image parts must carry the original encoded upload byte length, not normalized bytes.
+   * This method is not Remote: callers own the references and their receiving Session.
+   * Admission and handler failures follow {@link execute}; cancellation after handler entry
+   * cannot roll back its effects.
+   * @param agent - exact receiving agent.
+   * @param line - complete slash-command line.
+   * @param attachments - ordered stored files and images.
+   * @param signal - cancellation signal owned by the adapter.
+   * @returns the settled execution, or undefined for invalid syntax or an unknown name.
+   */
+  async executeStored(
+    agent: Agent,
+    line: string,
+    attachments: readonly StoredCommandAttachment[],
+    signal: AbortSignal,
+  ): Promise<CommandExecution | undefined> {
+    const parsed = parseCommand(line)
+    if (parsed === undefined) return undefined
+    const command = this.view(agent).get(parsed.name)
+    if (command === undefined) return undefined
+    return this.executeInput(agent, parsed, command, { kind: 'stored', attachments }, signal)
+  }
+
+  private async executeInput(
+    agent: Agent,
+    parsed: ParsedCommand,
+    command: RegisteredCommand,
+    input: { kind: 'wire'; attachments: readonly CommandSubmitAttachment[] }
+      | { kind: 'stored'; attachments: readonly StoredCommandAttachment[] },
+    signal: AbortSignal,
+  ): Promise<CommandExecution> {
     if (signal.aborted) throw abortError(signal)
     const commandId = this.mintCommandId()
     this.appendLifecycle(agent.session, 'command/run', {
@@ -387,7 +426,7 @@ export class CommandRuntime extends TypertRemoteService {
       return Object.freeze({ commandId, result: Object.freeze(result) })
     }
     let attachments: readonly (ImageBlock | FileBlock)[] = NO_ATTACHMENTS
-    if (submittedAttachments.length > 0) {
+    if (input.attachments.length > 0) {
       if (command.definition.input?.attachments !== true) {
         return settle({ kind: 'error', text: `/${parsed.name} does not accept attachments` })
       }
@@ -396,11 +435,19 @@ export class CommandRuntime extends TypertRemoteService {
         return settle({ kind: 'error', text: `/${parsed.name}: attachments are unavailable because no attachment store is composed` })
       }
       try {
-        attachments = await admitCommandAttachments(
-          store,
-          submittedAttachments,
-          receiptId => this.fileReceipts.resolver?.(agent, receiptId),
-        )
+        if (input.kind === 'wire') {
+          attachments = await admitCommandAttachments(
+            store,
+            input.attachments,
+            receiptId => this.fileReceipts.resolver?.(agent, receiptId),
+          )
+        } else {
+          const admitted = await store.admitPromptContent(input.attachments)
+          attachments = Object.freeze(admitted.map((part) => {
+            if (part.type === 'text') throw new Error('stored command admission returned text')
+            return Object.freeze(part)
+          }))
+        }
       } catch (error: unknown) {
         if (error instanceof AttachmentError) {
           return settle({ kind: 'error', text: error.message })

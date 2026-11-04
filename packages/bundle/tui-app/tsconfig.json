@@ -99,6 +99,9 @@
       "path": "../../session-query/session-query"
     },
     {
+      "path": "../../session/session-continuation"
+    },
+    {
       "path": "../../session/session-persistence"
     },
     {

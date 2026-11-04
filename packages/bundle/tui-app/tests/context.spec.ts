@@ -1,9 +1,32 @@
 /** Project logged system prompts and injected context into transcript sections. */
 
 import { describe, expect, it } from 'vitest'
-import { contextGroup, injectedContextTitle, injectedContextView, systemPromptView } from '../src/context.ts'
+import { contextGroup, developerContextView, injectedContextTitle, injectedContextView, isEmptyRetry, systemPromptView } from '../src/context.ts'
 
 const text = (value: string) => [{ type: 'text' as const, text: value }]
+
+describe('developer and retry context', () => {
+  it('renders developer text and tool names without treating other blocks as prose', () => {
+    expect(developerContextView([
+      { type: 'text', text: 'Follow this.\nNext line.' },
+      { type: 'tool-addition', toolName: 'read' },
+      { type: 'tool-removal', toolName: 'write' },
+      { type: 'future-block', schema: 'private schema' } as never,
+    ])).toEqual({ title: 'developer message', parts: [{ kind: 'context', rows: [
+      'Follow this.', 'Next line.', 'Tool added: read', 'Tool removed: write', '[future-block]',
+    ] }] })
+    expect(developerContextView([])).toBeUndefined()
+  })
+
+  it('recognizes only empty retry receipts', () => {
+    expect(isEmptyRetry({ kind: 'retry' }, [])).toBe(true)
+    expect(isEmptyRetry({ kind: 'retry' }, text('continue'))).toBe(false)
+    expect(isEmptyRetry({ kind: 'future' }, [])).toBe(false)
+    expect(isEmptyRetry(null, [])).toBe(false)
+    expect(injectedContextView({ kind: 'retry' }, text('continue'))).toMatchObject({ title: 'retry' })
+    expect(injectedContextView({ kind: 'future' }, text('keep this'))).toMatchObject({ title: 'future' })
+  })
+})
 
 describe('systemPromptView', () => {
   it('skips an empty rendering, which logs that no system prompt is in force', () => {

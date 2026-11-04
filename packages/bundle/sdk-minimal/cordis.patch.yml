@@ -58,6 +58,9 @@
     - id: session-projection
       name: '@deepseek-ai/dsh-session-projection'
 
+    - id: session-continuation
+      name: '@deepseek-ai/dsh-session-continuation'
+
     - id: token-meter
       name: '@deepseek-ai/dsh-token-meter'
 

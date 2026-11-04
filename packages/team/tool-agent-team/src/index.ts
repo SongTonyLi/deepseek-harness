@@ -3,9 +3,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { SessionId } from '@deepseek-ai/dsh-session'
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
 import { TeamTaskId } from '@deepseek-ai/dsh-agent-team'
+import type { TeamTaskView } from '@deepseek-ai/dsh-agent-team'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 
@@ -24,9 +24,9 @@ export const Config: z<Config> = z.object({})
 const REMOVED_CONFIG_KEYS = ['interrupt', 'freshProvider', 'forkProvider'] as const
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
-const TEAM_POLICY = `A shared task board is available in this session. Task owners are agent ids from list_agents. The root can reassign tasks to itself or any continuable descendant; other agents claim ready tasks themselves.
+const TEAM_POLICY = `A shared task board is available in this session. Task owners are agent names from list_agents. The root can reassign tasks to itself or any continuable descendant; other agents claim ready tasks themselves.
 
-The root agent orchestrates the work. It first breaks the request into subtasks and classifies each as exploration or research, implementation of a separable part, review or verification, or testing. It keeps small, sequential, tightly coupled work and work requiring the whole conversation. It delegates independent work with disjoint write scopes or work that benefits from a focused role with fresh context. It does not create an agent for trivial work, and reuses an inactive agent with send_message when its role matches. Each delegated agent gets one role, a role-revealing description, and a prompt stating its responsibility. The root records each delegated subtask with acceptance criteria, write scopes, and dependencies, then assigns it using the returned agent id or asks the agent to claim it. The root integrates and verifies the results before the final answer.
+The root agent orchestrates the work. It first breaks the request into subtasks and classifies each as exploration or research, implementation of a separable part, review or verification, or testing. It keeps small, sequential, tightly coupled work and work requiring the whole conversation. It delegates independent work with disjoint write scopes or work that benefits from a focused role with fresh context. It does not create an agent for trivial work, and reuses an inactive agent with send_message when its role matches. Each delegated agent gets one role, a role-revealing description, and a prompt stating its responsibility. The root records each delegated subtask with acceptance criteria, write scopes, and dependencies, then assigns it using the returned agent name or asks the agent to claim it. The root integrates and verifies the results before the final answer.
 
 Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
 
@@ -44,7 +44,7 @@ const TASK_VIEW_SCHEMA = {
     subject: { type: 'string', required: true },
     description: { type: 'string', required: true },
     status: { type: 'string', required: true, enum: ['pending', 'in_progress', 'completed', 'deleted'] },
-    ownerId: { type: 'string' },
+    owner: { type: 'string' },
     blockedBy: { type: 'array', required: true, items: { type: 'string' } },
     writeScopes: { type: 'array', required: true, items: { type: 'string' } },
     ready: { type: 'boolean', required: true },
@@ -78,6 +78,9 @@ function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
   }
 }
 
+/** One task as the model sees it: the owner's Session id is replaced by its agent name. */
+type NamedTaskView = Omit<TeamTaskView, 'ownerId' | 'ownerName'> & { readonly owner?: string }
+
 /** Recover the exact caller guaranteed by conditional Team-tool discovery. */
 function callingAgent(agent: Agent | undefined, toolName: string): Agent {
   /* v8 ignore next 2 -- The Team condition rejects callers without an Agent before execution. */
@@ -96,6 +99,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       throw new Error(`tool-agent-team: ${key} is no longer supported; create teammates with a subagent tool`)
     }
   }
+  const withOwnerName = ({ ownerId, ownerName, ...task }: TeamTaskView): NamedTaskView =>
+    ownerId === undefined ? task : { ...task, owner: ownerName ?? ownerId }
   const enabled = (agent: Agent | undefined): boolean => {
     if (agent === undefined) return false
     try {
@@ -133,7 +138,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         ...args.blocked_by === undefined ? {} : { blockedBy: args.blocked_by.map(TeamTaskId) },
         ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
       }, exec.signal)
-      return task
+      return withOwnerName(task)
     },
   }), { when: ({ agent }) => enabled(agent) })
 
@@ -146,26 +151,33 @@ export function apply(ctx: Context, config: Config = {}): void {
         enum: ['pending', 'in_progress', 'completed'],
         description: 'Optional exact status filter.',
       },
-      owner: { type: 'string', description: 'Optional exact ownerId filter; use unowned for tasks without an owner.' },
+      owner: { type: 'string', description: 'Optional owner agent name filter; cannot be combined with unowned.' },
+      unowned: { type: 'boolean', description: 'Filter tasks by whether they have no owner; cannot be combined with owner.' },
       ready: { type: 'boolean', description: 'Optional readiness filter.' },
       cursor: { type: 'integer', description: 'Zero-based result offset. Defaults to 0.' },
       limit: { type: 'integer', description: 'Number of rows, 1 through 100. Defaults to 50.' },
     },
     output: jsonOutput(TASK_LIST_VALUE_SCHEMA),
-    execute(args, exec) {
+    async execute(args, exec) {
       const cursor = args.cursor ?? 0
       const limit = args.limit ?? 50
       if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error('cursor must be a non-negative safe integer')
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer from 1 through 100')
       const caller = callingAgent(exec.agent, 'team_task_list')
+      if (args.owner !== undefined && args.unowned !== undefined) throw new Error('owner and unowned filters cannot be combined')
+      const owner = args.owner === undefined
+        ? undefined
+        : await ctx.subagents.resolveName(caller, args.owner, exec.signal)
       const filtered = ctx.agentTeams.listTasks(caller).filter(task =>
         (args.status === undefined || task.status === args.status)
-        && (args.owner === undefined || (args.owner === 'unowned' ? task.ownerId === undefined : task.ownerId === args.owner))
+        && (owner === undefined || task.ownerId === owner)
+        && (args.unowned === undefined || (task.ownerId === undefined) === args.unowned)
         && (args.ready === undefined || task.ready === args.ready))
-      return Promise.resolve({
-        tasks: filtered.slice(cursor, cursor + limit),
+      const page = filtered.slice(cursor, cursor + limit)
+      return {
+        tasks: page.map(withOwnerName),
         ...(cursor + limit < filtered.length ? { nextCursor: cursor + limit } : {}),
-      })
+      }
     },
   }), { when: ({ agent }) => enabled(agent) })
 
@@ -179,7 +191,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     execute(args, exec) {
       const caller = callingAgent(exec.agent, 'team_task_get')
       const task = ctx.agentTeams.getTask(caller, TeamTaskId(args.task_id))
-      return Promise.resolve(task)
+      return Promise.resolve(withOwnerName(task))
     },
   }), { when: ({ agent }) => enabled(agent) })
 
@@ -199,7 +211,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       description: { type: 'string', description: 'Replacement details for edit.' },
       blocked_by: { type: 'array', items: { type: 'string' }, description: 'Complete blocker list for set_dependencies.' },
       write_scopes: { type: 'array', items: { type: 'string' }, description: 'Replacement advisory write scopes for edit.' },
-      owner: { type: 'string', description: 'Agent id of the root or any continuable descendant for root-only reassign; omit to unassign.' },
+      owner: { type: 'string', description: 'Agent name of the root or any continuable descendant for root-only reassign; omit to unassign.' },
     },
     output: jsonOutput(TASK_VIEW_SCHEMA),
     async execute(args, exec) {
@@ -213,9 +225,9 @@ export function apply(ctx: Context, config: Config = {}): void {
         ...args.description === undefined ? {} : { description: args.description },
         ...args.blocked_by === undefined ? {} : { blockedBy: args.blocked_by.map(TeamTaskId) },
         ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
-        ...args.owner === undefined ? {} : { owner: SessionId(args.owner) },
+        ...args.owner === undefined ? {} : { owner: await ctx.subagents.resolveName(caller, args.owner, exec.signal) },
       }, exec.signal)
-      return task
+      return withOwnerName(task)
     },
   }), { when: ({ agent }) => enabled(agent) })
 }

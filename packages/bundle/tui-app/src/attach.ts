@@ -8,6 +8,7 @@
 import { readFile } from 'node:fs/promises'
 import { basename, extname, resolve } from 'node:path'
 import type { AttachmentStore, ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import type { StoredCommandAttachment } from '@deepseek-ai/dsh-commands'
 import type { FileBlock, ImageBlock } from '@deepseek-ai/dsh-llm'
 
 /** Image media types by file extension; every other extension attaches as a file. */
@@ -19,12 +20,20 @@ const IMAGE_MEDIA_TYPES: Readonly<Record<string, ImageMediaType>> = {
   '.gif': 'image/gif',
 }
 
-/** One attachment waiting for the next prompt. */
-export interface PendingAttachment {
-  /** The display name, the file's base name. */
-  name: string
-  /** The durable content block the prompt carries. */
-  block: ImageBlock | FileBlock
+/** One stored attachment waiting for submission; image bytes refer to the original input. */
+export type PendingAttachment =
+  | { name: string; block: ImageBlock; encodedBytes: number }
+  | { name: string; block: FileBlock }
+
+/**
+ * Prepare stored attachments for aggregate admission in their pending order.
+ * @param pending - attachments retained by the current draft.
+ * @returns stored image and file parts for trusted same-process admission.
+ */
+export function storedAttachmentParts(pending: readonly PendingAttachment[]): StoredCommandAttachment[] {
+  return pending.map(attachment => 'encodedBytes' in attachment
+    ? { ...attachment.block, encodedBytes: attachment.encodedBytes }
+    : attachment.block)
 }
 
 /**
@@ -44,7 +53,7 @@ export async function attachLocalFile(store: AttachmentStore, cwd: string, path:
     const [ref] = await store.saveImages([{ data, mediaType, name }])
     /* v8 ignore next -- saveImages returns one ref per input */
     if (ref === undefined) throw new Error(`the attachment store returned no reference for ${name}`)
-    return { name, block: { type: 'image', attachment: ref } }
+    return { name, block: { type: 'image', attachment: ref }, encodedBytes: data.byteLength }
   }
   const ref = await store.saveFile({ data, name })
   return { name, block: { type: 'file', attachment: ref } }

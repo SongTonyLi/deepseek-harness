@@ -197,8 +197,10 @@ export type TeamRoomAction =
  *
  * A tool call is listed when its name is in `toolNames`, the names the Agent
  * Teams plugin currently scopes onto this agent, or when `toolNames` is
- * omitted and the arguments name a person or a task. Malformed tool arguments
- * still name the tool when it is in `toolNames`. A user message is listed
+ * omitted and the arguments name a person or a task. Successful subagent
+ * activation results name their spawn recipients by matching tool call id;
+ * pending and historical calls retain their argument-derived summaries.
+ * Malformed tool arguments still name the tool when it is in `toolNames`. A user message is listed
  * when its source is `agent-message` or its text begins `Team message from`.
  *
  * The Team Lead's `team/` records are authoritative, so they replace the rows
@@ -231,7 +233,17 @@ export function beatsFromEvents(
   toolNames?: ReadonlySet<string>,
   names: ReadonlyMap<string, string> = new Map(),
 ): TeamBeat[] {
-  const calls = events.map(event => event.type === 'tool/call' ? beatFromCall(event.data, speaker, toolNames, names) : undefined)
+  const activations = new Map<string, string>()
+  for (const event of events) {
+    if (event.type !== 'tool/result') continue
+    const result = fields(event.data)
+    const message = fields(result?.message)
+    const meta = fields(result?.meta)
+    const callId = text(message?.toolCallId)
+    const name = meta?.kind === 'activation' && message?.isError === false ? text(meta.name) : undefined
+    if (callId !== undefined && name !== undefined) activations.set(callId, name)
+  }
+  const calls = events.map(event => event.type === 'tool/call' ? beatFromCall(event.data, speaker, toolNames, names, activations) : undefined)
   const spawnCalls = new Set<string>()
   for (const call of calls) {
     if (call?.kind === 'spawn') spawnCalls.add(call.to)
@@ -723,6 +735,7 @@ function memberName(id: string | undefined, names: ReadonlyMap<string, string>):
  * @param speaker - the caller.
  * @param toolNames - names the plugin currently scopes onto the agent.
  * @param names - catalog labels indexed by Session id.
+ * @param activations - successful activation names indexed by tool call id.
  * @returns the exchange, or undefined when the call is not one this page plays.
  */
 function beatFromCall(
@@ -730,6 +743,7 @@ function beatFromCall(
   speaker: string,
   toolNames: ReadonlySet<string> | undefined,
   names: ReadonlyMap<string, string>,
+  activations: ReadonlyMap<string, string>,
 ): TeamBeat | undefined {
   const call = fields(data)
   const name = typeof call?.name === 'string' ? call.name : undefined
@@ -738,7 +752,10 @@ function beatFromCall(
   const scoped = toolNames !== undefined && toolNames.has(name)
   const summary = summarizeCall(name, args)
   if (!scoped && !summary.addressed) return undefined
-  return { from: speaker, to: knownName(summary.to, names) ?? summary.to, kind: summary.kind, text: summary.text }
+  const callId = text(call?.callId)
+  const activation = (name === 'subagent' || name === 'subagent_fork') && summary.kind === 'spawn' && callId !== undefined
+    ? activations.get(callId) : undefined
+  return { from: speaker, to: activation ?? knownName(summary.to, names) ?? summary.to, kind: summary.kind, text: summary.text }
 }
 
 /**
@@ -756,7 +773,8 @@ function summarizeCall(name: string, args: Record<string, unknown> | undefined):
   kind: TeamBeat['kind']
   text: string
 } {
-  const target = text(args?.agent_id) ?? text(args?.target)
+  // `agent_id` is the argument name that sessions saved before name-based addressing recorded.
+  const target = text(args?.agent) ?? text(args?.agent_id) ?? text(args?.target)
   const teammate = text(args?.name) ?? (name === 'subagent' || name === 'subagent_fork' ? text(args?.description) : undefined)
   const prompt = text(args?.prompt)
   const message = text(args?.message)
@@ -912,17 +930,22 @@ function textBlocks(content: unknown): string[] {
  * @returns the exchange, or undefined when the text is not a team message.
  */
 function beatFromUser(data: unknown, speaker: string, names: ReadonlyMap<string, string>): TeamBeat | undefined {
-  const message = fields(fields(data)?.message)
-  const body = textBlocks(message?.content).join('')
+  const root = fields(data)
+  const message = fields(root?.message) ?? root
+  const source = fields(message?.source)
+  const content = message?.content
+  const first = Array.isArray(content) ? fields(content[0]) : undefined
+  const relayHeader = source?.kind === 'agent-message' && first?.type === 'text'
+    && typeof first.text === 'string' && /^Agent [^\s]+ sent a message: $/u.test(first.text)
+  const body = textBlocks(relayHeader && Array.isArray(content) ? content.slice(1) : content).join('')
   const matched = /^Team message from ([^:]+):\s*([\s\S]*)$/u.exec(body)
   const named = matched?.[1]?.trim()
   const said = matched?.[2]?.trim()
   if (named !== undefined && named !== '' && said !== undefined && said !== '') {
     return { from: named, to: speaker, kind: 'message', text: said }
   }
-  const source = fields(message?.source)
-  if (source?.kind === 'agent-message' && body !== '') {
-    return { from: knownName(text(source.senderSessionId), names) ?? text(source.senderName) ?? 'teammate', to: speaker, kind: 'message', text: body }
+  if (source?.kind === 'agent-message' && (body !== '' || (relayHeader && Array.isArray(content) && content.length > 1))) {
+    return { from: knownName(text(source.senderSessionId), names) ?? text(source.senderName) ?? 'teammate', to: speaker, kind: 'message', text: body || NON_TEXT_MESSAGE }
   }
   return undefined
 }

@@ -5,6 +5,8 @@ import type { NativeFileApplication } from '@deepseek-ai/dsh-native-command/type
 import type {
   ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType,
 } from '@deepseek-ai/dsh-attachment'
+import type { SessionRequestId } from '@deepseek-ai/dsh-session-continuation/types'
+export type { SessionRequestId } from '@deepseek-ai/dsh-session-continuation/types'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { LlmAttemptId, MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { LlmModelBadge, TextBlock } from '@deepseek-ai/dsh-llm'
@@ -320,11 +322,11 @@ export interface SessionForkValue {
 
 /** Session prompt request. */
 export interface SessionPromptRequest {
-  /** Client-minted identity persisted on the exact accepted user message. */
+  /** Client-minted identity persisted on the accepted inbox input, including empty continuation. */
   readonly requestId: SessionRequestId
   readonly sessionId: SessionId
   readonly mode: 'queue' | 'steer'
-  /** At least one non-whitespace text part or attachment. */
+  /** Non-whitespace text or attachments; an empty array continues an eligible failed idle Session. */
   readonly content: readonly PromptContentPart[]
   readonly clientTimeZone?: string
 }
@@ -384,9 +386,6 @@ export interface SessionOpenWorkspacePathRequest {
 export interface SessionOpenWorkspacePathValue {
   readonly opened: true
 }
-
-/** Client-minted prompt identity used to reconcile optimistic and durable messages. */
-export type SessionRequestId = Branded<'session-request-id'>
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
