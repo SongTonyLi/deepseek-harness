@@ -216,7 +216,7 @@ function fakeAgent(
       if (release === undefined) throw new Error('agent already has active work')
       return task(maintenanceSignal).finally(release)
     },
-  } as Agent
+  } as unknown as Agent
 }
 
 /** Service over a store-detached session for failure classification. */
