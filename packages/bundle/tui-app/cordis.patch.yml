@@ -10,6 +10,23 @@
     personaPrefix: >-
       You are a coding agent powered by the {{model}} model.
 
+- id: agent-team
+  config:
+    defaultEnabled: true
+
+- id: tool-subagent
+  config:
+    provider: spawn
+    toolName: subagent
+    modelSelection: true
+    modelDiscovery: true
+
+- id: tool-subagent-fork
+  config:
+    provider: fork
+    toolName: subagent_fork
+    modelSelection: true
+
 - id: tools
   config:
     # Keep the same temporary process-wide PTC mode opt-in as the Web surface.

@@ -231,7 +231,7 @@ export function beatsFromEvents(
   toolNames?: ReadonlySet<string>,
   names: ReadonlyMap<string, string> = new Map(),
 ): TeamBeat[] {
-  const calls = events.map(event => event.type === 'tool/call' ? beatFromCall(event.data, speaker, toolNames) : undefined)
+  const calls = events.map(event => event.type === 'tool/call' ? beatFromCall(event.data, speaker, toolNames, names) : undefined)
   const spawnCalls = new Set<string>()
   for (const call of calls) {
     if (call?.kind === 'spawn') spawnCalls.add(call.to)
@@ -673,7 +673,7 @@ function beatsFromEvent(event: TeamLogEvent, call: TeamBeat | undefined, reading
   if (event.type === 'tool/call') return call === undefined || supersededCall(call, reading) ? [] : [call]
   if (event.type.startsWith('team/')) return beatsFromTeam(event.type, event.data, reading)
   if (event.type !== 'user/message' || reading.peersRecorded) return []
-  const received = beatFromUser(event.data, reading.speaker)
+  const received = beatFromUser(event.data, reading.speaker, reading.names)
   return received === undefined ? [] : [received]
 }
 
@@ -721,13 +721,15 @@ function memberName(id: string | undefined, names: ReadonlyMap<string, string>):
  * One tool call as an exchange.
  * @param data - the tool-call data.
  * @param speaker - the caller.
- * @param toolNames - names the plugin currently scopes onto the agent. When set, only those calls play.
+ * @param toolNames - names the plugin currently scopes onto the agent.
+ * @param names - catalog labels indexed by Session id.
  * @returns the exchange, or undefined when the call is not one this page plays.
  */
 function beatFromCall(
   data: unknown,
   speaker: string,
   toolNames: ReadonlySet<string> | undefined,
+  names: ReadonlyMap<string, string>,
 ): TeamBeat | undefined {
   const call = fields(data)
   const name = typeof call?.name === 'string' ? call.name : undefined
@@ -736,7 +738,7 @@ function beatFromCall(
   const scoped = toolNames !== undefined && toolNames.has(name)
   const summary = summarizeCall(name, args)
   if (!scoped && !summary.addressed) return undefined
-  return { from: speaker, to: summary.to, kind: summary.kind, text: summary.text }
+  return { from: speaker, to: knownName(summary.to, names) ?? summary.to, kind: summary.kind, text: summary.text }
 }
 
 /**
@@ -754,8 +756,8 @@ function summarizeCall(name: string, args: Record<string, unknown> | undefined):
   kind: TeamBeat['kind']
   text: string
 } {
-  const target = text(args?.target)
-  const teammate = text(args?.name)
+  const target = text(args?.agent_id) ?? text(args?.target)
+  const teammate = text(args?.name) ?? (name === 'subagent' || name === 'subagent_fork' ? text(args?.description) : undefined)
   const prompt = text(args?.prompt)
   const message = text(args?.message)
   const subject = text(args?.subject)
@@ -906,9 +908,10 @@ function textBlocks(content: unknown): string[] {
  * A received team message as an exchange aimed at `speaker`.
  * @param data - the user-message data.
  * @param speaker - the session that received the message.
+ * @param names - catalog labels indexed by Session id.
  * @returns the exchange, or undefined when the text is not a team message.
  */
-function beatFromUser(data: unknown, speaker: string): TeamBeat | undefined {
+function beatFromUser(data: unknown, speaker: string, names: ReadonlyMap<string, string>): TeamBeat | undefined {
   const message = fields(fields(data)?.message)
   const body = textBlocks(message?.content).join('')
   const matched = /^Team message from ([^:]+):\s*([\s\S]*)$/u.exec(body)
@@ -919,7 +922,7 @@ function beatFromUser(data: unknown, speaker: string): TeamBeat | undefined {
   }
   const source = fields(message?.source)
   if (source?.kind === 'agent-message' && body !== '') {
-    return { from: text(source.senderName) ?? 'teammate', to: speaker, kind: 'message', text: body }
+    return { from: knownName(text(source.senderSessionId), names) ?? text(source.senderName) ?? 'teammate', to: speaker, kind: 'message', text: body }
   }
   return undefined
 }

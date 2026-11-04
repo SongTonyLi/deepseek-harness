@@ -23,6 +23,7 @@
  * @module @deepseek-ai/dsh-tui-app/app
  */
 
+import { SubagentError } from '@deepseek-ai/dsh-subagent'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import {
@@ -84,7 +85,7 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import { AlternateScreen } from './alt-screen.ts'
-import { TeamIntro, agentTeamsMounted } from './team-intro.ts'
+import { TeamIntro } from './team-intro.ts'
 import { TeamPlay, beatsFromEvents, type TeamRoomSource } from './team-play.ts'
 import {
   TEAM_ABSENT_NOTICE,
@@ -93,7 +94,7 @@ import {
   TEAM_PANEL_USAGE,
   isTeamPanelEvent,
   memberLabel,
-  readTeam,
+  readTeamSnapshot,
   teamBrowseRows,
   teamToolRows,
   teammateViewTitle,
@@ -680,7 +681,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'changes', description: 'Browse the files the last turn changed (/changes <turn> for an earlier one; Enter shows a file\'s diff)' },
   { name: 'subagents', description: 'Browse the subagent sessions under this session (Enter opens one as a live session view)' },
   { name: 'team-play', description: 'Open the team room: each member\'s role and current work, the shared tasks, and the messages between them (Enter opens a teammate, f filters, Esc closes)' },
-  { name: 'team', description: 'Browse the team roster and shared tasks (Enter opens a teammate session)' },
+  { name: 'team', description: 'Browse teammates and shared tasks; /team on or /team off changes Team mode' },
   { name: 'team-tools', description: 'List the Agent Teams tools and whether this agent can call them' },
   { name: 'team-panel', description: 'Show or hide the team panel (/team-panel on, /team-panel off)' },
   { name: 'jobs', description: 'Browse this session\'s background jobs (Enter shows the output, Ctrl+K stops one; Ctrl+B moves running tool calls here)' },
@@ -925,6 +926,8 @@ export class TuiApp {
   private barSelection: FooterSegmentId = FIRST_FOOTER_SEGMENT
   /** The descendant listing the last reconcile produced, in pre-order. */
   private subagentEntries: readonly SubagentDescendantListEntry[] = []
+  /** Latest root catalog used by Team views opened inside a descendant. */
+  private teamEntries: readonly SubagentDescendantListEntry[] = []
   /** Lifecycle activity held until a fresh catalog confirms the named descendant. */
   private pendingSubagentActivity = new Map<SessionId, SubagentActivity>()
   /** The rows of the last panel draw. */
@@ -1329,12 +1332,16 @@ export class TuiApp {
     const { ctx } = this.deps
     const family = [(this.quitRoot ?? this.parents[0] ?? this.bound).agent]
     const agents = ctx.get('agents')
-    if (agents !== undefined) {
-      const live = agents.list()
-      // The walk also visits the members it appends, so it reaches every depth.
-      for (const owner of family) {
-        for (const candidate of live) {
-          if (agents.isOwnedBy(candidate.id, owner)) family.push(candidate)
+    const runtime = ctx.get('subagents')
+    if (agents !== undefined && runtime !== undefined) {
+      const root = (this.quitRoot ?? this.parents[0] ?? this.bound).agent
+      for (const candidate of agents.list()) {
+        if (candidate === root) continue
+        try {
+          if (runtime.rootOf(candidate) === root) family.push(candidate)
+        } catch (error) {
+          // Independently resumed children have no live delegation owner.
+          if (!(error instanceof SubagentError) || error.code !== 'UNAUTHORIZED') throw error
         }
       }
     }
@@ -1476,6 +1483,7 @@ export class TuiApp {
     this.queueSelection = undefined
     this.clearActivityBoard()
     this.subagentEntries = []
+    this.teamEntries = []
     this.pendingSubagentActivity.clear()
     this.panelSelection = undefined
     this.listingFailure = undefined
@@ -1781,7 +1789,7 @@ export class TuiApp {
     const session = this.agent.session
     const title = this.deps.ctx.get('sessionTitle')?.get(session)?.title
     const name = title === undefined ? `session ${session.id}` : `${title} ${palette.dim(`(${session.id})`)}`
-    const teamsOn = this.parents.length === 0 && agentTeamsMounted(this.deps.ctx.get('agentTeams'))
+    const teamsOn = this.parents.length === 0 && readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries).kind === 'team'
     const teammate = this.openTeammateTitle()
     const trail = this.parents.length === 0
       ? palette.dim(teamsOn ? '· Agent Teams on · /team-play · /help' : '· /help for commands')
@@ -1812,7 +1820,7 @@ export class TuiApp {
    * @returns the reads for one key or frame.
    */
   private teamRoomSource(): TeamRoomSource {
-    const snapshot = readTeam(this.deps.ctx.get('agentTeams'), this.agent)
+    const snapshot = readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries)
     const members = snapshot.kind === 'team' ? snapshot.members : []
     const names = this.scopedTeamToolNames()
     const speaker = members.find(row => row.id === this.agent.session.id)?.name ?? 'lead'
@@ -1837,7 +1845,7 @@ export class TuiApp {
    * A session that already has a user message, and a subagent view, draw none.
    */
   private mountTeamIntro(): void {
-    if (this.parents.length > 0 || !agentTeamsMounted(this.deps.ctx.get('agentTeams'))) return
+    if (this.parents.length > 0 || readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries).kind !== 'team') return
     if (this.teamLog.some(event => event.type === 'user/message' || event.type === 'tool/call' || event.type === 'assistant/message')) return
     this.teamIntro = new TeamIntro(this.deps.palette)
     this.chat.addChild(this.teamIntro)
@@ -2250,7 +2258,7 @@ export class TuiApp {
    * are mounted.
    */
   private refreshTeamPanel(): void {
-    const snapshot = readTeam(this.deps.ctx.get('agentTeams'), this.agent)
+    const snapshot = readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries)
     const roster = snapshot.kind === 'team' ? snapshot : undefined
     this.mountTeamLine(teamPanelLine({
       members: roster === undefined ? [] : roster.members,
@@ -2268,6 +2276,10 @@ export class TuiApp {
    * labels of members that joined after their rows were drawn.
    */
   private refreshTeamSurfaces(): void {
+    this.refreshHeader()
+    this.banner.setViews(this.viewLabels, this.asides.has(this.bound)
+      ? BTW_VIEW_TITLE
+      : this.readOnlyViews.has(this.bound) ? ONE_SHOT_VIEW_TITLE : this.openTeammateTitle())
     this.refreshTeamPanel()
     this.refreshSubagentPanel()
     this.relabelActivityBoard()
@@ -2278,7 +2290,7 @@ export class TuiApp {
    * @returns the members, the lead included; empty when Agent Teams is absent or the bound session is not on a team.
    */
   private teamMembers(): readonly TeamMemberRow[] {
-    const snapshot = readTeam(this.deps.ctx.get('agentTeams'), this.agent)
+    const snapshot = readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries)
     return snapshot.kind === 'team' ? snapshot.members : []
   }
 
@@ -2305,7 +2317,7 @@ export class TuiApp {
    * @returns the roster, or undefined when the service is absent or this session is not a member.
    */
   private loadedTeam(): Extract<TeamSnapshot, { kind: 'team' }> | undefined {
-    const snapshot = readTeam(this.deps.ctx.get('agentTeams'), this.agent)
+    const snapshot = readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries)
     if (snapshot.kind === 'absent') {
       this.notice(TEAM_ABSENT_NOTICE)
       return undefined
@@ -2362,7 +2374,7 @@ export class TuiApp {
   private showTeamTools(): void {
     if (this.loadedTeam() === undefined) return
     const tools = this.deps.ctx.get('tools')
-    const globalNames = new Set(tools?.schemas().map(schema => schema.name) ?? [])
+    const globalNames = new Set(tools?.schemas().map(schema => schema.name).filter(name => !name.startsWith('team_task_')) ?? [])
     this.showRows(
       teamToolRows(tools?.schemas(this.agent), globalNames),
       'no Agent Teams tools are visible to this agent',
@@ -2474,8 +2486,14 @@ export class TuiApp {
     const session = this.agent.session
     try {
       const entries = await subagents.listDescendants(session.id, new AbortController().signal)
+      const root = readTeamSnapshot(this.deps.ctx, this.agent).kind === 'team'
+        ? subagents.rootOf(this.agent) : undefined
+      const teamEntries = root === undefined || root.session === session
+        ? entries
+        : await subagents.listDescendants(root.id, new AbortController().signal)
       if (this.agent.session === session) {
         this.subagentEntries = entries
+        this.teamEntries = teamEntries
         this.listingFailure = undefined
         this.flushPendingSubagentActivity()
       } else {
@@ -2486,7 +2504,7 @@ export class TuiApp {
     } finally {
       this.listing = false
       if (!this.stopped) {
-        this.refreshSubagentPanel()
+        this.refreshTeamSurfaces()
         this.refreshWorkflowChildLinks()
       }
     }
@@ -4417,6 +4435,26 @@ export class TuiApp {
         this.openTeamPlay()
         return
       case 'team': {
+        if (argument !== '') {
+          if (argument !== 'on' && argument !== 'off') {
+            this.notice('usage: /team · /team on · /team off', 'error')
+            return
+          }
+          const teams = this.deps.ctx.get('agentTeams')
+          if (teams === undefined) {
+            this.notice(TEAM_ABSENT_NOTICE)
+            return
+          }
+          try {
+            await teams.setEnabled(this.agent, argument === 'on')
+            this.notice(`Agent Teams ${argument}`)
+          } catch (error: unknown) {
+            this.notice(describeFailure(error), 'error')
+          }
+          this.refreshHeader()
+          this.refreshTeamSurfaces()
+          return
+        }
         const snapshot = this.loadedTeam()
         if (snapshot === undefined) return
         const rows = teamBrowseRows(snapshot.members, snapshot.tasks)
@@ -5757,7 +5795,17 @@ export class TuiApp {
     this.pacer?.flush()
     // Roster, task, and team-message events are not on this package's session-event union.
     const loggedType: string = event.type
-    if (isTeamPanelEvent(loggedType)) this.refreshTeamSurfaces()
+    if (isTeamPanelEvent(loggedType)) {
+      this.refreshTeamSurfaces()
+      if (loggedType === 'team/mode') {
+        if (this.teamIntro !== undefined) {
+          this.chat.removeChild(this.teamIntro)
+          this.teamIntro = undefined
+        }
+        this.mountTeamIntro()
+        this.markSubagentsStale()
+      }
+    }
     const compaction = this.compactions.observe(event, this.turn)
     if (compaction !== undefined) this.showCompaction(compaction)
     switch (event.type) {

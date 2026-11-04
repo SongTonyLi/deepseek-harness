@@ -18,10 +18,10 @@ export const TEAM_ON_LINE = 'Agent Teams is on'
 export const TEAM_EXPLAIN_LINE = 'The lead plans the work and delegates independent subtasks to teammates, each with one role.'
 
 /** Disable command printed on the start card. */
-export const TEAM_OFF_COMMAND = '/plugins disable @deepseek-ai/dsh-experimental-agent-team-profile'
+export const TEAM_OFF_COMMAND = '/team off'
 
 /** What the start card says about turning the feature off. */
-export const TEAM_OFF_LINE = 'Turn it off, then start dsh tui again:'
+export const TEAM_OFF_LINE = 'Turn it off for this session:'
 
 /** The commands the start card names, with what each shows. */
 export const TEAM_COMMAND_LINES: readonly (readonly [command: string, summary: string])[] = [
@@ -35,11 +35,11 @@ const COMMAND_COLUMNS = 13
 /**
  * Whether `service` is the Agent Teams service this terminal can read.
  * @param service - the value of `ctx.get('agentTeams')`, absent when the bundle is off.
- * @returns true when the value exposes `listMembers`.
+ * @returns true when the value exposes `isEnabled`.
  */
 export function agentTeamsMounted(service: unknown): boolean {
-  return typeof service === 'object' && service !== null && 'listMembers' in service
-    && typeof service.listMembers === 'function'
+  return typeof service === 'object' && service !== null && 'isEnabled' in service
+    && typeof service.isEnabled === 'function'
 }
 
 /** How the start card is drawn. */
