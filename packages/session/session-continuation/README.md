@@ -61,11 +61,19 @@ The [service entry](src/index.ts) provides admission, the [projection](src/proje
 <a id="model-experience"></a>
 ## Model Experience
 
-An accepted retry records an empty user message with its retry source and starts a new turn. It adds no instruction text; retained non-waking context is delivered with that request.
+### Accepted retry
+
+#### What the model sees
+
+An accepted retry appends one user message with empty `content`. The next request includes that empty user turn, the retained history, and any queued non-waking context. The message adds no instruction text.
+
+#### Token effect
+
+The retry message contributes no instruction tokens. Tokens in the new request come from the retained history, queued context, and the provider framing of the empty user turn.
 
 #### KV Cache effect
 
-The empty message extends the conversation. Existing history is retained; actual cache reuse depends on the provider and assembled request.
+The empty user turn is appended after the retained history and does not replace earlier tokens. Queued context delivered with the new request extends the suffix. A refused retry adds no message.
 
 ## Known Limitations and Deferred Work
 

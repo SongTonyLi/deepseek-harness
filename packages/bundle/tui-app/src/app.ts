@@ -5543,10 +5543,10 @@ export class TuiApp {
     for (const question of questions) {
       const prompt = new QuestionPrompt(this.deps.palette, question)
       const withdraw = prompt.withdraw.bind(prompt)
-      let withdrawn = false
-      prompt.withdraw = () => { withdrawn = true; withdraw() }
+      const withdrawal = { requested: false }
+      prompt.withdraw = () => { withdrawal.requested = true; withdraw() }
       const answer = await this.showModal(prompt, signal)
-      if (withdrawn || signal?.aborted === true) {
+      if (withdrawal.requested || signal?.aborted === true) {
         throw new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED')
       }
       if (answer === null) throw new UserQuestionError('the question was dismissed', 'ASK_CANCELLED')

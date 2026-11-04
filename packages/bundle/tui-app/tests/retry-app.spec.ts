@@ -95,7 +95,7 @@ it('retries an eligible failed turn and preserves injected context', async () =>
   expect(JSON.stringify(t.adapter.requests[1]?.messages)).toContain('injected context')
   const retries = t.agent.session.ownEvents().flatMap(event => event.type === 'user/message' && event.data.source.kind === 'retry' ? [event.data] : [])
   expect(retries).toHaveLength(1)
-  expect(retries[0]).toMatchObject({ content: [], source: { kind: 'retry', rpcId: expect.any(String) } })
+  expect(retries[0]).toMatchObject({ content: [], source: { kind: 'retry', rpcId: expect.any(String) as string } })
   t.app.stop()
   const replay = t.open()
   await settle()

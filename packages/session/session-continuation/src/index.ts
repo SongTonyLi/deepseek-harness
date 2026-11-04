@@ -17,6 +17,7 @@ declare module '@deepseek-ai/cordis' {
 /** The Agent already owns a turn or maintenance operation; retry after that work settles. */
 export class SessionContinuationBusyError extends Error {
   override readonly name = 'SessionContinuationBusyError'
+  /** Machine-readable code for a retry refused because the Agent is not idle. */
   readonly code = 'AGENT_BUSY'
 
   constructor(cause: unknown) {
@@ -47,8 +48,10 @@ export class SessionContinuation extends Service {
    * @throws if reading the projection or queuing the retry fails.
    */
   async retry(agent: Agent, source: RetrySource): Promise<'accepted' | 'unavailable'> {
+    // Catch only the synchronous busy rejection. Admission failures stay on the returned promise.
+    let admitted: Promise<'accepted' | 'unavailable'>
     try {
-      return agent.runMaintenance(() => {
+      admitted = agent.runMaintenance(() => {
         const inbox = agent.inbox
         if (this.projection.stateOf(agent.session).ending === null
           || inbox.nextTurn.length > 0 || inbox.nextStep.some(message => message.source.kind === 'user')) {
@@ -58,9 +61,9 @@ export class SessionContinuation extends Service {
         return Promise.resolve('accepted' as const)
       })
     } catch (cause: unknown) {
-      // runMaintenance throws synchronously only when another activity owns the Agent.
       throw new SessionContinuationBusyError(cause)
     }
+    return admitted
   }
 }
 

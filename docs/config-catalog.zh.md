@@ -263,7 +263,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-api-session-controller`
 
-- `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `remoteAccess` · `sessions` · `sessionProjections` · `sessionQuery` · `typert` · `typertGateway` · `workspaceRegistry`
+- `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `remoteAccess` · `sessions` · `sessionProjections` · `sessionContinuation` · `sessionQuery` · `typert` · `typertGateway` · `workspaceRegistry`
 - `source`: [`packages/api/session-controller/src/index.ts:110`](../packages/api/session-controller/src/index.ts)
 
 ```ts config-catalog
@@ -5357,6 +5357,7 @@ export interface Config {
 | `@deepseek-ai/dsh-sandbox-ssh` | `ssh` | [`packages/ssh/sandbox-ssh/src/index.ts`](../packages/ssh/sandbox-ssh/src/index.ts) |
 | `@deepseek-ai/dsh-session` | — | [`packages/core/session/src/index.ts`](../packages/core/session/src/index.ts) |
 | `@deepseek-ai/dsh-session-checkpoint-policy` | `llm` · `sessionPersistence` · `sessions` · `tools` | [`packages/session/session-checkpoint-policy/src/index.ts`](../packages/session/session-checkpoint-policy/src/index.ts) |
+| `@deepseek-ai/dsh-session-continuation` | `sessionProjections` | [`packages/session/session-continuation/src/index.ts`](../packages/session/session-continuation/src/index.ts) |
 | `@deepseek-ai/dsh-session-projection` | — | [`packages/session/session-projection/src/index.ts`](../packages/session/session-projection/src/index.ts) |
 | `@deepseek-ai/dsh-session-stats` | `sessionProjections` | [`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts) |
 | `@deepseek-ai/dsh-session-turn-outline` | `sessionProjections` | [`packages/session/session-turn-outline/src/index.ts`](../packages/session/session-turn-outline/src/index.ts) |

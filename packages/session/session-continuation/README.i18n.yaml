@@ -10,7 +10,7 @@
   zh: 15a5430f49098011
 /deepseek-ai-dsh-session-continuation/summary:
   en: 46c5ffad72f35e54
-  zh: 584227d1a5878e11
+  zh: fd8cd9ac30905477
 /deepseek-ai-dsh-session-continuation/table-of-contents:
   en: d152484eb41ac6b4
   zh: 2fbbd3dd3430b19e
@@ -24,11 +24,20 @@
   en: 0418e52ddba1089f
   zh: 308479157587ac1b
 /deepseek-ai-dsh-session-continuation/model-experience:
-  en: 7d8063a144afc77b
-  zh: fbf1fff5e0b50a4a
-/deepseek-ai-dsh-session-continuation/model-experience/kv-cache-effect:
-  en: b24ddae0f5ab0bc2
-  zh: 21b5acf2e6a5d1a3
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-session-continuation/model-experience/accepted-retry:
+  en: 9767fa834a1d6fa4
+  zh: 05510b8ca5812d4b
+/deepseek-ai-dsh-session-continuation/model-experience/accepted-retry/what-the-model-sees:
+  en: 2f9258cf95618523
+  zh: 9177d10a660492e9
+/deepseek-ai-dsh-session-continuation/model-experience/accepted-retry/token-effect:
+  en: f8b1dc7bcbf9c0c1
+  zh: 65233da2af81d21b
+/deepseek-ai-dsh-session-continuation/model-experience/accepted-retry/kv-cache-effect:
+  en: 4b999358127340f2
+  zh: 5e25de8e23b58e61
 /deepseek-ai-dsh-session-continuation/known-limitations-and-deferred-work:
   en: 39368dac7142e7bb
   zh: 847fc8ad68d85fd2
