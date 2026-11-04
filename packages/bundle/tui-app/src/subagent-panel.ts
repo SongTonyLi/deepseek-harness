@@ -77,6 +77,8 @@ export interface SubagentPanelInputs {
    * another surface accounts for, such as Agent Teams roster members.
    */
   entries: readonly SubagentDescendantListEntry[]
+  /** Exact root-relative addresses by Session id; missing entries use their label or id. */
+  addresses?: ReadonlyMap<SessionId, string>
   /** Live facts by child session id; an id with no entry draws without them. */
   facts: ReadonlyMap<SessionId, SubagentLiveFacts>
   /** The wall clock a running child's elapsed time is measured against. */
@@ -144,13 +146,20 @@ function elapsedOf(facts: SubagentLiveFacts | undefined, now: number): string | 
  * One listing entry as a row.
  * @param entry - the listing entry.
  * @param facts - the live facts sampled for it, when it has any.
+ * @param address - exact root-relative address, when known.
  * @param now - the wall clock the running time is measured against.
  * @returns the row.
  */
-function rowOf(entry: SubagentDescendantListEntry, facts: SubagentLiveFacts | undefined, now: number): SubagentPanelRow {
+function rowOf(
+  entry: SubagentDescendantListEntry,
+  facts: SubagentLiveFacts | undefined,
+  address: string | undefined,
+  now: number,
+): SubagentPanelRow {
   const indent = DEPTH_INDENT.repeat(entry.depth - 1)
   if (entry.kind === 'diagnostic') {
-    return { id: entry.id, enterable: false, ticking: false, text: `${indent}${entry.id}${SEPARATOR}unreadable: ${entry.reason}` }
+    const identity = address === undefined ? entry.id : `${address}${SEPARATOR}${entry.id}`
+    return { id: entry.id, enterable: false, ticking: false, text: `${indent}${identity}${SEPARATOR}unreadable: ${entry.reason}` }
   }
   const status = facts?.running === true ? 'running' : facts?.lastTurnCompleted === true ? 'completed' : 'idle'
   const parts = [entry.mode, 'resident', status]
@@ -159,11 +168,13 @@ function rowOf(entry: SubagentDescendantListEntry, facts: SubagentLiveFacts | un
   if (facts?.usage !== undefined) {
     parts.push(`↑${formatTokens(facts.usage.inputTokens)} ↓${formatTokens(facts.usage.outputTokens)}`)
   }
+  const label = address === undefined ? entry.label ?? entry.id
+    : `${address}${entry.label === undefined ? '' : `${SEPARATOR}${entry.label}`}`
   return {
     id: entry.id,
     enterable: true,
     ticking: facts?.activeSince !== undefined,
-    text: `${indent}${entry.label ?? entry.id}${SEPARATOR}${parts.join(SEPARATOR)}`,
+    text: `${indent}${label}${SEPARATOR}${parts.join(SEPARATOR)}`,
   }
 }
 
@@ -177,7 +188,7 @@ export function subagentPanelView(inputs: SubagentPanelInputs): SubagentPanelVie
   const listed = inputs.entries.filter(entry => entry.kind === 'diagnostic' || (entry.mode !== 'external' && entry.activity === 'running'))
   const rows = listed
     .slice(0, SUBAGENT_PANEL_MAX_ROWS)
-    .map(entry => rowOf(entry, inputs.facts.get(entry.id), inputs.now))
+    .map(entry => rowOf(entry, inputs.facts.get(entry.id), inputs.addresses?.get(entry.id), inputs.now))
   return { rows, hidden: listed.length - rows.length, ticking: rows.some(row => row.ticking) }
 }
 

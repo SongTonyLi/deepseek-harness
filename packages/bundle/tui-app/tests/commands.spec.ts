@@ -17,6 +17,15 @@ function typeLine(terminal: { type(data: string): void }, text: string): void {
   terminal.type(KEY.enter)
 }
 
+/** Pass stored parts through, dropping the upload length the prompt message does not carry. */
+function admitPromptContent(content: readonly Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  return Promise.resolve(content.map((part) => {
+    if (part['type'] !== 'image') return part
+    const { encodedBytes: _encodedBytes, ...block } = part
+    return block
+  }))
+}
+
 let dir: string
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'dsh-tui-commands-')) })
 afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
@@ -377,6 +386,8 @@ describe('attachments', () => {
         ctx.provide('attachments', {
           saveImages: () => Promise.resolve([{ kind: 'image', id: 'img', mediaType: 'image/png' }]),
           saveFile: () => Promise.resolve({ kind: 'file', id: 'file' }),
+          admitPromptContent,
+          isAttachmentError: () => false,
         } as never)
       },
     })
@@ -423,6 +434,8 @@ describe('attachments', () => {
           // image typed second.
           saveImages: () => Promise.resolve([{ kind: 'image', id: 'img', mediaType: 'image/png' }]),
           saveFile: () => new Promise(resolve => setTimeout(() => { resolve({ kind: 'file', id: 'file' }) }, 20)),
+          admitPromptContent,
+          isAttachmentError: () => false,
         } as never)
       },
     })

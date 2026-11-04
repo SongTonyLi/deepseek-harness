@@ -59,7 +59,7 @@ ctx.commands.register({
 
 ### 从适配器分派
 
-交互式适配器调用 `execute(agent, line, attachments, signal)`，传入确切的接收 agent、完整命令行与本次提交的有序附件。它返回已结算的 `CommandExecution`——规范化结果加生命周期配对 `commandId`——语法无效或名称未知时返回 `undefined`。`list(agent)` 与 `find(agent, name)` 在应用 agent 作用域遮蔽后用于命令发现。
+Wire 适配器调用 `execute(agent, line, attachments, signal)`，传入确切的接收 agent、完整命令行与本次提交的有序附件。持有已存储引用的可信同进程适配器改用 `executeStored`，并为每张图片提供原始编码上传字节数；调用方负责这些引用及其接收会话。两者均返回已结算的 `CommandExecution`——规范化结果加生命周期配对 `commandId`——语法无效或名称未知时返回 `undefined`。`executeStored` 不是 Remote 方法。`list(agent)` 与 `find(agent, name)` 在应用 agent 作用域遮蔽后用于命令发现。
 
 无状态入口 `@deepseek-ai/dsh-commands/builtin` 为 Host 和 Client 适配器共享第一方身份、中英文输入 token 及描述符解析。`builtinCommandName()` 根据定义识别能力，不依赖注册名；`resolveCommand()` 保留精确名称优先级，并按定义 ID 解析别名。支持范围由适配器决定，注册器本身仍接受任意定义。
 
@@ -96,7 +96,7 @@ ctx.commands.register({
 
 ### 附件准入
 
-附件强制执行发生在执行器中：图片经 `admitEncodedImages` 提交，文件通过唯一的会话感知凭证提供方解析，执行器在调用处理器前恢复原始混合顺序。验证拒绝不会开始写入附件。图片存储失败可能留下等待清理且无法引用的内容寻址对象，但不会发布模型可见消息。取消会在处理器运行前生效。命令返回错误时，分发方 composer 的草稿与附件卡保持原位。
+附件强制执行发生在执行器中：Wire 图片经 `admitEncodedImages` 提交，Wire 文件通过唯一的会话感知凭证提供方解析，可信的已存储附件经 `admitPromptContent` 检查图片总量限制。执行器在调用处理器前保持原始混合顺序。验证拒绝不会开始写入附件。图片存储失败可能留下等待清理且无法引用的内容寻址对象，但不会发布模型可见消息。取消会在处理器运行前生效。命令返回错误时，分发方 composer 的草稿与附件卡保持原位。
 
 </details>
 

@@ -59,7 +59,7 @@ A command may declare `input.attachments` to accept composer images and generic 
 
 ### Dispatching from an adapter
 
-An interactive adapter calls `execute(agent, line, attachments, signal)` with the exact receiving agent, the full command line, and the submission's ordered attachments. It returns the settled `CommandExecution` — the normalized result plus its lifecycle `commandId` — or `undefined` for invalid syntax or an unknown name. `list(agent)` and `find(agent, name)` serve discovery after agent-scoped shadowing.
+A wire adapter calls `execute(agent, line, attachments, signal)` with the exact receiving agent, the full command line, and the submission's ordered attachments. A trusted same-process adapter holding stored references calls `executeStored` instead, supplying each image's original encoded upload byte length; it owns those references and their receiving Session. Both return the settled `CommandExecution` — the normalized result plus its lifecycle `commandId` — or `undefined` for invalid syntax or an unknown name. `executeStored` is not Remote. `list(agent)` and `find(agent, name)` serve discovery after agent-scoped shadowing.
 
 The stateless `@deepseek-ai/dsh-commands/builtin` entry shares first-party identity, English/Chinese input tokens, and descriptor resolution across Host and Client adapters. `builtinCommandName()` identifies the definition independently of its registered name; `resolveCommand()` preserves exact-name priority and follows aliases by definition ID. Adapters choose their supported subset; the registry itself continues to accept arbitrary definitions.
 
@@ -96,7 +96,7 @@ Registrations live in global and agent-scoped layers merged per agent via `Scope
 
 ### Attachment admission
 
-Attachment enforcement happens in the executor: images are committed through `admitEncodedImages`, files are resolved through the single Session-aware receipt provider, and the executor restores their original mixed order before calling the handler. Validation rejection starts no attachment writes. An image-storage failure can leave unreachable content-addressed objects for deferred collection, but publishes no model-visible message. Cancellation is honored before the handler runs. Command errors leave the dispatching composer's draft and attachment cards intact.
+Attachment enforcement happens in the executor: wire images are committed through `admitEncodedImages`, wire files are resolved through the single Session-aware receipt provider, and trusted stored parts pass through `admitPromptContent` for aggregate image limits. The executor preserves their original mixed order before calling the handler. Validation rejection starts no attachment writes. An image-storage failure can leave unreachable content-addressed objects for deferred collection, but publishes no model-visible message. Cancellation is honored before the handler runs. Command errors leave the dispatching composer's draft and attachment cards intact.
 
 </details>
 

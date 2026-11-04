@@ -3,6 +3,7 @@
  * and outline rows, and the plugin-management verbs, over scripted services.
  */
 
+import { fuzzyFilter } from '@earendil-works/pi-tui'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -171,6 +172,35 @@ describe('listSubagentChoices', () => {
       { id: 'session-c', depth: 1, label: 'session-c', description: 'corrupt', target: 'diagnostic', enterable: false },
     ])
     expect(asked).toEqual([[sessionId, signal]])
+  })
+
+  it('makes supplied root addresses and descriptions searchable without changing session targets', async () => {
+    const { ctx } = descendantsStub([
+      { kind: 'child', id: 'first', activity: 'running', mode: 'continuable', name: 'reviewer', path: 'reviewer', label: 'Review code', hasChildren: true, parentId: sessionId, depth: 1 },
+      { kind: 'child', id: 'nested', activity: 'inactive', mode: 'continuable', name: 'checker', path: 'reviewer/checker', label: 'Review code', hasChildren: false, parentId: 'first', depth: 2 },
+      { kind: 'child', id: 'external', activity: 'inactive', mode: 'external', name: 'audit', path: 'audit', label: 'Audit code', hasChildren: false, parentId: sessionId, depth: 1 },
+      { kind: 'child', id: 'old', activity: 'inactive', mode: 'continuable', label: 'Old work', hasChildren: false, parentId: sessionId, depth: 1 },
+    ])
+    const addresses = new Map<SessionId, string>([['first' as SessionId, 'lead-child/reviewer'], ['nested' as SessionId, 'lead-child/reviewer/checker'], ['external' as SessionId, 'lead-child/audit']])
+    const choices = await listSubagentChoices(ctx, sessionId, signal, addresses)
+    expect(choices).toEqual([
+      { id: 'first', depth: 1, label: 'lead-child/reviewer · Review code', description: 'running · continuable · first', target: 'session', mode: 'continuable', enterable: true },
+      { id: 'nested', depth: 2, label: '  lead-child/reviewer/checker · Review code', description: 'inactive · continuable · nested', target: 'session', mode: 'continuable', enterable: true },
+      { id: 'external', depth: 1, label: 'lead-child/audit · Audit code', description: 'external task · no local session · external', target: 'external-task', mode: 'external', enterable: false },
+      { id: 'old', depth: 1, label: 'Old work', description: 'inactive · continuable · old', target: 'session', mode: 'continuable', enterable: true },
+    ])
+    const search = (query: string): string[] => fuzzyFilter(choices, query, row => `${row.label} ${row.description}`).map(row => row.id)
+    expect(search('reviewer/checker')).toEqual(['nested'])
+    expect(search('Review code')).toEqual(expect.arrayContaining(['first', 'nested']))
+    const withoutAddresses = await listSubagentChoices(ctx, sessionId, signal)
+    expect(withoutAddresses[1]?.label).toBe('  Review code')
+    expect(withoutAddresses[2]?.label).toBe('Audit code')
+  })
+
+  it('keeps a diagnostic unopenable when an exact address is supplied', async () => {
+    const { ctx } = descendantsStub([{ kind: 'diagnostic', id: 'broken', path: 'local', reason: 'corrupt', parentId: sessionId, depth: 1 }])
+    const choices = await listSubagentChoices(ctx, sessionId, signal, new Map([['broken' as SessionId, 'parent/broken']]))
+    expect(choices).toEqual([{ id: 'broken', depth: 1, label: 'parent/broken', description: 'corrupt · broken', target: 'diagnostic', enterable: false }])
   })
 
   it('keeps an external execution visible without offering a local session', async () => {

@@ -141,7 +141,7 @@ describe('ordinary subagent exchanges', () => {
   it('uses role labels and id-based message attribution', () => {
     const beats = beatsFromEvents([
       { type: 'tool/call', data: { name: 'subagent', arguments: JSON.stringify({ description: 'reviewer', prompt: 'Review the diff' }) } },
-      { type: 'tool/call', data: { name: 'send_message', arguments: JSON.stringify({ agent_id: 'child', message: 'Check tests' }) } },
+      { type: 'tool/call', data: { name: 'send_message', arguments: JSON.stringify({ agent: 'child', message: 'Check tests' }) } },
       { type: 'user/message', data: { message: { source: { kind: 'agent-message', senderSessionId: 'child' }, content: [{ type: 'text', text: 'Done' }] } } },
     ], 'lead', undefined, new Map([['child', 'reviewer']]))
     expect(beats).toEqual([
@@ -149,6 +149,67 @@ describe('ordinary subagent exchanges', () => {
       { from: 'lead', to: 'reviewer', kind: 'message', text: 'Check tests' },
       { from: 'reviewer', to: 'lead', kind: 'message', text: 'Done' },
     ])
+  })
+
+  it('addresses a message to the agent name the call carries', () => {
+    const beats = beatsFromEvents([
+      { type: 'tool/call', data: { name: 'send_message', arguments: JSON.stringify({ agent: 'agent-1', message: 'Check tests' }) } },
+    ], 'lead', undefined, new Map([['child', 'reviewer']]))
+    expect(beats).toEqual([{ from: 'lead', to: 'agent-1', kind: 'message', text: 'Check tests' }])
+  })
+
+  it('correlates interleaved successful activation results by call id', () => {
+    const events: TeamLogEvent[] = [
+      { type: 'tool/call', data: { callId: 'a', name: 'subagent', arguments: JSON.stringify({ description: 'same role', prompt: 'first' }) } },
+      { type: 'tool/call', data: { callId: 'b', name: 'subagent_fork', arguments: JSON.stringify({ name: 'checker', description: 'same role', prompt: 'second' }) } },
+      { type: 'tool/call', data: { callId: 'c', name: 'subagent', arguments: JSON.stringify({ description: 'pending', prompt: 'third' }) } },
+      { type: 'tool/call', data: { callId: 'd', name: 'subagent', arguments: JSON.stringify({ description: 'failed', prompt: 'fourth' }) } },
+      { type: 'tool/result', data: { message: { toolCallId: 'b', isError: false }, meta: { kind: 'activation', name: 'reviewer/checker' } } },
+      { type: 'tool/result', data: { message: { toolCallId: 'd', isError: true }, meta: { kind: 'activation', name: 'wrong' } } },
+      { type: 'tool/result', data: { message: { toolCallId: 'a', isError: false }, meta: { kind: 'activation', name: 'agent-1' } } },
+      { type: 'tool/call', data: { name: 'send_message', arguments: JSON.stringify({ agent: 'reviewer/checker', message: 'please check' }) } },
+    ]
+    const beats = beatsFromEvents(events, 'lead')
+    expect(beats.map(line)).toEqual([
+      'spawn lead→agent-1 first',
+      'spawn lead→reviewer/checker second',
+      'spawn lead→pending third',
+      'spawn lead→failed fourth',
+      'message lead→reviewer/checker please check',
+    ])
+    const nested = member({ id: 'nested', name: 'reviewer/checker', role: 'teammate', status: 'inactive', description: 'same role' })
+    const shown = frame({ source: source({ members: [lead, nested], beats }), filtered: true, selected: 'nested' }).join('\n')
+    expect(shown).toContain('lead → reviewer/checker  spawn: second')
+    expect(shown).toContain('lead → reviewer/checker  message: please check')
+    expect(shown).not.toContain('spawn: first')
+  })
+
+  it('removes only a standalone runtime relay header from direct messages', () => {
+    const relay = (content: object[], kind = 'agent-message'): TeamLogEvent => ({
+      type: 'user/message', data: { source: { kind, senderSessionId: 'child' }, content },
+    })
+    const header = { type: 'text', text: 'Agent reviewer/checker sent a message: ' }
+    const beats = beatsFromEvents([
+      relay([header, { type: 'text', text: 'Done' }]),
+      relay([header, { type: 'image', data: 'image' }]),
+      relay([{ type: 'text', text: 'Agent reviewer/checker sent a message: literal text' }]),
+      relay([{ type: 'text', text: 'Old relay' }]),
+      { type: 'user/message', data: { content: [{ type: 'text', text: 'Team message from reviewer/checker: historical' }] } },
+    ], 'lead', undefined, new Map([['child', 'reviewer/checker']]))
+    expect(beats.map(line)).toEqual([
+      'message reviewer/checker→lead Done',
+      'message reviewer/checker→lead (non-text message)',
+      'message reviewer/checker→lead Agent reviewer/checker sent a message: literal text',
+      'message reviewer/checker→lead Old relay',
+      'message reviewer/checker→lead historical',
+    ])
+  })
+
+  it('reads the agent_id argument that sessions saved before name addressing recorded', () => {
+    const beats = beatsFromEvents([
+      { type: 'tool/call', data: { name: 'send_message', arguments: JSON.stringify({ agent_id: 'child', message: 'Check tests' }) } },
+    ], 'lead', undefined, new Map([['child', 'reviewer']]))
+    expect(beats).toEqual([{ from: 'lead', to: 'reviewer', kind: 'message', text: 'Check tests' }])
   })
 })
 

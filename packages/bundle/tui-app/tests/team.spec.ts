@@ -147,19 +147,22 @@ describe('team member names', () => {
 
 
 describe('Team task boards and subagent catalogs', () => {
-  it('uses current model selections and resolves task owners through continuable labels', () => {
+  it('uses catalog paths and descriptions and preserves task owner names', () => {
     const root = { id: SessionId('root'), status: 'running', model: { current: () => ({ provider: 'route', model: 'switched' }) } } as Agent
     const child = { id: SessionId('child'), status: 'idle', model: { current: () => ({ provider: 'route', model: 'override' }) } } as Agent
     const entries: SubagentDescendantListEntry[] = [
-      { kind: 'child', id: child.id, parentId: root.id, depth: 1, mode: 'continuable', label: 'reviewer', activity: 'running', hasChildren: false },
-      { kind: 'child', id: SessionId('cold'), parentId: root.id, depth: 1, mode: 'continuable', label: 'tester', activity: 'inactive', hasChildren: false },
+      { kind: 'child', id: child.id, parentId: root.id, depth: 1, mode: 'continuable', name: 'reviewer', path: 'reviewer', label: 'Review changes', activity: 'running', hasChildren: true },
+      { kind: 'child', id: SessionId('nested'), parentId: child.id, depth: 2, mode: 'continuable', name: 'tester', path: 'reviewer/tester', label: 'Review changes', activity: 'inactive', hasChildren: false },
+      { kind: 'child', id: SessionId('cold'), parentId: root.id, depth: 1, mode: 'continuable', label: 'historical work', activity: 'inactive', hasChildren: false },
       { kind: 'child', id: SessionId('one-shot'), parentId: root.id, depth: 1, mode: 'one-shot', activity: 'inactive', hasChildren: false },
     ]
     let enabled = true
     const services = {
       agentTeams: { isEnabled: () => enabled, listTasks: () => [
-        { ...task({ id: 'task-1', subject: 'Review', status: 'pending' }), ownerId: child.id },
-        { ...task({ id: 'task-2', subject: 'Offline owner', status: 'pending' }), ownerId: 'unavailable' },
+        { ...task({ id: 'task-1', subject: 'Review', status: 'pending', ownerName: 'old-name' }), ownerId: child.id },
+        { ...task({ id: 'task-2', subject: 'Nested', status: 'pending' }), ownerId: 'nested' },
+        { ...task({ id: 'task-3', subject: 'Offline owner', status: 'pending', ownerName: 'reviewer/checker' }), ownerId: 'unavailable' },
+        { ...task({ id: 'task-4', subject: 'Unnamed owner', status: 'pending' }), ownerId: 'unknown' },
       ] },
       subagents: { rootOf: () => root },
       agents: { get: (id: string) => id === child.id ? child : undefined },
@@ -168,11 +171,13 @@ describe('Team task boards and subagent catalogs', () => {
     const snapshot = readTeamSnapshot(context, child, entries)
     expect(snapshot).toMatchObject({ kind: 'team', members: [
       { id: 'root', name: 'lead', role: 'lead', status: 'running', model: 'switched' },
-      { id: 'child', name: 'reviewer', role: 'teammate', status: 'inactive', model: 'override' },
-      { id: 'cold', name: 'tester', role: 'teammate', status: 'inactive' },
-    ], tasks: [{ ownerName: 'reviewer' }, { ownerName: 'unavailable' }] })
+      { id: 'child', name: 'reviewer', description: 'Review changes', role: 'teammate', status: 'inactive', model: 'override' },
+      { id: 'nested', name: 'reviewer/tester', description: 'Review changes', role: 'teammate', status: 'inactive' },
+      { id: 'cold', name: 'historical work', role: 'teammate', status: 'inactive' },
+    ], tasks: [{ ownerName: 'reviewer' }, { ownerName: 'reviewer/tester' }, { ownerName: 'reviewer/checker' }, { ownerName: 'unknown' }] })
     if (snapshot.kind !== 'team') throw new Error('expected Team snapshot')
     expect(snapshot.members[2]).not.toHaveProperty('model')
+    expect(snapshot.members[3]).not.toHaveProperty('description')
     enabled = false
     expect(readTeamSnapshot(context, child, entries)).toEqual({ kind: 'not-member' })
   })

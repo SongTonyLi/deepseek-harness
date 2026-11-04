@@ -162,9 +162,9 @@ export function listPlugins(ctx: Context): string[] {
 export interface SubagentChoice {
   /** The descendant session or external-task id; the picker row value. */
   id: SessionId
-  /** Root-relative depth, 1 for a direct child. */
+  /** Depth relative to the listed Session, 1 for a direct child. */
   depth: number
-  /** Row label: the depth indent, then the durable label when the entry has one, else the id. */
+  /** Row label: depth indent, exact root-relative address when known, and durable label or id. */
   label: string
   /** Row description: local activity and mode, or why no local Session can be opened. */
   description: string
@@ -178,24 +178,27 @@ export interface SubagentChoice {
 
 /**
  * One descendant listing entry as a picker row: a local child has its session
- * id, activity, mode, and label; an external execution names its durable task
- * record without offering a Session to open. A diagnostic candidate shows its
- * reason. The live panel enters the same local-child row.
+ * id, activity, mode, and label. An optional exact root-relative address is
+ * shown beside the label. An external execution has no Session to open; a
+ * diagnostic candidate shows its reason. The live panel enters the same row.
  * @param entry - the listing entry.
+ * @param options - exact root-relative address, omitted when unavailable.
  * @returns the row; `enterable` is false for a diagnostic or external entry.
  */
-export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoice {
+export function subagentChoice(entry: SubagentDescendantListEntry, options?: { readonly address?: string }): SubagentChoice {
   const prefix = indent(entry.depth - 1)
+  const address = options?.address
   switch (entry.kind) {
     case 'child': {
       const external = entry.mode === 'external'
       const parts: string[] = external ? ['external task', 'no local session'] : [entry.activity, entry.mode]
-      // The label took the id's place in the row label, so the description carries it.
-      if (entry.label !== undefined) parts.push(entry.id)
+      if (entry.label !== undefined || address !== undefined) parts.push(entry.id)
+      const label = address === undefined ? entry.label ?? entry.id
+        : `${address}${entry.label === undefined ? '' : ` · ${entry.label}`}`
       return {
         id: entry.id,
         depth: entry.depth,
-        label: `${prefix}${entry.label ?? entry.id}`,
+        label: `${prefix}${label}`,
         description: parts.join(' · '),
         target: external ? 'external-task' : 'session',
         mode: entry.mode,
@@ -206,8 +209,8 @@ export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoi
       return {
         id: entry.id,
         depth: entry.depth,
-        label: `${prefix}${entry.id}`,
-        description: entry.reason,
+        label: `${prefix}${address ?? entry.id}`,
+        description: address === undefined ? entry.reason : `${entry.reason} · ${entry.id}`,
         target: 'diagnostic',
         enterable: false,
       }
@@ -221,13 +224,19 @@ export function subagentChoice(entry: SubagentDescendantListEntry): SubagentChoi
  * @param ctx - plugin context carrying the optional subagent runtime.
  * @param sessionId - the root session whose descendants are listed.
  * @param signal - cancels the listing.
+ * @param addresses - exact root-relative addresses by Session id; missing entries retain label or id.
  * @returns one choice per descendant in listing order, empty when the session has no subagents.
  * @throws {Error} when no subagent runtime is mounted.
  */
-export async function listSubagentChoices(ctx: Context, sessionId: SessionId, signal: AbortSignal): Promise<SubagentChoice[]> {
+export async function listSubagentChoices(
+  ctx: Context, sessionId: SessionId, signal: AbortSignal, addresses?: ReadonlyMap<SessionId, string>,
+): Promise<SubagentChoice[]> {
   const subagents = ctx.get('subagents')
   if (subagents === undefined) throw new Error('subagents are not mounted in this profile')
-  return (await subagents.listDescendants(sessionId, signal)).map(subagentChoice)
+  return (await subagents.listDescendants(sessionId, signal)).map((entry) => {
+    const address = addresses?.get(entry.id)
+    return subagentChoice(entry, address === undefined ? undefined : { address })
+  })
 }
 
 /**

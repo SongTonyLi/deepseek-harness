@@ -1,4 +1,5 @@
 /** The terminal Team start card and live room use standard child discovery. */
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
 import { KEY, bench, type Bench } from './bench.ts'
 import { listed, provideTeam } from './team-bench.ts'
@@ -53,6 +54,42 @@ describe('Team start card and live room', () => {
     await test.settle()
     expect(test.terminal.written).toContain(LEAVE_ALT)
     expect(await test.screen()).toContain('team · 1 teammate · tasks 0/1 done')
+  })
+
+  it('shows addressable teammate names and filters their exchanges', async () => {
+    const test = await bench({ before(ctx) {
+      provideTeam(ctx, () => [{
+        kind: 'child', id: SessionId('session-checker'), parentId: SessionId('session-reviewer'), depth: 2,
+        mode: 'continuable', name: 'checker', path: 'reviewer/checker', label: 'Inspect dependencies',
+        activity: 'inactive', hasChildren: false,
+      }])
+    } })
+    test.appendToolCall('spawn-checker', 'subagent', { description: 'Inspect dependencies', prompt: 'Check the lockfile' })
+    test.appendToolResult('spawn-checker', [{ type: 'text', text: 'started subagent reviewer/checker' }], false,
+      { kind: 'activation', name: 'reviewer/checker' })
+    test.appendToolCall('message-checker', 'send_message', { agent: 'reviewer/checker', message: 'Check the tests' })
+    await test.settle()
+
+    for (const char of '/team') test.terminal.type(char)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(await test.screen()).toContain('reviewer/checker')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+
+    await open(test)
+    expect(alt(test)).toContain('reviewer/checker')
+    expect(alt(test)).toContain('Inspect dependencies')
+    expect(alt(test)).toContain('spawn: Check the lockfile')
+    expect(alt(test)).toContain('message: Check the tests')
+    test.terminal.type(KEY.down)
+    test.terminal.type('f')
+    await test.settle()
+    expect(alt(test)).toContain('Messages · with reviewer/checker · 2')
+    expect(alt(test)).toContain('lead → reviewer/checker')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+    expect(test.terminal.written).toContain(LEAVE_ALT)
   })
 
   it('tears the room down when the app quits', async () => {

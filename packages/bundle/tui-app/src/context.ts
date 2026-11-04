@@ -46,6 +46,33 @@ export function systemPromptView(text: string, update: boolean): ContextProjecti
 }
 
 /**
+ * Project developer text and tool changes without rendering tool schemas.
+ * @param content - the developer message's blocks.
+ * @returns a navigable section, or undefined for an empty message.
+ */
+export function developerContextView(content: readonly ContentBlock[]): ContextProjection | undefined {
+  const rows = content.flatMap((block): string[] => {
+    switch (block.type) {
+      case 'text': return block.text === '' ? [] : block.text.split('\n')
+      case 'tool-addition': return [`Tool added: ${block.toolName}`]
+      case 'tool-removal': return [`Tool removed: ${block.toolName}`]
+      default: return [`[${block.type}]`]
+    }
+  })
+  return rows.length === 0 ? undefined : { title: 'developer message', parts: [{ kind: 'context', rows }] }
+}
+
+/**
+ * Identify an empty manual continuation input, without changing other retry content.
+ * @param source - the message's durable source.
+ * @param content - the message's blocks.
+ * @returns whether the message is an empty retry receipt.
+ */
+export function isEmptyRetry(source: unknown, content: readonly ContentBlock[]): boolean {
+  return recordOf(source)?.kind === 'retry' && content.length === 0
+}
+
+/**
  * Project one injected `user/message` into a transcript section.
  * @param source - the message's durable source.
  * @param content - the model-facing blocks.

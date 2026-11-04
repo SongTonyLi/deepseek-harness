@@ -24,6 +24,8 @@
  */
 
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import { SessionContinuationBusyError, type SessionRequestId } from '@deepseek-ai/dsh-session-continuation'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import {
@@ -64,7 +66,7 @@ import type { ToolWorkflowRunStartData } from '@deepseek-ai/dsh-tool-workflow/ty
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { JobId, type JobEvent, type JobRegistry, type JobView } from '@deepseek-ai/dsh-jobs'
-import type { AskUserQuestionAnswer, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
+import { UserQuestionError, type AskUserQuestionAnswer, type AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 // Empty type imports carry the Context merges for the services this app reads through `ctx.get`.
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -114,7 +116,7 @@ import {
   settledToast,
 } from './jobs-panel.ts'
 import { btwBriefMessage } from './btw.ts'
-import { attachLocalFile, type PendingAttachment } from './attach.ts'
+import { attachLocalFile, storedAttachmentParts, type PendingAttachment } from './attach.ts'
 import {
   changeDiffRows,
   changesNotice,
@@ -123,7 +125,6 @@ import {
   listDeliverables,
   listPlugins,
   listSettings,
-  listSubagentChoices,
   listTurnChanges,
   removeBundle,
   resetSetting,
@@ -165,7 +166,7 @@ import {
   type ToolFamily,
 } from './spinner.ts'
 import { editorCompletion, type CompletableCommand, type ReferenceItem } from './completion.ts'
-import { injectedContextView, systemPromptView } from './context.ts'
+import { developerContextView, injectedContextView, isEmptyRetry, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
 import { parseUserShellLine, userShellContextText, userShellTranscriptRows } from './shell-line.ts'
 import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
@@ -296,6 +297,9 @@ const COMPACTION_LOADER_DETAIL = 'context · Esc cancels'
 
 /** What a prompt submitted while a dispatched `/compact` runs reports. */
 const COMPACTION_QUEUE_NOTICE = 'queued: the prompt starts once compaction finishes'
+
+/** What input reports while staged attachments are still being admitted. */
+const ATTACHMENT_FLIGHT_WAIT = 'wait for the attachment submission to finish (Esc cancels it)'
 
 /** The one extra key the model picker answers, stated above its rows. */
 const MODEL_PICKER_HINT = 'Ctrl+S saves the highlighted model as the default for the next launch'
@@ -667,8 +671,9 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'clear', description: 'Start a new session with empty context; previous session stays on disk (resumable with /resume)' },
   { name: 'fork', description: 'Fork this session at its last completed turn (/fork <turn> for an earlier one)' },
   { name: 'title', description: 'Rename this session (/title <text>)' },
-  { name: 'attach', description: 'Attach a file or image to the next prompt (/attach <path>, /attach clear)' },
+  { name: 'attach', description: 'Attach a file or image to the next prompt or a command that accepts attachments (/attach <path>, /attach clear)' },
   { name: 'queue', description: 'Show or clear the messages queued for the Agent (/queue clear)' },
+  { name: 'retry', description: 'Continue an eligible failed turn without a new prompt' },
   { name: 'skills', description: 'List the skills the Agent can load' },
   { name: 'login', description: 'Sign in with a provider subscription (/login <key> skips the picker)' },
   { name: 'signin', description: 'Sign in to a provider' },
@@ -908,6 +913,8 @@ export class TuiApp {
   /** When the running turn started, from its `turn/start` envelope; absent between turns. */
   private turnStartedAt: number | undefined
   private pending: PendingAttachment[] = []
+  /** Admission of the staged attachments borrowed by one prompt or shared command. */
+  private attachmentFlight: AbortController | undefined
   /** The home directory the footer shortens the workspace path against. */
   private readonly home = homedir()
   /** The segments of the last footer draw, in bar order. */
@@ -926,6 +933,8 @@ export class TuiApp {
   private barSelection: FooterSegmentId = FIRST_FOOTER_SEGMENT
   /** The descendant listing the last reconcile produced, in pre-order. */
   private subagentEntries: readonly SubagentDescendantListEntry[] = []
+  /** Exact root-relative addresses for the last listing, keyed by Session id. */
+  private subagentAddresses: ReadonlyMap<SessionId, string> = new Map()
   /** Latest root catalog used by Team views opened inside a descendant. */
   private teamEntries: readonly SubagentDescendantListEntry[] = []
   /** Lifecycle activity held until a fresh catalog confirms the named descendant. */
@@ -1057,6 +1066,7 @@ export class TuiApp {
    * shows history and live progress only.
    */
   private readonly readOnlyViews = new Set<BoundSession>()
+  private readonly retryingViews = new Set<BoundSession>()
   private streaming: AssistantBlock | undefined
   /** Whether the fold keys left every foldable block open; one appended later follows it. */
   private toolsExpanded = false
@@ -1376,6 +1386,7 @@ export class TuiApp {
     this.dropCompaction()
     this.restoreQueueDraft()
     this.stopped = true
+    this.attachmentFlight?.abort()
     this.updateTicker()
     this.updateFadeTicker()
     this.updateSpinTicker()
@@ -1483,6 +1494,7 @@ export class TuiApp {
     this.queueSelection = undefined
     this.clearActivityBoard()
     this.subagentEntries = []
+    this.subagentAddresses = new Map()
     this.teamEntries = []
     this.pendingSubagentActivity.clear()
     this.panelSelection = undefined
@@ -1534,6 +1546,7 @@ export class TuiApp {
       this.notice(COMPACTION_SWITCH_WAIT, 'error')
       return
     }
+    if (this.attachmentSubmissionPending()) return
     this.cancelPickers()
     this.switching = true
     let next: BoundSession
@@ -1584,6 +1597,7 @@ export class TuiApp {
       this.notice('wait for the session switch to finish', 'error')
       return
     }
+    if (this.attachmentSubmissionPending()) return
     this.switching = true
     let next: BoundSession
     try {
@@ -1633,6 +1647,7 @@ export class TuiApp {
    * @param question - the text after `/btw`; empty opens the page without asking.
    */
   private async openAside(question: string): Promise<void> {
+    if (this.attachmentSubmissionPending()) return
     if (this.asides.has(this.bound)) {
       if (question === '') this.notice('this is already a btw side agent; type a question, or Ctrl+P to end it')
       else this.submit(question)
@@ -1679,6 +1694,7 @@ export class TuiApp {
       this.notice('wait for the session switch to finish', 'error')
       return
     }
+    if (this.attachmentSubmissionPending()) return
     this.switching = true
     let history: readonly SessionEvent[]
     try {
@@ -2144,7 +2160,9 @@ export class TuiApp {
     if (member !== undefined) return memberLabel(member)
     const entry = this.subagentEntries.find(candidate => candidate.id === id)
     if (entry?.kind !== 'child') return id
-    const label = entry.label ?? id
+    const address = this.subagentAddresses.get(id)
+    const label = address === undefined ? entry.label ?? id
+      : `${address}${entry.label === undefined ? '' : ` · ${entry.label}`}`
     return entry.mode === 'external' ? `${label} (external task)` : label
   }
 
@@ -2223,6 +2241,7 @@ export class TuiApp {
     const entries = this.subagentEntries.filter(entry => !members.has(entry.id))
     const view = subagentPanelView({
       entries,
+      addresses: this.subagentAddresses,
       facts: this.subagentFacts(entries),
       now: this.deps.now(),
     })
@@ -2467,6 +2486,37 @@ export class TuiApp {
   }
 
   /**
+   * Read the live tree root's listing for exact addresses, reusing a root listing.
+   * @param agent - the exact Agent that owns the local listing.
+   * @param entries - its descendant listing.
+   * @param signal - cancellation for a root listing.
+   * @returns the root listing, or undefined when the live root is unavailable.
+   */
+  private async rootSubagentEntries(
+    agent: Agent, entries: readonly SubagentDescendantListEntry[], signal: AbortSignal,
+  ): Promise<readonly SubagentDescendantListEntry[] | undefined> {
+    const subagents = this.deps.ctx.get('subagents')
+    if (subagents === undefined) return undefined
+    let root: Agent
+    try {
+      root = subagents.rootOf(agent)
+    } catch (error: unknown) {
+      if (error instanceof SubagentError && error.code === 'UNAUTHORIZED') return undefined
+      throw error
+    }
+    return root === agent ? entries : await subagents.listDescendants(root.id, signal)
+  }
+
+  /** Build exact addresses from the live root's listing. */
+  private subagentAddressMap(entries: readonly SubagentDescendantListEntry[] | undefined): ReadonlyMap<SessionId, string> {
+    const addresses = new Map<SessionId, string>()
+    for (const entry of entries ?? []) {
+      if (entry.path !== undefined) addresses.set(entry.id, entry.path)
+    }
+    return addresses
+  }
+
+  /**
    * Re-read the descendant listing once. Two listings never overlap and a
    * result the terminal moved away from is discarded — both leave the listing
    * stale, so the next tick reads again. A rejection keeps the rows the last
@@ -2483,24 +2533,31 @@ export class TuiApp {
     }
     this.listing = true
     this.subagentsStale = false
-    const session = this.agent.session
+    const agent = this.agent
+    const session = agent.session
     try {
-      const entries = await subagents.listDescendants(session.id, new AbortController().signal)
-      const root = readTeamSnapshot(this.deps.ctx, this.agent).kind === 'team'
-        ? subagents.rootOf(this.agent) : undefined
-      const teamEntries = root === undefined || root.session === session
-        ? entries
-        : await subagents.listDescendants(root.id, new AbortController().signal)
-      if (this.agent.session === session) {
+      const signal = new AbortController().signal
+      const entries = await subagents.listDescendants(session.id, signal)
+      let rootEntries: readonly SubagentDescendantListEntry[] | undefined
+      let addressFailure: string | undefined
+      try {
+        rootEntries = await this.rootSubagentEntries(agent, entries, signal)
+      } catch (error: unknown) {
+        addressFailure = `address lookup: ${describeFailure(error)}`
+      }
+      if (this.agent === agent) {
         this.subagentEntries = entries
-        this.teamEntries = teamEntries
-        this.listingFailure = undefined
+        this.subagentAddresses = this.subagentAddressMap(rootEntries)
+        this.teamEntries = rootEntries ?? []
+        if (addressFailure === undefined) this.listingFailure = undefined
+        else this.reportListingFailure(addressFailure)
         this.flushPendingSubagentActivity()
       } else {
         this.markSubagentsStale()
       }
     } catch (error: unknown) {
-      this.reportListingFailure(describeFailure(error))
+      if (this.agent === agent) this.reportListingFailure(describeFailure(error))
+      else this.markSubagentsStale()
     } finally {
       this.listing = false
       if (!this.stopped) {
@@ -3092,7 +3149,8 @@ export class TuiApp {
     const entry = this.subagentEntries.find(candidate => candidate.id === row.id)
     /* v8 ignore next -- every drawn row comes from the entries of the last listing */
     if (entry === undefined) return
-    const choice = subagentChoice(entry)
+    const address = this.subagentAddresses.get(entry.id)
+    const choice = subagentChoice(entry, address === undefined ? undefined : { address })
     await this.enterSubagent(choice, this.subagentBrowseRow(choice))
   }
 
@@ -3433,6 +3491,10 @@ export class TuiApp {
     if (this.editor.isShowingAutocomplete()) return undefined
     if (this.shellAbort !== undefined) {
       this.shellAbort.abort()
+      return { consume: true }
+    }
+    if (this.attachmentFlight !== undefined) {
+      this.attachmentFlight.abort()
       return { consume: true }
     }
     if (this.compacting !== undefined) {
@@ -4155,6 +4217,10 @@ export class TuiApp {
   private onSubmit(raw: string, mode: SubmitMode = 'queue'): void {
     const text = raw.trim()
     if (text === '') return
+    if (this.attachmentFlight !== undefined && !this.attachmentFlightAllows(text)) {
+      this.notice(ATTACHMENT_FLIGHT_WAIT, 'error')
+      return
+    }
     if (this.switching) {
       this.notice(SESSION_SWITCH_WAIT, 'error')
       return
@@ -4166,12 +4232,18 @@ export class TuiApp {
       this.syncEditorBorder()
       return
     }
+    if (this.queueDraft !== undefined && /^\/retry(?:\s|$)/iu.test(text)) {
+      this.notice('/retry: finish or cancel the queued draft first', 'error')
+      this.editor.setText(raw)
+      this.syncEditorBorder()
+      return
+    }
     this.editor.setText('')
     this.editor.addToHistory(text)
     const draft = this.queueDraft
     this.queueDraft = undefined
     if (draft === undefined && text.startsWith('/')) {
-      void this.dispatchCommand(text)
+      void this.dispatchCommand(text, raw)
       return
     }
     const shell = draft === undefined ? parseUserShellLine(text) : undefined
@@ -4185,11 +4257,12 @@ export class TuiApp {
   /**
    * Run one slash command and turn a rejection into a terminal notice.
    * @param line - the complete slash-command line.
+   * @param original - the submitted editor text to restore after a refused retry.
    * @returns when the command or its failure notice settles.
    */
-  private dispatchCommand(line: string): Promise<void> {
+  private dispatchCommand(line: string, original = line): Promise<void> {
     const name = line.slice(0, line.indexOf(' ') === -1 ? undefined : line.indexOf(' '))
-    return this.runCommand(line).catch((error: unknown) => { this.notice(`${name} failed: ${describeFailure(error)}`, 'error') })
+    return this.runCommand(line, original).catch((error: unknown) => { this.notice(`${name} failed: ${describeFailure(error)}`, 'error') })
   }
 
   /**
@@ -4295,11 +4368,72 @@ export class TuiApp {
   }
 
   private submit(text: string, mode: SubmitMode = 'queue', draft?: UserMessage): void {
+    if (this.attachmentSubmissionPending()) return
+    const submitted = this.pending.slice()
+    if (submitted.length === 0) {
+      this.deliverPrompt(text, mode, draft, [])
+      return
+    }
+    const bound = this.bound
+    const controller = new AbortController()
+    this.attachmentFlight = controller
+    void this.admitAndDeliverPrompt(bound, controller, text, mode, draft, submitted)
+  }
+
+  /**
+   * Admit one ordinary prompt's staged attachments before any message is created.
+   * A refused batch, cancellation, or unexpected failure leaves the staged
+   * attachments pending. Later additions stay pending too.
+   */
+  private async admitAndDeliverPrompt(
+    bound: BoundSession,
+    controller: AbortController,
+    text: string,
+    mode: SubmitMode,
+    draft: UserMessage | undefined,
+    submitted: readonly PendingAttachment[],
+  ): Promise<void> {
+    const store = this.deps.ctx.get('attachments')
+    try {
+      if (store === undefined) {
+        if (this.attachmentCurrent(bound, controller)) this.notice('no attachment store is composed', 'error')
+        return
+      }
+      const admitted = await store.admitPromptContent(storedAttachmentParts(submitted))
+      if (!this.attachmentCurrent(bound, controller)) return
+      if (controller.signal.aborted) {
+        this.notice('prompt cancelled; attachments stayed pending', 'error')
+        return
+      }
+      this.deliverPrompt(text, mode, draft, admitted.flatMap(part => part.type === 'text' ? [] : [part]), submitted)
+    } catch (error: unknown) {
+      if (!this.attachmentCurrent(bound, controller)) return
+      if (controller.signal.aborted) {
+        this.notice('prompt cancelled; attachments stayed pending', 'error')
+        return
+      }
+      if (store !== undefined && store.isAttachmentError(error)) {
+        this.notice(`${error.message}; attachments stayed pending`, 'error')
+        return
+      }
+      this.notice(`prompt failed: ${describeFailure(error)}; the prompt was not sent; attachments stayed pending`, 'error')
+    } finally {
+      this.finishAttachmentFlight(controller)
+    }
+  }
+
+  /** Publish one prompt after its attachments, if any, were admitted. */
+  private deliverPrompt(
+    text: string,
+    mode: SubmitMode,
+    draft: UserMessage | undefined,
+    attachments: readonly PendingAttachment['block'][],
+    submitted: readonly PendingAttachment[] = [],
+  ): void {
     const agent = this.agent
-    const attachments = this.pending.splice(0)
     const retained = draft?.content.filter(block => block.type !== 'text') ?? []
     const message: UserMessage = createUserMessage({
-      content: [...retained, ...attachments.map(attachment => attachment.block), { type: 'text', text }],
+      content: [...retained, ...attachments, { type: 'text', text }],
       source: terminalPromptSource(draft),
     })
     if (this.compacting !== undefined) {
@@ -4307,12 +4441,11 @@ export class TuiApp {
       // settles, so the prompt waits in the follow-ups list and is drawn when
       // its turn claims it.
       agent.followup(message)
-      this.notice(COMPACTION_QUEUE_NOTICE)
     } else if (agent.status !== 'running') {
       // An idle Agent takes the prompt at once, so it is drawn here and the
       // durable `user/message` that follows is not drawn a second time.
       this.submittedIds.add(message.id)
-      const shown = attachments.length === 0 ? text : `${text}\n${attachments.map(attachment => `[${attachment.block.type}: ${attachment.name}]`).join(' ')}`
+      const shown = submitted.length === 0 ? text : `${text}\n${submitted.map(attachment => `[${attachment.block.type}: ${attachment.name}]`).join(' ')}`
       this.chat.addChild(new UserBlock(this.theme, shown, this.turn))
       agent.followup(message)
     } else if (mode === 'steer') {
@@ -4324,13 +4457,60 @@ export class TuiApp {
       agent.followup(message)
       this.notice('queued for the next turn (Ctrl+S steers the running turn instead)')
     }
+    this.consumeSubmitted(submitted)
+    if (this.compacting !== undefined) this.notice(COMPACTION_QUEUE_NOTICE)
     this.refreshQueue()
     this.refreshFooter()
   }
 
+  /** Report that an attachment submission still owns the staged rows. */
+  private attachmentSubmissionPending(): boolean {
+    if (this.attachmentFlight === undefined) return false
+    this.notice(ATTACHMENT_FLIGHT_WAIT, 'error')
+    return true
+  }
+
+  /**
+   * Whether `line` may run during admission.
+   * Listing and adding stay available. Clearing, and any line that is not an
+   * attach command, would race the batch already being admitted.
+   * @param line - the trimmed editor line.
+   * @returns true when the line lists or adds an attachment and no queued draft owns the editor.
+   */
+  private attachmentFlightAllows(line: string): boolean {
+    if (this.queueDraft !== undefined) return false
+    const match = /^\/attach(?:\s+(\S(?:.*\S)?))?$/iu.exec(line)
+    if (match === null) return false
+    return (match[1] ?? '').toLowerCase() !== 'clear'
+  }
+
+  /**
+   * Whether `controller` still owns admission for `bound`.
+   * Quit and a session change make a late result silent.
+   */
+  private attachmentCurrent(bound: BoundSession, controller: AbortController): boolean {
+    return !this.stopped && this.bound === bound && this.attachmentFlight === controller
+  }
+
+  /** Drop the flight marker once its admission settles. */
+  private finishAttachmentFlight(controller: AbortController): void {
+    if (this.attachmentFlight === controller) this.attachmentFlight = undefined
+  }
+
+  /** Remove exactly the attachments one successful submission admitted. */
+  private consumeSubmitted(submitted: readonly PendingAttachment[]): void {
+    if (submitted.length === 0) return
+    const consumed = new Set(submitted)
+    this.pending = this.pending.filter(attachment => !consumed.has(attachment))
+  }
+
   // ── commands ────────────────────────────────────────────────────────────
 
-  private async runCommand(line: string): Promise<void> {
+  private async runCommand(line: string, original = line): Promise<void> {
+    if (/^\/retry(?:\s|$)/iu.test(line)) {
+      await this.retryTurn(line.slice('/retry'.length).trim(), original)
+      return
+    }
     const space = line.indexOf(' ')
     const name = (space === -1 ? line : line.slice(0, space)).slice(1).toLowerCase()
     const argument = space === -1 ? '' : line.slice(space + 1).trim()
@@ -4472,7 +4652,23 @@ export class TuiApp {
         this.setTeamPanel(argument)
         return
       case 'subagents': {
-        const choices = await listSubagentChoices(this.deps.ctx, this.agent.session.id, new AbortController().signal)
+        const subagents = this.deps.ctx.get('subagents')
+        if (subagents === undefined) throw new Error('subagents are not mounted in this profile')
+        const agent = this.agent
+        const signal = new AbortController().signal
+        const entries = await subagents.listDescendants(agent.session.id, signal)
+        let rootEntries: readonly SubagentDescendantListEntry[] | undefined
+        try {
+          rootEntries = await this.rootSubagentEntries(agent, entries, signal)
+        } catch (error: unknown) {
+          if (this.agent === agent) this.notice(`subagent address lookup failed: ${describeFailure(error)}`, 'error')
+        }
+        if (this.agent !== agent) return
+        const addresses = this.subagentAddressMap(rootEntries)
+        const choices = entries.map((entry) => {
+          const address = addresses.get(entry.id)
+          return subagentChoice(entry, address === undefined ? undefined : { address })
+        })
         if (choices.length === 0) {
           this.notice('no subagent sessions')
           return
@@ -4496,10 +4692,66 @@ export class TuiApp {
         await this.plugins(argument)
         return
       case 'compact':
+        if (this.pending.length > 0) {
+          await this.runUserSharedCommand(line, 'compact')
+          return
+        }
         await this.compact(line)
         return
       default:
-        await this.runSharedCommand(line, name)
+        await this.runUserSharedCommand(line, name)
+    }
+  }
+
+  /** Admit a retry without consuming staged attachments or replacing a newer editor draft. */
+  private async retryTurn(argument: string, original: string): Promise<void> {
+    const bound = this.bound
+    const restore = (): void => {
+      if (this.stopped || this.bound !== bound) return
+      if (this.editor.getText() === '') {
+        this.editor.setText(original)
+        this.syncEditorBorder()
+      } else {
+        this.notice(`/retry was not submitted; the current draft is unchanged: ${original}`, 'error')
+      }
+    }
+    if (argument !== '') {
+      this.notice('usage: /retry', 'error')
+      restore()
+      return
+    }
+    if (this.readOnlyViews.has(bound)) {
+      this.notice('/retry is unavailable in a read-only session view', 'error')
+      restore()
+      return
+    }
+    if (this.retryingViews.has(bound)) {
+      this.notice('/retry is already submitting', 'error')
+      restore()
+      return
+    }
+    const continuation = this.deps.ctx.get('sessionContinuation')
+    if (continuation === undefined) {
+      this.notice('/retry is unavailable: continuation service is not mounted', 'error')
+      restore()
+      return
+    }
+    this.retryingViews.add(bound)
+    try {
+      const result = await continuation.retry(bound.agent, { kind: 'retry', rpcId: brandString<SessionRequestId>(randomUUID()) })
+      if (this.stopped || this.bound !== bound) return
+      if (result === 'unavailable') {
+        this.notice('/retry: no eligible failed turn, or human input is still waiting', 'error')
+        restore()
+      }
+    } catch (error: unknown) {
+      if (this.stopped || this.bound !== bound) return
+      this.notice(error instanceof SessionContinuationBusyError
+        ? '/retry: wait for current work to finish, then retry'
+        : `/retry failed: ${describeFailure(error)}`, 'error')
+      restore()
+    } finally {
+      this.retryingViews.delete(bound)
     }
   }
 
@@ -4518,11 +4770,60 @@ export class TuiApp {
   }
 
   /**
-   * Run one command of the shared registry and print its result into the
-   * session it ran on. A success that names the `compaction/summary` this
-   * terminal just drew as a block prints nothing more; a run whose signal
-   * aborted reports the cancel; a result that settles after a session switch
-   * or quit prints nothing.
+   * Run one user-typed shared command. Staged attachments are admitted with it
+   * and removed only after success. A command that does not accept them fails
+   * before its handler runs, and the staged rows stay. Permission and sandbox
+   * submissions do not use this path.
+   * @param line - the complete slash-command line.
+   * @param name - the lowercase command name, for the notices.
+   */
+  private async runUserSharedCommand(line: string, name: string): Promise<void> {
+    const submitted = this.pending.slice()
+    if (submitted.length === 0) {
+      await this.runSharedCommand(line, name)
+      return
+    }
+    if (this.attachmentSubmissionPending()) return
+    const bound = this.bound
+    const controller = new AbortController()
+    this.attachmentFlight = controller
+    const registry = this.deps.ctx.get('commands')
+    try {
+      if (registry === undefined) {
+        this.notice(`unknown command /${name}; attachments stayed pending`, 'error')
+        return
+      }
+      const execution = await registry.executeStored(bound.agent, line, storedAttachmentParts(submitted), controller.signal)
+      if (!this.attachmentCurrent(bound, controller)) return
+      if (execution === undefined) {
+        this.notice(`unknown command /${name}; attachments stayed pending`, 'error')
+        return
+      }
+      const result = execution.result
+      if (result.kind === 'error') {
+        this.notice(`/${name}: ${result.text}; attachments stayed pending`, 'error')
+        return
+      }
+      this.consumeSubmitted(submitted)
+      if (result.sourceEventSeq === undefined || result.sourceEventSeq !== this.drawnCompaction) {
+        this.notice(result.text === undefined ? `/${name} done` : `/${name}: ${result.text}`, 'success')
+      }
+    } catch (error: unknown) {
+      if (!this.attachmentCurrent(bound, controller)) return
+      this.notice(controller.signal.aborted
+        ? `/${name} cancelled; attachments stayed pending and the command's use of them is unknown`
+        : `/${name} failed: ${describeFailure(error)}; attachments stayed pending and the command's use of them is unknown`, 'error')
+    } finally {
+      this.finishAttachmentFlight(controller)
+      if (!this.stopped && this.bound === bound) this.refreshFooter()
+    }
+  }
+
+  /**
+   * Run one shared command without staged attachments and print its result into
+   * the session it ran on. A success that names the compaction summary this
+   * terminal just drew prints nothing more. A cancelled run reports that cancel.
+   * A result that settles after a session switch or quit prints nothing.
    * @param line - the complete slash-command line.
    * @param name - the lowercase command name, for the notices.
    * @param signal - cancels the run; a run nothing cancels passes none.
@@ -5063,11 +5364,12 @@ export class TuiApp {
   private async attachNow(argument: string): Promise<void> {
     if (argument === '' ) {
       this.notice(this.pending.length === 0
-        ? 'nothing attached; /attach <path> attaches a file or image to the next prompt'
+        ? 'nothing attached; /attach <path> attaches a file or image to the next prompt or a command that accepts attachments'
         : `attached: ${this.pending.map(attachment => attachment.name).join(', ')}`)
       return
     }
     if (argument === 'clear') {
+      if (this.attachmentSubmissionPending()) return
       this.pending = []
       this.notice('attachments cleared')
       this.refreshFooter()
@@ -5081,7 +5383,7 @@ export class TuiApp {
     try {
       const pending = await attachLocalFile(store, this.deps.cwd, argument)
       this.pending.push(pending)
-      this.notice(`attached ${pending.block.type} ${pending.name}; it goes with the next prompt`, 'success')
+      this.notice(`attached ${pending.block.type} ${pending.name}; it goes with the next prompt or a command that accepts attachments`, 'success')
     } catch (error: unknown) {
       this.notice(`attach failed: ${describeFailure(error)}`, 'error')
     }
@@ -5239,8 +5541,15 @@ export class TuiApp {
   ): Promise<AskUserQuestionAnswer> {
     const answers: AskUserQuestionAnswer['answers'] = []
     for (const question of questions) {
-      const answer = await this.showModal(new QuestionPrompt(this.deps.palette, question), signal)
-      if (answer === null) throw new Error('the question was dismissed')
+      const prompt = new QuestionPrompt(this.deps.palette, question)
+      const withdraw = prompt.withdraw.bind(prompt)
+      let withdrawn = false
+      prompt.withdraw = () => { withdrawn = true; withdraw() }
+      const answer = await this.showModal(prompt, signal)
+      if (withdrawn || signal?.aborted === true) {
+        throw new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED')
+      }
+      if (answer === null) throw new UserQuestionError('the question was dismissed', 'ASK_CANCELLED')
       answers.push(answer)
     }
     return { answers }
@@ -5829,6 +6138,11 @@ export class TuiApp {
       case 'system/message':
         this.onSystemMessage(event.data)
         break
+      case 'developer/message': {
+        const view = developerContextView(event.data.message.content)
+        if (view !== undefined) this.addContext(view.title, view.parts, event.data.turn)
+        break
+      }
       case 'assistant/message': {
         const { message, usage, interrupted } = event.data
         const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('')
@@ -5860,8 +6174,11 @@ export class TuiApp {
         const moved = isError ? movedJobId(result.content) : undefined
         if (moved === undefined) {
           const view = this.presentResult(block.name, this.toolArguments.get(result.toolCallId), result.content, isError, event.data.meta)
-          const body = toolResultBody(view, result.content)
-          block.setResult(body.lines, isError, body.code, body.diff, body)
+          const patch = block.name === 'apply_patch'
+          const meta = event.data.meta
+          const stopped = patch && typeof meta === 'object' && meta !== null && !Array.isArray(meta) && meta.stopped === true
+          const body = toolResultBody(view, result.content, patch)
+          block.setResult(body.lines, isError || stopped, body.code, body.diff, body)
         } else {
           block.setBackground([`${BACKGROUND_GLYPH} moved to the background as ${moved} · /jobs lists it`])
         }
@@ -6128,7 +6445,8 @@ export class TuiApp {
       this.refreshWorkflowChildLinks()
       return
     }
-    const choice = subagentChoice(entry)
+    const address = this.subagentAddresses.get(entry.id)
+    const choice = subagentChoice(entry, address === undefined ? undefined : { address })
     await this.enterSubagent(choice, this.subagentBrowseRow(choice), { liveOnly: true })
   }
 
@@ -6157,6 +6475,10 @@ export class TuiApp {
   private onUserMessage(message: UserMessage): void {
     if (this.submittedIds.has(message.id)) return
     const source = message.source
+    if (isEmptyRetry(source, message.content)) {
+      this.notice('continuing failed turn')
+      return
+    }
     if (source.kind === 'user') {
       const attachments = message.content.filter(block => block.type !== 'text').map(block => `[${block.type}]`)
       const text = [contentText(message.content), ...attachments].filter(part => part !== '').join('\n')

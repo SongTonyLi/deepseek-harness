@@ -73,7 +73,7 @@ export function isTeamPanelEvent(type: string): boolean {
 
 /**
  * Read Team mode, current task owners, and continuable catalog descendants.
- * The catalog carries labels; a separate Team roster is not maintained.
+ * The catalog carries names and descriptions; a separate Team roster is not maintained.
  * @param ctx - context carrying the task board and subagent runtime.
  * @param agent - exact live caller.
  * @param entries - the terminal's latest descendant listing.
@@ -102,12 +102,15 @@ export function readTeamSnapshot(
     const members = [row(root, root.id, 'lead', 'lead')]
     for (const entry of entries) {
       if (entry.kind !== 'child' || entry.mode !== 'continuable') continue
-      members.push(row(ctx.get('agents')?.get(entry.id), entry.id, entry.label, 'teammate'))
+      members.push({
+        ...row(ctx.get('agents')?.get(entry.id), entry.id, entry.path ?? entry.label, 'teammate'),
+        ...entry.path === undefined ? {} : { description: entry.label },
+      })
     }
     const names = new Map(members.map(member => [member.id, member.name]))
     const tasks = teams.listTasks(agent).map(task => ({
       ...task,
-      ...task.ownerId === undefined ? {} : { ownerName: names.get(task.ownerId) ?? task.ownerId },
+      ...task.ownerId === undefined ? {} : { ownerName: names.get(task.ownerId) ?? task.ownerName ?? task.ownerId },
     }))
     return { kind: 'team', members, tasks }
   } catch (error: unknown) {

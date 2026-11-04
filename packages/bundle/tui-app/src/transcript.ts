@@ -516,9 +516,10 @@ export function toolResultLines(view: ToolResultView | undefined, content: reado
  * marker for terminal cards.
  * @param view - the tool's `presentResult` view, when it has one.
  * @param content - the model-facing result content.
+ * @param includeDiffContent - retain result text alongside a diff view.
  * @returns the rows and their aligned presentation metadata.
  */
-export function toolResultBody(view: ToolResultView | undefined, content: readonly ContentBlock[]): ToolBody {
+export function toolResultBody(view: ToolResultView | undefined, content: readonly ContentBlock[], includeDiffContent = false): ToolBody {
   if (view === undefined) return contentResultBody(content)
   switch (view.card) {
     case 'generic':
@@ -538,8 +539,15 @@ export function toolResultBody(view: ToolResultView | undefined, content: readon
       }
       return { lines, shellOutput: true, ...json === undefined ? {} : { json } }
     }
-    case 'diff':
-      return diffsBody(view.diffs)
+    case 'diff': {
+      const body = diffsBody(view.diffs)
+      if (!includeDiffContent) return body
+      const text = contentText(content)
+      if (text === '') return body
+      const lines = text.split('\n')
+      return { lines: [...lines, ...body.lines], code: [...lines.map(() => undefined), ...body.code ?? []],
+        diff: [...lines.map(() => undefined), ...body.diff ?? []] }
+    }
     case 'search': {
       const lines = view.shape === 'matches'
         ? view.files.flatMap(file => file.matches.map(match => `${file.path}:${String(match.lineNumber)}: ${match.line}`))

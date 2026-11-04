@@ -177,6 +177,9 @@
     - id: session-projection
       name: '@deepseek-ai/dsh-session-projection'
 
+    - id: session-continuation
+      name: '@deepseek-ai/dsh-session-continuation'
+
     # Durable KV storage: the storage hub, the json backend, and the
     # schema-validated domain form over them. Session-layer persistence (the
     # projection cache below; workspace in web layers)

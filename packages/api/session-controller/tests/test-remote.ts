@@ -24,6 +24,7 @@ import {
   type SessionPersistenceStatOptions,
 } from '@deepseek-ai/dsh-session-persistence'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SessionContinuation from '@deepseek-ai/dsh-session-continuation'
 import SessionQueryEngine from '@deepseek-ai/dsh-session-query'
 import { vi } from 'vitest'
 import {
@@ -295,6 +296,7 @@ async function installControllers(
     } as never)
   }
   installSessionReadTestServices(ctx)
+  if (ctx.get('sessionContinuation') === undefined) await ctx.plugin(SessionContinuation)
   if (ctx.get('remoteAccess') === undefined) new RemoteAccessService(ctx)
   const cwd = vi.spyOn(process, 'cwd').mockReturnValue(defaults.cwd)
   class TestController extends SessionController {

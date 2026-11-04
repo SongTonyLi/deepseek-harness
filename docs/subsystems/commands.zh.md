@@ -193,6 +193,20 @@ find(agent: Agent, name: string): CommandDefinition | undefined
  *   `undefined` when syntax or name does not resolve.
  */
 @Remote async execute( agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal: AbortSignal, ): Promise<CommandExecution | undefined>
+
+/**
+ * Execute a command with already-stored attachments from a trusted same-process adapter.
+ * Image parts must carry the original encoded upload byte length, not normalized bytes.
+ * This method is not Remote: callers own the references and their receiving Session.
+ * Admission and handler failures follow {@link execute}; cancellation after handler entry
+ * cannot roll back its effects.
+ * @param agent - exact receiving agent.
+ * @param line - complete slash-command line.
+ * @param attachments - ordered stored files and images.
+ * @param signal - cancellation signal owned by the adapter.
+ * @returns the settled execution, or undefined for invalid syntax or an unknown name.
+ */
+async executeStored( agent: Agent, line: string, attachments: readonly StoredCommandAttachment[], signal: AbortSignal, ): Promise<CommandExecution | undefined>
 ```
 
 Types: [Agent](core.zh.md)

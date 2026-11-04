@@ -74,6 +74,8 @@ flowchart LR
   cfg --> plugin_dsh_base_tool_working_directory
   plugin_dsh_base_session_projection["session-projection<br/>@deepseek-ai/dsh-session-projection"]
   cfg --> plugin_dsh_base_session_projection
+  plugin_dsh_base_session_continuation["session-continuation<br/>@deepseek-ai/dsh-session-continuation"]
+  cfg --> plugin_dsh_base_session_continuation
   plugin_dsh_base_storage["storage<br/>@deepseek-ai/dsh-storage"]
   cfg --> plugin_dsh_base_storage
   plugin_dsh_base_storage_json["storage-json<br/>@deepseek-ai/dsh-storage-json"]
@@ -245,6 +247,7 @@ flowchart LR
 | `working-directory` | `@deepseek-ai/dsh-working-directory` |
 | `tool-working-directory` | `@deepseek-ai/dsh-tool-working-directory` |
 | `session-projection` | `@deepseek-ai/dsh-session-projection` |
+| `session-continuation` | `@deepseek-ai/dsh-session-continuation` |
 | `storage` | `@deepseek-ai/dsh-storage` |
 | `storage-json` | `@deepseek-ai/dsh-storage-json` |
 | `storage-domain` | `@deepseek-ai/dsh-storage-domain` |

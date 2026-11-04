@@ -9,7 +9,7 @@ English | [中文](2026-09-22-fork-attribution-kinds.zh.md)
 
 ## Summary
 
-Record the terminal, continuation, reminder, and work-state notice attribution kinds.
+Record the terminal, continuation, reminder, and work-state notice attribution kinds alongside the `retry` message source.
 
 ## Table of Contents
 
@@ -27,32 +27,32 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "2c8a1d2db845f53f79de0eaf79b149d5d821bf31d186880a94642c0de8d9109b"
+    previous: "2026-10-27-retry-control-input"
+    after: "3a9f532fdce6b1065b89c210760639e13897c3b9780ae1aed38d58f1862464f8"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "1288035c34b3a630c6992672f16ea19c3e336a15c9ded5af24b114e1dbf0e59a"
+    previous: "2026-10-27-retry-control-input"
+    after: "c72bb925c77731c0c53faaf1c4734cf6090829c6cdcd781d23491da76d3f02a7"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "5c8b5610277b8600b418e3790ea80c3dcedcced5bb0bcffff3945d66d20fa29c"
+    previous: "2026-10-27-retry-control-input"
+    after: "576e5323de7e752ffb4dfac8abd756976f0cfce7cbea116b77f3f654fe5755c8"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-10-27-subagent-settlement-attribution"
-    after: "adc3a3ecaf30c00e5d2c32ce70b986a9450b979a8121263849a526b2b8ab4c8b"
+    previous: "2026-10-27-retry-control-input"
+    after: "c2574cff7c7c777baa5ee06efb5fee3e610f978642c78a0b8e08212918b16e4a"
     decision: same-version
 ```
 
 <a id="compatibility"></a>
 ## Compatibility
 
-Each added kind is an attribution-only `MessageSourceMap` entry on a user or developer source slot, qualified with `@persistenceAttribution`. Existing records keep their recorded kinds unchanged, and the Session header remains V4. A reader without the producer preserves the kind and its `form`/`summary` metadata, derives the message from its content alone, and needs no validation, replay, or authority projection; only the producing plugin reads its own kind, to avoid injecting the same notice twice.
+Existing `retry` and earlier message records remain readable, and the Session header remains V4. Each added kind is an attribution-only `MessageSourceMap` entry qualified with `@persistenceAttribution`. Readers without its producer preserve the kind and `form`/`summary` metadata and derive the message from its content without attribution-specific validation, replay, or authority projection. A producer reads its own kind only to avoid injecting the same notice twice.
 
 <a id="verification"></a>
 ## Verification
 
-The producing plugins' unit suites assert the recorded source on each injected notice, and the terminal transcript suite draws an unowned notice as injected context from the recorded kind alone.
+Focused no-progress reminder, goal-round driver, compaction, terminal side-agent, retry-input, and V3-to-V4 migration tests passed: 279 tests across seven files.
 
 <a id="dev-note"></a>
 ## Dev Note

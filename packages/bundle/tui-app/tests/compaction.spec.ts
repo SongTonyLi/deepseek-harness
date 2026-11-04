@@ -127,6 +127,19 @@ function report(overrides: Partial<CompactionReport> = {}): CompactionReport {
 }
 
 describe('CompactionLedger', () => {
+  it('accounts for retry receipts and developer messages as distinct surface facts', async () => {
+    const { session, ledger } = await logged()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({ source: { kind: 'retry' } as never, content: [] }), { surfaceOp: 'append' })
+    session.append('developer/message', { turn: 1, step: 1, message: {
+      role: 'developer', id: 'developer-1' as never, source: { kind: 'test' }, content: [{ type: 'tool-removal', toolName: 'old' }],
+    } }, { surfaceOp: 'append' })
+    expect(ledger.surface().map(node => node.fact)).toEqual([
+      { kind: 'context', turn: 1, title: 'continuing failed turn' },
+      { kind: 'developer', turn: 1 },
+    ])
+  })
+
   it('accounts for a manual compaction: the shadowed span, what stays, and the priced summary', async () => {
     const { session, outcomes } = await logged(blocks => blocks * 100)
     session.append('system/message', { turn: 1, message: { role: 'system', content: text('You are a coding agent.') } } as never, { surfaceOp: 'append' })

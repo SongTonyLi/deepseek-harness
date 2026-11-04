@@ -1300,18 +1300,18 @@ describe('TuiApp', () => {
     expect(test.terminal.text()).toContain('Esc back to the options')
     test.terminal.type(KEY.escape)
     test.terminal.type(KEY.escape)
-    await expect(dismissedFree).rejects.toThrow('dismissed')
+    await expect(dismissedFree).rejects.toMatchObject({ name: 'UserQuestionError', code: 'ASK_CANCELLED' })
 
     const dismissed = ask([{ id: 'q6', question: 'Pick', options: [{ label: 'a' }] }])
     await test.settle()
     test.terminal.type(KEY.escape)
-    await expect(dismissed).rejects.toThrow('dismissed')
+    await expect(dismissed).rejects.toMatchObject({ name: 'UserQuestionError', code: 'ASK_CANCELLED' })
 
     const controller = new AbortController()
     const withdrawn = ask([{ id: 'q7', question: 'Pick', options: [{ label: 'a' }] }], controller.signal)
     await test.settle()
     controller.abort()
-    await expect(withdrawn).rejects.toThrow('dismissed')
+    await expect(withdrawn).rejects.toMatchObject({ name: 'UserQuestionError', code: 'ASK_ABORTED' })
 
     const other = { id: 'session-other' } as Agent
     await expect(test.ctx.waterfall('user-questions/request', { agent: other, questions: [] }, () => Promise.reject(new Error('no answerer'))))

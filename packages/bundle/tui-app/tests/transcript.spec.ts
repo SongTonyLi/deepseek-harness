@@ -281,6 +281,19 @@ describe('transcript', () => {
     expect(() => toolResultLines({ card: 'other' } as never, text)).toThrow()
   })
 
+  it('retains requested result text alongside applied diffs', () => {
+    const content = [{ type: 'text' as const, text: 'Patch stopped\nFailed: denied' }]
+    const view = { card: 'diff' as const, diffs: [{ path: 'file', oldText: 'old', newText: 'new' }] }
+    const ordinary = toolResultBody(view, content)
+    const patch = toolResultBody(view, content, true)
+    expect(patch.lines).toEqual(['Patch stopped', 'Failed: denied', ...ordinary.lines])
+    expect(patch.diff).toEqual([undefined, undefined, ...ordinary.diff!])
+    expect(patch.code).toEqual([undefined, undefined, ...ordinary.code!])
+    expect(toolResultBody({ card: 'diff', diffs: [] }, [{ type: 'text', text: 'A new-file' }], true).lines)
+      .toEqual(['A new-file'])
+    expect(toolResultBody(view, content).lines).toEqual(ordinary.lines)
+  })
+
   it('renders diff rows with gap markers', () => {
     expect(diffRows({ path: 'p', oldText: '1\n2\n3\n4\n5\n6\n7', newText: '1\n2\n3\n4\n5\n6\nX' }))
       .toEqual(['  …', '  5', '  6', '- 7', '+ X'])
