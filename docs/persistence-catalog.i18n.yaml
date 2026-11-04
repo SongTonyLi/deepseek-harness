@@ -1800,8 +1800,11 @@
   en: 1f6dbdbf5d923df0
   zh: aea576e5ec34c0fc
 /session-persistence-event-catalog/resolved-persistence-types/kind-repeat-tool-reminder-form-snapshot:
-  en: e9c88cceef2d8432
-  zh: 14fb0897543b6960
+  en: f58bccca3df9c2ad
+  zh: 5c92b6edeb7ce020
+/session-persistence-event-catalog/resolved-persistence-types/kind-retry:
+  en: c628d0575f81407a
+  zh: d9a70ce1e05dcce8
 /session-persistence-event-catalog/resolved-persistence-types/kind-runtime-context:
   en: 68b5598e21cf8ba2
   zh: 95ef1685af64a5f4

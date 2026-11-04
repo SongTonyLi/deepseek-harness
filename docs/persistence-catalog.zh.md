@@ -7469,6 +7469,21 @@ SHA-256: `db06ef35b27a38425046b2228fa6bce9582abe140d781d363137eb2f4d233a1c`
 | `kind` | 必需 | `"repeat-tool-reminder"` |
 | `sections` | 必需 | [`ContextSnapshotSection[]`](#persistence-type-sha256-c748fb42c80a120038a8c587af80ec39924803c401364db11c8974d5bf6d0262) |
 
+<a id="persistence-type-sha256-8f1062573ea9184129dfdec43df1e8136eb5808746fd809bf6b539f3fd11362e"></a>
+
+### `{ kind: "retry" }`
+
+SHA-256: `8f1062573ea9184129dfdec43df1e8136eb5808746fd809bf6b539f3fd11362e`
+
+来源：[`packages/api/session-controller/src/types.ts:402`](../packages/api/session-controller/src/types.ts)
+
+| 属性 | 存在性 | 类型 |
+|---|---|---|
+| `clientTimeZone` | 可选 | `string` |
+| `kind` | 必需 | `"retry"` |
+| `principal` | 可选 | [`union (2 variants)`](#persistence-type-sha256-824a4aad44a54e245c67196817d67946734a2dc0eee0b0b6834a5b2a6ef352ce) |
+| `rpcId` | 必需 | `string` |
+
 <a id="persistence-type-sha256-0203243b72fc867afc81aff5f4cf2167e564ed342534eb612fc92f295cf07789"></a>
 
 ### `{ kind: "runtime-context" }`

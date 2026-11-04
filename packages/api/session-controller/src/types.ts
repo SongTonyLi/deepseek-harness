@@ -10,7 +10,7 @@ export type { SessionRequestId } from '@deepseek-ai/dsh-session-continuation/typ
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { LlmAttemptId, MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { LlmModelBadge, TextBlock } from '@deepseek-ai/dsh-llm'
-import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
+import type { SessionId, SessionSeq, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionMap, SessionProjectionSummaryExcluded, SessionProjectionSummaryValues } from '@deepseek-ai/dsh-session-projection/types'
 import type { Principal } from '@deepseek-ai/dsh-typert-protocol'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -18,6 +18,8 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
+    /** Eligible latest failed turn/end for an empty prompt, or null. */
+    conversationContinuation: SessionSeq | null
     /** Persisted facts used to summarize a Session without activating it. */
     sessionListMetadata: SessionListMetadata
     /**
@@ -395,6 +397,8 @@ declare module '@deepseek-ai/dsh-llm' {
      * caller other than the owner, so an absent `principal` means the owner.
      */
     'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal }
+    /** Empty retry user message with browser prompt correlation and caller metadata. */
+    'retry-rpc': { kind: 'retry'; rpcId: SessionRequestId; clientTimeZone?: string; principal?: Principal }
   }
 }
 
