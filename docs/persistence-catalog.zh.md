@@ -4735,7 +4735,7 @@ SHA-256: `56446dcfeddd343eecdc7d8b216b773240eb63a5f16cc1121f883576ba07e2d0`
 
 SHA-256: `fab2bb09bc5e3b9db0685e8f5500b029af1a2b33e70bc703c1d5d0f596fbc1fd`
 
-来源：[`packages/sandbox/sandbox/src/index.ts:33`](../packages/sandbox/sandbox/src/index.ts)
+来源：[`packages/sandbox/sandbox/src/index.ts:34`](../packages/sandbox/sandbox/src/index.ts)
 
 以下类型之一：
 

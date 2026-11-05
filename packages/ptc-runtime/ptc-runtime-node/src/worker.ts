@@ -11,7 +11,7 @@ import type { ExecutionMode } from './execution.ts'
 import { invokeBinding } from './bindings.ts'
 import type { BirpcReturn } from 'birpc'
 import { createProcessRpc } from './rpc.ts'
-import { bootstrapArgs } from './launch.ts'
+import { workerBootstrap } from './launch.ts'
 import { STARTUP_ENVIRONMENT_NAMES } from './environment.ts'
 import { decodePtcJsonWire } from './json-wire.ts'
 import { OutputLedger } from './output-ledger.ts'
@@ -280,10 +280,14 @@ export class ProgramWorker {
     if (this.closed) return
     const packaged = this.config.launch.kind === 'embedded'
     const heapFlag = `--max-old-space-size=${this.config.maxOldGenerationSizeMb}`
-    const argv = [executable, ...packaged ? [] : [heapFlag],
-      ...bootstrapArgs(this.ctx.fs, this.config.launch, this.config.maxMessageBytes, this.retainsState)]
+    const bootstrap = workerBootstrap(this.ctx.fs, this.config.launch, this.config.maxMessageBytes, this.retainsState)
+    const argv = [executable, ...packaged ? [] : [heapFlag], ...bootstrap.args]
     const policy = this.policy
-    this.confined = policy.mode === 'danger-full-access' ? undefined : await this.ctx.sandbox.confine(argv, { ...policy, mode: policy.mode }, this.controller.signal)
+    // The worker starts this world's executable and bootstrap and inherits the control descriptor.
+    const runtimePaths = [executable, ...bootstrap.readPaths]
+    this.confined = policy.mode === 'danger-full-access'
+      ? undefined
+      : await this.ctx.sandbox.confineHostBound(argv, { ...policy, mode: policy.mode }, { runtimePaths }, this.controller.signal)
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- Confinement may yield while disposal closes the process.
     if (this.closed) return
     const env: NodeJS.ProcessEnv = Object.fromEntries(Object.keys(process.env)

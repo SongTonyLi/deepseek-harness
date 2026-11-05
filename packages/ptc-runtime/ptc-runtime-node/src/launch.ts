@@ -33,41 +33,55 @@ export function resolveLaunch(config?: LaunchConfig): LaunchConfig {
   return launch
 }
 
+/** A worker invocation's arguments and the paths its bootstrap reads, both in the process world. */
+export interface WorkerBootstrap {
+  /** Arguments following the resolved Node executable. */
+  readonly args: string[]
+  /** Paths the bootstrap reads to start: the directory of its script, or this source checkout. */
+  readonly readPaths: string[]
+}
+
 /**
  * Select explicit arguments without inheriting host loader or inspector flags.
  * @param fs - Filesystem mapping host bootstrap assets into the process world.
  * @param config - resolved worker invocation.
  * @param maxMessageBytes - Validated frame and queued-write limit.
  * @param persistent - Whether the selected mode requires retained-process launch support.
- * @returns Arguments following the resolved Node executable.
+ * @returns Arguments following the resolved Node executable, and the paths they make the worker read.
  */
-export function bootstrapArgs(fs: Pick<FileSystem, 'processPathFromHostPath'>, config: LaunchConfig, maxMessageBytes: number, persistent = false): string[] {
+export function workerBootstrap(fs: Pick<FileSystem, 'processPathFromHostPath'>, config: LaunchConfig, maxMessageBytes: number, persistent = false): WorkerBootstrap {
   switch (config.kind) {
     case 'embedded':
       if (persistent) throw new Error('Persistent PTC requires a node-script launch')
-      return [String(maxMessageBytes)]
-    case 'node-script': return ['--experimental-vm-modules', ...scriptBootstrapArgs(fs, config.bootstrapPath, maxMessageBytes)]
+      return { args: [String(maxMessageBytes)], readPaths: [] }
+    case 'node-script': {
+      const script = scriptBootstrap(fs, config.bootstrapPath, maxMessageBytes)
+      return { args: ['--experimental-vm-modules', ...script.args], readPaths: script.readPaths }
+    }
     /* v8 ignore next -- Callers supply the resolved, closed LaunchConfig union. */
     default: return assertNever(config)
   }
 }
 
-function scriptBootstrapArgs(
+function scriptBootstrap(
   fs: Pick<FileSystem, 'processPathFromHostPath'>, bootstrapPath: string | undefined, maxMessageBytes: number,
-): string[] {
-  if (bootstrapPath !== undefined) return [bootstrapPath, String(maxMessageBytes)]
+): WorkerBootstrap {
+  if (bootstrapPath !== undefined) return { args: [bootstrapPath, String(maxMessageBytes)], readPaths: [dirname(bootstrapPath)] }
   const mapped = (path: string): string => {
     const result = fs.processPathFromHostPath(path)
     if (result === undefined) throw new Error(`PTC runtime bootstrap is unavailable in the subprocess execution world: ${path}`)
     return result
   }
-  /* v8 ignore next 3 -- built-lib.e2e.ts executes the bundled provider and sibling process.js under plain Node. */
+  /* v8 ignore next 4 -- built-lib.e2e.ts executes the bundled provider and sibling process.js under plain Node. */
   if (!new URL(import.meta.url).pathname.endsWith('.ts')) {
-    return [mapped(fileURLToPath(new URL('./process.js', import.meta.url))), String(maxMessageBytes)]
+    const script = mapped(fileURLToPath(new URL('./process.js', import.meta.url)))
+    return { args: [script, String(maxMessageBytes)], readPaths: [dirname(script)] }
   }
   const entry = mapped(fileURLToPath(new URL('./process.ts', import.meta.url)))
   const subprocess = dirname(fileURLToPath(import.meta.resolve('@deepseek-ai/dsh-subprocess/package.json')))
   const helper = mapped(resolve(subprocess, 'src/control.ts'))
   const source = `const {openInheritedControlChannel}=await import(${JSON.stringify(pathToFileURL(helper).href)});const {runNodeMain}=await import(${JSON.stringify(pathToFileURL(entry).href)});await runNodeMain(openInheritedControlChannel(),${maxMessageBytes},process);`
-  return ['--input-type=module', '--eval', source]
+  // Source modules import workspace packages and their dependencies from anywhere in this checkout.
+  const checkout = mapped(resolve(fileURLToPath(new URL('../../../../', import.meta.url))))
+  return { args: ['--input-type=module', '--eval', source], readPaths: [checkout] }
 }

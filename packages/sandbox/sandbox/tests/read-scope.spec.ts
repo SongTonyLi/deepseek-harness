@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { SandboxProvider, isReadableIn, nameGlobMatcher } from '@deepseek-ai/dsh-sandbox'
-import type { ConfinedArgv } from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -65,6 +65,26 @@ describe('SandboxProvider.readScope', () => {
     await ctx.plugin(Passthrough)
     expect(ctx.sandbox.readScope({ mode: 'read-only', workspaceRoot: '/ws' })).toBeUndefined()
     expect(ctx.sandbox.escalationNote({ mode: 'read-only', workspaceRoot: '/ws' }, 'danger-full-access')).toBeUndefined()
+    await ctx.fiber.dispose()
+  })
+})
+
+describe('SandboxProvider.confineHostBound', () => {
+  it('confines a host-bound execution through confine by default', async () => {
+    const calls: unknown[][] = []
+    class Recording extends SandboxProvider {
+      confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
+        calls.push([argv, policy, signal])
+        return Promise.resolve({ argv: ['runner', ...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] })
+      }
+    }
+    const ctx = new Context()
+    await ctx.plugin(Recording)
+    const policy: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws' }
+    const signal = new AbortController().signal
+    const confined = await ctx.sandbox.confineHostBound(['node', 'boot.js'], policy, { runtimePaths: ['/runtime'] }, signal)
+    expect(confined.argv).toEqual(['runner', 'node', 'boot.js'])
+    expect(calls).toEqual([[['node', 'boot.js'], policy, signal]])
     await ctx.fiber.dispose()
   })
 })

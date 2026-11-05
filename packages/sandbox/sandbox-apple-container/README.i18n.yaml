@@ -9,8 +9,8 @@
   en: fd474288bb2dac31
   zh: e0e109692d3df1c4
 /deepseek-ai-dsh-sandbox-apple-container/summary:
-  en: 20f21185b9538294
-  zh: f421f10616852e8f
+  en: 2b49aa0572118385
+  zh: 6df5e09fa75518bc
 /deepseek-ai-dsh-sandbox-apple-container/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -21,26 +21,29 @@
   en: d49845cf75f81420
   zh: 331b90bec2afb896
 /deepseek-ai-dsh-sandbox-apple-container/use-this-package/minimal-configuration:
-  en: 1a7a36bfc29d9f18
-  zh: 1769b4d7bfae4f95
+  en: 947e75a2de3eea1c
+  zh: 82e7531b03d027eb
 /deepseek-ai-dsh-sandbox-apple-container/use-this-package/switching-a-session:
   en: fe0f7d5ac6160763
   zh: 4e1455a8559d46ca
 /deepseek-ai-dsh-sandbox-apple-container/use-this-package/what-confinement-covers:
   en: 36ce4366173e0544
   zh: 4f7537ee5c9c78c0
+/deepseek-ai-dsh-sandbox-apple-container/use-this-package/host-bound-processes:
+  en: b19111c9ae73776f
+  zh: 3e411f7aac3314e3
 /deepseek-ai-dsh-sandbox-apple-container/use-this-package/failures-and-recovery:
-  en: 79782500f91b1f06
-  zh: a132d680acb85edc
+  en: 37392f91404d44ac
+  zh: 3cc24a6c811c7361
 /deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation:
   en: 42b15ac6321706aa
   zh: c8011788e17a2cd6
 /deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation/containers:
-  en: 9d22cd4f279e3c98
-  zh: b401fea7af29a453
+  en: 41ec5e057f28e234
+  zh: 73b6531f4730b74e
 /deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation/execution-shim:
-  en: 98ef17c4b9975fa3
-  zh: 223994718947d592
+  en: 87bae2dfa3bdf8bb
+  zh: 51c2912c28fbe319
 /deepseek-ai-dsh-sandbox-apple-container/understand-the-implementation/source-map:
   en: 866bf8dec1ab38ba
   zh: af875a19b5ceb7b9
@@ -66,8 +69,8 @@
   en: 3ab9e835ea38981a
   zh: 4839ebd84726eca0
 /deepseek-ai-dsh-sandbox-apple-container/known-limitations-and-deferred-work:
-  en: 774a7b78c802da01
-  zh: 920961d8b70297ba
+  en: cdab1654fd6954d9
+  zh: c95356a7f1e64dfd
 /deepseek-ai-dsh-sandbox-apple-container/known-limitations-and-deferred-work/dev-note:
-  en: d96c06feb419a24e
-  zh: d8c3b5781c9c1690
+  en: 0e092923f2ad3d54
+  zh: b52b737777585237

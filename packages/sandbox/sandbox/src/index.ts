@@ -3,8 +3,9 @@
  * subprocess argv under a host-path file policy, and report the host read
  * scope that model-facing file tools must share. Providers either confine on
  * the host kernel or, like the Apple container backend, run the argv in a VM
- * that mounts the workspace at its host path; remote execution replaces the
- * surrounding capability seam instead.
+ * that mounts the workspace at its host path; a host-bound execution that
+ * cannot move into such a VM confines in place instead. Remote execution
+ * replaces the surrounding capability seam.
  * @module @deepseek-ai/dsh-sandbox
  */
 
@@ -179,6 +180,19 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/**
+ * What a host-bound execution needs from {@link SandboxProvider.confineHostBound}
+ * beyond its policy.
+ */
+export interface HostBoundExecution {
+  /**
+   * Absolute paths, files or directories, in the subprocess execution world
+   * that the process reads to start and run, such as its interpreter and
+   * bootstrap files. A provider that restricts reads keeps them readable.
+   */
+  readonly runtimePaths: readonly string[]
+}
+
 /** Localized sentence a provider adds to an escalation approval prompt; `en` is required. */
 export interface EscalationNote {
   readonly en: string
@@ -212,7 +226,29 @@ export abstract class SandboxProvider extends Service {
   abstract confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv>
 
   /**
-   * What a process confined under `policy` can read on the host, or
+   * Wrap `argv` for a host-bound execution: one that must run in the
+   * subprocess provider's own execution world because its executable or
+   * runtime files are paths there outside the shared workspace, or because it
+   * inherits descriptors beyond stdin, stdout, and stderr. The base
+   * implementation is {@link confine}, which already confines in that world.
+   * A provider whose `confine` relocates execution, such as the Apple
+   * container backend, overrides this to confine in place under a read
+   * restriction it documents, or fails closed.
+   * @param argv - the exact argv the caller is about to spawn.
+   * @param policy - the file-effect policy this execution runs under.
+   * @param _execution - the runtime paths the process must read.
+   * @param signal - cancellation while the provider resolves the policy and runner.
+   * @returns the argv to spawn instead, plus the enforcement completeness
+   *   the selected backend achieves for it.
+   */
+  confineHostBound(
+    argv: readonly string[], policy: SandboxPolicy, _execution: HostBoundExecution, signal?: AbortSignal,
+  ): Promise<ConfinedArgv> {
+    return this.confine(argv, policy, signal)
+  }
+
+  /**
+   * What a process wrapped by {@link confine} under `policy` can read on the host, or
    * `undefined` when this backend does not confine reads. Model-facing tools
    * that read the host for the same session must refuse paths outside the
    * scope, so their view never exceeds the confined processes'. The base

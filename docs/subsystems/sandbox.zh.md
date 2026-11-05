@@ -164,6 +164,25 @@ interface ConfinedArgv {
 
 提供方选择、探测、缓存和后端特定的强制执行报告归[本地提供方](../../packages/sandbox/sandbox-local/README.zh.md)所有。
 
+## 宿主机绑定执行
+
+`await ctx.sandbox.confineHostBound(argv, policy, execution, signal)` 包装必须留在子进程提供方执行世界中的进程：它会启动该世界中位于共享工作区之外的可执行文件或文件，或者继承 stdin、stdout、stderr 之外的描述符。[Node PTC 运行时](../../packages/ptc-runtime/ptc-runtime-node/README.zh.md)的 worker 就是这样的进程。基础提供方原样返回 `confine` 的结果，因为在宿主机内核上隔离的提供方本就在该世界中隔离。`confine` 会迁移执行位置的提供方，则在原处用自身记载的读取限制隔离该进程，并保持 `runtimePaths` 可读，做不到时故障关闭；[Apple container 后端](../../packages/sandbox/sandbox-apple-container/README.zh.md)使用带读取围栏的 Seatbelt。
+
+```ts type-equiv
+/**
+ * What a host-bound execution needs from {@link SandboxProvider.confineHostBound}
+ * beyond its policy.
+ */
+interface HostBoundExecution {
+  /**
+   * Absolute paths, files or directories, in the subprocess execution world
+   * that the process reads to start and run, such as its interpreter and
+   * bootstrap files. A provider that restricts reads keeps them readable.
+   */
+  readonly runtimePaths: readonly string[]
+}
+```
+
 ## 读取范围
 
 `ctx.sandbox.readScope(policy)` 报告在 `policy` 下受限的进程能读取宿主机上的哪些内容；后端不限制读取时返回 `undefined`，基础提供方即返回 `undefined`。`ctx.sandboxPolicy.canRead(path, request)` 解析调用会话的策略，并在将路径与范围都规范化后再做比较，因此 `..` 片段和符号链接都无法离开这些根目录。`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 工具在观察路径之前，以 `FS_SANDBOX_DENIED` 或 `SEARCH_SANDBOX_DENIED` 拒绝范围之外的路径，`read` 与 `read_image` 在读取范围之外的非隐藏路径之前，每次调用都会先征求用户同意（[tool-fs](../../packages/fs/tool-fs/README.zh.md)），`grep` 还会在内容搜索中排除隐藏文件名，因此模型的文件工具读取的内容永远不会超出其受限命令。
@@ -213,7 +232,25 @@ Abstract process-sandbox service. confine must return enforcing argv or fail clo
 abstract confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv>
 
 /**
- * What a process confined under `policy` can read on the host, or
+ * Wrap `argv` for a host-bound execution: one that must run in the
+ * subprocess provider's own execution world because its executable or
+ * runtime files are paths there outside the shared workspace, or because it
+ * inherits descriptors beyond stdin, stdout, and stderr. The base
+ * implementation is {@link confine}, which already confines in that world.
+ * A provider whose `confine` relocates execution, such as the Apple
+ * container backend, overrides this to confine in place under a read
+ * restriction it documents, or fails closed.
+ * @param argv - the exact argv the caller is about to spawn.
+ * @param policy - the file-effect policy this execution runs under.
+ * @param _execution - the runtime paths the process must read.
+ * @param signal - cancellation while the provider resolves the policy and runner.
+ * @returns the argv to spawn instead, plus the enforcement completeness
+ *   the selected backend achieves for it.
+ */
+confineHostBound( argv: readonly string[], policy: SandboxPolicy, _execution: HostBoundExecution, signal?: AbortSignal, ): Promise<ConfinedArgv>
+
+/**
+ * What a process wrapped by {@link confine} under `policy` can read on the host, or
  * `undefined` when this backend does not confine reads. Model-facing tools
  * that read the host for the same session must refuse paths outside the
  * scope, so their view never exceeds the confined processes'. The base

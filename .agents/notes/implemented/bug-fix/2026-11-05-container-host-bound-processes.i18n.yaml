@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-05-container-host-bound-processes.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-11-05-container-host-bound-processes.md
+/agent-note-host-bound-processes-confine-on-the-host-under-a-read-fence:
+  en: e919164c0a9ed0c1
+  zh: 1c4a7d992bddf8b2
+/agent-note-host-bound-processes-confine-on-the-host-under-a-read-fence/problem:
+  en: 6d144654ead9d546
+  zh: 3f11d76b9eb8acbe
+/agent-note-host-bound-processes-confine-on-the-host-under-a-read-fence/decision:
+  en: 672112cb8c6d24b5
+  zh: 1fee1cbcbaf8b123
+/agent-note-host-bound-processes-confine-on-the-host-under-a-read-fence/alternatives-considered:
+  en: 0b0680f5faa4211a
+  zh: b8027de8d91b56e3
+/agent-note-host-bound-processes-confine-on-the-host-under-a-read-fence/consequences:
+  en: ea090fdba0dc125c
+  zh: 13b94351df8aae83
+/agent-note-host-bound-processes-confine-on-the-host-under-a-read-fence/related-decisions:
+  en: 43fba994d819e43a
+  zh: e78c78c58fe3a97f

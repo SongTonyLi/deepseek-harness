@@ -164,6 +164,25 @@ The [local provider](../../packages/sandbox/sandbox-local/README.md) owns operat
 
 Provider selection, probing, caching, and backend-specific enforcement reports belong to the [local provider](../../packages/sandbox/sandbox-local/README.md).
 
+## Host-bound executions
+
+`await ctx.sandbox.confineHostBound(argv, policy, execution, signal)` wraps a process that must stay in the subprocess provider's execution world: it starts an executable or files of that world outside the shared workspace, or it inherits descriptors beyond stdin, stdout, and stderr. The [Node PTC runtime](../../packages/ptc-runtime/ptc-runtime-node/README.md) worker is such a process. The base provider returns `confine` unchanged, because a host-kernel provider already confines in that world. A provider whose `confine` relocates execution confines the process in place under a read restriction it documents and keeps `runtimePaths` readable, or it fails closed; the [Apple container backend](../../packages/sandbox/sandbox-apple-container/README.md) uses Seatbelt with a read fence.
+
+```ts type-equiv
+/**
+ * What a host-bound execution needs from {@link SandboxProvider.confineHostBound}
+ * beyond its policy.
+ */
+interface HostBoundExecution {
+  /**
+   * Absolute paths, files or directories, in the subprocess execution world
+   * that the process reads to start and run, such as its interpreter and
+   * bootstrap files. A provider that restricts reads keeps them readable.
+   */
+  readonly runtimePaths: readonly string[]
+}
+```
+
 ## Read scope
 
 `ctx.sandbox.readScope(policy)` reports what a process confined under `policy` can read on the host, or `undefined` when the backend does not confine reads; the base provider returns `undefined`. `ctx.sandboxPolicy.canRead(path, request)` resolves the calling session's policy and checks a path against that scope after canonicalizing both, so neither `..` segments nor symlinks leave the roots. The `edit`, `write`, `str_replace_editor`, `grep`, and `glob` tools refuse a path outside the scope with `FS_SANDBOX_DENIED` or `SEARCH_SANDBOX_DENIED` before observing it, `read` and `read_image` ask the user once per call before reading a non-hidden path outside it ([tool-fs](../../packages/fs/tool-fs/README.md)), and `grep` excludes hidden file names from content searches, so the model's file tools never read more than its confined commands.
@@ -213,7 +232,25 @@ Abstract process-sandbox service. confine must return enforcing argv or fail clo
 abstract confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv>
 
 /**
- * What a process confined under `policy` can read on the host, or
+ * Wrap `argv` for a host-bound execution: one that must run in the
+ * subprocess provider's own execution world because its executable or
+ * runtime files are paths there outside the shared workspace, or because it
+ * inherits descriptors beyond stdin, stdout, and stderr. The base
+ * implementation is {@link confine}, which already confines in that world.
+ * A provider whose `confine` relocates execution, such as the Apple
+ * container backend, overrides this to confine in place under a read
+ * restriction it documents, or fails closed.
+ * @param argv - the exact argv the caller is about to spawn.
+ * @param policy - the file-effect policy this execution runs under.
+ * @param _execution - the runtime paths the process must read.
+ * @param signal - cancellation while the provider resolves the policy and runner.
+ * @returns the argv to spawn instead, plus the enforcement completeness
+ *   the selected backend achieves for it.
+ */
+confineHostBound( argv: readonly string[], policy: SandboxPolicy, _execution: HostBoundExecution, signal?: AbortSignal, ): Promise<ConfinedArgv>
+
+/**
+ * What a process wrapped by {@link confine} under `policy` can read on the host, or
  * `undefined` when this backend does not confine reads. Model-facing tools
  * that read the host for the same session must refuse paths outside the
  * scope, so their view never exceeds the confined processes'. The base

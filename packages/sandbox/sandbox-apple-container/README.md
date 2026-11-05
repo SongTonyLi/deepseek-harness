@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to confine bash, terminal, and PTC commands in an [Apple `container`](https://github.com/apple/container) Linux VM on macOS with Apple silicon and CLI 1.5.0 or newer. The VM mounts only the session workspace, limits model file tools to the same read scope, masks `.env` files, excludes credential-shaped environment variables, and makes `.git` read-only. Other hosts and sessions switched with `/sandbox local` use the inherited local sandbox chain.
+Use this package to confine bash and terminal commands in an [Apple `container`](https://github.com/apple/container) Linux VM on macOS with Apple silicon and CLI 1.5.0 or newer. The VM mounts only the session workspace, limits model file tools to the same read scope, masks `.env` files, excludes credential-shaped environment variables, and makes `.git` read-only. Host-bound processes, such as the Node code-execution worker that runs workflows, stay on the host under Seatbelt with a matching read fence. Other hosts and sessions switched with `/sandbox local` use the inherited local sandbox chain.
 
 ## Table of Contents
 
@@ -55,6 +55,7 @@ Choose it when confined commands should not see the user's home directory, keys,
 | `protectedPaths` | `['.git']` | Workspace-relative directories mounted read-only under `workspace-write` |
 | `hiddenFiles` | `.env`, `.env.*`, `.envrc`, private-key and certificate names, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials` | File-name globs masked in the guest and refused by file tools |
 | `hiddenFilesMaxDepth`, `hiddenFilesSkipDirs` | `8`, `['node_modules', '.git']` | Bounds of the workspace scan that finds files to mask when a container starts |
+| `hostBoundUnreadableRoots` | `['/Users', '/Volumes']` | Absolute host directories whose file contents host-bound processes of container sessions cannot read, apart from the read scope, the writable roots, and the process's runtime files |
 
 The fields of `@deepseek-ai/dsh-sandbox-local` also apply to the `local` backend. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-sandbox-apple-container) is the exhaustive source for every field and its JSDoc.
 
@@ -75,9 +76,13 @@ The fields of `@deepseek-ai/dsh-sandbox-local` also apply to the `local` backend
 
 `danger-full-access` bypasses `confine`, so it runs on the host under either backend. The approval prompt for an escalation to `danger-full-access` from a container session adds that the command runs directly on the Mac, outside the container. The Auto permission does not write it while a session runs on this backend: it writes `workspace-write`, and the reviewer, not a prompt, approves a one-shot escalation that leaves the container ([Auto review](../../experimental/auto-review/README.md)). On the `local` backend Auto still writes `danger-full-access`.
 
+### Host-bound processes
+
+The Node code-execution worker that runs workflows starts the host Node executable and its bootstrap, and it talks to the host over an inherited control descriptor, so it cannot run in the guest. Its `confineHostBound` call confines it on the host with the inherited Seatbelt chain under the session's write rules plus a read fence. File contents under `hostBoundUnreadableRoots` stay unreadable except the workspace, the read-only mounts, the policy's writable roots, and the runtime files the process names. Files matching `hiddenFiles` stay unreadable everywhere. Host paths outside those roots, such as `/etc`, `/opt`, and the temp areas, remain readable, unlike in the guest. Work the process starts keeps its own confinement: a workflow child runs its commands in the container.
+
 ### Failures and recovery
 
-Missing CLI, a stopped API server that cannot start, or a failed `container run` rejects the confined call with `SANDBOX_UNAVAILABLE`, and the message names `/sandbox local`. A `read-only` write denial reports `Read-only file system`, which the tool layer offers for the standard one-time escalation. Invalid `envDenylist`, `readOnlyMounts`, `protectedPaths`, or `cpus` values fail at load.
+Missing CLI, a stopped API server that cannot start, or a failed `container run` rejects the confined call with `SANDBOX_UNAVAILABLE`, and the message names `/sandbox local`. A `read-only` write denial reports `Read-only file system`, which the tool layer offers for the standard one-time escalation. A host-bound call of a container session fails with `SANDBOX_UNSUPPORTED_POLICY` when a configured `runnerCommand` replaces the Seatbelt chain, because only Seatbelt expresses the read fence. Invalid `envDenylist`, `readOnlyMounts`, `protectedPaths`, `hostBoundUnreadableRoots`, or `cpus` values fail at load.
 
 -----
 
@@ -89,11 +94,11 @@ Missing CLI, a stopped API server that cannot start, or a failed `container run`
 
 ### Containers
 
-The provider owns one container per canonical workspace root and confined mode, shared by every session and subagent in that workspace and mode. It starts with `container run --detach --init --rm`, labelled with the owning process id, bind-mounted with `--mount type=bind,…` (the `-v src:dst:ro` form is not used because `container` 1.5.0 misparses it), and idles on `sleep infinity`. Each container also mounts a private host run directory, `<os tmpdir>/dsh-container-run/<container name>`, writable at `/run/dsh` under every confined mode. A cached container is re-inspected with one `container inspect` at most once per `recheckMs` and restarted when it is gone or its run directory was deleted; disposal deletes every owned container and its run directory, and load deletes containers and run directories whose process has exited. When the default backend is `container` and the deployment default mode is confined, the default-mode container starts in the background at load.
+The provider owns one container per canonical workspace root and confined mode, shared by every session and subagent in that workspace and mode. It starts with `container run --detach --init --rm`, labelled with the owning process id, bind-mounted with `--mount type=bind,…`, which 1.5.0 and 1.6.1 both parse while 1.5.0 misparses `-v src:dst:ro`, and idles on `sleep infinity`. Each container also mounts a private host run directory, `<os tmpdir>/dsh-container-run/<container name>`, writable at `/run/dsh` under every confined mode. A cached container is re-inspected with one `container inspect` at most once per `recheckMs` and restarted when it is gone or its run directory was deleted; disposal deletes every owned container and its run directory, and load deletes containers and run directories whose process has exited. When the default backend is `container` and the deployment default mode is confined, the default-mode container starts in the background at load.
 
 ### Execution shim
 
-`confine` returns `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`. The shim runs on the host with the caller's working directory and environment, writes the filtered environment to a private `--env-file`, and runs `container exec -i [-t] -w <cwd>` with the argv under `setsid -w` in the guest. Before the argv starts, the guest wrapper writes its process-group id to `/run/dsh/<token>.pid`; when that write fails, the argv does not run. Because `container exec` does not forward signals, the shim signals that process group itself; a forwarded signal exits `128 + n`. The pid file doubles as the start sentinel: after `container exec` exits, the shim removes it from the host run directory, and a missing file marks a runtime failure, reported as `dsh-container-exec: …` with exit 125 and classified by the runner-failure rule, rather than a command that ran and failed. Each command therefore costs one `container exec`. The built `lib/exec-shim.js` depends only on Node built-ins and runs under plain Node in the npm-installed CLI; a source checkout launches `src/exec-shim.ts` through tsx.
+`confine` returns `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`. The shim runs on the host with the caller's working directory and environment, writes the filtered environment to a private `--env-file`, and runs `container exec -i [-t] -w <cwd>` with the argv under `setsid -w` in the guest. Before the argv starts, the guest wrapper writes its process-group id to `/run/dsh/<token>.pid`; when that write fails, the argv does not run. `container exec` never signals that process group: 1.5.0 forwards no signal, and 1.6.1 forwards it only to the `setsid` process, whose exit closes `container exec` while the group keeps running. The shim therefore signals the group itself through one more `container exec`, and a forwarded signal exits `128 + n`. The pid file doubles as the start sentinel: after `container exec` exits and every group signal has run, the shim removes it from the host run directory, and a missing file marks a runtime failure, reported as `dsh-container-exec: …` with exit 125 and classified by the runner-failure rule, rather than a command that ran and failed. Each command therefore costs one `container exec`. The built `lib/exec-shim.js` depends only on Node built-ins and runs under plain Node in the npm-installed CLI; a source checkout launches `src/exec-shim.ts` through tsx.
 
 ### Source map
 
@@ -148,7 +153,8 @@ The stable system prompt is unchanged. A changed context snapshot is appended af
 <a id="known-limitations-and-deferred-work"></a>
 
 - **Masks cover files present at container start** — `container` masks only paths that exist at creation, so a secret file created later is readable by commands in the running container until it restarts; file tools refuse it immediately.
-- **Single-file mounts are unsupported** — `container` 1.5.0 binds only directories, so protection works per directory (`.git`), not per file (`.git/config`).
+- **Single-file mounts are unsupported** — `container` 1.5.0 and 1.6.1 bind only directories, so protection works per directory (`.git`), not per file (`.git/config`).
+- **Host-bound processes read more of the host than commands** — outside `hostBoundUnreadableRoots`, a host-bound process can read system and temp paths that the guest never mounts, and file metadata stays readable everywhere.
 - **Subagents start on the default backend** — a child session does not inherit its parent's `/sandbox` choice.
 - **Terminal resizes do not reach the guest** — `container exec` does not forward `SIGWINCH`.
 - **Host and guest toolchains differ** — Darwin-native binaries in the workspace do not run in the Linux guest; use `/sandbox local` for those projects.
@@ -161,6 +167,6 @@ The stable system prompt is unchanged. A changed context snapshot is appended af
 
 No invariant companion is published: the `sandboxBackend` projection validates every folded `sandbox/backend` value against its two-value state schema, so a forged value fails at replay without a separate observation.
 
-Revisit the `-v` parsing, signal-forwarding, and single-file-mount workarounds when upgrading `container`; its releases are product versions, not semantic versions.
+Revisit the mount syntax, signal-forwarding, and single-file-mount workarounds when upgrading `container`; its releases are product versions, not semantic versions. On 1.6.1, `-v src:dst:ro` parses correctly, a file mount source is still refused, and `container exec` forwards a signal to the process it started.
 
 </details>

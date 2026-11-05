@@ -273,6 +273,56 @@ describe('AppleContainerSandboxProvider', () => {
     expect(h.ctx.sandboxPolicy.canRead('/etc/passwd', { session })).toBe(true)
   })
 
+  it('confines host-bound executions of container sessions on the host under a read fence', async () => {
+    const skills = tempDir('dsh-provider-bound-skills-')
+    const runtimeDir = tempDir('dsh-provider-bound-runtime-')
+    const h = await mounted({ config: { readOnlyMounts: [skills], hiddenFiles: ['.env'] } })
+    const session = h.session('s-bound')
+    const policy = { mode: 'workspace-write' as const, workspaceRoot: h.root, sessionId: session.id }
+    const confined = await h.sandbox.confineHostBound(['node', 'boot.js'], policy, { runtimePaths: ['/opt/node/bin/node', runtimeDir] })
+    expect(confined.argv[0]).toBe('sandbox-exec')
+    expect(confined.argv.slice(-3)).toEqual(['--', 'node', 'boot.js'])
+    const readable = [h.root, skills, realpathSync('/tmp'), realpathSync(tmpdir()), '/opt/node/bin/node', runtimeDir]
+    expect(confined.argv[2]).toContain([
+      '(deny file-read-data (subpath "/Users") (subpath "/Volumes"))',
+      `(allow file-read-data ${readable.map(root => `(subpath "${root}")`).join(' ')})`,
+      '(deny file-read-data (regex "/[.][eE][nN][vV]$"))',
+    ].join(' '))
+    expect(confined.denialSignatures).toEqual(['operation not permitted'])
+    expect(h.fake.calls().some(call => call[0] === 'run' || call[0] === 'exec')).toBe(false)
+  })
+
+  it('wraps host-bound executions of local sessions like any other call', async () => {
+    const h = await mounted()
+    const session = h.session('s-bound-local')
+    setSandboxBackend(session, 'local')
+    const policy = { mode: 'read-only' as const, workspaceRoot: h.root, sessionId: session.id }
+    const bound = await h.sandbox.confineHostBound(['node'], policy, { runtimePaths: ['/opt/node/bin/node'] })
+    expect(bound).toEqual(await h.sandbox.confine(['node'], policy))
+    expect(bound.argv[2]).not.toContain('file-read-data')
+  })
+
+  it('fails closed when the local chain cannot fence a container session\'s host-bound execution', async () => {
+    const h = await mounted({ config: { runnerCommand: ['runner'], runnerFailureSignatures: ['runner: '] } })
+    const session = h.session('s-bound-runner')
+    await expect(h.sandbox.confineHostBound(['node'], { mode: 'read-only', workspaceRoot: h.root, sessionId: session.id }, { runtimePaths: [] }))
+      .rejects.toMatchObject({ code: 'SANDBOX_UNSUPPORTED_POLICY' })
+  })
+
+  it('honors cancellation before deriving a host-bound fence', async () => {
+    const h = await mounted({ config: { readOnlyMounts: [tempDir('dsh-provider-bound-abort-')] } })
+    const controller = new AbortController()
+    controller.abort(new Error('cancelled before the fence'))
+    await expect(h.sandbox.confineHostBound(['node'], { mode: 'read-only', workspaceRoot: h.root }, { runtimePaths: [] }, controller.signal))
+      .rejects.toThrow('cancelled before the fence')
+  })
+
+  it('canonicalizes and deduplicates configured unreadable roots', async () => {
+    const h = await mounted({ config: { hostBoundUnreadableRoots: [tmpdir(), realpathSync(tmpdir())] } })
+    const confined = await h.sandbox.confineHostBound(['node'], { mode: 'read-only', workspaceRoot: h.root }, { runtimePaths: [] })
+    expect(confined.argv[2]).toContain(`(deny file-read-data (subpath "${realpathSync(tmpdir())}"))`)
+  })
+
   it('tells the user that escalating to full access leaves the container', async () => {
     const h = await mounted({ policy: 'workspace-write' })
     const session = h.session('s-note')
@@ -323,6 +373,8 @@ describe('AppleContainerSandboxProvider', () => {
       await expect(ctx.plugin(AppleContainerSandboxProvider, { backend: 'local', protectedPaths }))
         .rejects.toThrow('protectedPaths entries must be workspace-relative paths')
     }
+    await expect(ctx.plugin(AppleContainerSandboxProvider, { backend: 'local', hostBoundUnreadableRoots: ['Users'] }))
+      .rejects.toThrow('hostBoundUnreadableRoots entries must be absolute paths')
   })
 
   it('passes resources to container run', async () => {
