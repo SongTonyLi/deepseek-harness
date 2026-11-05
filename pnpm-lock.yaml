@@ -18850,6 +18850,9 @@ importers:
       '@deepseek-ai/dsh-session-checkpoint-policy':
         specifier: workspace:*
         version: link:../../packages/session/session-checkpoint-policy
+      '@deepseek-ai/dsh-session-continuation':
+        specifier: workspace:*
+        version: link:../../packages/session/session-continuation
       '@deepseek-ai/dsh-session-log-deepseek':
         specifier: workspace:*
         version: link:../../packages/session/session-log-deepseek
