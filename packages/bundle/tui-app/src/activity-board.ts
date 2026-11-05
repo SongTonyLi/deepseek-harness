@@ -18,8 +18,7 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import type { SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo/client'
-import type { BlockFade } from './blocks.ts'
-import { recolorLines } from './fade.ts'
+import { fadedLine, type BlockFade } from './blocks.ts'
 import type { Palette } from './style.ts'
 import { paintTodoContent, TODO_GLYPH } from './todos.ts'
 import { turnEndNotice } from './transcript.ts'
@@ -265,17 +264,4 @@ function subagentLine(child: ActivityBoardSubagent, render: ActivityBoardRender)
   const shown = truncateToWidth(note, noteRoom, '…')
   const paintNote = child.state === 'stopped' ? palette.error : settled ? palette.dim : (text: string) => text
   return `${glyph} ${paintLabel(label)}${palette.dim(NOTE_SEPARATOR)}${paintNote(shown)}`
-}
-
-/**
- * Draw one row at the mix its fade reports.
- * @param text - the settled row.
- * @param fade - the row's fade; absent for a row that never faded.
- * @returns the row at that mix, or `text` once the fade settled or was never attached.
- */
-function fadedLine(text: string, fade: BlockFade | undefined): string {
-  if (fade === undefined) return text
-  const age = fade.age()
-  if (age === undefined) return text
-  return recolorLines([text], age, fade.style(), 0).join('\n')
 }

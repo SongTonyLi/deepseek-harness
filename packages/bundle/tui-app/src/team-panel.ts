@@ -4,21 +4,33 @@
  *
  * The line is the only team summary on the main page. The subagent panel does
  * not list or count teammates, and the activity board labels a teammate by name
- * and role. The line names the teammates whose turn is running, so it is also
- * the live indicator. It is drawn while a teammate or a shared task that is not
- * deleted exists, and the app never gives it the keyboard. Everything here is
- * pure — no Context, no services, no clock.
+ * and role. The line opens with the team glyph and names the teammates whose
+ * turn is running, so it is also the live indicator: the app passes the
+ * delegation spinner's current frame as the glyph while a teammate runs. It is
+ * drawn while a teammate or a shared task that is not deleted exists, and the
+ * app never gives it the keyboard. Everything here is pure — no Context, no
+ * services, no clock.
  * @module @deepseek-ai/dsh-tui-app/team-panel
  */
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
+import { TOOL_SPINNERS } from './spinner.ts'
 import type { Palette } from './style.ts'
+
+/**
+ * The glyph the line and the header open the team indicator with: the
+ * delegation spinner's first frame, so a spinning indicator comes to rest on it.
+ */
+export const TEAM_GLYPH = TOOL_SPINNERS.subagent[0]
 
 /** Drawn when the user forces the panel on and the roster has nothing to list. */
 export const TEAM_PANEL_EMPTY = 'team · no teammates or shared tasks yet'
 
 /** What separates two facts inside the line. */
 const SEPARATOR = ' · '
+
+/** Columns the glyph and the space after it take. */
+const GLYPH_COLUMNS = 2
 
 /** The command the line points at; it plays the exchanges between the lead and its teammates. */
 const TEAM_PLAY_HINT = '/team-play'
@@ -77,6 +89,8 @@ export interface TeamLineInputs {
   hidden?: boolean
   /** Whether the user forced the line on, which draws {@link TEAM_PANEL_EMPTY} for a roster with nothing to list. */
   forced?: boolean
+  /** The glyph the line opens with, one column wide: a spinner frame while a teammate runs; {@link TEAM_GLYPH} when absent. */
+  glyph?: string
 }
 
 /**
@@ -137,10 +151,11 @@ function summaryText(teammates: readonly TeamMemberRow[], tasks: readonly TeamTa
  * draws {@link TEAM_PANEL_EMPTY} when the roster has no teammate and no task
  * that is not deleted. Otherwise the line counts the teammates (the lead is
  * not one), names the running ones, and counts the completed tasks among the
- * tasks that are not deleted. A line wider than `width` drops names from the
- * running list first, then ends with `…`.
- * @param inputs - the roster, the tasks, the width, and whether the line is hidden or forced.
- * @param palette - the palette the line is dimmed with.
+ * tasks that are not deleted. Either text follows the glyph in the accent
+ * color, and the rest of the line is dim. A line wider than `width` drops
+ * names from the running list first, then ends with `…`.
+ * @param inputs - the roster, the tasks, the width, the glyph, and whether the line is hidden or forced.
+ * @param palette - the palette the glyph is colored and the line dimmed with.
  * @returns the summary line, or `''` when the slot should stay empty.
  */
 export function teamPanelLine(inputs: TeamLineInputs, palette: Palette): string {
@@ -149,6 +164,9 @@ export function teamPanelLine(inputs: TeamLineInputs, palette: Palette): string 
   const tasks = liveTasks(inputs.tasks)
   const text = teammates.length === 0 && tasks.length === 0
     ? inputs.forced === true ? TEAM_PANEL_EMPTY : ''
-    : summaryText(teammates, tasks, inputs.width)
-  return text === '' ? '' : palette.dim(truncateToWidth(text, inputs.width, '…'))
+    : summaryText(teammates, tasks, inputs.width - GLYPH_COLUMNS)
+  if (text === '') return ''
+  const glyph = inputs.glyph ?? TEAM_GLYPH
+  const line = truncateToWidth(`${glyph} ${text}`, inputs.width, '…')
+  return line.startsWith(glyph) ? `${palette.accent(glyph)}${palette.dim(line.slice(glyph.length))}` : palette.dim(line)
 }
