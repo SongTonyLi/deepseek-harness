@@ -1149,6 +1149,7 @@ export class TuiApp {
     this.loader = new Loader(this.tui, palette.accent, message => this.paintLoaderMessage(message), 'thinking', { frames: [] })
     this.compactions = new CompactionLedger(message => deps.ctx.get('tokenMeter')?.estimateMessage(message))
     this.editor = new BarCursorEditor(this.tui, editorTheme(palette), { paddingX: 1 })
+    this.editor.commandColor = palette.enabled ? palette.accent : undefined
     this.editor.shellPaint = { highlight: this.codeHighlight, warning: palette.warning, paddingX: 1 }
     this.editor.setAutocompleteProvider(editorCompletion({
       commands: () => this.completableCommands(),

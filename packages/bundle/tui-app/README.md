@@ -68,6 +68,8 @@ The conversation, input, subagent panel, and status bar form the vertical arrow-
 
 Every key the screen names is drawn as a chip, italic in the accent color apart from the words around it: in the status bar, the region legends, the pickers and prompts, the transient line, fold markers, notices, `/help`, and the reader. With `mouse: true`, a left click on a chip presses that key exactly as typing it would, so `Shift+↓` in the status bar walks to the bar, `Esc` on the armed-stop line stops the turn, and each arrow of a pair such as `↑↓` presses its own key. Turning it on turns the terminal's mouse reports on: the wheel opens the full-screen reader at the newest section and scrolls it up or down, but does nothing while an approval or question is open. The wheel and plain click-drag reach the application instead of scrolling the terminal's scrollback or selecting text; most terminals still scroll and select with `Shift` held (`Option` in iTerm2).
 
+The input colors its leading `/command` token with the accent color and leaves arguments plain; `NO_COLOR` disables this styling.
+
 While the input has the keyboard:
 
 | Key | Effect |
