@@ -201,6 +201,32 @@ describe('runShim', () => {
     ])
   })
 
+  it('keeps the start sentinel until every group signal has run, including one sent while waiting', async () => {
+    const h = harness(true)
+    const pending: ((code: number) => void)[] = []
+    h.deps.run = (executable, args) => {
+      h.controls.push([executable, ...args])
+      return new Promise((resolve) => { pending.push(resolve) })
+    }
+    const run = runShim(ARGS, h.deps)
+    await settled()
+    h.signal('SIGTERM')
+    h.child.emit('close', 143, null)
+    await settled()
+    expect(h.consumed).toEqual([])
+    h.signal('SIGINT')
+    pending[0]?.(0)
+    await settled()
+    expect(h.consumed).toEqual([])
+    pending[1]?.(0)
+    await expect(run).resolves.toBe(143)
+    expect(h.consumed).toEqual(['/host/run/dsh-1/t1.pid'])
+    expect(h.controls).toEqual([
+      ['/bin/container', ...killArgs('dsh-1', 't1', 'SIGTERM')],
+      ['/bin/container', ...killArgs('dsh-1', 't1', 'SIGINT')],
+    ])
+  })
+
   it('reports a container CLI that cannot spawn', async () => {
     const h = harness()
     const run = runShim(ARGS, h.deps)

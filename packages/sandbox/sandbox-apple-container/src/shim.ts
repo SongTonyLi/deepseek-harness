@@ -2,9 +2,12 @@
  * Host-side exec shim logic. The provider's confined argv runs this shim on
  * the host; the shim runs the caller's argv in the guest through
  * `container exec`, carrying the host spawn's working directory and filtered
- * environment. `container` 1.5.0 does not forward signals through
- * `container exec`, so the shim records the guest process-group id and
- * signals that group itself. The guest wrapper writes a process-group-id file
+ * environment. `container exec` never delivers a host signal to the command's
+ * process group: 1.5.0 forwards none, and 1.6.1 forwards it only to the
+ * `setsid` process it started, whose exit closes `container exec` while the
+ * group keeps running. The shim therefore records the guest process-group id
+ * and signals that group itself, keeping the record until every group signal
+ * has run. The guest wrapper writes a process-group-id file
  * into a host directory mounted at {@link GUEST_RUN_DIR} before the command
  * starts, so the shim tells a runtime failure (exit {@link SHIM_FAILURE_EXIT}
  * with a {@link SHIM_FAILURE_PREFIX} line) from a command that ran and failed
@@ -182,9 +185,10 @@ function signalExit(signal: NodeJS.Signals): number {
 export async function runShim(args: ShimArgs, deps: ShimDeps): Promise<number> {
   const envFile = deps.writeEnvFile(envFileText(deps.env, args.denylist))
   let forwarded: NodeJS.Signals | undefined
+  const kills: Promise<number>[] = []
   const unsubscribe = deps.onSignal((signal) => {
     forwarded ??= signal
-    void deps.run(args.executable, killArgs(args.container, deps.token, signal))
+    kills.push(deps.run(args.executable, killArgs(args.container, deps.token, signal)))
   })
   try {
     const child = deps.spawn(args.executable, execArgs(args, { cwd: deps.cwd, envFile, tty: deps.tty, token: deps.token }))
@@ -192,6 +196,9 @@ export async function runShim(args: ShimArgs, deps: ShimDeps): Promise<number> {
       child.once('error', reject)
       child.once('close', (code, signal) => { resolve(code ?? signalExit(signal as NodeJS.Signals)) })
     })
+    // Each group signal reads the process-group file in the guest, so it stays until they have run,
+    // including signals that arrive during this wait.
+    for (const kill of kills) await kill
     const started = deps.consumeFile(join(args.runDir, pidFileName(deps.token)))
     if (forwarded !== undefined) return signalExit(forwarded)
     if (exit === 0 || started) return exit
