@@ -1149,6 +1149,7 @@ export class TuiApp {
     this.loader = new Loader(this.tui, palette.accent, message => this.paintLoaderMessage(message), 'thinking', { frames: [] })
     this.compactions = new CompactionLedger(message => deps.ctx.get('tokenMeter')?.estimateMessage(message))
     this.editor = new BarCursorEditor(this.tui, editorTheme(palette), { paddingX: 1 })
+    this.editor.commandColor = palette.enabled ? palette.accent : undefined
     this.editor.shellPaint = { highlight: this.codeHighlight, warning: palette.warning, paddingX: 1 }
     this.editor.setAutocompleteProvider(editorCompletion({
       commands: () => this.completableCommands(),
@@ -5413,7 +5414,9 @@ export class TuiApp {
       return
     }
     const palette = this.deps.palette
-    const summaries = await skills.list()
+    const agent = this.agent
+    const cwd = this.deps.ctx.get('workingDirectory')?.get(agent.session) ?? agent.session.header.cwd ?? this.deps.cwd
+    const summaries = await skills.list({ cwd, scope: agent })
     if (summaries.length === 0) {
       this.notice('no skills are available')
       return

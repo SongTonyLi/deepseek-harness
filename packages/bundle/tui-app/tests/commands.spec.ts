@@ -2,7 +2,7 @@
  *  Shift+Tab effort picker, `/permission` picker, export, and reference
  *  commands over scripted services. */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -10,6 +10,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { AuthorizationDeclinedError, type AuthorizationNotice, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { ReasoningEffortId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SkillRegistry from '@deepseek-ai/dsh-skill'
+import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 import { KEY, bench, exportStubs } from './bench.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
@@ -506,6 +508,28 @@ describe('command failures and aliases', () => {
 })
 
 describe('queue, skills, and export', () => {
+  it('lists skills from the active working directory and agent scope alongside global skills', async () => {
+    const roots = [[join(dir, '.agents/skills'), 'project-helper'], [join(dir, 'user/skills'), 'global-helper']] as const
+    for (const [root, name] of roots) {
+      await mkdir(join(root, name), { recursive: true })
+      await writeFile(join(root, name, 'SKILL.md'), `---\nname: ${name}\ndescription: Local helper\n---\nInstructions.\n`)
+    }
+    const test = await bench({
+      before: async (ctx) => {
+        await ctx.plugin(SkillRegistry)
+        await ctx.plugin(SkillFileSystem, { dshHome: join(dir, 'dsh'), agentsHome: join(dir, 'user'), watch: false })
+        ctx.provide('workingDirectory', { get: () => dir } as never)
+      },
+    })
+    const skills = test.agent.ctx.get('skills')
+    if (skills === undefined) throw new Error('skill registry missing')
+    skills.register({ name: 'agent-helper', description: 'Scoped helper', source: 'runtime', content: 'Instructions.' })
+    typeLine(test.terminal, '/skills')
+    await expect.poll(() => test.terminal.text()).toContain('project-helper Local helper')
+    expect(test.terminal.text()).toContain('global-helper Local helper')
+    expect(test.terminal.text()).toContain('agent-helper Scoped helper')
+  })
+
   it('lists and clears the inbox', async () => {
     const test = await bench()
     typeLine(test.terminal, '/queue')

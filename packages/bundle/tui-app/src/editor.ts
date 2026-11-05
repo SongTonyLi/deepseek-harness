@@ -1,5 +1,5 @@
 /**
- * The prompt editor's caret, word navigation, and live `!` / `!!` syntax
+ * The prompt editor's caret, word navigation, and live `/`, `!` / `!!` syntax
  * colour. pi-tui draws the caret cell itself in reverse video; this module
  * takes that block off the rendered lines, names the DECSCUSR sequences for a
  * blinking bar, maps Shift+Left/Right to pi-tui's word movement, and paints a
@@ -107,8 +107,19 @@ export function paintShellEditorLines(
 ): string[] {
   const draft = parseUserShellDraft(text)
   if (draft === undefined) return [...lines]
-  const visual = visualChunks(text, paintDraftLines(draft, paint), editorLayoutWidth(width, paint.paddingX))
-  const pad = editorPad(width, paint.paddingX)
+  return paintEditorLines(lines, text, paintDraftLines(draft, paint), width, paint.paddingX)
+}
+
+/** Overlay styled logical lines while preserving editor chrome and cursor placement. */
+function paintEditorLines(
+  lines: readonly string[],
+  text: string,
+  paintedLogical: readonly string[],
+  width: number,
+  paddingX: number,
+): string[] {
+  const visual = visualChunks(text, paintedLogical, editorLayoutWidth(width, paddingX))
+  const pad = editorPad(width, paddingX)
   const out = [...lines]
   const bottom = out.findIndex((line, index) => index > 0 && isEditorRule(line))
   const end = bottom === -1 ? out.length : bottom
@@ -402,6 +413,9 @@ export class BarCursorEditor extends Editor {
    */
   shellPaint: ShellEditorPaint | undefined
 
+  /** Colours the leading `/command` token without changing editor text or arguments. */
+  commandColor: Style | undefined
+
   /**
    * Handle Shift+Left and Shift+Right as pi-tui's word movements.
    * @param data - the bytes the terminal sent.
@@ -436,9 +450,15 @@ export class BarCursorEditor extends Editor {
       const next = stripBlockCursor(line)
       return focused ? next : next.replaceAll(CURSOR_MARKER, '')
     })
+    const text = this.getText()
+    const command = /^\/\S*/u.exec(text)?.[0]
+    if (command !== undefined && this.commandColor !== undefined) {
+      const painted = `${this.commandColor(command)}${text.slice(command.length)}`.split('\n')
+      return paintEditorLines(stripped, text, painted, width, this.getPaddingX())
+    }
     const paint = this.shellPaint
     return paint === undefined
       ? stripped
-      : paintShellEditorLines(stripped, this.getText(), width, { ...paint, paddingX: this.getPaddingX() })
+      : paintShellEditorLines(stripped, text, width, { ...paint, paddingX: this.getPaddingX() })
   }
 }
