@@ -103,7 +103,7 @@ import {
   type TeamBrowseRow,
   type TeamSnapshot,
 } from './team.ts'
-import { teamPanelLine, type TeamMemberRow } from './team-panel.ts'
+import { TEAM_GLYPH, teamPanelLine, type TeamMemberRow } from './team-panel.ts'
 import { ToolBackgrounder, movedJobId, type ForegroundCall } from './background.ts'
 import {
   BACKGROUND_GLYPH,
@@ -871,6 +871,8 @@ export class TuiApp {
    * `/team-panel` with no argument moves between `on` and `off`.
    */
   private teamPanelMode: 'auto' | 'on' | 'off' = 'auto'
+  /** Whether the mounted team summary's glyph spins, which it does while a teammate runs and motion is not reduced. */
+  private teamLineSpins = false
   private readonly footer: FooterBar
   private readonly modals: ModalQueue
   private readonly theme: BlockTheme
@@ -1809,7 +1811,9 @@ export class TuiApp {
     const teamsOn = this.parents.length === 0 && readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries).kind === 'team'
     const teammate = this.openTeammateTitle()
     const trail = this.parents.length === 0
-      ? palette.dim(teamsOn ? '· Agent Teams on · /team-play · /help' : '· /help for commands')
+      ? teamsOn
+        ? `${palette.dim('·')} ${palette.accent(`${TEAM_GLYPH} team`)} ${palette.dim('· /team-play · /help')}`
+        : palette.dim('· /help for commands')
       : this.asides.has(this.bound)
         ? `${palette.accent(`◆ ${BTW_VIEW_TITLE}`)} ${paintKeys(palette, '· Ctrl+P ends it and returns')}`
         : teammate === undefined
@@ -1860,12 +1864,25 @@ export class TuiApp {
   /**
    * Draw the start card on an empty root session while Agent Teams is mounted.
    * A session that already has a user message, and a subagent view, draw none.
+   * The card plays its entrance on the fade tick from this instant; a
+   * terminal that runs no motion draws it settled.
    */
   private mountTeamIntro(): void {
     if (this.parents.length > 0 || readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries).kind !== 'team') return
     if (this.teamLog.some(event => event.type === 'user/message' || event.type === 'tool/call' || event.type === 'assistant/message')) return
-    this.teamIntro = new TeamIntro(this.deps.palette)
+    this.teamIntro = new TeamIntro(this.deps.palette, this.fading
+      ? {
+        startedAt: this.deps.now(),
+        spinnerMs: this.deps.spinnerMs,
+        fadeStepMs: this.deps.fadeStepMs,
+        fadeSteps: this.deps.fadeSteps,
+        now: () => this.deps.now(),
+        style: () => this.fadeStyle,
+      }
+      : undefined)
     this.chat.addChild(this.teamIntro)
+    this.motions.add(this.teamIntro)
+    this.updateFadeTicker()
     this.tui.requestRender()
   }
 
@@ -2275,18 +2292,26 @@ export class TuiApp {
    * Redraw the team summary from the optional service. `auto` draws the line
    * only when a teammate or a shared task exists, `on` forces the line, and
    * `off` hides it. The summary stays ahead of the subagent panel when both
-   * are mounted.
+   * are mounted. While a teammate runs and motion is not reduced, the line's
+   * glyph is the delegation spinner's current frame and the spinner tick
+   * redraws it.
    */
   private refreshTeamPanel(): void {
     const snapshot = readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries)
     const roster = snapshot.kind === 'team' ? snapshot : undefined
-    this.mountTeamLine(teamPanelLine({
-      members: roster === undefined ? [] : roster.members,
+    const members = roster === undefined ? [] : roster.members
+    const working = !this.deps.reducedMotion && members.some(row => row.role === 'teammate' && row.status === 'running')
+    const line = teamPanelLine({
+      members,
       tasks: roster === undefined ? [] : roster.tasks,
       width: this.contentWidth(),
       hidden: this.teamPanelMode === 'off',
       forced: this.teamPanelMode === 'on',
-    }, this.deps.palette))
+      ...working ? { glyph: spinnerFrame(TOOL_SPINNERS.subagent, this.deps.now(), this.deps.spinnerMs) } : {},
+    }, this.deps.palette)
+    this.teamLineSpins = working && line !== ''
+    this.mountTeamLine(line)
+    this.updateSpinTicker()
     this.tui.requestRender()
   }
 
@@ -5743,15 +5768,15 @@ export class TuiApp {
   }
 
   /**
-   * Arm the spinner tick while the activity line animates, a card spins, or
-   * an in-progress todo spins, and disarm it otherwise, so a session with
-   * nothing running runs no spinner timer. Exactly one runs at a time, and a
-   * stopped app runs none.
+   * Arm the spinner tick while the activity line animates, a card spins, an
+   * in-progress todo spins, or the team summary's glyph spins, and disarm it
+   * otherwise, so a session with nothing running runs no spinner timer.
+   * Exactly one runs at a time, and a stopped app runs none.
    */
   private updateSpinTicker(): void {
     const spinning = this.streaming?.spinning() === true
       || this.spinners.size > 0 || this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0 || this.workflowSpinners.size > 0
-    const teamMotion = this.teamPlay?.animates() === true
+    const teamMotion = this.teamPlay?.animates() === true || this.teamLineSpins
     if (!this.stopped && (this.loaderAnimates() || spinning || teamMotion)) {
       this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, this.deps.spinnerMs)
       return
@@ -5777,6 +5802,7 @@ export class TuiApp {
     }
     if (this.loaderAnimates()) this.refreshLoader()
     this.paintTeamPlay()
+    if (this.teamLineSpins) this.refreshTeamPanel()
     if (this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0) this.refreshActivityBoard()
     else if (this.streaming?.spinning() === true || this.spinners.size > 0 || this.workflowSpinners.size > 0) this.tui.requestRender()
     this.updateSpinTicker()
@@ -5953,6 +5979,7 @@ export class TuiApp {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
       if (child instanceof ContextUsageBlock) child.setRepaintFloor(repaintFloor(start, viewportTop))
+      if (child instanceof TeamIntro && child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       if (fades && (child instanceof AssistantBlock || child instanceof ToolBlock)) {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
@@ -6111,6 +6138,7 @@ export class TuiApp {
       this.refreshTeamSurfaces()
       if (loggedType === 'team/mode') {
         if (this.teamIntro !== undefined) {
+          this.teamIntro.settle()
           this.chat.removeChild(this.teamIntro)
           this.teamIntro = undefined
         }

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { createPalette } from '../src/style.ts'
 import {
+  TEAM_GLYPH,
   TEAM_PANEL_EMPTY,
   teamPanelLine,
   type TeamMemberRow,
@@ -38,7 +39,7 @@ function teammate(name: string, status: TeamMemberRow['status'] = 'inactive'): T
 function line(
   members: readonly TeamMemberRow[],
   tasks: readonly TeamTaskRow[],
-  options: { width?: number; hidden?: boolean; forced?: boolean } = {},
+  options: { width?: number; hidden?: boolean; forced?: boolean; glyph?: string } = {},
 ): string {
   return stripVTControlCharacters(teamPanelLine({ members, tasks, width: options.width ?? 100, ...options }, palette))
 }
@@ -62,37 +63,45 @@ describe('teamPanelLine', () => {
         task({ id: 'gone', subject: 'gone', status: 'deleted' }),
         task({ id: 'gone-too', subject: 'gone too', status: 'deleted' }),
       ],
-    )).toBe('team · 2 teammates · tasks 1/3 done · /team-play')
+    )).toBe('✦ team · 2 teammates · tasks 1/3 done · /team-play')
   })
 
   it('says teammate for exactly one', () => {
-    expect(line([lead, teammate('Ada')], [])).toBe('team · 1 teammate · tasks 0/0 done · /team-play')
+    expect(line([lead, teammate('Ada')], [])).toBe('✦ team · 1 teammate · tasks 0/0 done · /team-play')
   })
 
   it('draws a shared task when the roster has no teammate', () => {
-    expect(line([lead], [pending])).toBe('team · 0 teammates · tasks 0/1 done · /team-play')
+    expect(line([lead], [pending])).toBe('✦ team · 0 teammates · tasks 0/1 done · /team-play')
   })
 
   it('names the running teammates and leaves the segment out when none runs', () => {
     expect(line([lead, teammate('Ada', 'running'), teammate('Ben'), teammate('Cy', 'running')], []))
-      .toBe('team · 3 teammates · working: Ada, Cy · tasks 0/0 done · /team-play')
+      .toBe('✦ team · 3 teammates · working: Ada, Cy · tasks 0/0 done · /team-play')
     expect(line([teammate('Ada', 'provisioning'), teammate('Ben', 'failed')], []))
-      .toBe('team · 2 teammates · tasks 0/0 done · /team-play')
+      .toBe('✦ team · 2 teammates · tasks 0/0 done · /team-play')
     expect(line([{ ...lead, status: 'running' }, teammate('Ada')], []))
       .not.toContain('working')
   })
 
   it('hides a roster and forces the empty line', () => {
     expect(line([teammate('Ada')], [pending], { hidden: true, forced: true })).toBe('')
-    expect(line([lead], [], { forced: true })).toBe(TEAM_PANEL_EMPTY)
+    expect(line([lead], [], { forced: true })).toBe(`${TEAM_GLYPH} ${TEAM_PANEL_EMPTY}`)
     expect(line([lead], [], { forced: false })).toBe('')
-    expect(line([teammate('Ada')], [], { forced: true })).toBe('team · 1 teammate · tasks 0/0 done · /team-play')
+    expect(line([teammate('Ada')], [], { forced: true })).toBe('✦ team · 1 teammate · tasks 0/0 done · /team-play')
   })
 
-  it('dims the line', () => {
-    const colored = teamPanelLine({ members: [teammate('Ada')], tasks: [], width: 100 }, createPalette(true))
-    expect(colored).not.toBe(stripVTControlCharacters(colored))
-    expect(stripVTControlCharacters(colored)).toBe('team · 1 teammate · tasks 0/0 done · /team-play')
+  it('opens with the team glyph in the accent color and dims the rest', () => {
+    const palette = createPalette(true)
+    const colored = teamPanelLine({ members: [teammate('Ada')], tasks: [], width: 100 }, palette)
+    expect(colored.startsWith(palette.accent(TEAM_GLYPH))).toBe(true)
+    expect(colored).toContain(palette.dim(' team · 1 teammate · tasks 0/0 done · /team-play'))
+    expect(stripVTControlCharacters(colored)).toBe('✦ team · 1 teammate · tasks 0/0 done · /team-play')
+  })
+
+  it('draws the frame it is given in place of the glyph', () => {
+    expect(TEAM_GLYPH).toBe('✦')
+    expect(line([lead, teammate('Ada', 'running')], [], { glyph: '❊' }))
+      .toBe('❊ team · 1 teammate · working: Ada · tasks 0/0 done · /team-play')
   })
 
   describe('at a narrow width', () => {
@@ -103,7 +112,7 @@ describe('teamPanelLine', () => {
       teammate('Cy', 'running'),
       teammate('Di'),
     ]
-    const full = 'team · 4 teammates · working: Ada, Bartholomew, Cy · tasks 0/0 done · /team-play'
+    const full = '✦ team · 4 teammates · working: Ada, Bartholomew, Cy · tasks 0/0 done · /team-play'
 
     it('keeps every running name while it fits', () => {
       expect(line(roster, [], { width: visibleWidth(full) })).toBe(full)
@@ -111,23 +120,27 @@ describe('teamPanelLine', () => {
 
     it('drops names from the end and counts them as +<n>', () => {
       expect(line(roster, [], { width: visibleWidth(full) - 1 }))
-        .toBe('team · 4 teammates · working: Ada, Bartholomew +1 · tasks 0/0 done · /team-play')
-      expect(line(roster, [], { width: 70 }))
-        .toBe('team · 4 teammates · working: Ada +2 · tasks 0/0 done · /team-play')
+        .toBe('✦ team · 4 teammates · working: Ada, Bartholomew +1 · tasks 0/0 done · /team-play')
+      expect(line(roster, [], { width: 72 }))
+        .toBe('✦ team · 4 teammates · working: Ada +2 · tasks 0/0 done · /team-play')
     })
 
     it('shrinks the running names to their number before it cuts the line', () => {
-      expect(line(roster, [], { width: 62 })).toBe('team · 4 teammates · 3 working · tasks 0/0 done · /team-play')
+      expect(line(roster, [], { width: 64 })).toBe('✦ team · 4 teammates · 3 working · tasks 0/0 done · /team-play')
     })
 
     it('ends a line that still does not fit with an ellipsis', () => {
-      const text = line(roster, [], { width: 30 })
-      expect(text).toBe('team · 4 teammates · 3 workin…')
-      expect(visibleWidth(text)).toBe(30)
+      const text = line(roster, [], { width: 32 })
+      expect(text).toBe('✦ team · 4 teammates · 3 workin…')
+      expect(visibleWidth(text)).toBe(32)
+    })
+
+    it('dims a line too narrow to keep the glyph', () => {
+      expect(line([lead], [], { forced: true, width: 1 })).toBe('…')
     })
 
     it('cuts the forced-empty line to the width as well', () => {
-      expect(line([lead], [], { forced: true, width: 12 })).toBe('team · no t…')
+      expect(line([lead], [], { forced: true, width: 14 })).toBe('✦ team · no t…')
     })
   })
 })

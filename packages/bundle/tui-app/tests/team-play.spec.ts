@@ -1,4 +1,4 @@
-/** The start card and the team room: exchanges read from the log, the three sections, and the page's keys. */
+/** The team room: exchanges read from the log, the three sections, and the page's keys. */
 
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it } from 'vitest'
@@ -14,15 +14,6 @@ import {
   type TeamRoomDraw,
   type TeamRoomSource,
 } from '../src/team-play.ts'
-import {
-  TEAM_EXPLAIN_LINE,
-  TEAM_OFF_COMMAND,
-  TEAM_OFF_LINE,
-  TEAM_ON_LINE,
-  TeamIntro,
-  agentTeamsMounted,
-  teamIntroLines,
-} from '../src/team-intro.ts'
 import type { TeamMemberRow, TeamTaskRow } from '../src/team-panel.ts'
 
 const palette = createPalette(false)
@@ -501,38 +492,6 @@ describe('beats from the Team Lead log', () => {
       'message lead→team shutdown',
       'message lead→team pause',
     ])
-  })
-})
-
-describe('the start card', () => {
-  it('explains the feature, names the two commands, and says how to turn it off', () => {
-    expect(teamIntroLines({ palette, width: 100 })).toEqual([
-      TEAM_ON_LINE,
-      TEAM_EXPLAIN_LINE,
-      '/team-play   live team room: roles, current work, tasks, and messages',
-      '/team        roster and shared task board',
-      TEAM_OFF_LINE,
-      TEAM_OFF_COMMAND,
-    ])
-    expect(TEAM_ON_LINE).toBe('Agent Teams is on')
-  })
-
-  it('draws the same lines on every render and fits the width', () => {
-    const card = new TeamIntro(palette)
-    card.invalidate()
-    const first = card.render(100)
-    expect(card.render(100)).toEqual(first)
-    expect(first).toEqual(teamIntroLines({ palette, width: 100 }))
-    for (const line of card.render(30)) expect(visibleWidth(line)).toBeLessThanOrEqual(30)
-    for (const line of teamIntroLines({ palette, width: 0 })) expect(visibleWidth(line)).toBeLessThanOrEqual(1)
-  })
-
-  it('is mounted only when the service exposes isEnabled', () => {
-    expect(agentTeamsMounted({ isEnabled: () => [] })).toBe(true)
-    expect(agentTeamsMounted({ isEnabled: 4 })).toBe(false)
-    expect(agentTeamsMounted({})).toBe(false)
-    expect(agentTeamsMounted(null)).toBe(false)
-    expect(agentTeamsMounted(undefined)).toBe(false)
   })
 })
 

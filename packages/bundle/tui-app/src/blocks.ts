@@ -32,7 +32,7 @@ import { Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type C
 import { maskCredentialText } from '@deepseek-ai/dsh-client-ui-secret-mask'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { sliceColumns } from './columns.ts'
-import { fadeInSlice, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
+import { fadeInSlice, recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
 import { jsonTreeText, paintJsonRows, type JsonRowStyle } from './json-tree.ts'
 import { paintKeys } from './key-chips.ts'
 import { pulse, type MotionLevel } from './motion.ts'
@@ -619,6 +619,19 @@ export interface BlockFade {
    * @returns the settings the rows draw under right now.
    */
   style(): FadeStyle
+}
+
+/**
+ * Draw one row at the mix its fade reports.
+ * @param text - the settled row.
+ * @param fade - the row's fade; absent for a row that never faded.
+ * @returns the row at that mix, or `text` once the fade settled or was never attached.
+ */
+export function fadedLine(text: string, fade: BlockFade | undefined): string {
+  if (fade === undefined) return text
+  const age = fade.age()
+  if (age === undefined) return text
+  return recolorLines([text], age, fade.style(), 0).join('\n')
 }
 
 /**

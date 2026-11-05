@@ -48,7 +48,7 @@ describe('teammate navigation', () => {
     expect(await test.screen()).toContain('◆ teammate Ada · teammate')
     test.terminal.type('\u0010')
     await test.settle()
-    expect(await test.screen()).toContain('Agent Teams on')
+    expect(await test.screen()).toContain('✦ team · /team-play · /help')
     expect(await test.screen()).not.toContain('◆ teammate')
   })
 })
