@@ -192,7 +192,7 @@ Typing `/` at the start of the editor completes the terminal's own commands and 
 | `/attach <path>` | Attach an image or file to the next prompt or a shared command that accepts attachments; `/attach` lists them and `/attach clear` drops them |
 | `/queue` | Show the messages queued for the next turn and step; `/queue clear` drops them, and the rows above the editor with them |
 | `/retry` | Continue an eligible failed turn without a new prompt; pending human input or active work prevents admission, and staged attachments remain pending |
-| `/skills` | List the skills the agent can load |
+| `/skills` | List skills available to the current agent and working directory, including global skills |
 | `/signin` | Sign in to a provider through its notices and prompts; `/signin <key>` skips the picker |
 | `/login` | Sign in with a provider subscription (hides key-collecting logins); `/login <key>` skips the picker |
 | `/export [dir]` | Write this session's log ZIP (sub-sessions and attachments included) into `dir`, default the workspace |

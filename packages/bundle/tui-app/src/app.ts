@@ -5414,7 +5414,9 @@ export class TuiApp {
       return
     }
     const palette = this.deps.palette
-    const summaries = await skills.list()
+    const agent = this.agent
+    const cwd = this.deps.ctx.get('workingDirectory')?.get(agent.session) ?? agent.session.header.cwd ?? this.deps.cwd
+    const summaries = await skills.list({ cwd, scope: agent })
     if (summaries.length === 0) {
       this.notice('no skills are available')
       return
