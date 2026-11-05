@@ -3039,7 +3039,7 @@ export interface Config {
 
 - `inject`: `sessions` · `sessionProjections`
 - `refs`: [`LocalConfig`](#deepseek-aidsh-sandbox-local)
-- `source`: [`packages/sandbox/sandbox-apple-container/src/index.ts:74`](../packages/sandbox/sandbox-apple-container/src/index.ts)
+- `source`: [`packages/sandbox/sandbox-apple-container/src/index.ts:82`](../packages/sandbox/sandbox-apple-container/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the local chain's fields plus the container backend's. */
@@ -3074,6 +3074,13 @@ export interface Config extends LocalConfig {
   hiddenFilesMaxDepth?: number
   /** Directory names the hidden-file scan does not enter (default: `['node_modules', '.git']`). */
   hiddenFilesSkipDirs?: string[]
+  /**
+   * Absolute host directories whose file contents a host-bound execution of a
+   * container session cannot read, except the session's read scope, its
+   * writable roots, and the execution's runtime paths (default:
+   * {@link DEFAULT_HOST_BOUND_UNREADABLE_ROOTS}).
+   */
+  hostBoundUnreadableRoots?: string[]
 }
 
 /** The configured backend: a fixed backend, or `auto` resolved per host at load. */
@@ -3089,7 +3096,7 @@ export type SandboxBackend = 'container' | 'local'
 
 ## `@deepseek-ai/dsh-sandbox-local`
 
-- `source`: [`packages/sandbox/sandbox-local/src/index.ts:45`](../packages/sandbox/sandbox-local/src/index.ts)
+- `source`: [`packages/sandbox/sandbox-local/src/index.ts:48`](../packages/sandbox/sandbox-local/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config. All optional — `static Config` supplies the defaults. */

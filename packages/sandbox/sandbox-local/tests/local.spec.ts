@@ -15,11 +15,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { LAUNCHER_FAILURE_EXIT } from '@deepseek-ai/node-addon-system/landlock-run'
 import { SANDBOX_UNAVAILABLE, SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
-import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import {
   LocalSandboxProvider,
 } from '@deepseek-ai/dsh-sandbox-local'
-import type { Config } from '@deepseek-ai/dsh-sandbox-local'
+import type { Config, SeatbeltReadFence } from '@deepseek-ai/dsh-sandbox-local'
 import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from '../src/profiles.ts'
 
 const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws' }
@@ -68,6 +68,24 @@ function fakeSeatbeltExec(status: number): string {
   writeFileSync(exec, `#!/bin/sh\nexit ${status}\n`, { mode: 0o755 })
   return exec
 }
+
+/** Exposes the protected read-fenced wrap for these tests. */
+class FencingSandbox extends LocalSandboxProvider {
+  fenced(argv: readonly string[], policy: SandboxPolicy, fence: SeatbeltReadFence): Promise<ConfinedArgv> {
+    return this.confineWithReadFence(argv, policy, fence)
+  }
+}
+
+async function fencing(config: Config = {}, internals: LocalSandboxProvider['internals'] = {}): Promise<FencingSandbox> {
+  const ctx = new Context()
+  tempDirs.push(mkdtempSync(join(tmpdir(), 'dsh-fencing-')))
+  await ctx.plugin(FencingSandbox, config)
+  const sandbox = ctx.sandbox as FencingSandbox
+  sandbox.internals = internals
+  return sandbox
+}
+
+const FENCE: SeatbeltReadFence = { deniedRoots: ['/Users', '/Volumes'], readableRoots: ['/Users/me/ws', '/rt/node'], hiddenNames: ['.env', '*.pem'] }
 
 /** The seatbelt read-only profile — every seatbelt profile starts with these forms. */
 const SEATBELT_RO_PROFILE = '(version 1) (allow default) (deny file-write*) (allow file-write* (literal "/dev/null"))'
@@ -149,11 +167,50 @@ describe('profile dialects', () => {
     expect(profile).toContain(`(subpath "${realpathSync.native(extra)}")`)
   })
 
+  it('seatbelt appends a read fence after the write rules: denial, readable exceptions, then hidden names', () => {
+    expect(seatbeltProfileArgs(RO, FENCE)).toEqual(['-p', [
+      SEATBELT_RO_PROFILE,
+      '(deny file-read-data (subpath "/Users") (subpath "/Volumes"))',
+      '(allow file-read-data (subpath "/Users/me/ws") (subpath "/rt/node"))',
+      '(deny file-read-data (regex "/[.][eE][nN][vV]$") (regex "/[^/]*[.][pP][eE][mM]$"))',
+    ].join(' ')])
+  })
+
+  it('seatbelt hidden-name expressions bracket every literal and escape the SBPL string', () => {
+    const profile = seatbeltProfileArgs(RO, { deniedRoots: [], readableRoots: ['/ignored'], hiddenNames: ['a^b\\c"d]-1', '', 'dir/name'] })[1]
+    expect(profile).toBe(String.raw`${SEATBELT_RO_PROFILE} (deny file-read-data (regex "/[aA][\\^][bB][\\\\][cC][\"][dD][]][-][1]$"))`)
+  })
+
+  it('seatbelt omits fence forms that have nothing to express', () => {
+    expect(seatbeltProfileArgs(RO, { deniedRoots: [], readableRoots: [], hiddenNames: [] })).toEqual(['-p', SEATBELT_RO_PROFILE])
+    expect(seatbeltProfileArgs(RO, { deniedRoots: ['/Users'], readableRoots: [], hiddenNames: ['/'] }))
+      .toEqual(['-p', `${SEATBELT_RO_PROFILE} (deny file-read-data (subpath "/Users"))`])
+  })
+
   it('seatbelt workspace-write dedups a workspace root that already IS the temp dir', () => {
     const profile = seatbeltProfileArgs({ mode: 'workspace-write', workspaceRoot: tmpdir() })[1] as string
     const grant = `(subpath "${realpathSync(tmpdir())}")`
     expect(profile).toContain(grant)
     expect(profile.split(grant)).toHaveLength(2)
+  })
+})
+
+describe('confineWithReadFence', () => {
+  it('fences reads in the Seatbelt profile on the darwin chain', async () => {
+    const sandbox = await fencing({}, { platform: 'darwin' })
+    await expect(sandbox.fenced(['node', 'boot.js'], RO, FENCE)).resolves.toEqual({
+      argv: ['sandbox-exec', ...seatbeltProfileArgs(RO, FENCE), '--', 'node', 'boot.js'],
+      enforcement: 'full',
+      denialSignatures: ['operation not permitted'],
+      runnerFailureRules: [{ fatalSignatures: ['sandbox-exec: '] }],
+    })
+  })
+
+  it('fails closed where the selected runner or a configured runnerCommand cannot restrict reads', async () => {
+    const linux = await fencing({}, { platform: 'linux', probeBwrap: () => true })
+    await expect(linux.fenced(['true'], RO, FENCE)).rejects.toMatchObject({ code: 'SANDBOX_UNSUPPORTED_POLICY', message: 'sandbox-local: the bwrap runner cannot restrict reads' })
+    const custom = await fencing({ runnerCommand: ['runner'], runnerFailureSignatures: ['runner: '] })
+    await expect(custom.fenced(['true'], RO, FENCE)).rejects.toMatchObject({ code: 'SANDBOX_UNSUPPORTED_POLICY', message: 'sandbox-local: a configured runnerCommand cannot restrict reads' })
   })
 })
 

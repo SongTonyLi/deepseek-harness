@@ -69,6 +69,10 @@ When a confined call is denied, the operation reports a denial marker naming the
 
 When no backend can enforce the requested mode, the call fails with `SANDBOX_UNAVAILABLE` rather than running unconfined; the error text names the missing platform runner. A backend that fails after starting also reports a structured runner-failure signature, so a broken sandbox is distinguishable from a command failure.
 
+### Host-bound executions
+
+A consumer whose process must stay in the subprocess provider's execution world calls `confineHostBound(argv, policy, { runtimePaths })` instead of `confine`. Such a process starts an executable or files of that world outside the shared workspace, or inherits descriptors beyond stdin, stdout, and stderr; the Node code-execution worker that runs workflows is one. `runtimePaths` names the files and directories it reads to start. A provider that confines on the host returns the same wrap as `confine`. A provider whose `confine` relocates execution, such as the [Apple container backend](../sandbox-apple-container/README.md), confines the process in place under a read restriction it documents and keeps `runtimePaths` readable, or fails closed.
+
 -----
 
 <a id="understand-the-implementation"></a>

@@ -40,6 +40,9 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { AclWriteGrant, assertTempRootOutsideWorkspace, registerAclDiagnosisSkill, tempWriteSid, workspaceWriteSid } from '@deepseek-ai/dsh-sandbox-windows-acl'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from './profiles.ts'
+import type { SeatbeltReadFence } from './profiles.ts'
+
+export type { SeatbeltReadFence } from './profiles.ts'
 
 /** Plugin config. All optional — `static Config` supplies the defaults. */
 export interface Config {
@@ -323,9 +326,34 @@ export class LocalSandboxProvider extends SandboxProvider {
    *   `SANDBOX_UNAVAILABLE` error when the platform has no usable runner.
    */
   async confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
+    return this.wrap(argv, policy, undefined, signal)
+  }
+
+  /**
+   * Wrap `argv` like {@link confine} and add a read fence to the profile. Only
+   * the Seatbelt rung expresses a read fence; another selected runner or a
+   * configured `runnerCommand` fails closed with `SANDBOX_UNSUPPORTED_POLICY`.
+   * @param argv - the exact argv the caller is about to spawn.
+   * @param policy - the file-effect policy this execution runs under.
+   * @param fence - the read restriction, with canonical paths.
+   * @param signal - cancellation before policy resolution.
+   * @returns the wrapped argv plus the Seatbelt rung's enforcement, denial
+   *   signatures, and runner-failure rules.
+   */
+  protected async confineWithReadFence(
+    argv: readonly string[], policy: SandboxPolicy, fence: SeatbeltReadFence, signal?: AbortSignal,
+  ): Promise<ConfinedArgv> {
+    return this.wrap(argv, policy, fence, signal)
+  }
+
+  /** The shared wrap of {@link confine} and {@link confineWithReadFence}. */
+  private wrap(
+    argv: readonly string[], policy: SandboxPolicy, fence: SeatbeltReadFence | undefined, signal?: AbortSignal,
+  ): Promise<ConfinedArgv> {
     signal?.throwIfAborted()
     policy = { ...policy, workspaceRoot: canonicalPath(policy.workspaceRoot) }
     if (this.runnerCommand !== undefined) {
+      if (fence !== undefined) throw new SandboxUnsupportedPolicyError('sandbox-local: a configured runnerCommand cannot restrict reads')
       return Promise.resolve<ConfinedArgv>({
         argv: [...this.runnerCommand, ...bwrapProfileArgs(policy), '--', ...argv],
         enforcement: 'full',
@@ -334,7 +362,10 @@ export class LocalSandboxProvider extends SandboxProvider {
       })
     }
     const selected = this.selectRunner(policy.mode)
-    const runnerArgv = this.runnerArgv(selected.runner, policy)
+    if (fence !== undefined && selected.runner !== 'seatbelt') {
+      throw new SandboxUnsupportedPolicyError(`sandbox-local: the ${selected.runner} runner cannot restrict reads`)
+    }
+    const runnerArgv = this.runnerArgv(selected.runner, policy, fence)
     return Promise.resolve<ConfinedArgv>({
       argv: [...runnerArgv, '--', ...argv],
       enforcement: selected.enforcement,
@@ -344,11 +375,11 @@ export class LocalSandboxProvider extends SandboxProvider {
   }
 
   /** The selected rung's runner invocation (program + profile arguments) for one policy. */
-  private runnerArgv(runner: SelectedRunner['runner'], policy: SandboxPolicy): string[] {
+  private runnerArgv(runner: SelectedRunner['runner'], policy: SandboxPolicy, fence: SeatbeltReadFence | undefined): string[] {
     switch (runner) {
       case 'bwrap': return ['bwrap', ...bwrapProfileArgs(policy)]
       case 'landlock': return [this.landlockLauncher(), ...landlockProfileArgs(policy)]
-      case 'seatbelt': return [this.seatbeltExec(), ...seatbeltProfileArgs(policy)]
+      case 'seatbelt': return [this.seatbeltExec(), ...seatbeltProfileArgs(policy, fence)]
       case 'windows-acl': return this.windowsAclRunnerArgv(policy)
       default: return assertNever(runner)
     }

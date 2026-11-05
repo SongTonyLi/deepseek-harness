@@ -1257,6 +1257,11 @@
       "source": "packages/sandbox/sandbox/src/index.ts"
     },
     {
+      "doc": "docs/subsystems/sandbox.md",
+      "symbol": "HostBoundExecution",
+      "source": "packages/sandbox/sandbox/src/index.ts"
+    },
+    {
       "doc": "docs/subsystems/ptc-runtime.md",
       "symbol": "PtcJsonValue",
       "source": "packages/ptc-runtime/ptc-runtime/src/types.ts"

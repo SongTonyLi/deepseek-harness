@@ -4,7 +4,9 @@
  * local platform chain, while `container` runs the argv through an exec shim
  * inside a Linux container VM that bind-mounts the workspace at its own
  * absolute path (read-only under `read-only`). Host file effects stay inside
- * the workspace, and the guest cannot read unmounted host paths.
+ * the workspace, and the guest cannot read unmounted host paths. A host-bound
+ * execution, which the guest cannot run, confines in place under the local
+ * Seatbelt chain with a read fence instead.
  *
  * Each session's backend is the last `sandbox/backend` event in its log,
  * otherwise the configured default; the shared `/sandbox` command reports and
@@ -23,8 +25,8 @@ import { z as zod } from 'zod'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
-import { SandboxUnavailableError, canonicalPath } from '@deepseek-ai/dsh-sandbox'
-import type { ConfinedArgv, RunnerFailureRule, SandboxExecutionPolicy, SandboxMode, SandboxPolicy, SandboxReadScope } from '@deepseek-ai/dsh-sandbox'
+import { SandboxUnavailableError, canonicalPath, writableRoots } from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, HostBoundExecution, RunnerFailureRule, SandboxExecutionPolicy, SandboxMode, SandboxPolicy, SandboxReadScope } from '@deepseek-ai/dsh-sandbox'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import type { Config as LocalConfig } from '@deepseek-ai/dsh-sandbox-local'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
@@ -61,6 +63,12 @@ export const DEFAULT_HIDDEN_FILES: readonly string[] = [
   '.env', '.env.*', '.envrc', '*.pem', '*.key', '*.p12', '*.pfx',
   'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', '.npmrc', '.pypirc', '.netrc', '.git-credentials',
 ]
+
+/**
+ * Host directories whose file contents host-bound executions of container
+ * sessions cannot read by default: user homes and attached volumes.
+ */
+export const DEFAULT_HOST_BOUND_UNREADABLE_ROOTS: readonly string[] = ['/Users', '/Volumes']
 
 /** Stderr text of a write the read-only workspace mount refused. */
 const CONTAINER_DENIAL_SIGNATURES: readonly string[] = ['read-only file system']
@@ -102,6 +110,13 @@ export interface Config extends LocalConfig {
   hiddenFilesMaxDepth?: number
   /** Directory names the hidden-file scan does not enter (default: `['node_modules', '.git']`). */
   hiddenFilesSkipDirs?: string[]
+  /**
+   * Absolute host directories whose file contents a host-bound execution of a
+   * container session cannot read, except the session's read scope, its
+   * writable roots, and the execution's runtime paths (default:
+   * {@link DEFAULT_HOST_BOUND_UNREADABLE_ROOTS}).
+   */
+  hostBoundUnreadableRoots?: string[]
 }
 
 /** The sandbox-backend projection's state schema. */
@@ -166,6 +181,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
     hiddenFiles: z.array(z.string()).default([...DEFAULT_HIDDEN_FILES]),
     hiddenFilesMaxDepth: z.natural().default(8),
     hiddenFilesSkipDirs: z.array(z.string()).default(['node_modules', '.git']),
+    hostBoundUnreadableRoots: z.array(z.string()).default([...DEFAULT_HOST_BOUND_UNREADABLE_ROOTS]),
   })])
 
   static inject = ['sessions', 'sessionProjections']
@@ -179,6 +195,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   private readonly envDenylist: readonly string[]
   private readonly readOnlyMounts: readonly string[]
   private readonly hiddenFiles: readonly string[]
+  private readonly hostBoundUnreadableRoots: readonly string[]
   private readonly runtime: ContainerRuntime
   private readonly pool: ContainerPool
 
@@ -217,6 +234,11 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       throw new Error('sandbox-apple-container: protectedPaths entries must be workspace-relative paths without `..` or a comma')
     }
     this.hiddenFiles = config.hiddenFiles as string[]
+    const unreadable = config.hostBoundUnreadableRoots as string[]
+    if (unreadable.some(path => !isAbsolute(path))) {
+      throw new Error('sandbox-apple-container: hostBoundUnreadableRoots entries must be absolute paths')
+    }
+    this.hostBoundUnreadableRoots = [...new Set(unreadable.map(canonicalPath))]
     this.runtime = new ContainerRuntime({
       executable: this.executable,
       image: this.image,
@@ -328,6 +350,34 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   }
 
   /**
+   * Confine a host-bound execution in place. The local backend wraps it like
+   * any other call. The container guest cannot run host executables or receive
+   * descriptors beyond stdio, so the container backend confines it with the
+   * local Seatbelt chain under the policy's write rules and a read fence: file
+   * contents under `hostBoundUnreadableRoots` stay unreadable except the read
+   * scope, the policy's writable roots, and the runtime paths, and hidden files
+   * stay unreadable everywhere. Host paths outside those roots stay readable.
+   * @param argv - the exact argv the caller is about to spawn.
+   * @param policy - the file-effect policy this execution runs under.
+   * @param execution - the runtime paths the process must read.
+   * @param signal - cancellation before policy resolution.
+   * @returns the wrapped argv; a container session whose local chain is not
+   *   Seatbelt fails closed with `SANDBOX_UNSUPPORTED_POLICY`.
+   */
+  override async confineHostBound(
+    argv: readonly string[], policy: SandboxPolicy, execution: HostBoundExecution, signal?: AbortSignal,
+  ): Promise<ConfinedArgv> {
+    signal?.throwIfAborted()
+    if (this.policyBackend(policy) === 'local') return super.confine(argv, policy, signal)
+    const readable = [...this.containerReadRoots(policy), ...writableRoots(policy), ...execution.runtimePaths]
+    return this.confineWithReadFence(argv, policy, {
+      deniedRoots: this.hostBoundUnreadableRoots,
+      readableRoots: [...new Set(readable.map(canonicalPath))],
+      hiddenNames: this.hiddenFiles,
+    }, signal)
+  }
+
+  /**
    * Tells the user that `danger-full-access` leaves the container.
    * @param policy - the calling session's resolved policy.
    * @param target - the wider mode the call asks for.
@@ -350,10 +400,12 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
    */
   override readScope(policy: SandboxExecutionPolicy): SandboxReadScope | undefined {
     if (policy.mode === 'danger-full-access' || this.policyBackend(policy) === 'local') return undefined
-    return {
-      roots: [...new Set([policy.workspaceRoot, canonicalPath(policy.workspaceRoot), ...this.readOnlyMounts])],
-      hiddenNames: this.hiddenFiles,
-    }
+    return { roots: this.containerReadRoots(policy), hiddenNames: this.hiddenFiles }
+  }
+
+  /** The host directories a container session's guest can read: the workspace as spelled and canonical, and the extra mounts. */
+  private containerReadRoots(policy: SandboxExecutionPolicy): string[] {
+    return [...new Set([policy.workspaceRoot, canonicalPath(policy.workspaceRoot), ...this.readOnlyMounts])]
   }
 
   /** The backend of the session a policy names; agentless and unknown sessions use the default. */

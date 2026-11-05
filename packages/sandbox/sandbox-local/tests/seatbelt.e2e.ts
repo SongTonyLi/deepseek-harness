@@ -1,12 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
+import type { SeatbeltReadFence } from '@deepseek-ai/dsh-sandbox-local'
 import { seatbeltProfileArgs } from '../src/profiles.ts'
 import { checkExtraWrites, checkRedirectedRoot } from './extra-roots.ts'
 
@@ -50,6 +51,13 @@ async function provider(): Promise<LocalSandboxProvider> {
   return sandbox
 }
 
+/** Exposes the protected read-fenced wrap for the fence case. */
+class FencingSandbox extends LocalSandboxProvider {
+  fenced(argv: readonly string[], policy: SandboxPolicy, fence: SeatbeltReadFence): Promise<ConfinedArgv> {
+    return this.confineWithReadFence(argv, policy, fence)
+  }
+}
+
 /** Confine a shell command under `policy` and run it for real; returns the spawn result and the wrap's facts. */
 async function runConfined(sandbox: LocalSandboxProvider, command: string, policy: SandboxPolicy, env?: NodeJS.ProcessEnv) {
   const confined = await sandbox.confine(['bash', '-c', command], policy)
@@ -75,6 +83,30 @@ describe.skipIf(!seatbeltUsable)('sandbox-local: real Seatbelt confinement throu
     // The wrap's denialSignatures must be what the kernel actually prints.
     expect(result.stderr.toLowerCase()).toContain('operation not permitted')
     expect(existsSync(join(workdir, 'denied.txt'))).toBe(false)
+  })
+
+  it('a read fence hides contents outside its readable roots, through aliases too, and hidden names everywhere', async () => {
+    const workdir = realpathSync.native(await tempDir(homedir()))
+    const outside = realpathSync.native(await tempDir(homedir()))
+    writeFileSync(join(workdir, 'visible.txt'), 'visible\n')
+    writeFileSync(join(workdir, '.ENV'), 'HIDDEN=1\n')
+    writeFileSync(join(outside, 'secret.txt'), 'secret\n')
+    symlinkSync(join(outside, 'secret.txt'), join(workdir, 'alias.txt'))
+    ctx = new Context()
+    await ctx.plugin(FencingSandbox, {})
+    const sandbox = ctx.sandbox as FencingSandbox
+    sandbox.internals = { probeBwrap: () => false, probeLandlock: () => 'unusable' }
+    const fence = { deniedRoots: [realpathSync.native(homedir())], readableRoots: [workdir], hiddenNames: ['.env'] }
+    const command = [
+      'cat visible.txt', `cat ${quote(join(outside, 'secret.txt'))}`, 'cat alias.txt', 'cat .ENV', `ls ${quote(outside)}`,
+      `ln ${quote(join(outside, 'secret.txt'))} hard.txt`, 'printf written > written.txt', 'echo done',
+    ].join('; ')
+    const confined = await sandbox.fenced(['bash', '-c', command], { mode: 'workspace-write', workspaceRoot: workdir }, fence)
+    const result = spawnSync(confined.argv[0] as string, confined.argv.slice(1), { cwd: workdir, timeout: 30_000, encoding: 'utf8' })
+    expect(result.stdout).toBe('visible\ndone\n')
+    expect(result.stderr.toLowerCase().split('\n').filter(line => line.includes('operation not permitted'))).toHaveLength(5)
+    expect(readFileSync(join(workdir, 'written.txt'), 'utf8')).toBe('written')
+    expect(existsSync(join(workdir, 'hard.txt'))).toBe(false)
   })
 
   it('read-only keeps the tree readable/executable and /dev/null writable', async () => {

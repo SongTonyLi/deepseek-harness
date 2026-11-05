@@ -24,6 +24,12 @@ const COMPACTION_SUMMARY = '## Primary Request and Intent\n- CLI_COMPACTION_SUMM
 const DELEGATION_TOOL = 'subagent'
 /** Text in a delegated prompt that tells this mock it is answering the child, which makes the shell call. */
 const DELEGATED_MARKER = 'CLI_DELEGATED_SHELL_CALL'
+/** The model-facing name of the workflow tool the shipped profiles compose. */
+const WORKFLOW_TOOL = 'workflow'
+/** Text in a workflow child's prompt that tells this mock it is answering that child. */
+const WORKFLOW_MARKER = 'CLI_WORKFLOW_CHILD'
+/** The text every workflow child replies with. */
+const WORKFLOW_CHILD_REPLY = 'CLI_WORKFLOW_CHILD_OK'
 
 /**
  * Whether the conversation is a delegated child or has already delegated.
@@ -35,6 +41,46 @@ function delegationHandled(messages: readonly RequestMessage[]): boolean {
   return messages.some(message => message.content.some(block =>
     (message.role === 'user' && block.type === 'text' && block.text.includes(DELEGATED_MARKER))
     || (message.role === 'assistant' && block.type === 'tool-call' && block.name === DELEGATION_TOOL)))
+}
+
+/**
+ * Whether the conversation belongs to a workflow child or has already called the workflow tool.
+ * @param messages - the request's conversation.
+ * @returns which of the two applies, or undefined for neither.
+ */
+function workflowRole(messages: readonly RequestMessage[]): 'child' | 'called' | undefined {
+  if (messages.some(message => message.role === 'user' && message.content.some(block => block.type === 'text' && block.text.includes(WORKFLOW_MARKER)))) return 'child'
+  if (messages.some(message => message.role === 'assistant' && message.content.some(block => block.type === 'tool-call' && block.name === WORKFLOW_TOOL))) return 'called'
+  return undefined
+}
+
+/**
+ * The tool call a conversation without a tool result makes.
+ * @param workflow - whether the workflow hook selects the `workflow` tool.
+ * @param messages - the request's conversation, read by the delegation hook.
+ * @returns the tool name and its JSON arguments.
+ */
+function firstToolCall(workflow: boolean, messages: readonly RequestMessage[]): { tool: string; args: string } {
+  if (workflow) {
+    return {
+      tool: WORKFLOW_TOOL,
+      args: JSON.stringify({
+        meta: { name: 'cli-mock-workflow', description: 'One child for the CLI round trip' },
+        script: `phase('Run')\nconst reply = await agent('Reply for the CLI workflow. ${WORKFLOW_MARKER}')\nreturn { reply }`,
+      }),
+    }
+  }
+  if (process.env.DSH_CLI_MOCK_DELEGATE === '1' && !delegationHandled(messages)) {
+    return { tool: DELEGATION_TOOL, args: JSON.stringify({ description: 'Delegated shell call', prompt: `Make the CLI shell call. ${DELEGATED_MARKER}` }) }
+  }
+  return {
+    tool: SHELL_TOOL,
+    args: JSON.stringify({
+      command: process.env.DSH_CLI_MOCK_SHELL_COMMAND ?? SHELL_COMMAND,
+      description: 'Prove the CLI tool round trip.',
+      ...process.env.DSH_CLI_MOCK_SHELL_BACKGROUND === '1' ? { run_in_background: true } : {},
+    }),
+  }
 }
 
 /**
@@ -51,6 +97,11 @@ function delegationHandled(messages: readonly RequestMessage[]): boolean {
  *   {@link DELEGATED_MARKER}; the child, whose conversation carries the
  *   marker, makes the shell call. Later turns of the delegating conversation
  *   make the shell call themselves.
+ * - `DSH_CLI_MOCK_WORKFLOW=1` makes a conversation that has not called the
+ *   `workflow` tool yet call it with a script that starts one child whose
+ *   prompt carries {@link WORKFLOW_MARKER}; that child replies
+ *   {@link WORKFLOW_CHILD_REPLY}, and the tool result then gets the ordinary
+ *   round-trip reply.
  */
 class CliMockAdapter extends LlmAdapter {
   private readonly replay: ReplayEntry[] | undefined
@@ -121,19 +172,19 @@ class CliMockAdapter extends LlmAdapter {
       yield* resolved.chunks
       return
     }
+    const workflow = process.env.DSH_CLI_MOCK_WORKFLOW === '1' ? workflowRole(options.messages) : 'called'
+    if (workflow === 'child') {
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text: WORKFLOW_CHILD_REPLY }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: WORKFLOW_CHILD_REPLY } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
     const last = options.messages.at(-1)
     const toolResult = last?.role === 'tool' ? last : undefined
     if (toolResult === undefined) {
       const reasoning = 'Inspecting the task before the tool call.'
-      const delegate = process.env.DSH_CLI_MOCK_DELEGATE === '1' && !delegationHandled(options.messages)
-      const tool = delegate ? DELEGATION_TOOL : SHELL_TOOL
-      const args = delegate
-        ? JSON.stringify({ description: 'Delegated shell call', prompt: `Make the CLI shell call. ${DELEGATED_MARKER}` })
-        : JSON.stringify({
-          command: process.env.DSH_CLI_MOCK_SHELL_COMMAND ?? SHELL_COMMAND,
-          description: 'Prove the CLI tool round trip.',
-          ...process.env.DSH_CLI_MOCK_SHELL_BACKGROUND === '1' ? { run_in_background: true } : {},
-        })
+      const { tool, args } = firstToolCall(workflow === undefined, options.messages)
       yield { type: 'block-start', index: 0, blockType: 'reasoning' }
       yield { type: 'reasoning-delta', index: 0, text: reasoning }
       yield { type: 'block-end', index: 0, block: { type: 'reasoning', text: reasoning } }

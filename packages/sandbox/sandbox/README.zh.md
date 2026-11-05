@@ -69,6 +69,10 @@ kind: "package-reference"
 
 没有后端能强制执行所请求的模式时，调用以 `SANDBOX_UNAVAILABLE` 失败，而不是不受限制地运行；错误文本会指明缺失的平台 runner。启动后失败的后端还会报告结构化的 runner 失败签名，因此损坏的沙箱可以与命令失败区分开。
 
+### 宿主机绑定执行
+
+进程必须留在子进程提供方自身执行世界中的消费方，调用 `confineHostBound(argv, policy, { runtimePaths })` 而不是 `confine`。这类宿主机绑定执行（host-bound execution）会启动该世界中位于共享工作区之外的可执行文件或文件，或者继承 stdin、stdout、stderr 之外的描述符；运行工作流的 Node 代码执行 worker 就是其中之一。`runtimePaths` 列出它启动时读取的文件和目录。在宿主机上隔离的提供方返回与 `confine` 相同的包装结果。`confine` 会把执行迁移到别处的提供方，例如 [Apple container 后端](../sandbox-apple-container/README.zh.md)，会在原处用自身记载的读取限制隔离该进程，并保持 `runtimePaths` 可读；做不到时故障关闭。
+
 -----
 
 <a id="understand-the-implementation"></a>

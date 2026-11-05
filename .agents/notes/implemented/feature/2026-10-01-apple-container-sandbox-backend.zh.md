@@ -20,7 +20,7 @@ Status: implemented
 
 ### 执行 shim
 
-`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`。宿主机上的 shim 携带 spawn 的工作目录，把去除形似凭据的变量名以及内嵌凭据的 URL 之后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 运行 argv。`container` 1.5.0 不会通过 `container exec` 转发信号，因此 shim 自行向记录下的客户机进程组发送信号。启动哨兵文件用于区分运行时失败（退出码 125 并输出 `dsh-container-exec: ` 行，由运行器失败规则匹配）与已运行但失败的命令。客户机把哨兵写入以可写方式挂载到 `/run/dsh` 的私有宿主机运行目录，因此 shim 在宿主机上检查它，而不必在每次非零退出后再付出一次 `container exec`（约 60 ms）；代价是客户机命令即使在 `read-only` 下也能写入这一个宿主机目录，而 DSH 只会删除其中内容，从不执行或读取它们。构建后的 shim 只依赖 Node 内置模块，因此可从打包的 npm 包中以纯 Node 运行。
+`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`。宿主机上的 shim 携带 spawn 的工作目录，把去除形似凭据的变量名以及内嵌凭据的 URL 之后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 运行 argv。`container exec` 从不向命令的进程组发送信号：1.5.0 不转发任何信号，1.6.1 只把信号转发给它启动的 `setsid` 进程，该进程退出会让 `container exec` 结束，而进程组仍在运行。因此 shim 自行向记录下的客户机进程组发送信号，并保留该记录，直到这些信号执行完毕。启动哨兵文件用于区分运行时失败（退出码 125 并输出 `dsh-container-exec: ` 行，由运行器失败规则匹配）与已运行但失败的命令。客户机把哨兵写入以可写方式挂载到 `/run/dsh` 的私有宿主机运行目录，因此 shim 在宿主机上检查它，而不必在每次非零退出后再付出一次 `container exec`（约 60 ms）；代价是客户机命令即使在 `read-only` 下也能写入这一个宿主机目录，而 DSH 只会删除其中内容，从不执行或读取它们。构建后的 shim 只依赖 Node 内置模块，因此可从打包的 npm 包中以纯 Node 运行。
 
 ### 读取范围
 
@@ -52,7 +52,7 @@ Status: implemented
 
 在受支持的 Mac 上，受限命令无法读取或修改工作区之外的宿主机文件，看不到启动时已存在的密钥文件或凭据环境变量，也无法植入供宿主机执行的 Git hook。模型的文件工具共享同一读取视图。在 Mac 之外，终端 profile 保持之前的本地沙箱。
 
-代价是工具链不同：工作区中的 Darwin 原生二进制无法在 Linux 客户机中运行，这类项目需使用 `/sandbox local`。容器启动后创建的密钥文件在重启前仍可在容器内读取，`.git` 写入需要提权，终端尺寸变化不会传到客户机，子智能体从默认后端开始，安装后的第一条命令可能需要等待镜像拉取。Auto 权限保留此后端，而不是切换到完全访问（[Auto 保留沙箱](../bug-fix/2026-10-04-auto-keeps-container-sandbox.zh.md)）。早于本变更的构建会拒绝包含 `sandbox/backend` 的日志。升级 `container` 时必须重新评估 `-v` 解析、信号转发与单文件挂载这几项绕行措施。
+代价是工具链不同：工作区中的 Darwin 原生二进制无法在 Linux 客户机中运行，这类项目需使用 `/sandbox local`。容器启动后创建的密钥文件在重启前仍可在容器内读取，`.git` 写入需要提权，终端尺寸变化不会传到客户机，子智能体从默认后端开始，安装后的第一条命令可能需要等待镜像拉取。Auto 权限保留此后端，而不是切换到完全访问（[Auto 保留沙箱](../bug-fix/2026-10-04-auto-keeps-container-sandbox.zh.md)）。早于本变更的构建会拒绝包含 `sandbox/backend` 的日志。宿主机绑定进程（例如运行工作流的 Node PTC worker）无法在客户机中运行，它们在宿主机上受 Seatbelt 读取围栏隔离（[宿主机绑定进程](../bug-fix/2026-11-05-container-host-bound-processes.zh.md)）。每次升级 `container` 都要重新检查挂载语法、信号转发与单文件挂载这几项绕行措施：在 1.6.1 上，`-v src:dst:ro` 已能正确解析，文件挂载源仍会被拒绝，`container exec` 只把信号转发给它启动的进程。
 
 ## Testing
 

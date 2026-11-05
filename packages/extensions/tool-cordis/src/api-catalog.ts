@@ -2611,8 +2611,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the argv to spawn instead, plus the enforcement completeness the selected backend achieves for it.',
       },
       {
+        signature: 'confineHostBound( argv: readonly string[], policy: SandboxPolicy, _execution: HostBoundExecution, signal?: AbortSignal, ): Promise<ConfinedArgv>',
+        description: 'Wrap `argv` for a host-bound execution: one that must run in the subprocess provider\'s own execution world because its executable or runtime files are paths there outside the shared workspace, or because it inherits descriptors beyond stdin, stdout, and stderr. The base implementation is confine, which already confines in that world. A provider whose `confine` relocates execution, such as the Apple container backend, overrides this to confine in place under a read restriction it documents, or fails closed.',
+        parameters: [{ name: 'argv', description: 'the exact argv the caller is about to spawn.' }, { name: 'policy', description: 'the file-effect policy this execution runs under.' }, { name: '_execution', description: 'the runtime paths the process must read.' }, { name: 'signal', description: 'cancellation while the provider resolves the policy and runner.' }],
+        returns: 'the argv to spawn instead, plus the enforcement completeness the selected backend achieves for it.',
+      },
+      {
         signature: 'readScope(_policy: SandboxExecutionPolicy): SandboxReadScope | undefined',
-        description: 'What a process confined under `policy` can read on the host, or `undefined` when this backend does not confine reads. Model-facing tools that read the host for the same session must refuse paths outside the scope, so their view never exceeds the confined processes\'. The base implementation confines no reads.',
+        description: 'What a process wrapped by confine under `policy` can read on the host, or `undefined` when this backend does not confine reads. Model-facing tools that read the host for the same session must refuse paths outside the scope, so their view never exceeds the confined processes\'. The base implementation confines no reads.',
         parameters: [{ name: '_policy', description: 'the file-effect policy of the calling session.' }],
         returns: 'the read scope, or `undefined` for unconfined reads.',
       },
@@ -6829,6 +6835,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'HookRegistration',
     declaration: 'export interface HookRegistration {\n    catch(handler: AnyHook): void;\n}',
+  },
+  {
+    name: 'HostBoundExecution',
+    declaration: 'export interface HostBoundExecution {\n    readonly runtimePaths: readonly string[];\n}',
   },
   {
     name: 'HostConnectionFetch',

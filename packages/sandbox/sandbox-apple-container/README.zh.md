@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可在搭载 Apple 芯片、运行 Apple `container` CLI 1.5.0 或更高版本的 macOS 上，将 bash、终端和 PTC 命令限制在 [Apple `container`](https://github.com/apple/container) Linux 虚拟机中。虚拟机只挂载会话工作区，模型文件工具也受相同读取范围限制；`.env` 文件会被遮蔽，类似凭据的环境变量不会传入客户机，`.git` 保持只读。其他主机和通过 `/sandbox local` 切换的会话使用继承的本地沙箱链。
+使用本包可在搭载 Apple 芯片、运行 Apple `container` CLI 1.5.0 或更高版本的 macOS 上，将 bash 和终端命令限制在 [Apple `container`](https://github.com/apple/container) Linux 虚拟机中。虚拟机只挂载会话工作区，模型文件工具也受相同读取范围限制；`.env` 文件会被遮蔽，类似凭据的环境变量不会传入客户机，`.git` 保持只读。宿主机绑定进程（例如运行工作流的 Node 代码执行 worker）留在宿主机上，在 Seatbelt 下受与之对应的读取围栏限制。其他主机和通过 `/sandbox local` 切换的会话使用继承的本地沙箱链。
 
 ## 目录
 
@@ -55,6 +55,7 @@ kind: "package-reference"
 | `protectedPaths` | `['.git']` | 在 `workspace-write` 下以只读方式挂载的工作区相对目录 |
 | `hiddenFiles` | `.env`、`.env.*`、`.envrc`、私钥与证书文件名、`.npmrc`、`.pypirc`、`.netrc`、`.git-credentials` | 在客户机中被遮蔽、并被文件工具拒绝的文件名通配模式 |
 | `hiddenFilesMaxDepth`、`hiddenFilesSkipDirs` | `8`、`['node_modules', '.git']` | 容器启动时查找待遮蔽文件的工作区扫描范围 |
+| `hostBoundUnreadableRoots` | `['/Users', '/Volumes']` | 容器会话的宿主机绑定进程不能读取其文件内容的宿主机绝对目录；读取范围、可写根目录以及进程的运行时文件除外 |
 
 `@deepseek-ai/dsh-sandbox-local` 的字段同样适用于 `local` 后端。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-sandbox-apple-container)是每个字段及其 JSDoc 的完整来源。
 
@@ -75,9 +76,13 @@ kind: "package-reference"
 
 `danger-full-access` 绕过 `confine`，因此在任一后端下都在宿主机上运行。从容器会话升权到 `danger-full-access` 时，审批提示会补充说明该命令将直接在 Mac 上运行，而不是在容器内。会话运行在此后端时，Auto 权限不会写入它：而是写入 `workspace-write`，并由 reviewer 而不是提示批准离开容器的一次性提权（[Auto review](../../experimental/auto-review/README.zh.md)）。在 `local` 后端上，Auto 仍写入 `danger-full-access`。
 
+### 宿主机绑定进程
+
+运行工作流的 Node 代码执行 worker 会启动宿主机的 Node 可执行文件及其 bootstrap，并通过继承的控制描述符与宿主机通信，因此无法在客户机中运行。它的 `confineHostBound` 调用会在宿主机上用继承的 Seatbelt 链隔离它：沿用会话的写入规则，再加一道读取围栏。`hostBoundUnreadableRoots` 下的文件内容保持不可读，但工作区、只读挂载、策略的可写根目录以及进程声明的运行时文件除外。匹配 `hiddenFiles` 的文件在任何位置都不可读。这些根目录之外的宿主机路径，例如 `/etc`、`/opt` 和临时区域，仍然可读，这一点与客户机不同。该进程启动的工作保持各自的隔离：工作流子智能体的命令在容器中运行。
+
 ### 失败与恢复
 
-CLI 缺失、已停止且无法启动的 API 服务器，或 `container run` 失败，都会以 `SANDBOX_UNAVAILABLE` 拒绝受限调用，消息中会提到 `/sandbox local`。`read-only` 下被拒绝的写入报告 `Read-only file system`，工具层会为此提供标准的一次性提权。无效的 `envDenylist`、`readOnlyMounts`、`protectedPaths` 或 `cpus` 值在加载时失败。
+CLI 缺失、已停止且无法启动的 API 服务器，或 `container run` 失败，都会以 `SANDBOX_UNAVAILABLE` 拒绝受限调用，消息中会提到 `/sandbox local`。`read-only` 下被拒绝的写入报告 `Read-only file system`，工具层会为此提供标准的一次性提权。配置的 `runnerCommand` 取代 Seatbelt 链时，容器会话的宿主机绑定调用以 `SANDBOX_UNSUPPORTED_POLICY` 失败，因为只有 Seatbelt 能表达读取围栏。无效的 `envDenylist`、`readOnlyMounts`、`protectedPaths`、`hostBoundUnreadableRoots` 或 `cpus` 值在加载时失败。
 
 -----
 
@@ -89,11 +94,11 @@ CLI 缺失、已停止且无法启动的 API 服务器，或 `container run` 失
 
 ### 容器
 
-提供方为每个规范化的工作区根目录与受限模式各持有一个容器，由该工作区与模式下的所有会话和子智能体共享。容器以 `container run --detach --init --rm` 启动，带有所属进程 id 的标签，使用 `--mount type=bind,…` 绑定挂载（不使用 `-v src:dst:ro` 形式，因为 `container` 1.5.0 会错误解析它），并以 `sleep infinity` 空转。每个容器还挂载一个私有的宿主机运行目录 `<os tmpdir>/dsh-container-run/<container name>`，在所有受限模式下都以可写方式挂载到 `/run/dsh`。缓存的容器每 `recheckMs` 至多以一次 `container inspect` 重新检查，在容器消失或其运行目录被删除时重新启动；销毁时删除所有自有容器及其运行目录，加载时删除所属进程已退出的容器与运行目录。当默认后端为 `container` 且部署默认模式为受限模式时，默认模式的容器会在加载时于后台启动。
+提供方为每个规范化的工作区根目录与受限模式各持有一个容器，由该工作区与模式下的所有会话和子智能体共享。容器以 `container run --detach --init --rm` 启动，带有所属进程 id 的标签，使用 `--mount type=bind,…` 绑定挂载，1.5.0 与 1.6.1 都能正确解析这种形式，而 1.5.0 会错误解析 `-v src:dst:ro`；容器以 `sleep infinity` 空转。每个容器还挂载一个私有的宿主机运行目录 `<os tmpdir>/dsh-container-run/<container name>`，在所有受限模式下都以可写方式挂载到 `/run/dsh`。缓存的容器每 `recheckMs` 至多以一次 `container inspect` 重新检查，在容器消失或其运行目录被删除时重新启动；销毁时删除所有自有容器及其运行目录，加载时删除所属进程已退出的容器与运行目录。当默认后端为 `container` 且部署默认模式为受限模式时，默认模式的容器会在加载时于后台启动。
 
 ### 执行 shim
 
-`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`。shim 以调用方的工作目录与环境在宿主机上运行，将过滤后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 以 `container exec -i [-t] -w <cwd>` 运行 argv。argv 启动前，客户机包装脚本将其进程组 id 写入 `/run/dsh/<token>.pid`；写入失败时 argv 不会运行。由于 `container exec` 不转发信号，shim 自行向该进程组发送信号；被转发的信号以 `128 + n` 退出。该 pid 文件同时充当启动哨兵：`container exec` 退出后，shim 从宿主机运行目录中删除它，文件缺失即表示运行时失败（以 `dsh-container-exec: …` 报告、退出码 125，并由运行器失败规则分类），而非已运行但失败的命令。因此每条命令只需一次 `container exec`。构建后的 `lib/exec-shim.js` 只依赖 Node 内置模块，可在 npm 安装的 CLI 中以纯 Node 运行；源码检出则通过 tsx 启动 `src/exec-shim.ts`。
+`confine` 返回 `[node, exec-shim.js, <executable>, <container>, <run dir>, <denylist>, '--', ...argv]`。shim 以调用方的工作目录与环境在宿主机上运行，将过滤后的环境写入私有的 `--env-file`，并在客户机中通过 `setsid -w` 以 `container exec -i [-t] -w <cwd>` 运行 argv。argv 启动前，客户机包装脚本将其进程组 id 写入 `/run/dsh/<token>.pid`；写入失败时 argv 不会运行。`container exec` 从不向该进程组发送信号：1.5.0 不转发任何信号，1.6.1 只把信号转发给它启动的 `setsid` 进程，该进程退出会让 `container exec` 结束，而进程组仍在运行。因此 shim 通过再一次 `container exec` 自行向进程组发送信号，被转发的信号以 `128 + n` 退出。该 pid 文件同时充当启动哨兵：`container exec` 退出且所有进程组信号都执行完毕后，shim 从宿主机运行目录中删除它，文件缺失即表示运行时失败（以 `dsh-container-exec: …` 报告、退出码 125，并由运行器失败规则分类），而非已运行但失败的命令。因此每条命令只需一次 `container exec`。构建后的 `lib/exec-shim.js` 只依赖 Node 内置模块，可在 npm 安装的 CLI 中以纯 Node 运行；源码检出则通过 tsx 启动 `src/exec-shim.ts`。
 
 ### 源码地图
 
@@ -148,7 +153,8 @@ Commands confined by the DSH file sandbox run inside a Linux container from imag
 <a id="known-limitations-and-deferred-work"></a>
 
 - **遮蔽只覆盖容器启动时已存在的文件** — `container` 只遮蔽创建时存在的路径，因此之后创建的密钥文件在容器重启前可被运行中容器内的命令读取；文件工具会立即拒绝它。
-- **不支持单文件挂载** — `container` 1.5.0 只能绑定目录，因此保护以目录（`.git`）为单位，而非文件（`.git/config`）。
+- **不支持单文件挂载** — `container` 1.5.0 与 1.6.1 只能绑定目录，因此保护以目录（`.git`）为单位，而非文件（`.git/config`）。
+- **宿主机绑定进程能读取的宿主机范围大于命令** — 在 `hostBoundUnreadableRoots` 之外，宿主机绑定进程可以读取客户机从未挂载的系统路径和临时路径，文件元数据在任何位置都保持可读。
 - **子智能体从默认后端开始** — 子会话不继承父会话的 `/sandbox` 选择。
 - **终端尺寸变化不会传到客户机** — `container exec` 不转发 `SIGWINCH`。
 - **宿主机与客户机工具链不同** — 工作区中的 Darwin 原生二进制无法在 Linux 客户机中运行；此类项目请使用 `/sandbox local`。
@@ -161,6 +167,6 @@ Commands confined by the DSH file sandbox run inside a Linux container from imag
 
 未发布 `./invariant` 配套模块：`sandboxBackend` 投影会用其二值状态 schema 校验每个折叠的 `sandbox/backend` 值，因此伪造的值会在回放时失败，无需额外的独立观察。
 
-升级 `container` 时，请重新评估 `-v` 解析、信号转发与单文件挂载这几项绕行措施；其版本号是产品版本，而非语义化版本。
+升级 `container` 时，请重新评估挂载语法、信号转发与单文件挂载这几项绕行措施；其版本号是产品版本，而非语义化版本。在 1.6.1 上，`-v src:dst:ro` 已能正确解析，文件挂载源仍会被拒绝，`container exec` 会把信号转发给它启动的进程。
 
 </details>

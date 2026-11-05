@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { PROGRAM_PROTOCOL_VERSION } from '../src/protocol.ts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
@@ -65,6 +67,16 @@ describe('Node runtime host failures', () => {
     await h.ctx.fiber.dispose()
     expect(() => h.runtime.resolve(request)).toThrow('resolve after disposal')
     await expect(h.runtime.run(spec)).rejects.toThrow('run after disposal')
+  })
+
+  it('confines the worker as a host-bound execution of its executable and bootstrap', async () => {
+    const h = await setup({}, 'read-only')
+    const confine = vi.spyOn(h.ctx.sandbox, 'confineHostBound').mockImplementation(async argv => confinement([...argv]))
+    h.onBoot(() => { h.complete({ value: encodePtcJsonWire(1) }) })
+    expect((await h.start()).value).toBe(1)
+    const [argv, policy, execution] = confine.mock.calls[0] ?? []
+    expect(policy?.mode).toBe('read-only')
+    expect(execution?.runtimePaths).toEqual([argv?.[0], resolve(fileURLToPath(new URL('../../../../', import.meta.url)))])
   })
 
   it('fails a required unavailable sandbox before spawning', async () => {
