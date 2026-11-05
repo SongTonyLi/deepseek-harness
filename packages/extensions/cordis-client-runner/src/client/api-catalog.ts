@@ -952,10 +952,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionReferenceSourceMap {\n    controllerOperation: unknown;\n    gateway: unknown;\n}',
   },
   {
-    name: 'SessionRequestId',
-    declaration: 'export type SessionRequestId = Branded<\'session-request-id\'>;',
-  },
-  {
     name: 'SessionRetainInfo',
     declaration: 'export interface SessionRetainInfo {\n    readonly referenceCount: number;\n    readonly retainedBy: Readonly<Partial<Record<SessionReferenceSource, number>>>;\n}',
   },

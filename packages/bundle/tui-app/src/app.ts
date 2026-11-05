@@ -45,7 +45,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AssistantStreamFrame, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { formatFileMention } from '@deepseek-ai/dsh-file-reference'
-import { ReasoningEffortId, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type ToolResultMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, assembleAssistantStream, boundContextSummary, createUserMessage, type LlmModelReasoningInfo, type MessageId, type StreamChunk, type TokenUsage, type ToolCallId, type ToolResultMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -5543,10 +5543,10 @@ export class TuiApp {
     for (const question of questions) {
       const prompt = new QuestionPrompt(this.deps.palette, question)
       const withdraw = prompt.withdraw.bind(prompt)
-      let withdrawn = false
-      prompt.withdraw = () => { withdrawn = true; withdraw() }
+      const withdrawal = { requested: false }
+      prompt.withdraw = () => { withdrawal.requested = true; withdraw() }
       const answer = await this.showModal(prompt, signal)
-      if (withdrawn || signal?.aborted === true) {
+      if (withdrawal.requested || signal?.aborted === true) {
         throw new UserQuestionError('ask_user_question was aborted before the user answered', 'ASK_ABORTED')
       }
       if (answer === null) throw new UserQuestionError('the question was dismissed', 'ASK_CANCELLED')
@@ -6141,6 +6141,22 @@ export class TuiApp {
       case 'developer/message': {
         const view = developerContextView(event.data.message.content)
         if (view !== undefined) this.addContext(view.title, view.parts, event.data.turn)
+        break
+      }
+      case 'assistant/attempt': {
+        const content = assembleAssistantStream(event.data.stream).interruptedBlocks()
+        if (content.length > 0) {
+          const text = content.filter(block => block.type === 'text').map(block => block.text).join('')
+          const reasoning = content.filter(block => block.type === 'reasoning').map(block => block.text).join('')
+          this.streamingBlock().commit(text, reasoning, false)
+        } else if (this.streaming !== undefined) {
+          this.chat.removeChild(this.streaming)
+        }
+        this.streaming = undefined
+        this.endFade()
+        this.clearLiveUsage()
+        this.dropUnconfirmedTools()
+        this.updateSpinTicker()
         break
       }
       case 'assistant/message': {

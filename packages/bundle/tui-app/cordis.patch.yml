@@ -27,11 +27,6 @@
     toolName: subagent_fork
     modelSelection: true
 
-- id: tools
-  config:
-    # Keep the same temporary process-wide PTC mode opt-in as the Web surface.
-    mode: !!js process.env.DSH_TOOLS_MODE
-
 # The terminal confines commands with the Apple container backend below
 # instead of the base local sandbox row.
 - id: sandbox

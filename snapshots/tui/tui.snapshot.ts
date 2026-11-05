@@ -112,7 +112,7 @@ describe('TUI recorded-session replay', () => {
         { marker: 'external task: no local session', keys: '\u001b' },
         // Leaving the detail reopens the list on the row just read. That frame ends in the footer legend,
         // so the first legend marker closes the list and the second waits for the editor to return.
-        { marker: 'external snapshot task ✓', keys: '' },
+        { marker: 'Subagent sessions', keys: '' },
         { marker: 'Shift+↑ read · Shift+↓ status', keys: '\u001b' },
         { marker: 'Shift+↑ read · Shift+↓ status', keys: '' },
       ], cliPatch, { DSH_TUI_SNAPSHOT_SESSION: join(externalRoot, name) })

@@ -1,0 +1,10 @@
+version: 1
+scenario: attempt-replay
+profile: tui
+composition: tui-attempt-replay
+recording: authored
+header:
+  class: tui-attempt-replay
+  pin: true
+platform: posix
+permission: danger-full-access

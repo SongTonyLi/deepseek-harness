@@ -18,8 +18,8 @@
   en: 192bbbb187278f91
   zh: 1f7e5632c15bdcf7
 /deepseek-ai-dsh-tui-app/use-this-package/starting-and-resuming:
-  en: 312d9a3ea1cbb673
-  zh: 937ff76d6bdcca22
+  en: d0ede2f3fc62912b
+  zh: d177b8f16b58828f
 /deepseek-ai-dsh-tui-app/use-this-package/the-screen:
   en: 8798852e763b4558
   zh: 6bb6768ee7186709
@@ -42,8 +42,8 @@
   en: 1354f4f002a282eb
   zh: 98ce0fa0ef7e3156
 /deepseek-ai-dsh-tui-app/use-this-package/configuration:
-  en: a49396b53b347ac4
-  zh: 6ee8443d318b2bf6
+  en: 5476d8ed57b808c6
+  zh: ccd70bd708b38629
 /deepseek-ai-dsh-tui-app/understand-the-implementation:
   en: f124d406565fef39
   zh: 90344b5eec319cad
@@ -51,11 +51,11 @@
   en: e6c3923481cbf9e6
   zh: 0bca6c917dd26cbc
 /deepseek-ai-dsh-tui-app/understand-the-implementation/rendering-model:
-  en: ee593519f59c7a36
-  zh: 351fa58a43b483ff
+  en: ecbcecfd325fddfc
+  zh: ba726f23145a86d7
 /deepseek-ai-dsh-tui-app/understand-the-implementation/patch-surface-over-base:
-  en: 142f04bf29e981dd
-  zh: a1689297b06c9ca6
+  en: 5fcf3240081b9540
+  zh: 6fafe10c4adf654f
 /deepseek-ai-dsh-tui-app/understand-the-implementation/source-map:
   en: cb2a9fb8623dac76
   zh: 1cd89366da059886

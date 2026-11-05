@@ -96,7 +96,7 @@ it('refuses pending next-turn work and active maintenance', async () => {
   const maintenance = agent.runMaintenance(() => release.promise)
   try {
     await expect(ctx.sessionContinuation.retry(agent, source('busy'))).rejects.toMatchObject({
-      name: 'SessionContinuationBusyError', code: 'AGENT_BUSY', cause: expect.any(Error),
+      name: 'SessionContinuationBusyError', code: 'AGENT_BUSY', cause: expect.any(Error) as Error,
     })
     await expect(ctx.sessionContinuation.retry(agent, source('busy-again'))).rejects.toBeInstanceOf(SessionContinuationBusyError)
   } finally {

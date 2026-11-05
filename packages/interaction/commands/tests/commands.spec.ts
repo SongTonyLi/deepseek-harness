@@ -498,7 +498,12 @@ describe('command attachments', () => {
         maxImageBytes: 1024, maxImagesPerMessage: 2, maxMessageImageBytes: 1024,
         maxImagePixels: 1_000_000, maxImageDimension: 2000, mediaTypes: ['image/png'],
       },
-      admitPromptContent: AttachmentStore.prototype.admitPromptContent,
+      admitPromptContent(content: readonly unknown[]) {
+        return (AttachmentStore.prototype.admitPromptContent as (
+          this: unknown,
+          content: readonly unknown[],
+        ) => Promise<unknown[]>).call(this, content)
+      },
       validateImage: vi.fn(() => Promise.resolve()),
       saveImage: vi.fn((input: { mediaType: string; name?: string }) => {
         saved += 1
