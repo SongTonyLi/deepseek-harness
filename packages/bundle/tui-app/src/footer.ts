@@ -14,6 +14,7 @@
 
 import { truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent'
+import { effortLabel } from './effort.ts'
 import { fitLegend } from './frame.ts'
 import { paintKeys } from './key-chips.ts'
 import { HINTS, entryHints } from './keys.ts'
@@ -256,7 +257,7 @@ function effortSegment(effort: ModelSelection['reasoningEffort']): FooterSegment
   const unset = effort === undefined
   return {
     id: 'effort',
-    label: unset ? 'effort default' : `effort ${effort}`,
+    label: effortLabel(effort),
     detail: printed([
       unset ? 'reasoning effort: the model\'s own default' : `reasoning effort: ${effort}`,
       'Shift+Tab or /effort opens the effort list',

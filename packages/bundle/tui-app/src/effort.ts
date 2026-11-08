@@ -1,6 +1,7 @@
 /**
  * Reasoning-effort rows and labels shared by `/effort`, the effort step of
- * `/model`, and the Shift+Tab picker.
+ * `/model`, and the Shift+Tab picker, plus the `effort <id>` label the status
+ * bar, the `/model` row in force, and the default-model save notice draw.
  * @module @deepseek-ai/dsh-tui-app/effort
  */
 
@@ -15,6 +16,16 @@ const PROVIDER_DEFAULT_LABEL = 'Provider default'
 
 /** The `/effort` argument that restores the provider default. */
 const DEFAULT_ARGUMENT = 'default'
+
+/**
+ * The short effort label the status bar, the `/model` row in force, and the
+ * default-model save notice draw.
+ * @param effort - the selection's reasoning effort, or undefined when it leaves reasoning effort to the model.
+ * @returns `effort <id>`, or `effort default` for the model's own default.
+ */
+export function effortLabel(effort: ReasoningEffortId | undefined): string {
+  return effort === undefined ? 'effort default' : `effort ${effort}`
+}
 
 /**
  * The display name of one effort.
