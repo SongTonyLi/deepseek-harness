@@ -169,7 +169,7 @@ import { editorCompletion, type CompletableCommand, type ReferenceItem } from '.
 import { developerContextView, injectedContextView, isEmptyRetry, systemPromptView } from './context.ts'
 import { BarCursorEditor, SET_BLINKING_BAR_CURSOR, SET_TERMINAL_DEFAULT_CURSOR } from './editor.ts'
 import { parseUserShellLine, userShellContextText, userShellTranscriptRows } from './shell-line.ts'
-import { PROVIDER_DEFAULT, effortHint, effortItems, matchEffort } from './effort.ts'
+import { PROVIDER_DEFAULT, effortHint, effortItems, effortLabel, matchEffort } from './effort.ts'
 import { SEARCH_ROUTE_ITEMS, applySearchRoute, currentSearchRoute, type SearchRoute } from './search-route.ts'
 import { matchPermission, permissionHint, permissionItems } from './permission.ts'
 import { SandboxPrompt } from './sandbox.ts'
@@ -305,13 +305,38 @@ const ATTACHMENT_FLIGHT_WAIT = 'wait for the attachment submission to finish (Es
 const MODEL_PICKER_HINT = 'Ctrl+S saves the highlighted model as the default for the next launch'
 
 /**
+ * The model picker row value of one selection.
+ * @param selection - the provider and model; any effort is not part of the value.
+ * @returns `provider/model`.
+ */
+function modelValue(selection: ModelSelection): string {
+  return `${selection.provider}/${selection.model}`
+}
+
+/**
  * Read a picker row value back into a selection.
- * @param value - `provider/model`, as {@link TuiApp.modelItems} writes it.
+ * @param value - `provider/model`, as {@link modelValue} writes it.
  * @returns the provider and model.
  */
 function splitModelValue(value: string): ModelSelection {
   const slash = value.indexOf('/')
   return { provider: value.slice(0, slash), model: value.slice(slash + 1) }
+}
+
+/**
+ * Name the effort in force on the model picker row in force, ahead of the
+ * model's own description.
+ * @param items - the model picker rows.
+ * @param current - the selection in force.
+ * @returns the rows, the one in force naming its effort.
+ */
+function markEffortInForce(items: readonly PickItem[], current: ModelSelection): PickItem[] {
+  const value = modelValue(current)
+  return items.map((item) => {
+    if (item.value !== value) return item
+    const effort = effortLabel(current.reasoningEffort)
+    return { ...item, description: item.description === undefined ? effort : `${effort} · ${item.description}` }
+  })
 }
 
 /** What the banner and header call an open `/btw` side agent. */
@@ -4952,12 +4977,14 @@ export class TuiApp {
         return
       }
       const current = this.currentSelection()
-      const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Model for the next request', items, {
+      const picked = await this.showModal(new PickPrompt(this.deps.palette, 'Model for the next request', markEffortInForce(items, current), {
         body: [MODEL_PICKER_HINT],
-        current: `${current.provider}/${current.model}`,
+        current: modelValue(current),
         // The save leaves the picker open: the highlighted model becomes the
         // next launch's default whether or not Enter then applies it here.
-        onSave: (item) => { void this.saveDefaultModel(splitModelValue(item.value)) },
+        // The row in force saves its effort too, as `/model save` does; no
+        // effort has been chosen for any other row yet.
+        onSave: (item) => { void this.saveDefaultModel(item.value === modelValue(current) ? current : splitModelValue(item.value)) },
       }))
       if (picked === undefined) return
       next = splitModelValue(picked.value)
@@ -4972,8 +4999,9 @@ export class TuiApp {
 
   /**
    * Record `model` as the default every later launch starts from. The
-   * reasoning effort rides along when the selection carries one.
-   * @param model - the provider and model to save.
+   * reasoning effort rides along when the selection carries one, and the
+   * notice names the saved effort, `effort default` when there is none.
+   * @param model - the provider, model, and optional effort to save.
    */
   private async saveDefaultModel(model: ModelSelection): Promise<void> {
     const defaults = this.deps.ctx.get('agentDefaultModel')
@@ -4988,7 +5016,7 @@ export class TuiApp {
       this.notice(`default model not saved: ${describeFailure(error)}`, 'error')
       return
     }
-    this.notice(`default model saved: ${model.provider}/${model.model}`, 'success')
+    this.notice(`default model saved: ${modelValue(model)} · ${effortLabel(model.reasoningEffort)}`, 'success')
   }
 
   /**
@@ -5300,9 +5328,10 @@ export class TuiApp {
         continue
       }
       for (const model of models) {
+        const value = modelValue({ provider: provider.id, model: model.id })
         items.push({
-          value: `${provider.id}/${model.id}`,
-          label: `${provider.id}/${model.id}`,
+          value,
+          label: value,
           ...model.description === undefined ? {} : { description: model.description },
         })
       }

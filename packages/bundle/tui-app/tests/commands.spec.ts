@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { AuthorizationDeclinedError, type AuthorizationNotice, type AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { ReasoningEffortId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -981,6 +982,67 @@ describe('references and model', () => {
     test.terminal.type(KEY.escape)
     test.terminal.type(KEY.escape)
     await test.settle()
+  })
+
+  it('saves the effort in force with the model in force on Ctrl+S, and the next launch names that effort', async () => {
+    const saved: ModelSelection[] = []
+    const provideLlm = (ctx: Context): void => {
+      ctx.provide('llm', {
+        listProviders: () => [{ id: 'p', name: 'P' }],
+        listModels: () => Promise.resolve([
+          { provider: 'p', id: 'think', name: 'Think', description: 'reasons' },
+          { provider: 'p', id: 'two', name: 'Two' },
+        ]),
+        resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }),
+      } as never)
+    }
+    const test = await bench({
+      saveDefaultModel: (value) => { saved.push(value); return Promise.resolve() },
+      before: provideLlm,
+    })
+    typeLine(test.terminal, '/model p/think')
+    await test.settle()
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.enter)
+    await test.settle()
+    expect(test.agent.model.current()).toEqual({ provider: 'p', model: 'think', reasoningEffort: 'high' })
+    // The row in force names its effort, and Ctrl+S on it saves that effort too.
+    typeLine(test.terminal, '/model')
+    await test.settle()
+    expect(test.terminal.text()).toMatch(/p\/think ✓ +effort high · reasons/u)
+    test.terminal.type(KEY.ctrlS)
+    await test.settle()
+    expect(saved).toEqual([{ provider: 'p', model: 'think', reasoningEffort: 'high' }])
+    expect(test.terminal.text()).toContain('default model saved: p/think · effort high')
+    // Any other row has no effort chosen yet, and its notice says so.
+    test.terminal.type(KEY.down)
+    test.terminal.type(KEY.ctrlS)
+    await test.settle()
+    expect(saved).toEqual([
+      { provider: 'p', model: 'think', reasoningEffort: 'high' },
+      { provider: 'p', model: 'two' },
+    ])
+    expect(test.terminal.text()).toContain('default model saved: p/two · effort default')
+    test.terminal.type(KEY.escape)
+    await test.settle()
+
+    // The next launch starts on the saved selection: the status bar, the
+    // model list, and the effort step all name the saved effort.
+    const [launch] = saved
+    if (launch === undefined) throw new Error('Ctrl+S saved no selection')
+    const relaunched = await bench({ selected: launch, before: provideLlm })
+    await relaunched.settle()
+    expect(relaunched.terminal.text()).toContain('p/think · effort high')
+    typeLine(relaunched.terminal, '/model')
+    await relaunched.settle()
+    expect(relaunched.terminal.text()).toMatch(/p\/think ✓ +effort high · reasons/u)
+    relaunched.terminal.type(KEY.enter)
+    await relaunched.settle()
+    expect(relaunched.terminal.text()).toContain('Reasoning effort · p/think')
+    expect(relaunched.terminal.text()).toContain('High ✓')
+    relaunched.terminal.type(KEY.escape)
+    await relaunched.settle()
   })
 
   it('opens the same reasoning-effort picker on Shift+Tab as /effort', async () => {

@@ -178,7 +178,7 @@ follow-ups 面板持有键盘时：
 | 命令 | 效果 |
 |---|---|
 | `/help` | 列出命令，以及每个焦点状态所应答的按键；输入为空时按 `?` 效果相同 |
-| `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认，在模型列表中按 `Ctrl+S` 则把高亮的模型存为下次启动的默认而不关闭列表 |
+| `/model` | 为下一次请求选择模型（输入即可过滤行），若模型声明多于一种推理强度则接着选择强度；当前生效的行标出其推理强度，选择把推理强度交给模型时标为 `effort default`。`/model <provider>/<model>` 直接选择，`/model save` 把当前选择存为默认，在模型列表中按 `Ctrl+S` 则把高亮的模型存为下次启动的默认而不关闭列表：当前生效的行连同其推理强度一起保存，其他行不带推理强度保存。每条保存通知都写明所存的推理强度 |
 | `/effort [id]` | 不带参数时为下一次请求打开当前模型的推理强度选择器，与编辑器中的 `Shift+Tab` 打开的是同一个；id 直接选择，`/effort default` 恢复提供方默认值 |
 | `/permission [preset]` | 不带参数时打开权限预设选择器；preset 直接选择。随附 profile 包含实验性 Auto review；`/permission auto` 为当前会话选中它，在 Apple container 后端上它保留容器（`workspace-write`），而不是切换到完全访问 |
 | `/sandbox [container\|local]` | 已组合 Apple container 提供方时，打开带有实时访问预览的后端选择器；带参数时通过共享命令直接切换。选择器标记当前后端，隐藏不可用的容器选项并说明原因，显示 workspace、读写限制，以及 `danger-full-access` 绕过任一后端时的警告。`Enter` 应用，`Esc` 保留当前后端。文件策略与审批设置不变；使用 `/permission` 控制它们，但仍处于完全访问的 Auto 会话除外：选择器把容器预览为受限，因为 Auto 会从下一次调用起把自己限制在容器内 |
@@ -318,7 +318,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/app.ts`](src/app.ts) | 终端应用：布局、按键路由、命令、会话绑定、接缝、日志与流的折叠、编辑器上方的 activity board、停止与退出的装填、退出所停止工作的清点、它挂载的临时提示行、阅读器所依托的终端交接，以及提交时解析的 `!` / `!!` |
 | [`src/keys.ts`](src/keys.ts) | 按键模型：各焦点区域、一次按键在每个区域中的含义、它们逐级收缩的按键提示、进入用的按键、`/help` 的各行，以及交接窗口 |
 | [`src/sessions.ts`](src/sessions.ts) | `/resume` 与 `/sessions` 共用的持久化会话列表及选择器行；标题来自实时或缓存的 title 投影 |
-| [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行 |
+| [`src/effort.ts`](src/effort.ts) | `/model`、`/effort` 与编辑器 `Shift+Tab` 共用的推理强度名称及选择器行，以及状态栏、`/model` 中当前生效的行与默认模型保存通知所绘制的 `effort <id>` 标签 |
 | [`src/permission.ts`](src/permission.ts) | `/permission` 的权限预设名称及选择器行 |
 | [`src/search-route.ts`](src/search-route.ts) | `/search` 背后的网页搜索路由及 `web-search-deepseek` 设置写入 |
 | [`src/attach.ts`](src/attach.ts) | `/attach`：本地文件经附件存储成为图片或文件块 |

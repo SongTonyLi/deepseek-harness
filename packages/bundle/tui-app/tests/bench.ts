@@ -476,7 +476,7 @@ export async function bench(options: {
    * default-model plugin, whose own write goes through a Loader entry no
    * hand-built Context has.
    */
-  saveDefaultModel?: (selection: { provider: string; model: string }) => Promise<void>
+  saveDefaultModel?: (selection: ModelSelection) => Promise<void>
   before?(ctx: Context): Promise<void> | void
 } = {}): Promise<Bench> {
   const ctx = new Context()
