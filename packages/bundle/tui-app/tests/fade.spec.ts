@@ -1,7 +1,7 @@
 /** The streaming fade: the ramp, its three encodings, the wall-clock tail state, the block clocks, and the recolor transforms. */
 
 import { describe, expect, it } from 'vitest'
-import type { RgbColor } from '@earendil-works/pi-tui'
+import { stripTerminalSequences, visibleWidth, type RgbColor } from '@earendil-works/pi-tui'
 import { AssistantBlock } from '../src/blocks.ts'
 import {
   BlockFadeClock,
@@ -13,6 +13,7 @@ import {
   fadeInSlice,
   fadeSgr,
   mixFadeColor,
+  nearestAnsi256,
   recolorLines,
   recolorTail,
   resolveFadeCapability,
@@ -79,8 +80,8 @@ function clock(): { now: () => number; advance: (ms: number) => void } {
 }
 
 describe('defaults', () => {
-  it('ships twenty-four brightness levels, each lasting one 16ms frame', () => {
-    expect(FADE_STEPS).toBe(24)
+  it('ships twelve brightness levels, each lasting one 16ms frame', () => {
+    expect(FADE_STEPS).toBe(12)
     expect(FADE_TICK_MS).toBe(16)
   })
 })
@@ -152,14 +153,14 @@ describe('mixFadeColor', () => {
 
 describe('fadeSgr', () => {
   it('writes 24-bit foreground bytes per ramp level', () => {
-    expect(sgrAt(0)).toBe('\u001b[38;2;10;2;1m')
-    expect(sgrAt(3)).toBe('\u001b[38;2;58;25;8m')
+    expect(sgrAt(0)).toBe('\u001b[38;2;28;8;2m')
+    expect(sgrAt(3)).toBe('\u001b[38;2;108;51;22m')
     expect(sgrAt(FADE_STEPS - 1)).toBe('\u001b[38;2;200;100;50m')
   })
 
   it('draws a fractional age between its two neighbouring levels in truecolor', () => {
-    expect(fadeSgr(COLOR, 0.5)).toBe('\u001b[38;2;21;5;2m')
-    expect(fadeSgr(COLOR, 3.5)).toBe('\u001b[38;2;65;29;10m')
+    expect(fadeSgr(COLOR, 0.5)).toBe('\u001b[38;2;46;18;5m')
+    expect(fadeSgr(COLOR, 3.5)).toBe('\u001b[38;2;119;57;26m')
     expect(fadeSgr(COLOR, 4)).toBe(sgrAt(4))
   })
 
@@ -668,9 +669,10 @@ describe('recolorTail', () => {
   })
 
   it('steps over the escape sequences the markdown renderer already emitted', () => {
+    // Bold ended before the run, so the run restores nothing of it.
     const rendered = '\u001b[1mbold\u001b[22m tail'
     expect(recolorTail([rendered], [{ text: 'tail', age: 1 }], COLOR)).toEqual([
-      `\u001b[1mbold\u001b[22m ${sgrAt(1)}\u001b[1m\u001b[22mtail\u001b[39m`,
+      `\u001b[1mbold\u001b[22m ${sgrAt(1)}tail\u001b[39m`,
     ])
   })
 
@@ -744,6 +746,113 @@ describe('recolorTail', () => {
   })
 })
 
+/**
+ * A 24-bit foreground, as the highlighter and the mix both write one.
+ * @param color - the color.
+ * @returns `ESC[38;2;R;G;Bm`.
+ */
+function rgbSgr(color: RgbColor): string {
+  return `\u001b[38;2;${String(color.r)};${String(color.g)};${String(color.b)}m`
+}
+
+/** The default foreground, closing a syntax token. */
+const FG_OFF = '\u001b[39m'
+
+/** Syntax colors of a highlighted code line. */
+const KEYWORD: RgbColor = { r: 255, g: 123, b: 114 }
+const NAME: RgbColor = { r: 210, g: 168, b: 255 }
+const PLAIN: RgbColor = { r: 230, g: 237, b: 243 }
+const NUMBER: RgbColor = { r: 121, g: 192, b: 255 }
+
+/**
+ * The fade color a syntax token of one age draws in under {@link COLOR}.
+ * @param color - the token's own color.
+ * @param age - the chunk's age.
+ * @returns the 24-bit sequence of the mix from the darkest ramp level toward the token's color.
+ */
+function tokenSgr(color: RgbColor, age: number): string {
+  return rgbSgr(mixFadeColor(COLOR.ramp[0] as RgbColor, color, age / (FADE_STEPS - 1)))
+}
+
+describe('recolorTail syntax color', () => {
+  const highlighted = `${rgbSgr(KEYWORD)}const${FG_OFF} ${rgbSgr(NAME)}step${FG_OFF} ${rgbSgr(PLAIN)}=${FG_OFF} ${rgbSgr(NUMBER)}11${FG_OFF}`
+
+  it('fades a token toward its own color and the text between tokens along the gray ramp', () => {
+    const spans = [{ text: 'const ', age: 5 }, { text: 'step = 11', age: 1 }]
+    expect(recolorTail([highlighted], spans, COLOR)).toEqual([
+      `${tokenSgr(KEYWORD, 5)}const${sgrAt(5)} ${tokenSgr(NAME, 1)}step${sgrAt(1)} ${tokenSgr(PLAIN, 1)}=${sgrAt(1)} ${tokenSgr(NUMBER, 1)}11${FG_OFF}\u001b[39m`,
+    ])
+  })
+
+  it('opens a run cut after many colors with one fade color, not the line\'s color history', () => {
+    const painted = recolorTail([highlighted], [{ text: '11', age: 2 }], COLOR)[0] as string
+    expect(painted).toBe(`${highlighted.slice(0, highlighted.lastIndexOf(rgbSgr(NUMBER)))}${tokenSgr(NUMBER, 2)}11${FG_OFF}\u001b[39m`)
+  })
+
+  it('keeps a token\'s own color when its sequence sits exactly at the cut', () => {
+    const line = `${rgbSgr(PLAIN)}x = ${rgbSgr(NAME)}step11${FG_OFF}`
+    expect(recolorTail([line], [{ text: 'step11', age: 2 }], COLOR)).toEqual([
+      `${rgbSgr(PLAIN)}x = ${tokenSgr(NAME, 2)}step11${FG_OFF}\u001b[39m`,
+    ])
+  })
+
+  it('brightens a token from the darkest ramp level to exactly its own color by the last drawn age', () => {
+    const line = `${rgbSgr(NAME)}step${FG_OFF}`
+    const at = (age: number): RgbColor => fadeRgbs(recolorTail([line], [{ text: 'step', age }], COLOR)[0] as string)[0] as RgbColor
+    expect(at(0)).toEqual(COLOR.ramp[0])
+    const luma = [0, 3, 6, 9].map(age => luminance(at(age)))
+    expect(luma).toEqual([...luma].sort((a, b) => a - b))
+    expect(new Set(luma).size).toBe(4)
+    // The mix keeps the token's hue: blue strongest, then red, then green.
+    expect(at(6).b).toBeGreaterThan(at(6).r)
+    expect(at(6).r).toBeGreaterThan(at(6).g)
+    expect(at(FADE_STEPS - 1)).toEqual(NAME)
+  })
+
+  it('keeps fading plain prose that follows a colored span on the same line', () => {
+    const line = `see ${rgbSgr(NAME)}code${FG_OFF} then prose`
+    expect(recolorTail([line], [{ text: 'then ', age: 3 }, { text: 'prose', age: 0 }], COLOR)).toEqual([
+      `see ${rgbSgr(NAME)}code${FG_OFF} ${sgrAt(3)}then ${sgrAt(0)}prose\u001b[39m`,
+    ])
+  })
+
+  it('writes the fade color again after a reset or a combined sequence inside the run, and keeps a hyperlink in place', () => {
+    const link = '\u001b]8;;https://example.com\u0007'
+    const line = `${rgbSgr(NAME)}ab\u001b[0mcd\u001b[1;38;2;1;2;3mef${link}gh`
+    expect(recolorTail([line], [{ text: 'abcdefgh', age: 4 }], COLOR)).toEqual([
+      `${tokenSgr(NAME, 4)}ab\u001b[0m${sgrAt(4)}cd\u001b[1;38;2;1;2;3m${tokenSgr({ r: 1, g: 2, b: 3 }, 4)}ef${link}gh\u001b[39m`,
+    ])
+  })
+
+  it('encodes a token\'s mix as the nearest 256-color index at the age\'s whole level', () => {
+    const gray: FadeStyle = { capability: 'ansi256', ramp: COLOR.ramp }
+    const line = `\u001b[38;5;141mstep${FG_OFF} done`
+    // Index 141 is the color cube's (175, 135, 255).
+    const mixed = mixFadeColor(COLOR.ramp[0] as RgbColor, { r: 175, g: 135, b: 255 }, 3 / (FADE_STEPS - 1))
+    const expected = [`\u001b[38;5;${String(nearestAnsi256(mixed))}mstep${fadeSgr(gray, 3)} done\u001b[39m`]
+    expect(recolorTail([line], [{ text: 'step done', age: 3 }], gray)).toEqual(expected)
+    expect(recolorTail([line], [{ text: 'step done', age: 3.7 }], gray)).toEqual(expected)
+  })
+
+  it('draws a token faint in its own color in the two-level mode, and as rendered without a capability', () => {
+    const line = `${rgbSgr(PLAIN)}x = ${rgbSgr(NAME)}step${FG_OFF}`
+    expect(recolorTail([line], [{ text: 'step', age: 0 }], DIM_STYLE)).toEqual([
+      `${rgbSgr(PLAIN)}x = \u001b[2m${rgbSgr(PLAIN)}${rgbSgr(NAME)}step${FG_OFF}\u001b[22m`,
+    ])
+    expect(recolorTail([line], [{ text: 'step', age: 0 }], { capability: 'none', ramp: COLOR.ramp })).toEqual([line])
+    expect(recolorTail([line], [{ text: 'step', age: 0 }], { capability: 'truecolor', ramp: [] })).toEqual([line])
+  })
+
+  it('keeps every wide character and emoji cluster whole and in its columns', () => {
+    const line = `${rgbSgr(NAME)}中文${FG_OFF} 👍🏽 ok`
+    const spans = [{ text: '中文 ', age: 4 }, { text: '👍🏽 ', age: 2 }, { text: 'ok', age: 0 }]
+    const painted = recolorTail([line], spans, COLOR)[0] as string
+    expect(painted).toBe(`${tokenSgr(NAME, 4)}中文${sgrAt(4)} ${sgrAt(2)}👍🏽 ${sgrAt(0)}ok\u001b[39m`)
+    expect(stripTerminalSequences(painted)).toBe(stripTerminalSequences(line))
+    expect(visibleWidth(painted)).toBe(visibleWidth(line))
+  })
+})
+
 describe('recolorTail float-out', () => {
   it('starts brighter than the dim settle and recedes, then returns the original dim italic bytes', () => {
     const young = recolorTail([DIM_REASONING], [{ text: 'world', age: 0 }], COLOR, 0, 'out')
@@ -775,14 +884,14 @@ describe('recolorTail restore', () => {
   it('ends only the foreground, so an enclosing bold survives the recolored run', () => {
     const rendered = '\u001b[1mbold tail'
     expect(recolorTail([rendered], [{ text: 'tail', age: 0 }], COLOR)).toEqual([
-      `\u001b[1mbold ${sgrAt(0)}\u001b[1mtail\u001b[39m`,
+      `\u001b[1mbold \u001b[1m${sgrAt(0)}tail\u001b[39m`,
     ])
   })
 
   it('keeps the line closing sequences the renderer emitted ahead of the restore', () => {
     const rendered = 'plain \u001b[1mbold\u001b[22m'
     expect(recolorTail([rendered], [{ text: 'bold', age: 0 }], COLOR)).toEqual([
-      `plain ${sgrAt(0)}\u001b[1mbold\u001b[22m\u001b[39m`,
+      `plain \u001b[1m${sgrAt(0)}bold\u001b[22m\u001b[39m`,
     ])
   })
 

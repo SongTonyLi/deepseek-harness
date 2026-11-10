@@ -110,7 +110,7 @@ describe('stream pacing', () => {
     test.stream.chunk({ type: 'reasoning-delta', index: 0, text: 'pondering' })
     await test.settle()
     await frame(test)
-    expect(await test.screen()).toMatch(/[☙✴❇✳※⚜⁂❄] Thinking/)
+    expect(await test.screen()).toMatch(/[☙⊛✠☼※⁜⁂⍟] Thinking/)
     expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
     test.stream.end({ kind: 'abandoned' })
     await test.settle()

@@ -28,10 +28,11 @@
  * built, so the application passes `capability: 'dim'` with an empty ramp and
  * gets the two-level mode.
  *
- * Visible reply text fades in along {@link buildFadeRamp}. Streamed reasoning
- * and tool cards float out: they start at a lifted mix toward the assumed
- * foreground and recede to the colors the component already drew, and the
- * last frame is those original bytes.
+ * Visible reply text fades in along {@link buildFadeRamp}, and its
+ * syntax-colored text fades in toward its own color over the same ages.
+ * Streamed reasoning and tool cards float out: they start at a lifted mix
+ * toward the assumed foreground and recede to the colors the component
+ * already drew, and the last frame is those original bytes.
  *
  * No value here is read from configuration or the environment at module load:
  * `steps`, the tick period, and every capability input are parameters, so the
@@ -40,7 +41,7 @@
  */
 
 import { stripTerminalSequences, visibleWidth, type RgbColor } from '@earendil-works/pi-tui'
-import { sliceColumns } from './columns.ts'
+import { isSgr, lineParts, setsForeground, sgrChanges, sliceColumns } from './columns.ts'
 import { declaresTruecolor } from './style.ts'
 
 /**
@@ -49,11 +50,13 @@ import { declaresTruecolor } from './style.ts'
  * reaches `steps`. Fewer than two levels leaves no visible ramp, so the
  * application's config field should require at least 2.
  *
- * Twenty-four at {@link FADE_TICK_MS} is a ramp of about four hundred
+ * Twelve at {@link FADE_TICK_MS} is a ramp of about two hundred
  * milliseconds, one level per frame: enough levels that a word climbs rather
- * than steps, and short enough that a settled line is never waited for.
+ * than steps, and short enough that the trail a fast stream leaves covers a
+ * line or two rather than several, so the newest lines are readable while
+ * they arrive.
  */
-export const FADE_STEPS = 24
+export const FADE_STEPS = 12
 
 /** Duration of one brightness level in milliseconds, and so the repaint period of fading text: about 60 frames per second. */
 export const FADE_TICK_MS = 16
@@ -371,7 +374,7 @@ export function recolorLines(lines: readonly string[], age: number, style: FadeS
  * level and rises to the color the component drew it in, so text in the
  * default foreground, a dim rule, and a colored title each brighten to their
  * own settled color. The slice should come from {@link sliceColumns}, which
- * replays the sequences in force at its first column.
+ * opens it with the styling in force at its first column.
  * @param slice - the slice's text with its escape sequences.
  * @param age - elapsed time in units of `stepMs`; `ramp.length` is t = 1.
  * @param style - the capability and the ramp, darkest level first.
@@ -534,15 +537,13 @@ function floatOutSpanSgr(style: FadeStyle, age: number): string {
 }
 
 /**
- * Apply one SGR sequence to the float-out foreground state.
+ * Apply one SGR sequence to the foreground state.
  * @param state - the state to update.
  * @param sequence - a CSI SGR including the trailing `m`.
  */
 function applySgr(state: FgState, sequence: string): void {
-  const body = sequence.slice(2, -1)
-  const parts = body === '' ? [0] : body.split(';').map(part => part === '' ? 0 : Number(part))
-  for (let index = 0; index < parts.length; index += 1) {
-    const code = colorParam(parts, index)
+  for (const change of sgrChanges(sequence)) {
+    const code = change[0] as number
     if (code === 0) {
       state.color = undefined
       state.dim = false
@@ -557,45 +558,20 @@ function applySgr(state: FgState, sequence: string): void {
     } else if (code >= 90 && code <= 97) {
       state.color = ANSI16[code - 90 + 8]
     } else if (code === 38) {
-      const read = readExtendedColor(parts, index)
-      state.color = read.color
-      index += read.skip
-    } else if (code === 48) {
-      index += readExtendedColor(parts, index).skip
+      state.color = extendedColor(change)
     }
   }
 }
 
 /**
- * Consume an ITU T.416 extended color (`38`/`48` plus `2;R;G;B` or `5;N`).
- * @param parts - the SGR parameter list.
- * @param index - index of the `38` or `48` code.
- * @returns the RGB for a foreground read, and how many following parameters were consumed.
+ * Read the color of one ITU T.416 extended color change (`38`/`48` plus `2;R;G;B` or `5;N`).
+ * @param change - the change from {@link sgrChanges}, its code first.
+ * @returns the RGB, with a missing channel or index read as 0, or undefined for any other mode.
  */
-function readExtendedColor(parts: readonly number[], index: number): { color: RgbColor | undefined; skip: number } {
-  const mode = parts[index + 1]
-  if (mode === 2) {
-    return {
-      color: {
-        r: channel(colorParam(parts, index + 2)),
-        g: channel(colorParam(parts, index + 3)),
-        b: channel(colorParam(parts, index + 4)),
-      },
-      skip: 4,
-    }
-  }
-  if (mode === 5) return { color: ansi256Rgb(colorParam(parts, index + 2)), skip: 2 }
-  return { color: undefined, skip: mode === undefined ? 0 : 1 }
-}
-
-/**
- * Read one SGR numeric parameter, defaulting a missing slot to 0.
- * @param parts - the SGR parameter list.
- * @param index - the slot to read.
- * @returns the parameter, or 0 when it is absent.
- */
-function colorParam(parts: readonly number[], index: number): number {
-  return parts[index] ?? 0
+function extendedColor(change: readonly number[]): RgbColor | undefined {
+  const mode = change[1]
+  if (mode === 2) return { r: channel(change[2] ?? 0), g: channel(change[3] ?? 0), b: channel(change[4] ?? 0) }
+  return mode === 5 ? ansi256Rgb(change[2] ?? 0) : undefined
 }
 
 /**
@@ -897,8 +873,22 @@ interface LineRun {
   start: number
   /** Column after the run. */
   end: number
-  /** Sequence the run opens with. */
+  /** Sequence the run opens with; in a fade-in under a color capability, the one its default-foreground text draws in. */
   sgr: string
+  /**
+   * How far text under an explicit foreground has come from the ramp's
+   * darkest level toward that foreground, 0 to 1; read only by a fade-in
+   * under a color capability, and 0 otherwise.
+   */
+  mix: number
+}
+
+/** What a fade-in under a color capability mixes a syntax-colored run with. */
+interface TokenMix {
+  /** How the mixed color is encoded. */
+  capability: 'truecolor' | 'ansi256'
+  /** The color a run starts from: the ramp's darkest level, where default-foreground text starts. */
+  start: RgbColor
 }
 
 /**
@@ -918,15 +908,23 @@ interface LineRun {
  * there at all - text this tail never reached; that chunk and every older one
  * then draw at the foreground, unchanged.
  *
- * Styling inside a recolored run survives. The run reasserts the sequences in
- * force at its start, so an enclosing bold or italic continues across it; an
- * enclosing foreground color reasserted there wins over the fade-in ramp, and
- * that run simply does not fade. Each recolored line ends with `ESC[39m` (or
- * `ESC[22m` in the two-level mode, which also ends bold) after the line's own
- * closing sequences, so the recolor never leaks past the line it was applied
- * to. Float-out resets intensity before the mixed color so a dim wrapper does
- * not stack on the overlay, and at t >= 1 the original lines come back
- * unchanged.
+ * Styling inside a recolored run survives. Each run opens with the styling in
+ * force at its first column, as {@link sliceColumns} restores it, so an
+ * enclosing bold, italic, background, or hyperlink continues across it, and
+ * keeps every sequence of its own except the ones a fade color replaces. In a
+ * fade-in under `truecolor` or `ansi256`, text under the default foreground
+ * draws at the run's level of the gray ramp, and text under an explicit
+ * foreground, such as a syntax-colored token, draws at the same age's mix from
+ * the ramp's darkest level to that foreground: the exact mix under `truecolor`
+ * and the nearest 256-color index of the mix at the age's whole level under
+ * `ansi256`. A run that crosses a color change takes a fade color for each
+ * color it covers. The two-level mode and float-out open each run with one
+ * sequence, under which an enclosing foreground keeps its color. Each
+ * recolored line ends with `ESC[39m` (or `ESC[22m` in the two-level mode,
+ * which also ends bold) after the line's own closing sequences, so the
+ * recolor never leaks past the line it was applied to. Float-out resets
+ * intensity before the mixed color so a dim wrapper does not stack on the
+ * overlay, and at t >= 1 the original lines come back unchanged.
  * @param lines - the rendered lines of the streaming block, newest text last.
  * @param spans - the tail from {@link FadeTracker.spans}, oldest first.
  * @param style - the capability and the ramp.
@@ -946,13 +944,14 @@ export function recolorTail(
   mode: RecolorMode = 'in',
 ): string[] {
   if (spans.length === 0 || lines.length === 0) return [...lines]
+  const mixing = tokenMix(style, mode)
   const cells = new CellWalk(cellsFromEnd(lines))
   const runs: LineRun[] = []
   for (const span of [...spans].reverse()) {
     const covered = consumeSpan(cells, span.text)
     if (covered === undefined) break
     const sgr = mode === 'out' ? floatOutSpanSgr(style, span.age) : fadeSgr(style, span.age)
-    if (sgr !== '') collectRuns(runs, covered, sgr)
+    if (sgr !== '') collectRuns(runs, covered, sgr, mixing === undefined ? 0 : mixPosition(mixing, style.ramp.length, span.age))
   }
   const byLine = new Map<number, LineRun[]>()
   for (const run of runs) {
@@ -961,10 +960,43 @@ export function recolorTail(
     else known.unshift(run)
   }
   const restore = restoreFor(style.capability)
+  const paint = mixing === undefined
+    ? (piece: string, run: LineRun): string => `${run.sgr}${piece}`
+    : (piece: string, run: LineRun): string => fadeInRun(piece, run, mixing)
   return lines.map((text, index) => {
     const lineRuns = index < from ? undefined : byLine.get(index)
-    return lineRuns === undefined ? text : paintLine(text, lineRuns, restore)
+    return lineRuns === undefined ? text : paintLine(text, lineRuns, restore, paint)
   })
+}
+
+/**
+ * Whether a recolor mixes syntax colors, and with what.
+ * @param style - the capability and the ramp.
+ * @param mode - the recolor's direction.
+ * @returns the encoding and the start color for a fade-in under `truecolor`
+ * or `ansi256` with a ramp; undefined for float-out, the two-level mode, no
+ * capability, and an empty ramp, whose runs each open with one sequence.
+ */
+function tokenMix(style: FadeStyle, mode: RecolorMode): TokenMix | undefined {
+  const start = style.ramp[0]
+  const { capability } = style
+  if (mode === 'out' || start === undefined) return undefined
+  return capability === 'truecolor' || capability === 'ansi256' ? { capability, start } : undefined
+}
+
+/**
+ * How far a syntax-colored chunk of one age has come toward its color. The
+ * position reaches 1 at age `steps - 1`, where default-foreground text reaches
+ * the last ramp level, and the 256-color encoding reads the age's whole level
+ * as {@link fadeSgr} does.
+ * @param mixing - the encoding.
+ * @param steps - the ramp's level count.
+ * @param age - the chunk's age in units of `stepMs`.
+ * @returns the position from the ramp's darkest level to the color, 0 to 1.
+ */
+function mixPosition(mixing: TokenMix, steps: number, age: number): number {
+  const level = mixing.capability === 'ansi256' ? Math.floor(age) : age
+  return Math.min(1, level / Math.max(1, steps - 1))
 }
 
 /**
@@ -1095,18 +1127,20 @@ function isBlank(grapheme: string): boolean {
 
 /**
  * Turn covered cells into runs, merging each cell into the run to its right
- * when they touch on the same line under the same sequence.
+ * when they touch on the same line under the same sequence and mix.
  * @param runs - runs collected so far, in the walk's right-to-left order.
  * @param covered - the cells one chunk covers.
  * @param sgr - the sequence the chunk draws under.
+ * @param mix - the chunk's position toward a syntax color, from {@link mixPosition}.
  */
-function collectRuns(runs: LineRun[], covered: readonly Cell[], sgr: string): void {
+function collectRuns(runs: LineRun[], covered: readonly Cell[], sgr: string, mix: number): void {
   for (const cell of covered) {
     const previous = runs.at(-1)
-    if (previous !== undefined && previous.line === cell.line && previous.sgr === sgr && previous.start === cell.column + cell.width) {
+    const touches = previous !== undefined && previous.line === cell.line && previous.start === cell.column + cell.width
+    if (touches && previous.sgr === sgr && previous.mix === mix) {
       previous.start = cell.column
     } else {
-      runs.push({ line: cell.line, start: cell.column, end: cell.column + cell.width, sgr })
+      runs.push({ line: cell.line, start: cell.column, end: cell.column + cell.width, sgr, mix })
     }
   }
 }
@@ -1116,14 +1150,74 @@ function collectRuns(runs: LineRun[], covered: readonly Cell[], sgr: string): vo
  * @param text - the rendered line.
  * @param runs - the line's runs, in column order.
  * @param restore - the sequence that ends the last run.
- * @returns the line with each run opened by its sequence, the text between
- * runs untouched, and the line's own trailing sequences kept ahead of `restore`.
+ * @param paint - draws one run's piece from {@link sliceColumns} in the run's fade.
+ * @returns the line with each run painted, the text between runs untouched,
+ * and the line's own trailing sequences kept ahead of `restore`.
  */
-function paintLine(text: string, runs: readonly LineRun[], restore: string): string {
+function paintLine(text: string, runs: readonly LineRun[], restore: string, paint: (piece: string, run: LineRun) => string): string {
   const pieces = sliceColumns(text, runs.flatMap(run => [run.start, run.end]))
   let out = pieces[0] as string
   runs.forEach((run, index) => {
-    out += `${run.sgr}${pieces[2 * index + 1] as string}${pieces[2 * index + 2] as string}`
+    out += `${paint(pieces[2 * index + 1] as string, run)}${pieces[2 * index + 2] as string}`
   })
   return `${out}${restore}`
+}
+
+/**
+ * Draw one fade-in run whose text may sit under several foregrounds. Text
+ * under the default foreground draws in `run.sgr`; text under an explicit
+ * foreground draws at `run.mix` of the way from `mixing.start` to that
+ * foreground. The fade color is written before the run's first text and
+ * again after a sequence that changed the foreground. A sequence that only
+ * sets the foreground is left out when text follows it, since the fade color
+ * takes its place; every other sequence stays where it was.
+ * @param piece - the run's piece from {@link sliceColumns}, which opens with
+ * the styling in force at the run's first column.
+ * @param run - the run.
+ * @param mixing - the encoding and the start color.
+ * @returns the run with its fade colors; the sequences after its last text,
+ * every one of them, as written.
+ */
+function fadeInRun(piece: string, run: LineRun, mixing: TokenMix): string {
+  const state: FgState = { color: undefined, dim: false }
+  let out = ''
+  // Sequences read since the last text: the ones kept ahead of the next text,
+  // and all of them, for a piece that ends on sequences.
+  let kept = ''
+  let read = ''
+  let stale = true
+  for (const part of lineParts(piece)) {
+    if (part.sequence) {
+      read += part.text
+      const effect = foregroundEffect(part.text)
+      if (effect !== 'none') {
+        applySgr(state, part.text)
+        stale = true
+      }
+      if (effect !== 'only') kept += part.text
+      continue
+    }
+    out += kept
+    if (stale) out += state.color === undefined ? run.sgr : encodeMix(mixing.capability, mixFadeColor(mixing.start, state.color, run.mix))
+    out += part.text
+    kept = ''
+    read = ''
+    stale = false
+  }
+  return `${out}${read}`
+}
+
+/**
+ * What one escape sequence does to the foreground.
+ * @param sequence - one escape sequence from {@link lineParts}.
+ * @returns `only` for an SGR whose every change sets or clears the
+ * foreground, `some` for an SGR with a full reset or a foreground change
+ * among other changes, and `none` for any other sequence.
+ */
+function foregroundEffect(sequence: string): 'none' | 'only' | 'some' {
+  if (!isSgr(sequence)) return 'none'
+  const changes = sgrChanges(sequence)
+  const touching = changes.filter(change => change[0] === 0 || setsForeground(change[0] as number))
+  if (touching.length === 0) return 'none'
+  return touching.length === changes.length && touching.every(change => change[0] !== 0) ? 'only' : 'some'
 }

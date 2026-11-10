@@ -493,6 +493,93 @@ describe('TuiApp', () => {
     expect(screen.split('\n').some(line => line.trim() === `│ ${TOOL_RUNNING_ROW}`)).toBe(false)
   })
 
+  describe('streamed arguments', () => {
+    /**
+     * The card rows under the header, trimmed, as `│ <row>`.
+     * @param screen - the terminal's text.
+     * @returns the rows the card draws behind its rule.
+     */
+    function cardRows(screen: string): string[] {
+      return screen.split('\n').map(line => line.trim()).filter(line => line.startsWith('│ '))
+    }
+
+    it('draws a write call\'s path once it is complete, then a content size that grows while the text arrives', async () => {
+      const test = await bench()
+      test.stream.start()
+      const delta = (argumentsDelta: string): void => {
+        test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'write', argumentsDelta })
+      }
+      delta('{"file_path":"src/gen')
+      expect(cardRows(await test.screen())).toEqual([`│ ${TOOL_RUNNING_ROW}`])
+      delta('.ts","content":"')
+      expect(cardRows(await test.screen())).toEqual(['│ src/gen.ts', `│ ${TOOL_RUNNING_ROW}`])
+      delta('x'.repeat(1500))
+      expect(cardRows(await test.screen())).toEqual(['│ src/gen.ts', '│ content 2 KB', `│ ${TOOL_RUNNING_ROW}`])
+      delta('x'.repeat(1500))
+      expect(cardRows(await test.screen())).toEqual(['│ src/gen.ts', '│ content 3 KB', `│ ${TOOL_RUNNING_ROW}`])
+
+      // The logged call replaces the streamed rows with the card it always drew.
+      delta('"}')
+      test.stream.end({ kind: 'committed', eventType: 'assistant/message', seq: 1 as never })
+      test.appendToolCall('call-1', 'write', { file_path: 'src/gen.ts', content: 'short' })
+      const logged = await test.screen()
+      expect(logged).toContain('file_path: "src/gen.ts"')
+      expect(logged).toContain('content: "short"')
+      expect(logged).not.toContain('content 3 KB')
+    })
+
+    it('draws a shell command as soon as its key closes, before the arguments do', async () => {
+      const test = await bench()
+      test.stream.start()
+      test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'bash', argumentsDelta: '{"command":"pnpm test","timeout":' })
+      expect(cardRows(await test.screen())).toEqual(['│ pnpm test', `│ ${TOOL_RUNNING_ROW}`])
+    })
+
+    it('draws only the running row while no key is complete', async () => {
+      const test = await bench()
+      test.stream.start()
+      test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'edit', argumentsDelta: '{"file_path":"src/a' })
+      expect(cardRows(await test.screen())).toEqual([`│ ${TOOL_RUNNING_ROW}`])
+    })
+
+    it('drops the streamed rows with the card when the attempt is abandoned, and a call streamed again starts over', async () => {
+      const test = await bench()
+      test.stream.start()
+      test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'write', argumentsDelta: '{"file_path":"gone.ts","content":"xx' })
+      expect(cardRows(await test.screen())).toEqual(['│ gone.ts', '│ content 1 KB', `│ ${TOOL_RUNNING_ROW}`])
+      test.stream.end({ kind: 'abandoned' })
+      expect(await test.screen()).not.toContain('gone.ts')
+      test.stream.start()
+      test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'write', argumentsDelta: '{"file_path":"next' })
+      expect(cardRows(await test.screen())).toEqual([`│ ${TOOL_RUNNING_ROW}`])
+    })
+
+    it('flows the streamed rows out while more of the arguments arrive every frame', async () => {
+      const test = await bench({ color: true, env: { COLORTERM: 'truecolor' }, background: 'rgb:0000/0000/0000', toolRevealFrames: 2, streamPaceFrames: 4 })
+      await test.settle()
+      test.stream.start()
+      test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, name: 'write', argumentsDelta: '{"file_path":"src/gen.ts","content":"' })
+      await test.settle()
+      // The pace releases a share of the arguments inside every frame, ahead
+      // of the card's flow, as a long content stream does; the rows change only
+      // when the content passes a whole kilobyte.
+      for (let tick = 0; tick < 20; tick += 1) {
+        test.stream.chunk({ type: 'tool-call-delta', index: 0, id: 'call-1' as never, argumentsDelta: 'x'.repeat(104) })
+        await test.settle()
+        test.runTick(FADE_TICK_MS)
+        await test.settle()
+      }
+      const drawn = test.terminal.text()
+      expect(drawn).toContain('src/gen.ts')
+      expect(drawn).toContain('content 2 KB')
+      for (let tick = 0; tick < 20 && test.tickArmed(FADE_TICK_MS); tick += 1) {
+        test.runTick(FADE_TICK_MS)
+        await test.settle()
+      }
+      expect(cardRows(await test.screen())).toEqual(['│ src/gen.ts', '│ content 3 KB', `│ ${TOOL_RUNNING_ROW}`])
+    }, 20_000)
+  })
+
   it('ignores unnamed or id-less tool-call deltas and drops a card on an abandoned attempt retry', async () => {
     const test = await bench({ running: true })
     test.stream.start()
