@@ -82,9 +82,10 @@ export const WORKFLOW_SPINNER: SpinnerFrames = ['◇', '◈', '◆', '❖', '◆
 
 /**
  * Bloom frames for the live Thinking header, disjoint from every tool
- * family; completed reasoning keeps its static `✻`.
+ * family; completed reasoning keeps its static `✻`. No frame has the Unicode
+ * `Emoji` property, so a terminal never draws one from a colour emoji font.
  */
-export const THINKING_SPINNER: SpinnerFrames = ['☙', '✴', '❇', '✳', '※', '⚜', '⁂', '❄']
+export const THINKING_SPINNER: SpinnerFrames = ['☙', '⊛', '✠', '☼', '※', '⁜', '⁂', '⍟']
 
 /** One tool family of {@link TOOL_SPINNERS}. */
 export type ToolFamily = keyof typeof TOOL_SPINNERS

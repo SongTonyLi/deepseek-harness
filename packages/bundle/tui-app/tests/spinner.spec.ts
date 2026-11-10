@@ -8,6 +8,7 @@ import {
   SPINNER_CYCLE,
   THINKING_SPINNER,
   TOOL_SPINNERS,
+  WORKFLOW_SPINNER,
   activityStatus,
   callingActivity,
   isCallingActivity,
@@ -266,10 +267,41 @@ describe('shimmer', () => {
   })
 })
 
+/**
+ * The frames a terminal may draw from a colour emoji font: those with the
+ * Unicode `Emoji` property.
+ * @param frames - the frames of one animation.
+ * @returns the frames that carry the property.
+ */
+function emojiCapable(frames: readonly string[]): string[] {
+  return frames.filter(frame => /\p{Emoji}/u.test(frame))
+}
+
 describe('THINKING_SPINNER', () => {
-  it('shares no glyph with any other animation', () => {
-    const taken = new Set<string>(ALL_SPINNERS.flatMap(([_name, frames]) => frames))
-    for (const frame of THINKING_SPINNER) expect(taken.has(frame)).toBe(false)
+  it('shares no glyph with any other animation, the braille frames, or the static reasoning glyph', () => {
+    const taken = new Set<string>([...ALL_SPINNERS.flatMap(([_name, frames]) => frames), ...WORKFLOW_SPINNER, '✻'])
+    for (const frame of THINKING_SPINNER) expect(taken.has(frame), frame).toBe(false)
     expect(new Set(THINKING_SPINNER).size).toBe(THINKING_SPINNER.length)
+  })
+
+  it('draws eight one-column frames, each different from the next', () => {
+    expect(THINKING_SPINNER).toHaveLength(SPINNER_CYCLE)
+    for (const [index, frame] of THINKING_SPINNER.entries()) {
+      expect(visibleWidth(frame)).toBe(1)
+      expect(frame).not.toBe(THINKING_SPINNER[(index + 1) % SPINNER_CYCLE])
+    }
+  })
+})
+
+describe('working animations', () => {
+  it('draws no frame a terminal could take from a colour emoji font', () => {
+    const animations: ReadonlyArray<readonly [string, SpinnerFrames]> = [
+      ...ALL_SPINNERS,
+      ['workflow', WORKFLOW_SPINNER],
+      ['thinking header', THINKING_SPINNER],
+    ]
+    for (const [name, frames] of animations) expect(emojiCapable(frames), name).toEqual([])
+    // The check rejects a frame with the property, such as a star some fonts draw in colour.
+    expect(emojiCapable(['☙', '✴', '※'])).toEqual(['✴'])
   })
 })

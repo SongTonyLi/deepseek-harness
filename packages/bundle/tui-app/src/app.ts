@@ -67,7 +67,7 @@ import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { JobId, type JobEvent, type JobRegistry, type JobView } from '@deepseek-ai/dsh-jobs'
 import { UserQuestionError, type AskUserQuestionAnswer, type AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
-import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { PartialArguments, assertNever } from '@deepseek-ai/dsh-util-values'
 // Empty type imports carry the Context merges for the services this app reads through `ctx.get`.
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-attachment'
@@ -282,6 +282,7 @@ import {
   withLiveUsage,
   type UsageTotals,
 } from './transcript.ts'
+import { streamedArgumentLines } from './stream-args.ts'
 
 /** Text drawn in the terminal's own colors, as a footer segment's detail rows are. */
 const plainText: Style = text => text
@@ -370,6 +371,16 @@ const TODO_ROW_LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 1, max
 /** The panel draw of a session with no subagent rows. */
 const EMPTY_PANEL_VIEW: SubagentPanelView = { rows: [], hidden: 0, ticking: false }
 
+/** The arguments one tool call has streamed so far. */
+interface StreamedArguments {
+  /** The raw argument text the call's `tool-call-delta` chunks carried. */
+  text: string
+  /** The same text, scanned as it arrives, for the rows a card draws before the JSON closes. */
+  partial: PartialArguments
+  /** The rows the card last drew from {@link partial}; undefined until it drew some. */
+  rows: readonly string[] | undefined
+}
+
 /**
  * How long the application waits for the terminal to answer the OSC 11
  * background-color query it sends once at start. The query is a round trip to
@@ -407,6 +418,16 @@ const DARK_FOREGROUND: RgbColor = { r: 0, g: 0, b: 0 }
 function assumedForeground(background: RgbColor): RgbColor {
   const luminance = (0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b) / 255
   return luminance < DARK_BACKGROUND_LUMINANCE ? LIGHT_FOREGROUND : DARK_FOREGROUND
+}
+
+/**
+ * Whether two lists of card rows are the same rows in the same order.
+ * @param rows - the rows a streamed call reads now.
+ * @param drawn - the rows the card last drew.
+ * @returns true when `drawn` holds exactly `rows`.
+ */
+function sameRows(rows: readonly string[], drawn: readonly string[]): boolean {
+  return drawn.length === rows.length && rows.every((row, index) => row === drawn[index])
 }
 
 /** A region drawn around the editor, which is where the keyboard returns from. */
@@ -915,8 +936,8 @@ export class TuiApp {
   /** The global fold action has not chosen a workflow default until the first `Ctrl+O`. */
   private workflowExpanded: boolean | undefined
   private readonly toolArguments = new Map<ToolCallId, unknown>()
-  /** Raw argument text accumulated from `tool-call-delta` chunks, keyed by call id. */
-  private readonly toolStreamArgs = new Map<ToolCallId, string>()
+  /** The arguments each call streamed so far through `tool-call-delta` chunks, keyed by call id. */
+  private readonly toolStreamArgs = new Map<ToolCallId, StreamedArguments>()
   /** Cards mounted from the live stream that no logged `tool/call` has confirmed yet. */
   private readonly unconfirmedTools = new Map<ToolCallId, ToolBlock>()
   private readonly submittedIds = new Set<string>()
@@ -6237,7 +6258,7 @@ export class TuiApp {
         this.toolStreamArgs.delete(callId)
         this.pendingToolNames.set(callId, name)
         this.setLoaderActivity(callingActivity(name))
-        this.upsertToolCard(callId, name, argumentsJson, 'log')
+        this.upsertToolCard(callId, name, argumentsJson)
         this.rememberWorkflowCall(callId, this.toolArguments.get(callId))
         break
       }
@@ -6768,17 +6789,23 @@ export class TuiApp {
 
   /**
    * Mount or refresh a tool card from a stream delta: the name as soon as
-   * the model sends one, then the presenter headline once the arguments
-   * parse as JSON.
+   * the model sends one, the rows {@link streamedArgumentLines} reads off the
+   * arguments while their JSON is open, then the presenter headline once it
+   * closes and parses.
    * @param chunk - one `tool-call-delta` of the live assistant stream.
    */
   private onToolCallDelta(chunk: Extract<StreamChunk, { type: 'tool-call-delta' }>): void {
     const name = this.streamedToolName(chunk)
     if (chunk.id === '') return
-    const argumentsJson = (this.toolStreamArgs.get(chunk.id) ?? '') + chunk.argumentsDelta
-    this.toolStreamArgs.set(chunk.id, argumentsJson)
+    let streamed = this.toolStreamArgs.get(chunk.id)
+    if (streamed === undefined) {
+      streamed = { text: '', partial: new PartialArguments(), rows: undefined }
+      this.toolStreamArgs.set(chunk.id, streamed)
+    }
+    streamed.text += chunk.argumentsDelta
+    streamed.partial.append(chunk.argumentsDelta)
     if (name === undefined) return
-    this.upsertToolCard(chunk.id, name, argumentsJson, 'stream')
+    this.upsertToolCard(chunk.id, name, streamed.text, streamed)
   }
 
   /**
@@ -6788,19 +6815,26 @@ export class TuiApp {
    * @param callId - the model's call id.
    * @param name - the tool name.
    * @param argumentsJson - arguments accumulated so far, or the logged string.
-   * @param source - `stream` for a live delta, `log` for the durable call.
+   * @param streamed - a live call's arguments, which are parsed whole only
+   * once their outer object closed; absent for the durable call.
    */
-  private upsertToolCard(callId: ToolCallId, name: string, argumentsJson: string, source: 'stream' | 'log'): void {
-    const args = parseArguments(argumentsJson)
+  private upsertToolCard(callId: ToolCallId, name: string, argumentsJson: string, streamed?: StreamedArguments): void {
+    const args = streamed === undefined || streamed.partial.closed() ? parseArguments(argumentsJson) : undefined
     if (args !== undefined) this.toolArguments.set(callId, args)
-    const call = source === 'stream' && args === undefined
-      ? { title: '', lines: [] }
-      : toolCallText(argumentsJson, args === undefined ? undefined : this.presentCall(name, args), name)
+    const rows = streamed !== undefined && args === undefined ? streamedArgumentLines(streamed.partial) : undefined
     const existing = this.toolBlocks.get(callId)
+    // A delta that leaves the rows as drawn changes nothing; replacing the
+    // call anyway would restart the card's measurement every frame and hold
+    // its flow where it stands.
+    if (existing !== undefined && rows !== undefined && streamed?.rows !== undefined && sameRows(rows, streamed.rows)) return
+    if (streamed !== undefined) streamed.rows = rows
+    const call = rows === undefined
+      ? toolCallText(argumentsJson, args === undefined ? undefined : this.presentCall(name, args), name)
+      : { title: '', lines: rows }
     if (existing !== undefined) {
       existing.setCall(name, call)
       if (isSubagentTool(name)) existing.setSubagent(subagentRowFacts(args))
-      if (source === 'log') this.unconfirmedTools.delete(callId)
+      if (streamed === undefined) this.unconfirmedTools.delete(callId)
       this.trackReveal(existing)
       return
     }
@@ -6811,7 +6845,7 @@ export class TuiApp {
     this.chat.addChild(block)
     this.revealBlock(block)
     this.spinBlock(block)
-    if (source === 'stream') this.unconfirmedTools.set(callId, block)
+    if (streamed !== undefined) this.unconfirmedTools.set(callId, block)
   }
 
   /**

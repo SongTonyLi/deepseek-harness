@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import { jsonTreeText } from '../src/json-tree.ts'
-import { completedArguments, rawInputBody, streamedArgumentLines } from '../src/stream-args.ts'
+import { rawInputBody, streamedArgumentLines } from '../src/stream-args.ts'
 
 describe('raw input body', () => {
   it('renders absent, scalar, script, todo, and list values as plain rows', () => {
@@ -36,19 +36,6 @@ describe('raw input body', () => {
     expect(rawInputBody([{ content: 'read', status: 1 }]).lines).toEqual(['╰─ [0]:', '   ├─ content: "read"', '   ╰─ status: 1'])
     expect(rawInputBody([1, 'text']).lines).toEqual(['├─ [0]: 1', '╰─ [1]: "text"'])
     expect(rawInputBody({}).lines).toEqual(['(empty object)'])
-  })
-})
-
-describe('completed arguments', () => {
-  it('keeps closed values and strings and skips open or empty keys', () => {
-    expect(completedArguments(PartialArguments.fromObject({}))).toBeUndefined()
-    expect(completedArguments(PartialArguments.fromText('{"file_path":"src'))).toBeUndefined()
-    expect(completedArguments(PartialArguments.fromObject({
-      script: 'return 1',
-      count: 2,
-      ghost: undefined,
-    }))).toEqual({ script: 'return 1', count: 2 })
-    expect(completedArguments(PartialArguments.fromText('{"count":2,"file_path":"src'))).toEqual({ count: 2 })
   })
 })
 
@@ -94,5 +81,31 @@ describe('streamed argument lines', () => {
     }))).toEqual([])
     expect(streamedArgumentLines(PartialArguments.fromText('{"command":"echo'))).toEqual([])
     expect(streamedArgumentLines(PartialArguments.fromObject({}))).toEqual([])
+  })
+
+  it('shows the path once it is complete, then a content size that grows while the text arrives', () => {
+    const partial = new PartialArguments()
+    const rows: string[][] = []
+    const content = 'x'.repeat(3000)
+    for (const delta of ['{"file_', 'path":"src/', 'gen.ts"', ',"content":"', content.slice(0, 500), content.slice(500, 1500), content.slice(1500), '"}']) {
+      partial.append(delta)
+      rows.push(streamedArgumentLines(partial))
+    }
+    expect(rows).toEqual([
+      [],
+      [],
+      ['src/gen.ts'],
+      ['src/gen.ts'],
+      ['src/gen.ts', 'content 1 KB'],
+      ['src/gen.ts', 'content 2 KB'],
+      ['src/gen.ts', 'content 3 KB'],
+      ['src/gen.ts', 'content 3 KB'],
+    ])
+  })
+
+  it('shows a command as soon as its key closes, before the JSON does', () => {
+    const partial = new PartialArguments()
+    partial.append('{"command":"pnpm test","timeout":')
+    expect(streamedArgumentLines(partial)).toEqual(['pnpm test'])
   })
 })

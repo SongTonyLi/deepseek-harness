@@ -1,13 +1,16 @@
 /**
- * Live tool-argument lines. Incomplete JSON keys contribute nothing; a
- * completed content key is a size, not the text.
+ * Rows a tool card draws for its arguments: the raw input of a call whose
+ * presenter supplied no content, and the live rows of a call whose argument
+ * JSON is still streaming. A live path, command, or description appears once
+ * its key is complete; a content key appears as a size that grows while its
+ * text arrives, never as the text.
  * @module @deepseek-ai/dsh-tui-app/stream-args
  */
 
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import { jsonTreeText, type JsonRowStyle } from './json-tree.ts'
 
-/** Keys whose completed text is shown as a size, not as the text itself. */
+/** Keys whose text is shown as a size, not as the text itself. */
 const SIZED_KEYS = ['content', 'old_string', 'new_string'] as const
 
 /** A generic card's raw input rows, with token ranges when they are a JSON tree. */
@@ -64,35 +67,14 @@ function todoLines(value: unknown): string[] | undefined {
 }
 
 /**
- * The object of keys whose delimiters have arrived. Incomplete keys are omitted.
+ * Rows for the arguments of a call that are still streaming: the path
+ * (`file_path`, else `path`), the command, and the first line of the
+ * description, each once its key is complete, then one size row per text key
+ * that holds content (`content`, `old_string`, `new_string`), as in
+ * `content 3 KB`. A size counts the text decoded so far in UTF-16 units,
+ * rounds up to whole kilobytes of 1024, and grows while the text arrives.
  * @param partial - the live argument parser.
- * @returns the object, or undefined when no key is complete.
- */
-export function completedArguments(partial: PartialArguments): Record<string, unknown> | undefined {
-  const record: Record<string, unknown> = {}
-  let any = false
-  for (const key of partial.keys()) {
-    if (!partial.complete(key)) continue
-    const value = partial.value(key)
-    if (value !== undefined) {
-      record[key] = value
-      any = true
-      continue
-    }
-    const text = partial.text(key)
-    if (text !== undefined) {
-      record[key] = text
-      any = true
-    }
-  }
-  return any ? record : undefined
-}
-
-/**
- * Path, description, command, and size lines from keys that are already complete.
- * An incomplete key contributes nothing.
- * @param partial - the live argument parser.
- * @returns the lines.
+ * @returns the rows; empty while no key has anything to show.
  */
 export function streamedArgumentLines(partial: PartialArguments): string[] {
   const lines: string[] = []
@@ -108,7 +90,6 @@ export function streamedArgumentLines(partial: PartialArguments): string[] {
     if (first !== undefined && first !== '') lines.push(first)
   }
   for (const key of SIZED_KEYS) {
-    if (!partial.complete(key)) continue
     const length = partial.stringLength(key)
     if (length === undefined || length === 0) continue
     lines.push(`${key} ${String(Math.max(1, Math.ceil(length / 1024)))} KB`)

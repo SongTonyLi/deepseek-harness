@@ -549,6 +549,87 @@ describe('syntax colour', () => {
     return fadeRgbs(line).some(color => color.r !== color.g || color.g !== color.b)
   }
 
+  /** A one-line TypeScript fence. */
+  const FENCE = '```ts\nconst rows = 42\n```'
+
+  /**
+   * The bytes of one repainted line between the renderer's line clear and its closing reset.
+   * @param line - a repainted line from the terminal output.
+   * @returns the line as the component drew it.
+   */
+  function drawnRow(line: string): string {
+    const from = line.lastIndexOf('\u001b[2K') + '\u001b[2K'.length
+    return line.slice(from, line.indexOf('\u001b[0m', from))
+  }
+
+  /**
+   * Commit {@link FENCE} and wait until its grammar has landed and the row is painted.
+   * @param test - the running bench.
+   * @returns the painted row as the highlighter drew it, which the streamed copy settles to.
+   */
+  async function highlightedRow(test: Bench): Promise<string> {
+    const since = writesFrom(test)
+    test.appendAssistant([{ type: 'text', text: FENCE }])
+    await test.settle()
+    let line: string | undefined
+    for (let pass = 0; pass < 200 && line === undefined; pass += 1) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      await test.settle()
+      line = since().split('\n').findLast(row => row.includes('rows') && hasSyntaxColor(row))
+    }
+    if (line === undefined) throw new Error('the fenced block was never repainted in colour')
+    return drawnRow(line)
+  }
+
+  it('fades a streamed code token toward its own colour and settles on the bytes the highlighter drew', async () => {
+    const test = await bench(TRUECOLOR)
+    await test.settle()
+    const committed = await highlightedRow(test)
+    const settledColors = fadeRgbs(committed)
+    test.stream.start()
+    drawn(test)
+    await streamText(test, FENCE)
+    // Every token of the fresh chunk opens at the darkest ramp level.
+    expect(new Set(fadeRgbs(lineWith(drawn(test), 'rows')).map(color => JSON.stringify(color)))).toEqual(new Set([JSON.stringify(buildFadeRamp({ r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 })[0])]))
+
+    for (let tick = 0; tick < 4; tick += 1) await fadeTick(test)
+    // Mid-fade, each token is a darker shade of its own colour: one fade colour
+    // per token and gap, each below its settled colour, the strongest channel kept.
+    // The indentation before the first token and the padding after the last
+    // are default-foreground text, on the gray ramp.
+    const mid = fadeRgbs(drawnRow(lineWith(drawn(test), 'rows')))
+    const tokens = mid.slice(1, -1)
+    expect(tokens).toHaveLength(settledColors.length)
+    for (const [index, color] of tokens.entries()) {
+      const settled = settledColors[index] as { r: number; g: number; b: number }
+      expect(rgbLuma(color)).toBeLessThan(rgbLuma(settled))
+      const strongest = (rgb: { r: number; g: number; b: number }): string => (['r', 'g', 'b'] as const).reduce<'r' | 'g' | 'b'>((best, key) => rgb[key] > rgb[best] ? key : best, 'r')
+      expect(strongest(color)).toBe(strongest(settled))
+    }
+
+    let settled = ''
+    for (let tick = 0; tick < FADE_STEPS + 2 && test.tickArmed(FADE_TICK_MS); tick += 1) {
+      await fadeTick(test)
+      const output = drawn(test)
+      if (output.includes('rows')) settled = drawnRow(lineWith(output, 'rows'))
+    }
+    expect(settled).toBe(committed)
+    expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+  }, 20_000)
+
+  it('streams code in the highlighter\'s own bytes under reduced motion and under NO_COLOR', async () => {
+    for (const options of [{ ...TRUECOLOR, reducedMotion: true }, { ...TRUECOLOR, env: { COLORTERM: 'truecolor', NO_COLOR: '1' } }]) {
+      const test = await bench(options)
+      await test.settle()
+      const committed = await highlightedRow(test)
+      test.stream.start()
+      drawn(test)
+      await streamText(test, FENCE)
+      expect(drawnRow(lineWith(drawn(test), 'rows'))).toBe(committed)
+      expect(test.tickArmed(FADE_TICK_MS)).toBe(false)
+    }
+  }, 20_000)
+
   it('repaints a fenced block in colour once its grammar has landed', async () => {
     const test = await bench(TRUECOLOR)
     await test.settle()
