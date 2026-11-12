@@ -1,13 +1,13 @@
 /** Plugin config resolve. */
 import { describe, expect, it } from 'vitest'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import { Config, resolveAdapterOptions } from '../src/config.ts'
+import { Config, readAdapterOptions, resolveAdapterOptions } from '../src/config.ts'
 import { DEFAULT_API_KEY_ENV, DEFAULT_STREAM_IDLE_TIMEOUT_MS } from '../src/protocol.ts'
 
 describe('resolveAdapterOptions', () => {
   it('validates default and exact-model context budgets', () => {
     expect(resolveAdapterOptions({}).defaultContextWindow).toBe(200_000)
-    expect(Config({}).defaultContextWindow).toBe(200_000)
+    expect(Config({}).defaultContextWindow.get()).toBe(200_000)
     for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => resolveAdapterOptions({ defaultContextWindow: invalid })).toThrow(/defaultContextWindow/)
       expect(() => resolveAdapterOptions({ modelContextWindows: { grok: invalid } })).toThrow(/modelContextWindows.*grok/)
@@ -35,7 +35,7 @@ describe('resolveAdapterOptions', () => {
   })
 
   it('materializes Config defaults', () => {
-    const materialized = Config({})
+    const materialized = readAdapterOptions(Config({}))
     expect(materialized.apiKeyEnv).toBe(DEFAULT_API_KEY_ENV)
     expect(materialized.reuseInstalledCursorLogin).toBe(true)
     expect(materialized.streamIdleTimeoutMs).toBe(DEFAULT_STREAM_IDLE_TIMEOUT_MS)

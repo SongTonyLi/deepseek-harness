@@ -1,0 +1,40 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/util/credential-mask/README.md
+/:
+  en: de1eb1f044ac2b2d
+  zh: f4d6673673af6005
+/deepseek-ai-dsh-util-credential-mask:
+  en: d60da126342f73ec
+  zh: 3dda59f23d1aa36c
+/deepseek-ai-dsh-util-credential-mask/summary:
+  en: 53d7a0009c6194ba
+  zh: ec5905c1c956f5c7
+/deepseek-ai-dsh-util-credential-mask/table-of-contents:
+  en: 80b31a934611cb4a
+  zh: 05f3f7f9cb2fd881
+/deepseek-ai-dsh-util-credential-mask/use-this-package:
+  en: bbff250eba0f1b89
+  zh: 0a618f05cc88ee2b
+/deepseek-ai-dsh-util-credential-mask/use-this-package/mask-text-for-display:
+  en: de7887e69d455bd6
+  zh: 88efcc0e17b225ce
+/deepseek-ai-dsh-util-credential-mask/use-this-package/scan-for-credentials:
+  en: c61fd28f73fb2581
+  zh: 4a4c90a761074889
+/deepseek-ai-dsh-util-credential-mask/understand-the-implementation:
+  en: 94a3a6c6d97680b5
+  zh: 76e501bce382ce48
+/deepseek-ai-dsh-util-credential-mask/understand-the-implementation/source-map:
+  en: a5fb9a3b7888d44c
+  zh: 605ae6c29e2e3f1b
+/deepseek-ai-dsh-util-credential-mask/further-exploration:
+  en: 30b6a4c5004a7a03
+  zh: a1214274f8b47231
+/deepseek-ai-dsh-util-credential-mask/known-limitations-and-deferred-work:
+  en: ba222fe56d70fa78
+  zh: 3d1733414d381e61
+/deepseek-ai-dsh-util-credential-mask/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 3bb0c20c93f16f98

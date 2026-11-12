@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-调用方可以校验无损 JSON、读取流式参数、创建分离的 JSON 快照、冻结待发布值、比较 JSON 兼容数据，或终止不可达分支，而无需导入某个能力包。每次流式调用使用独立的 `PartialArguments` 读器；`PartialArguments.EMPTY` 是不含字段的共用封存视图。
+调用方可以校验无损 JSON、读取流式参数、创建分离的 JSON 快照、冻结待发布值、比较 JSON 兼容数据、按阶段分组成员，或终止不可达分支，而无需导入某个能力包。每次流式调用使用独立的 `PartialArguments` 读器；`PartialArguments.EMPTY` 是不含字段的共用封存视图。
 
 ## 目录
 
@@ -49,6 +49,10 @@ const snapshot = snapshotJsonValue(input) as JsonValue
 
 `WeakMapWithValues<Key, Value>` 组合弱对象键查找与强引用且保持插入顺序的 `values` set。每个 value 只属于一个 key。owner 必须在对应生命周期边界调用 `delete(key)` 或 `clear()`；该集合不执行自动清理。
 
+### 按阶段分组成员
+
+`groupByPhase(members, phaseOf, keyOf, entryOf)` 按成员阶段身份的稳定键对成员分组。分组按首个成员的顺序排列，成员保持输入顺序，`entryOf` 为每个成员生成其贡献的条目。阶段身份（例如省略字段对应的 `null`）及其键格式由调用方负责；键相同的阶段身份共享一个分组，该分组报告其首个成员的阶段身份。
+
 ### 封闭可辨识联合类型
 
 在封闭可辨识联合类型的 default 分支中使用 `assertNever(value, context?)`。新增变体会让每个穷尽 switch 在 TypeScript 编译时失败；如果某个运行时值逃过了声明类型，该函数会抛出带可选上下文标签的错误。
@@ -67,7 +71,7 @@ JSON 校验器为每个正在遍历的容器保留一个位置，每次读取一
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | JSON 值类型、校验与快照遍历、结构相等、深度冻结、弱键/强值关联和穷尽联合类型失败 |
+| [`src/index.ts`](src/index.ts) | JSON 值类型、校验与快照遍历、结构相等、深度冻结、阶段分组、弱键/强值关联和穷尽联合类型失败 |
 | [`src/partial-json.ts`](src/partial-json.ts) | 懒扫描顶层参数，并检测已读取答案的变化 |
 
 </details>

@@ -1,5 +1,5 @@
 ---
-description: "Package map for shared utilities: atomic file writes, branded ids, deques, JSON values, harness home paths, launch environment, native commands, output retention, time and zone vocabulary, timeouts, and official package lists."
+description: "Package map for shared utilities: atomic file writes, branded ids, deques, JSON values, harness home paths, launch environment, native commands, packaged ripgrep, output retention, time and zone vocabulary, timeouts, and official package lists."
 kind: "package-group"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The `util/` group gives capability packages shared mechanical primitives instead of duplicate implementations. It covers atomic writes, branded ids, deques, lossless JSON values, UUIDs, Harness-home paths, launch environments, outbound proxy policy, native commands, output retention, time-zone, instant, and span vocabulary, and timeout handling. Every root entry here is a library: it registers no product service or event, and the consuming capability retains the business semantics. The exception is `official-bundles`: instead of a mechanical primitive, it holds the installation's and the plugin manager's official package lists as data their consumers apply.
+The `util/` group gives capability packages shared mechanical primitives instead of duplicate implementations. It covers atomic writes, branded ids, deques, lossless JSON values, UUIDs, Harness-home paths, launch environments, outbound proxy policy, native commands, packaged ripgrep execution, output retention, time-zone, instant, and span vocabulary, and timeout handling. Every root entry here is a library: it registers no product service or event, and the consuming capability retains the business semantics. The exception is `official-bundles`: instead of a mechanical primitive, it holds the installation's and the plugin manager's official package lists as data their consumers apply.
 
 ## Table of Contents
 
@@ -27,6 +27,7 @@ Each package provides one primitive or one data set; open a package page for how
 | Package | Role |
 |---|---|
 | [`brand/`](brand/README.md) | Nominal string types and their stateless constructor |
+| [`error/`](error/README.md) | The dependency-free `HarnessError` base class with a stable machine-routable code |
 | [`package-manifest/`](package-manifest/README.md) | Shared TypeScript declarations for package manifests |
 | [`plugin-detail/`](plugin-detail/README.md) | Selects plugin detail documents and reads them from local packages and npm file CDNs |
 | [`plugin-market-index/`](plugin-market-index/README.md) | Validates plugin market index format 1 and builds pinned install arguments |
@@ -35,12 +36,14 @@ Each package provides one primitive or one data set; open a package page for how
 | [`deque/`](deque/README.md) | Provides amortized constant-time queue operations with bounded vacant storage |
 | [`chunked-list/`](chunked-list/README.md) | Retains immutable list versions with bounded append copying and checkpoint validation |
 | [`values/`](values/README.md) | Validates, snapshots, compares, and freezes lossless JSON-compatible values |
+| [`credential-mask/`](credential-mask/README.md) | Recognizes credentials in user text by their published formats and draws them masked for display, leaving the text unchanged |
 | [`home-paths/`](home-paths/README.md) | Resolves the single Harness home and joins shared user-data paths |
 | [`http-proxy/`](http-proxy/README.md) | Resolves one outbound proxy policy and installs it for `fetch`, SDK agents, and spawned children |
 | [`launch-environment/`](launch-environment/README.md) | Frozen launch environment that remembers which layer supplied each value |
 | [`atomic-write/`](atomic-write/README.md) | Atomic file replacement and cross-process writer locking |
 | [`lazy-require/`](lazy-require/README.md) | Loads CommonJS-compatible Host dependencies on first use with caller-relative resolution |
 | [`native-command/`](native-command/README.md) | Runs host-native commands directly, never through a shell string |
+| [`ripgrep/`](ripgrep/README.md) | Resolves the packaged ripgrep binary, spawns it through the caller's subprocess service, and streams its output records |
 | [`workspace-path/`](workspace-path/README.md) | Provides browser-safe Workspace path and display helpers |
 | [`code-language/`](code-language/README.md) | Maps a filename suffix to the syntax-highlighting language that the Code preview, diff review, and the read card render |
 | [`output-retention/`](output-retention/README.md) | Bounds model-facing output and reports exact omission metadata |

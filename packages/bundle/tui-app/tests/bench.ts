@@ -10,7 +10,7 @@ import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage, type StreamChunk, type ContentBlock, type ToolCallId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
-import type { Session, SessionEvent, SessionEventType, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionEventMap, SessionEventType, SessionId, SurfaceEventType } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
@@ -262,6 +262,9 @@ export interface AgentCalls {
   cancelOptions: unknown
 }
 
+/** The event types {@link BenchChild.append} takes: those that carry no surface intent. */
+type LogOnlyEventType = Exclude<SessionEventType, SurfaceEventType>
+
 /** One Agent the bench created under the bound session, for the subagent surfaces. */
 export interface BenchChild {
   agent: Agent
@@ -275,7 +278,7 @@ export interface BenchChild {
    * @param type - the event type; surface events, which take intent options, are out of scope.
    * @param data - the event payload.
    */
-  append(type: SessionEventType, data: unknown): void
+  append<T extends LogOnlyEventType>(type: T, data: SessionEventMap[T]): void
 }
 
 export interface Bench {
@@ -712,11 +715,10 @@ export async function bench(options: {
           childStatuses.set(id, next)
           child.ctx.emit('agent/status', { agent: child, status: next })
         },
-        append(type, data) {
+        append(type: LogOnlyEventType, data: SessionEventMap[LogOnlyEventType]) {
           // `append` takes surface intent options for surface event types;
           // this helper carries the log-only lifecycle events instead.
-          const log = child.session as unknown as { append(type: string, data: unknown): void }
-          log.append(type, data)
+          child.session.append(type, data)
         },
       }
     },

@@ -7,7 +7,7 @@ import { isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/ds
 import type { InboxState } from './inbox.ts'
 import type { ProcessEvidenceState } from './turn-process.ts'
 import { chatNode, contextLocation } from './common.ts'
-import { contextForm, contextProducer } from './event-projection.ts'
+import { contextForm, contextProducer } from '../contract/event-projection.ts'
 
 interface ReferencedUserMessageNode extends UserMessageNode {
   /** Labels cited by the immediately following session-reference context. */

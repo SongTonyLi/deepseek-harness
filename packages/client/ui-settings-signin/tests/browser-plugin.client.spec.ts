@@ -8,6 +8,9 @@ import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { apply, inject, NS } from '../src/client/index.ts'
 import { SignInCard } from '../src/client/SignInCard.tsx'
 import { SignInFooter } from '../src/client/SignInFooter.tsx'
+import type { SignInCardFace } from '../src/client/SignInCard.tsx'
+import type { SignInFooterFace } from '../src/client/SignInFooter.tsx'
+import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import { apply as hostApply } from '../src/index.ts'
 
 usePinnedBrowserLanguages('zh-CN')
@@ -70,6 +73,41 @@ function declare(slots: SlotRegistry): () => void {
       'settings.models.footer': { kind: 'list', scope: 'root' },
     },
   } as never, () => null)
+}
+
+/**
+ * The face one seat's registration injects, narrowed by the seat's guard. The
+ * registry stores faces erased, so a face the guard rejects fails the spec here.
+ * @param entry - the seat's registration.
+ * @param isFace - the guard for the seat's face.
+ * @returns the face, typed as the seat declares it.
+ */
+function seatFace<F extends object>(entry: StoredEntry, isFace: (value: object) => value is F): F {
+  const face = entry.inject?.()
+  if (face === undefined || !isFace(face)) throw new Error('slot entry injected no face of the expected shape')
+  return face
+}
+
+/** Whether a value carries the sign-in store the seats bind as `hooks.signIn`. */
+function isSignInHooks(value: unknown): value is SignInCardFace['hooks'] {
+  return typeof value === 'object' && value !== null && 'signIn' in value
+    && typeof value.signIn === 'object' && value.signIn !== null && 'getSnapshot' in value.signIn
+    && typeof value.signIn.getSnapshot === 'function'
+}
+
+/** Whether a value is the provider-card seat's face: sign-in, sign-out, and the snapshot hook. */
+function isCardFace(value: object): value is SignInCardFace {
+  return 'signIn' in value && typeof value.signIn === 'function'
+    && 'signOut' in value && typeof value.signOut === 'function'
+    && 'hooks' in value && isSignInHooks(value.hooks)
+}
+
+/** Whether a value is the dialog seat's face: answer, decline, close, and the snapshot hook. */
+function isFooterFace(value: object): value is SignInFooterFace {
+  return 'answer' in value && typeof value.answer === 'function'
+    && 'decline' in value && typeof value.decline === 'function'
+    && 'close' in value && typeof value.close === 'function'
+    && 'hooks' in value && isSignInHooks(value.hooks)
 }
 
 describe('ui-settings-signin browser plugin', () => {
@@ -143,16 +181,8 @@ describe('ui-settings-signin browser plugin', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     await vi.waitFor(() => { expect(b.list).toHaveBeenCalled() })
 
-    const card = (b.slots.entries('settings.models.provider-card')[0]!.inject as unknown as () => {
-      signIn: (flow: typeof FLOW, provider: string, method?: string) => void
-      signOut: (flow: typeof FLOW) => Promise<string | undefined>
-    })()
-    const footer = (b.slots.entries('settings.models.footer')[0]!.inject as unknown as () => {
-      hooks: { signIn: { getSnapshot: () => { attempt: { question?: unknown } | undefined } } }
-      answer: (value: string) => void
-      decline: () => void
-      close: () => void
-    })()
+    const card = seatFace(b.slots.entries('settings.models.provider-card')[0]!, isCardFace)
+    const footer = seatFace(b.slots.entries('settings.models.footer')[0]!, isFooterFace)
 
     card.signIn(FLOW, 'openai-codex', 'oauth')
     await vi.waitFor(() => {
@@ -182,12 +212,8 @@ describe('ui-settings-signin browser plugin', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     await vi.waitFor(() => { expect(b.list).toHaveBeenCalled() })
 
-    const card = (b.slots.entries('settings.models.provider-card')[0]!.inject as unknown as () => {
-      hooks: { signIn: { getSnapshot: () => { flows: ReadonlyMap<string, unknown> } } }
-    })()
-    const footer = (b.slots.entries('settings.models.footer')[0]!.inject as unknown as () => {
-      hooks: { signIn: { getSnapshot: () => { flows: ReadonlyMap<string, unknown> } } }
-    })()
+    const card = seatFace(b.slots.entries('settings.models.provider-card')[0]!, isCardFace)
+    const footer = seatFace(b.slots.entries('settings.models.footer')[0]!, isFooterFace)
     expect(card.hooks.signIn).toBe(footer.hooks.signIn)
     await vi.waitFor(() => {
       expect([...card.hooks.signIn.getSnapshot().flows.keys()]).toEqual(['openai-codex'])

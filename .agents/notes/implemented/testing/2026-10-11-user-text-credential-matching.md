@@ -6,7 +6,7 @@ English | [中文](2026-10-11-user-text-credential-matching.zh.md)
 
 ## Problem
 
-[ui-secret-mask](../../../../packages/client/ui-secret-mask/README.md) recognizes credentials in every sent user text. The UserText scheduler queries the matcher again after each accepted node, so a text costs the sum of all its queries. Most text contains no credential, so the first goal is that such text pays as little as possible; second, text with credentials pays in proportion to their number and length; adversarial input must stay linear. Constraints: no regex backtracking, prefix pruning, linear total over all queries of one text, and no allocation before a node is returned.
+The Web secret rule in [ui-secret-mask](../../../../packages/client/ui-secret-mask/README.md) recognizes credentials in every sent user text with the matcher in [dsh-util-credential-mask](../../../../packages/util/credential-mask/README.md), whose placement is recorded in [fork runtime decisions after the upstream sync](../architecture/2026-11-12-fork-runtime-decisions-after-upstream-sync.md). The UserText scheduler queries the matcher again after each accepted node, so a text costs the sum of all its queries. Most text contains no credential, so the first goal is that such text pays as little as possible; second, text with credentials pays in proportion to their number and length; adversarial input must stay linear. Constraints: no regex backtracking, prefix pruning, linear total over all queries of one text, and no allocation before a node is returned.
 
 ## Decision
 

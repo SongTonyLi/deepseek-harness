@@ -36,6 +36,33 @@ async function readPackage(nodeModules: string, name: string): Promise<TestManif
   return JSON.parse(await readFile(join(nodeModules, name, 'package.json'), 'utf8')) as TestManifest
 }
 
+/**
+ * Write the platform family the lift tests start from: a consumer declaring
+ * `platform-linux-x64` at `linuxRange` beside a plain addon, a parent declaring
+ * the darwin and linux platform packages, and the darwin platform package.
+ */
+async function writePlatformFamily(nodeModules: string, linuxRange: string): Promise<void> {
+  await Promise.all([
+    writePackage(nodeModules, {
+      name: 'secondary-consumer',
+      version: '3.0.0',
+      optionalDependencies: { 'platform-linux-x64': linuxRange, 'plain-addon': '^9.0.0' },
+    }),
+    writePackage(nodeModules, { name: 'plain-addon', version: '9.1.0' }),
+    writePackage(nodeModules, {
+      name: 'platform-parent',
+      version: '1.0.0',
+      optionalDependencies: { 'platform-darwin-arm64': '1.0.0', 'platform-linux-x64': '1.0.0' },
+    }),
+    writePackage(nodeModules, {
+      name: 'platform-darwin-arm64',
+      version: '1.0.0',
+      os: ['darwin'],
+      cpu: ['arm64'],
+    }),
+  ])
+}
+
 describe('npmPayloadExclusion', () => {
   it('keeps the runtime files a bundled package is imported through', () => {
     expect(npmPayloadExclusion('node_modules/@deepseek-ai/dsh-tui-app/lib/index.js')).toBeUndefined()
@@ -67,25 +94,7 @@ describe('npmPayloadExclusion', () => {
 describe('liftPlatformOptionalDependencies', () => {
   it('lifts a fixed-range family once and removes every nested declaration', async () => {
     const nodeModules = await createPayload()
-    await Promise.all([
-      writePackage(nodeModules, {
-        name: 'secondary-consumer',
-        version: '3.0.0',
-        optionalDependencies: { 'platform-linux-x64': '1.0.0', 'plain-addon': '^9.0.0' },
-      }),
-      writePackage(nodeModules, { name: 'plain-addon', version: '9.1.0' }),
-      writePackage(nodeModules, {
-        name: 'platform-parent',
-        version: '1.0.0',
-        optionalDependencies: { 'platform-darwin-arm64': '1.0.0', 'platform-linux-x64': '1.0.0' },
-      }),
-      writePackage(nodeModules, {
-        name: 'platform-darwin-arm64',
-        version: '1.0.0',
-        os: ['darwin'],
-        cpu: ['arm64'],
-      }),
-    ])
+    await writePlatformFamily(nodeModules, '1.0.0')
 
     const lifted = await liftPlatformOptionalDependencies(nodeModules, [
       'secondary-consumer',
@@ -136,25 +145,7 @@ describe('liftPlatformOptionalDependencies', () => {
 
   it('rejects a conflicting secondary declaration before changing the payload', async () => {
     const nodeModules = await createPayload()
-    await Promise.all([
-      writePackage(nodeModules, {
-        name: 'secondary-consumer',
-        version: '3.0.0',
-        optionalDependencies: { 'platform-linux-x64': '2.0.0', 'plain-addon': '^9.0.0' },
-      }),
-      writePackage(nodeModules, { name: 'plain-addon', version: '9.1.0' }),
-      writePackage(nodeModules, {
-        name: 'platform-parent',
-        version: '1.0.0',
-        optionalDependencies: { 'platform-darwin-arm64': '1.0.0', 'platform-linux-x64': '1.0.0' },
-      }),
-      writePackage(nodeModules, {
-        name: 'platform-darwin-arm64',
-        version: '1.0.0',
-        os: ['darwin'],
-        cpu: ['arm64'],
-      }),
-    ])
+    await writePlatformFamily(nodeModules, '2.0.0')
     const parentBefore = await readFile(join(nodeModules, 'platform-parent', 'package.json'), 'utf8')
     const consumerBefore = await readFile(join(nodeModules, 'secondary-consumer', 'package.json'), 'utf8')
 

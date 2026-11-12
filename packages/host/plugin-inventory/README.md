@@ -59,7 +59,7 @@ Display metadata comes from the optional `pluginPackages` service using each Loa
 
 ### The phase mapping
 
-Fiber states map onto the public phase vocabulary, with `disposed` folding into `null` — an entry whose fiber is gone has no live root to report. The phase therefore never distinguishes why no live root exists: the entry may never have started, or its fiber may already have been disposed. The exported `pluginFiberPhase(state)` is that mapping, so the terminal surface's `/plugins` rows and the gateway report the same phase.
+Fiber states map onto the public phase vocabulary, with `disposed` folding into `null` — an entry whose fiber is gone has no live root to report. The phase therefore never distinguishes why no live root exists: the entry may never have started, or its fiber may already have been disposed. The package keeps `pluginFiberPhase(state)` internal; the terminal surface's `/plugins` rows apply the same mapping in their own package, so both report the same phase.
 
 ### Source map
 

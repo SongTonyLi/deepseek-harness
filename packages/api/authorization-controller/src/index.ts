@@ -20,7 +20,7 @@ import type { AuthorizationPrompt, AuthorizationService } from '@deepseek-ai/dsh
 import { AuthorizationDeclinedError, AuthorizationError } from '@deepseek-ai/dsh-authorization'
 import { credentialKeyId, credentialKeyScope, parseCredentialKey } from '@deepseek-ai/dsh-credentials'
 import type { CredentialKey, CredentialProvider } from '@deepseek-ai/dsh-credentials'
-import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { parseRemoteRequest, Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
 import type {
   AuthorizationBeginRequest, AuthorizationFlowView, AuthorizationFrame, AuthorizationPromptFrame,
@@ -32,15 +32,6 @@ const keySchema = z.string().min(1)
 const beginRequestSchema = z.object({ key: keySchema, method: z.string().min(1).optional() })
 const promptRequestSchema = z.object({ key: keySchema, promptId: z.string().min(1) })
 const answerRequestSchema = promptRequestSchema.extend({ value: z.string() })
-
-/** Parse the domain constraints that are more specific than generated TypeScript codecs. */
-function parseRequest<T>(method: string, schema: z.ZodType<T>, value: unknown): T {
-  const parsed = schema.safeParse(value)
-  if (!parsed.success) {
-    throw new RemoteError('gateway/bad-request', `invalid payload for ${method}`, { issues: parsed.error.issues })
-  }
-  return parsed.data
-}
 
 /**
  * Brand one wire key, reporting a string outside the `<scope>/<id>` grammar as
@@ -235,7 +226,7 @@ export class AuthorizationController extends TypertRemoteService {
   @Remote
   answer(key: string, promptId: string, value: string): Promise<void> {
     return settled(() => {
-      const parsed = parseRequest('authorization.answer', answerRequestSchema, { key, promptId, value })
+      const parsed = parseRemoteRequest('authorization.answer', answerRequestSchema, { key, promptId, value })
       this.waiting('authorization.answer', parsed).answer(parsed.value)
       // The flow resumes on its own microtask; the attempt's stream is what
       // reports what came of the answer.
@@ -251,7 +242,7 @@ export class AuthorizationController extends TypertRemoteService {
   @Remote
   decline(key: string, promptId: string): Promise<void> {
     return settled(() => {
-      const parsed = parseRequest('authorization.decline', promptRequestSchema, { key, promptId })
+      const parsed = parseRemoteRequest('authorization.decline', promptRequestSchema, { key, promptId })
       this.waiting('authorization.decline', parsed).decline()
     })
   }
@@ -264,7 +255,7 @@ export class AuthorizationController extends TypertRemoteService {
   @Remote
   cancel(key: string): Promise<void> {
     return settled(() => {
-      const parsed = parseRequest('authorization.cancel', keySchema, key)
+      const parsed = parseRemoteRequest('authorization.cancel', keySchema, key)
       this.seam().cancel(keyOf('authorization.cancel', parsed))
     })
   }
@@ -277,7 +268,7 @@ export class AuthorizationController extends TypertRemoteService {
    */
   @Remote
   async signOut(key: string): Promise<void> {
-    const parsed = parseRequest('authorization.signOut', keySchema, key)
+    const parsed = parseRemoteRequest('authorization.signOut', keySchema, key)
     const branded = keyOf('authorization.signOut', parsed)
     const credentials = this.provider()
     try {
@@ -296,7 +287,7 @@ export class AuthorizationController extends TypertRemoteService {
     request: AuthorizationBeginRequest,
     signal: AbortSignal,
   ): AsyncGenerator<AuthorizationFrame> {
-    const parsed = parseRequest('authorization.begin', beginRequestSchema, request)
+    const parsed = parseRemoteRequest('authorization.begin', beginRequestSchema, request)
     const key = keyOf('authorization.begin', parsed.key)
     const method = parsed.method
     const authorization = this.seam()

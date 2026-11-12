@@ -11,14 +11,18 @@ const CONTINUABLE_FAILURES: ReadonlySet<string> = new Set([
 ])
 
 const endingSchema = z.number().int().nonnegative().transform(brandNumber<SessionSeq>).nullable()
-const stateSchema = z.object({
+/** Recoverable manual-continuation facts over admitted user input and empty retry messages. */
+export type ContinuationState = {
+  admitted: boolean
+  failedAttempt: boolean
+  ending: SessionSeq | null
+}
+
+const stateSchema: z.ZodType<ContinuationState> = z.object({
   admitted: z.boolean(),
   failedAttempt: z.boolean(),
   ending: endingSchema,
 })
-
-/** Recoverable manual-continuation facts over admitted user input and empty retry messages. */
-export type ContinuationState = z.infer<typeof stateSchema>
 
 const EMPTY: ContinuationState = { admitted: false, failedAttempt: false, ending: null }
 

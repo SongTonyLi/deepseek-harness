@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createUserMessage, LlmAdapter, LlmError, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, LlmAdapter, LlmError, type BuiltinLlmFailureCode, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import SessionContinuation from '@deepseek-ai/dsh-session-continuation'
 import { expect, it, onTestFinished, vi } from 'vitest'
@@ -15,7 +15,7 @@ import { FakeTerminal, KEY } from './bench.ts'
 
 class Adapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
-  constructor(private readonly code: string) { super() }
+  constructor(private readonly code: BuiltinLlmFailureCode) { super() }
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return Promise.resolve({ provider, id: model, name: model })
   }
@@ -32,7 +32,7 @@ class Adapter extends LlmAdapter {
 const human = (text: string) => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 60))
 
-async function setup(options: { code?: string; service?: boolean; child?: boolean } = {}) {
+async function setup(options: { code?: BuiltinLlmFailureCode; service?: boolean; child?: boolean } = {}) {
   const ctx = new Context()
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(AgentLoop, { agents: [] })

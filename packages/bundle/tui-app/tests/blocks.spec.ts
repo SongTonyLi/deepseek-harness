@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui'
+import { createCredentialMasker } from '@deepseek-ai/dsh-util-credential-mask'
 import { AssistantBlock, ContextBlock, NoticeBlock, SUBAGENT_RUNNING_GLYPH, TOOL_RUNNING_ROW, ToolBlock, UserBlock, UserShellBlock, isFoldable, type BlockTheme, type FadeRender } from '../src/blocks.ts'
 import type { FadeStyle } from '../src/fade.ts'
 import { jsonTreeText } from '../src/json-tree.ts'
@@ -10,6 +11,7 @@ import { toolCallText, type CodeSpan } from '../src/transcript.ts'
 import { CardFlow } from '../src/pace.ts'
 
 const theme: BlockTheme = { palette: createPalette(false), toolPreviewLines: 2, contextPreviewLines: 6 }
+const masker = createCredentialMasker()
 
 /** The two-level fade style, which draws one sequence whatever the ramp would be. */
 const FADE: FadeStyle = { capability: 'dim', ramp: [] }
@@ -49,14 +51,14 @@ function flowOut(block: ToolBlock, style?: () => FadeStyle, shown = 0): FlowCloc
 
 describe('blocks', () => {
   it('wraps a long prompt under its marker', () => {
-    const block = new UserBlock(theme, 'one two three four', 1)
+    const block = new UserBlock(theme, 'one two three four', 1, masker)
     expect(block.render(10)).toEqual(['', '❯ one two', '  three', '  four'])
     block.invalidate()
   })
 
   it('draws a recognized credential masked while the section keeps the sent text', () => {
     const key = 'sk-a1b2c3d4e5f6g7h8i9j0'
-    const block = new UserBlock(theme, `use ${key} now`, 1)
+    const block = new UserBlock(theme, `use ${key} now`, 1, masker)
     const drawn = block.render(60).join('\n')
     expect(drawn).toContain('use sk-a1b2c')
     expect(drawn).toContain('*')
@@ -65,7 +67,7 @@ describe('blocks', () => {
   })
 
   it('lays every prompt row on the background band, the leading blank line left bare', () => {
-    const block = new UserBlock({ ...theme, palette: createPalette(true) }, 'one two three', 1)
+    const block = new UserBlock({ ...theme, palette: createPalette(true) }, 'one two three', 1, masker)
     const lines = block.render(10)
     expect(lines[0]).toBe('')
     for (const line of lines.slice(1)) {
@@ -108,7 +110,7 @@ describe('blocks', () => {
 
   it('draws a steered or injected prompt dim on a darker band', () => {
     const on = createPalette(true)
-    const block = new UserBlock({ ...theme, palette: on }, 'change course', 1, 'injected')
+    const block = new UserBlock({ ...theme, palette: on }, 'change course', 1, masker, 'injected')
     const lines = block.render(20)
     expect(lines[0]).toBe('')
     expect(lines[1]).toBe(on.injectedBand(`${on.dim('❯ change course')}     `))
@@ -116,7 +118,7 @@ describe('blocks', () => {
       on.injectedBand(`${on.dim('❯ change')}  `),
       on.injectedBand(`${on.dim('  course')}  `),
     ])
-    expect(new UserBlock({ ...theme, palette: on }, 'change course', 1).render(20)[1]?.startsWith('\u001b[48;5;236m')).toBe(true)
+    expect(new UserBlock({ ...theme, palette: on }, 'change course', 1, masker).render(20)[1]?.startsWith('\u001b[48;5;236m')).toBe(true)
   })
 
   it('spins a running card glyph until the result lands', () => {
@@ -476,7 +478,7 @@ describe('blocks', () => {
 
 describe('navigable sections', () => {
   it('reuses sections until their block content changes', () => {
-    const user = new UserBlock(theme, 'prompt', 1)
+    const user = new UserBlock(theme, 'prompt', 1, masker)
     expect(user.parts()).toBe(user.parts())
 
     const assistant = new AssistantBlock(theme, 1)
@@ -501,7 +503,7 @@ describe('navigable sections', () => {
   })
 
   it('reports a prompt as one section, split at its own newlines', () => {
-    const block = new UserBlock(theme, 'read the spec\nthen fix it', 4)
+    const block = new UserBlock(theme, 'read the spec\nthen fix it', 4, masker)
     expect(block.turn).toBe(4)
     expect(block.blockKind).toBe('user')
     expect(block.parts()).toEqual([{ kind: 'user', rows: ['read the spec', 'then fix it'] }])
@@ -560,7 +562,7 @@ describe('the focus gutter', () => {
   const trimmed = (lines: string[]): string[] => lines.map(line => line.trimEnd())
 
   it('draws a prompt behind the focus gutter, two columns narrower', () => {
-    const block = new UserBlock(theme, 'one two three four', 1)
+    const block = new UserBlock(theme, 'one two three four', 1, masker)
     block.setHighlight(0)
     expect(block.render(10)).toEqual(['┃ ', '┃ ❯ one', '┃   two', '┃   three', '┃   four'])
     block.setHighlight(undefined)
@@ -776,7 +778,7 @@ describe('folding a block', () => {
   it('is the marker every foldable block carries, and nothing else carries', () => {
     expect(isFoldable(new ContextBlock(theme, 'system prompt', [{ kind: 'system', rows: ['a'] }], 0))).toBe(true)
     expect(isFoldable(new ToolBlock(theme, 'bash', { title: '', lines: [] }, 1))).toBe(true)
-    expect(isFoldable(new UserBlock(theme, 'read the spec', 1))).toBe(false)
+    expect(isFoldable(new UserBlock(theme, 'read the spec', 1, masker))).toBe(false)
     expect(isFoldable(new AssistantBlock(theme, 1))).toBe(false)
     expect(isFoldable(undefined)).toBe(false)
   })
@@ -945,7 +947,7 @@ describe('render reuse', () => {
   })
 
   it('hands back the same prompt lines while nothing changed', () => {
-    const block = new UserBlock(theme, 'one two three four', 1)
+    const block = new UserBlock(theme, 'one two three four', 1, masker)
     const first = block.render(10)
     expect(block.render(10)).toBe(first)
     expect(block.render(12)).not.toBe(first)

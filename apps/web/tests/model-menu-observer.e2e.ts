@@ -29,6 +29,7 @@ const PROVIDERS = [
 }))
 const EXPECTED_GROUPS = [
   { label: 'DeepSeek', rows: ['DeepSeek-V4-Flash', 'DeepSeek-V4-Flash-Vision-Exp'] },
+  { label: 'Cursor', rows: ['Composer 2', 'Composer 2 Fast', 'Composer 1.5', 'Claude 4.5 Sonnet', 'Claude 4.6 Opus', 'GPT-5.1'] },
   ...PROVIDERS.map(provider => ({ label: provider.name, rows: provider.models.map(model => model.name) })),
 ]
 
@@ -56,7 +57,7 @@ async function assertNoRectReads(page: Page): Promise<void> {
   expect(await page.evaluate(() => window.__modelMenuRectReads)).toBe(0)
 }
 
-async function assertPinned(page: Page, viewport: Locator, index: number, count = 5): Promise<void> {
+async function assertPinned(page: Page, viewport: Locator, index: number, count = EXPECTED_GROUPS.length): Promise<void> {
   const expected = Array.from({ length: count }, (_, i) => i === index)
   await expect.poll(() => readPinned(viewport)).toEqual(expected)
   await assertNoRectReads(page)
@@ -183,7 +184,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
 
       await open()
       try {
-        expect(await viewport.locator('[role="option"], [role="menuitemradio"]').count()).toBe(30)
+        expect(await viewport.locator('[role="option"], [role="menuitemradio"]').count()).toBe(36)
         expect(await viewport.evaluate(node => node.scrollTop)).toBe(0)
         expect(await viewport.locator('[data-menu-group-heading]').evaluateAll(headings =>
           [...new Set(headings.map(heading => getComputedStyle(heading).backgroundColor))]))
@@ -198,7 +199,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
         if (entry === 'button') buttonMaterial = material
         else expect(material).toEqual(buttonMaterial)
 
-        for (const index of [2, 4, 1]) {
+        for (const index of [3, 5, 2]) {
           await scrollToGroup(viewport, index)
           await assertPinned(page, viewport, index)
           const height = await viewport.evaluate(node => node.clientHeight)
@@ -226,7 +227,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
             const before = await rows.evaluateAll(nodes => nodes.findIndex(node =>
               node.hasAttribute('data-highlighted') || node.getAttribute('aria-selected') === 'true'))
             await search.press(key)
-            const expected = (before + (key === 'ArrowDown' ? 1 : -1) + 30) % 30
+            const expected = (before + (key === 'ArrowDown' ? 1 : -1) + 36) % 36
             await expect.poll(() => rows.evaluateAll(nodes => nodes.findIndex(node =>
               node.hasAttribute('data-highlighted') || node.getAttribute('aria-selected') === 'true'))).toBe(expected)
             await frames(page)
@@ -271,15 +272,15 @@ describe.skipIf(webSnapshotMode() === 'record').each([
         await open()
         expect(await search.inputValue()).toBe('')
 
-        await scrollToGroup(viewport, 3, 90)
-        await assertPinned(page, viewport, 3)
+        await scrollToGroup(viewport, 4, 90)
+        await assertPinned(page, viewport, 4)
         await viewport.evaluate((node) => { node.style.maxHeight = '64px' })
         await expect.poll(() => viewport.evaluate(node => node.clientHeight)).toBeLessThanOrEqual(64)
-        await assertPinned(page, viewport, 3)
-        await scrollToGroup(viewport, 4, 100)
         await assertPinned(page, viewport, 4)
-        await scrollToGroup(viewport, 1, 100)
-        await assertPinned(page, viewport, 1)
+        await scrollToGroup(viewport, 5, 100)
+        await assertPinned(page, viewport, 5)
+        await scrollToGroup(viewport, 2, 100)
+        await assertPinned(page, viewport, 2)
         await scrollToGroup(viewport, 0, 0)
         await assertPinned(page, viewport, -1)
       } finally {
@@ -329,8 +330,8 @@ describe.skipIf(webSnapshotMode() === 'record').each([
         })))
         expect(Math.max(...widths.map(row => row.right)) - Math.min(...widths.map(row => row.right))).toBeLessThan(1)
         expect(Math.max(...widths.map(row => row.width)) - Math.min(...widths.map(row => row.width))).toBeLessThan(1)
-        await scrollToGroup(models, 1, 10)
-        await expect.poll(() => models.locator('[data-menu-group-heading]').nth(1).getAttribute('data-stuck')).not.toBeNull()
+        await scrollToGroup(models, 2, 10)
+        await expect.poll(() => models.locator('[data-menu-group-heading]').nth(2).getAttribute('data-stuck')).not.toBeNull()
         const coversViewport = await models.evaluate((node) => {
           const viewport = node.getBoundingClientRect()
           const heading = node.querySelector('[data-menu-group-heading][data-stuck]')!.getBoundingClientRect()

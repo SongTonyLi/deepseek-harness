@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-session-continuation",
   "description": "Failed-turn continuation eligibility and admission",
-  "version": "0.2.2-rc.1",
+  "version": "0.2.2-rc.2",
   "publishConfig": { "access": "public" },
   "repository": { "type": "git", "url": "git+https://github.com/deepseek-ai/deepseek-harness.git", "directory": "packages/session/session-continuation" },
   "type": "module",
@@ -11,11 +11,12 @@
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./types": { "types": "./lib/types/types.d.ts", "default": "./lib/types/types.js" },
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
-  "files": ["lib/index.js", "lib/types/**/*.js", "lib/types/**/*.d.ts"],
+  "files": ["locale/*.json", "lib/index.js", "lib/types/**/*.js", "lib/types/**/*.d.ts", "lib/types/**/*.d.ts.map", "lib/**/*.js.map", "src"],
   "license": "MIT",
-  "dependencies": { "@deepseek-ai/dsh-brand": "workspace:*", "zod": "4.4.3" },
+  "dependencies": { "@deepseek-ai/dsh-brand": "workspace:*", "zod": "4.6.6" },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:~",
     "@deepseek-ai/dsh-agent": "workspace:*",

@@ -12,6 +12,7 @@ export const PLATFORM_MODULES = [
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-dockkit',
+  '@deepseek-ai/dsh-util-credential-mask',
 ] as const
 
 /** Client-bundle specifiers whose factories the parser preloads before the shell starts. */

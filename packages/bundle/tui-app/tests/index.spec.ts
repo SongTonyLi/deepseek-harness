@@ -21,7 +21,8 @@ import { SessionLogOffset, type EpochHeader, type SessionEvent, type SessionId }
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { BTW_SANDBOXED_TOOLS, BTW_TOOLS } from '../src/btw.ts'
-import { Config, apply, internals } from '../src/index.ts'
+import { Config, apply } from '../src/index.ts'
+import { internals } from '../src/internals.ts'
 import { DISABLE_MOUSE, ENABLE_MOUSE } from '../src/pointer.ts'
 import { FakeTerminal, KEY } from './bench.ts'
 

@@ -83,6 +83,8 @@ throw new RemoteError('goal/not-found', `goal "${id}" does not exist`, { goalId:
 
 An owner throws at the failure point; no package writes an error-class family or an exit-mapping function. A caller discriminates by `code` — never by `instanceof` — and a `code` branch narrows `details` with no cast, because `RemoteFailure` is the code-discriminated union of `RemoteError` instances. Infrastructure that must recognize a failure carried across a module or realm copy of the class calls `remoteErrorOf(value)`, which reads a structural marker instead of the prototype chain.
 
+A method whose payload needs domain constraints beyond the generated codecs calls `parseRemoteRequest(method, schema, value)`, which returns the schema's parsed output. The `schema` parameter is structural: any object with a `safeParse` method, such as a Zod schema, qualifies. An invalid payload throws `RemoteError` with code `gateway/bad-request`, the message `invalid payload for <method>`, and the schema's issues in `details.issues`.
+
 ### Receiving forwarded Host events on the Client
 
 The Host assembly extends `TypertRemoteEventSelection` with the Cordis events it forwards to consumers, which narrows the `ctx.remote.$on` key set. `TypertForwardableEvent` accepts unscoped `void` notifications and scoped async waterfalls whose final `next()` callback returns the event's result type. `TypertClientEventListener` derives the Client listener from that same `Events` member while preserving signals, optional and readonly fields, arrays, callbacks, and result types. `TypertClientRemote` exposes only `$mount()` and `$on()`; event transport remains private to Gateway.
@@ -126,6 +128,7 @@ Every namespace, method, lookup, and Context segment must satisfy `isTypertRemot
 | [`src/remote-access.ts`](src/remote-access.ts) | `RemoteAccessResource`, `RemoteAccessResourceKind`, and `RemoteAccessResourceOf` over `TypertResourceMap` |
 | [`src/json-value.ts`](src/json-value.ts) | `isRemoteJsonValue` and `isRemoteUplinkItem`, the lossless JSON checks every carrier shares |
 | [`src/remote-error.ts`](src/remote-error.ts) | `RemoteError` and the structural `remoteErrorOf` recognizer |
+| [`src/remote-request.ts`](src/remote-request.ts) | `parseRemoteRequest`, which validates a request payload through a structural `safeParse` schema and refuses it as `gateway/bad-request` |
 | [`src/remote-info.ts`](src/remote-info.ts) | Pure lazy info factory and direct-method type guard |
 | [`src/types.ts`](src/types.ts) | Protocol maps, `RemoteErrorDetailsMap`, `RemoteResult`, `RemoteStream`, `RemoteStreamHandle`, `PrincipalMap`, `Principal`, `PeerScope`, `RemoteInvocation`, `InvocationDescriptor`, codecs, provider contracts, registry interfaces, `TypertClientRemote` |
 

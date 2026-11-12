@@ -7,7 +7,6 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { UserTextNode, UserTextRule, UserTextTransformContext } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { UserTextRegistry } from '@deepseek-ai/dsh-client-ui-conversation/src/client/conversation/user-text-registry.ts'
 import { collapseWhitespaceRule, trimWhitespaceRule } from '@deepseek-ai/dsh-client-ui-conversation/src/client/user-text/whitespace-rules.ts'
-import { formatTables } from '../src/client/format-tables.ts'
 import { createSecretRule } from '../src/client/secret-rule.ts'
 
 // Samples are assembled at run time so the repository holds no literal in a credential format.
@@ -196,12 +195,6 @@ describe('secretRule masking', () => {
 })
 
 describe('secretRule scheduling', () => {
-  it('finds format starts through grouped literals only, so scanning cannot backtrack', () => {
-    const literals = formatTables().prefixSource.replace(/\\./gu, '').replaceAll('(?:', '').replaceAll(')', '')
-    expect(literals.split('|').length).toBeGreaterThan(20)
-    expect(literals).not.toMatch(/[*+?{}()[\].^$]/u)
-  })
-
   it('reads no Facts, queries forward once per credential, and reuses the result across Facts updates', () => {
     const read = vi.fn()
     const rule = createSecretRule()

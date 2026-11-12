@@ -223,6 +223,44 @@ export function deepFreeze<T>(value: T): T {
   return value
 }
 
+/** Members that share one phase key, as produced by {@link groupByPhase}. */
+export interface PhaseGroup<Phase, Key, Entry> {
+  /** Stable key shared by every member of the group. */
+  readonly key: Key
+  /** Exact phase identity of the first member that produced the key. */
+  readonly phase: Phase
+  /** Entries of the group's members, in input order. */
+  readonly members: readonly Entry[]
+}
+
+/**
+ * Group members by the stable key of their phase identity, keeping first-appearance order.
+ * @param members - members in input order.
+ * @param phaseOf - returns one member's exact phase identity.
+ * @param keyOf - returns the stable key of a phase identity; identities with equal keys share one group.
+ * @param entryOf - returns the entry stored in its group for one member.
+ * @returns one group per distinct key, ordered by the first member that produced it; each group keeps its members in input order.
+ */
+export function groupByPhase<Member, Phase, Key, Entry>(
+  members: readonly Member[],
+  phaseOf: (member: Member) => Phase,
+  keyOf: (phase: Phase) => Key,
+  entryOf: (member: Member) => Entry,
+): PhaseGroup<Phase, Key, Entry>[] {
+  const groups = new Map<Key, { key: Key; phase: Phase; members: Entry[] }>()
+  for (const member of members) {
+    const phase = phaseOf(member)
+    const key = keyOf(phase)
+    let group = groups.get(key)
+    if (group === undefined) {
+      group = { key, phase, members: [] }
+      groups.set(key, group)
+    }
+    group.members.push(entryOf(member))
+  }
+  return [...groups.values()]
+}
+
 /**
  * Weak-key lookup with a strongly retained iterable set of associated values.
  *

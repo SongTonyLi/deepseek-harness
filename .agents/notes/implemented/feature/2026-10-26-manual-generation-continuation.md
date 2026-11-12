@@ -12,7 +12,7 @@ Users need another request after a model failure without inserting an artificial
 
 The play action submits `content: []` through the existing Session prompt API. The API assigns `source.kind: 'retry'`; unchanged AgentLoop admission records an empty `user/message` and opens a normally balanced new turn. Chat presents a compact continuation-request receipt while the log retains the empty input. The original failed turn remains closed.
 
-The Session API owns the fixed-size `conversationContinuation` projection and shares its value with the browser. Admission requires an eligible failure, true idle ownership, and no pending human input. An appended empty retry message admits the new turn, preserving eligibility if its request also fails.
+The [session-continuation service](../../../../packages/session/session-continuation/README.md) owns the fixed-size `conversationContinuation` projection; the Session API shares its value with the browser. [Controller compatibility](../architecture/2026-11-12-session-controller-continuation-compatibility.md) records the separate Web controller and direct TUI retry paths. Admission requires an eligible failure, true idle ownership, and no pending human input. An appended empty retry message admits the new turn, preserving eligibility if its request also fails.
 
 The six-code manual allowlist stays independent of provider retry policy. Non-waking injected context accompanies the request. The accepted user message retains request-id deduplication after the inbox input is claimed. Reusing ordinary message admission avoids a Loop branch and a separate durable acceptance event.
 

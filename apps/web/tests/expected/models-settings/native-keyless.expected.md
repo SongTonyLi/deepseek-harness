@@ -9,7 +9,12 @@
   - button "关闭"
   - heading "模型" [level=2]
   - paragraph: 填入各提供商的 API 密钥即可使用其模型。
-  - list
+  - list:
+    - listitem:
+      - text: Cursor
+      - button "编辑 Cursor (cursor)": 编辑
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
   - tablist "添加方式":
     - tab "第三方模型提供商" [selected]
     - tab "自定义模型 API"
@@ -61,3 +66,5 @@
     - group: 自定义设置
     - button "取消"
     - button "保存"
+    - button "登录"
+    - paragraph: 该提供方使用订阅登录，而不是 API 密钥。

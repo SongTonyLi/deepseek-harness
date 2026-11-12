@@ -15,10 +15,8 @@
  * @module @deepseek-ai/dsh-sandbox-apple-container
  */
 
-import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
@@ -33,6 +31,7 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-system-prompt'
+import { DEFAULT_ENV_DENYLIST, DEFAULT_HIDDEN_FILES, DEFAULT_HOST_BOUND_UNREADABLE_ROOTS } from './defaults.ts'
 import { ContainerPool } from './pool.ts'
 import type { PoolEntry } from './pool.ts'
 import { ContainerRuntime } from './runtime.ts'
@@ -40,35 +39,10 @@ import { containerSupported, resolveBackend } from './host.ts'
 import type { ConfiguredBackend } from './host.ts'
 import { isSandboxBackend, setSandboxBackend } from './session-backend.ts'
 import type { SandboxBackend } from './session-backend.ts'
-import { SHIM_FAILURE_EXIT, SHIM_FAILURE_PREFIX, encodeShimArgs } from './shim.ts'
+import { SHIM_FAILURE_EXIT, SHIM_FAILURE_PREFIX, encodeShimArgs, shimInvocation } from './shim.ts'
 
-export { SANDBOX_BACKENDS, isSandboxBackend, setSandboxBackend } from './session-backend.ts'
 export type { SandboxBackend } from './session-backend.ts'
-export { containerSupported, executableResolves, resolveBackend } from './host.ts'
 export type { ConfiguredBackend, HostFacts } from './host.ts'
-
-/**
- * Environment names the shim withholds from the guest by default: host-specific
- * paths and session plumbing, plus every credential-shaped name, even one a
- * composition passes deliberately.
- */
-export const DEFAULT_ENV_DENYLIST: readonly string[] = [
-  'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'PWD', 'OLDPWD', 'SHLVL', 'SSH_AUTH_SOCK',
-  '__CF*', 'XPC_*', 'DYLD_*', 'TERM_PROGRAM*',
-  '*KEY*', '*TOKEN*', '*SECRET*', '*PASSWORD*', '*PASSWD*', '*CREDENTIAL*', '*COOKIE*', '*PRIVATE*', 'AWS_*',
-]
-
-/** File names hidden from confined commands and host file tools by default: environment files, private keys, and credential stores. */
-export const DEFAULT_HIDDEN_FILES: readonly string[] = [
-  '.env', '.env.*', '.envrc', '*.pem', '*.key', '*.p12', '*.pfx',
-  'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', '.npmrc', '.pypirc', '.netrc', '.git-credentials',
-]
-
-/**
- * Host directories whose file contents host-bound executions of container
- * sessions cannot read by default: user homes and attached volumes.
- */
-export const DEFAULT_HOST_BOUND_UNREADABLE_ROOTS: readonly string[] = ['/Users', '/Volumes']
 
 /** Stderr text of a write the read-only workspace mount refused. */
 const CONTAINER_DENIAL_SIGNATURES: readonly string[] = ['read-only file system']
@@ -127,22 +101,6 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
     /** Last logged sandbox-backend switch, or null before one (the configured default applies). */
     sandboxBackend: zod.infer<typeof sandboxBackendStateSchema>
   }
-}
-
-/**
- * The exec-shim launch prefix for a provider module at `moduleUrl`: the built
- * sibling `exec-shim.js` under plain Node when present, otherwise the source
- * entry through tsx pinned to this checkout's TypeScript paths.
- * @param moduleUrl - the provider module's `import.meta.url`.
- * @returns `[node, ...loader, entry]`.
- */
-export function shimInvocation(moduleUrl: string): string[] {
-  const built = fileURLToPath(new URL('./exec-shim.js', moduleUrl))
-  if (existsSync(built)) return [process.execPath, built]
-  const source = fileURLToPath(new URL('./exec-shim.ts', moduleUrl))
-  const tsconfig = fileURLToPath(new URL('../../../../tsconfig.base.json', moduleUrl))
-  const registration = `import { register } from ${JSON.stringify(import.meta.resolve('tsx/esm/api'))}; register({ tsconfig: ${JSON.stringify(tsconfig)} });`
-  return [process.execPath, '--import', `data:text/javascript,${encodeURIComponent(registration)}`, source]
 }
 
 /** Whether `pid` names a live process; a permission refusal still proves existence. */

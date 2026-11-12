@@ -13,7 +13,7 @@ import type {
 } from '../contract/snapshot.ts'
 import { isAtOrOutside } from '../contract/group-tree.ts'
 import { locationCoordinates } from './common.ts'
-import { sessionRecallLabels, skillInvocationName } from './event-projection.ts'
+import { sessionRecallLabels, skillInvocationName } from '../contract/event-projection.ts'
 import { GroupTreeSegments } from './group-tree-segments.ts'
 import { sameTurnNavigationItem, turnNavigationItem } from './turn-navigation.ts'
 import { ChatTurnProcessProjector } from './turn-process-presentation.ts'

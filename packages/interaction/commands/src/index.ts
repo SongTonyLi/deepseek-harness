@@ -93,6 +93,11 @@ interface RegisteredCommand {
   readonly descriptor: CommandDescriptor
 }
 
+/** Attachments admitted with one command line: encoded uploads from the wire, or stored references from a trusted adapter. */
+type CommandAttachmentInput =
+  | { kind: 'wire'; attachments: readonly CommandSubmitAttachment[] }
+  | { kind: 'stored'; attachments: readonly StoredCommandAttachment[] }
+
 /** All command registrations owned by one global or scoped layer. */
 class CommandLayer implements ScopeLayer {
   readonly commands: NamedEntries<RegisteredCommand>
@@ -367,11 +372,7 @@ export class CommandRuntime extends TypertRemoteService {
     submittedAttachments: readonly CommandSubmitAttachment[],
     signal: AbortSignal,
   ): Promise<CommandExecution | undefined> {
-    const parsed = parseCommand(line)
-    if (parsed === undefined) return undefined
-    const command = this.view(agent).get(parsed.name)
-    if (command === undefined) return undefined
-    return this.executeInput(agent, parsed, command, { kind: 'wire', attachments: submittedAttachments }, signal)
+    return this.executeLine(agent, line, { kind: 'wire', attachments: submittedAttachments }, signal)
   }
 
   /**
@@ -392,19 +393,32 @@ export class CommandRuntime extends TypertRemoteService {
     attachments: readonly StoredCommandAttachment[],
     signal: AbortSignal,
   ): Promise<CommandExecution | undefined> {
+    return this.executeLine(agent, line, { kind: 'stored', attachments }, signal)
+  }
+
+  /**
+   * Resolve a slash-command line for the receiving agent and run it with the
+   * given attachments. Invalid syntax or an unknown name returns `undefined`
+   * before anything is logged or run.
+   */
+  private async executeLine(
+    agent: Agent,
+    line: string,
+    input: CommandAttachmentInput,
+    signal: AbortSignal,
+  ): Promise<CommandExecution | undefined> {
     const parsed = parseCommand(line)
     if (parsed === undefined) return undefined
     const command = this.view(agent).get(parsed.name)
     if (command === undefined) return undefined
-    return this.executeInput(agent, parsed, command, { kind: 'stored', attachments }, signal)
+    return this.executeInput(agent, parsed, command, input, signal)
   }
 
   private async executeInput(
     agent: Agent,
     parsed: ParsedCommand,
     command: RegisteredCommand,
-    input: { kind: 'wire'; attachments: readonly CommandSubmitAttachment[] }
-      | { kind: 'stored'; attachments: readonly StoredCommandAttachment[] },
+    input: CommandAttachmentInput,
     signal: AbortSignal,
   ): Promise<CommandExecution> {
     if (signal.aborted) throw abortError(signal)

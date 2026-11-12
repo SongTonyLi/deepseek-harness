@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Poursuite de la session",
+    "description": "Poursuit les tours de modèle échoués admissibles par une nouvelle tentative vide admise pendant que l'agent est inactif."
+  }
+}

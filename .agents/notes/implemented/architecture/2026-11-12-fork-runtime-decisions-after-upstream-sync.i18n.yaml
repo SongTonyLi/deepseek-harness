@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for 2026-11-12-fork-runtime-decisions-after-upstream-sync.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-12-fork-runtime-decisions-after-upstream-sync.md
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync:
+  en: 839f9ded9d302901
+  zh: 6bb331b3d700b8b5
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/problem:
+  en: 08e7ba40e2276b6b
+  zh: 37142d5805477cdd
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/decision:
+  en: 0d2e1fa8d040654b
+  zh: fd36089a9ed4d91b
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/decision/read-fence-refusal-keeps-its-code-string:
+  en: 3e0dca5e5da5f539
+  zh: 167897eacc76f386
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/decision/the-credential-matcher-lives-in-a-static-utility:
+  en: 2222c67c141d0b3b
+  zh: a9d2f8b92818c9d2
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/decision/the-terminal-profile-keeps-interrupt-agent-on:
+  en: ce61c69456d371fa
+  zh: ce01a6ab40408e22
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/decision/four-files-keep-the-cordis-preset-id-under-the-rescope-gate:
+  en: 79004f1d71643069
+  zh: 26c6d1bd1db46806
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/alternatives-considered:
+  en: 9fa228c85b212a3d
+  zh: 0b7d82432f3bed54
+/agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/consequences:
+  en: 81e2173502c26459
+  zh: d5a727b52dc1403a

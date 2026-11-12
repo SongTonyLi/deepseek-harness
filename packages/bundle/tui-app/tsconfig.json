@@ -27,9 +27,6 @@
       "path": "../../boot/plugin-manager"
     },
     {
-      "path": "../../client/ui-secret-mask/tsconfig.host.json"
-    },
-    {
       "path": "../../compaction/compaction"
     },
     {
@@ -148,6 +145,9 @@
     },
     {
       "path": "../../util/native-command"
+    },
+    {
+      "path": "../../util/credential-mask"
     },
     {
       "path": "../../util/values"

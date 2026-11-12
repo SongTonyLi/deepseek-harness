@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session continuation",
+    "description": "Continues eligible failed model turns through an empty retry admitted while the Agent is idle."
+  }
+}

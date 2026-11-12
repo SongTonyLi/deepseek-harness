@@ -17,12 +17,19 @@
       - text: DeepSeek deepseek-official API 密钥
       - button "认证说明": "?"
       - textbox "API 密钥":
-        - /placeholder: 留空使用已保存凭据
+        - /placeholder: dsh_onboa•••••••••••••••••••••••••••••••test
+      - paragraph: 使用已保存的 API key。
       - group:
         - text: 自定义设置 API 地址
         - textbox "API 地址":
           - /placeholder: https://api.deepseek.com/anthropic（默认使用环境 DEEPSEEK_BASE_URL）
         - text: 请填写兼容 Anthropic Messages 协议的 API 地址。
+        - group "重试策略":
+          - text: 重试策略
+          - combobox "重试策略":
+            - option "默认（仅临时错误）" [selected]
+            - option "仅临时错误"
+            - option "所有错误"
         - region "模型目录":
           - text: 模型目录 已自定义模型目录
           - button "恢复默认模型"
@@ -52,4 +59,9 @@
           - button "添加模型"
       - button "取消"
       - button "保存"
+    - listitem:
+      - text: Cursor
+      - button "编辑 Cursor (cursor)": 编辑
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
   - button "添加模型提供商"

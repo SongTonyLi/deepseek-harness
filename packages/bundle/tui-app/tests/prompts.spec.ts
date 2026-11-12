@@ -1,11 +1,11 @@
 /** Modal prompts settle once, and the queue shows one at a time. */
 
-import { describe, expect, it } from 'vitest'
-import { Container, type TUI } from '@earendil-works/pi-tui'
+import { describe, expect, it, vi } from 'vitest'
+import { Container, TuiMainScreen } from '@earendil-works/pi-tui'
 import type { AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import { ApprovalPrompt, DetailPrompt, ModalQueue, PickPrompt, QuestionPrompt } from '../src/prompts.ts'
 import { createPalette } from '../src/style.ts'
-import { KEY } from './bench.ts'
+import { FakeTerminal, KEY } from './bench.ts'
 
 /** One key as a colored palette draws its chip: accent, italic. */
 const chip = (label: string): string => `\u001b[3m\u001b[38;5;111m${label}\u001b[39m\u001b[23m`
@@ -246,10 +246,10 @@ describe('prompts', () => {
     const renders: number[] = []
     const slot = new Container()
     const editor = new Container()
-    const tui = {
-      setFocus: (component: unknown) => { focused.push(component) },
-      requestRender: () => { renders.push(1) },
-    } as unknown as TUI
+    // The queue drives only setFocus and requestRender; both record here instead of drawing.
+    const tui = new TuiMainScreen(new FakeTerminal())
+    vi.spyOn(tui, 'setFocus').mockImplementation((component) => { focused.push(component) })
+    vi.spyOn(tui, 'requestRender').mockImplementation(() => { renders.push(1) })
     const queue = new ModalQueue({ tui, slot, focusAfter: editor })
     expect(queue.isActive()).toBe(false)
     const first = new ApprovalPrompt(palette, 'a', undefined)

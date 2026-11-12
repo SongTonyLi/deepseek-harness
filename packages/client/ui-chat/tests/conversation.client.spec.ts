@@ -6,7 +6,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   displayFailure, emptyAssistantBlock, toAssistantBlock, toAssistantBlocks,
   isTokenDelta,
-} from '../src/client/conversation-nodes/event-projection.ts'
+} from '../src/client/contract/event-projection.ts'
 
 describe('toAssistantBlock', () => {
   it('classifies the four block shapes', () => {

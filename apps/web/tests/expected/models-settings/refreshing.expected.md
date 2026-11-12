@@ -11,6 +11,11 @@
   - paragraph: 填入各提供商的 API 密钥即可使用其模型。
   - list:
     - listitem:
+      - text: Cursor
+      - button "编辑 Cursor (cursor)" [disabled]: 编辑
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
+    - listitem:
       - text: minimax-cn
       - img "API 密钥已配置"
       - button "编辑 minimax-cn" [disabled]: 编辑

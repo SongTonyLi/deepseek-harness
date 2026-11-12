@@ -4,7 +4,7 @@
  * @module @deepseek-ai/dsh-tui-app/workflow
  */
 
-import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { assertNever, groupByPhase } from '@deepseek-ai/dsh-util-values'
 import type {
   ToolWorkflowAgentEndData, ToolWorkflowAgentStartData,
   ToolWorkflowRunEndData, ToolWorkflowRunStartData,
@@ -146,35 +146,19 @@ export function projectWorkflowRun(
   options: WorkflowRunProjectionOptions = {},
 ): WorkflowRunView {
   const interrupted = state.stopReason === undefined && options.markUnfinishedInterrupted === true
-  const phases = new Map<string, { phase: string | null; members: WorkflowRunMemberView[] }>()
-  for (const member of state.members) {
-    const phase = member.phase === undefined ? null : member.phase
-    const key = workflowPhaseKey(phase)
-    let group = phases.get(key)
-    if (group === undefined) {
-      group = { phase, members: [] }
-      phases.set(key, group)
-    }
-    group.members.push({
-      seq: member.seq,
-      label: member.label,
-      childId: member.childId,
-      status: member.outcome === undefined
-        ? interrupted ? 'interrupted' : 'running'
-        : statusFromOutcome(member.outcome),
-    })
-  }
+  const phases = groupByPhase(
+    state.members,
+    member => member.phase === undefined ? null : member.phase,
+    workflowPhaseKey,
+    member => memberView(member, interrupted),
+  )
   return {
     runId: state.runId,
     name: state.name,
     status: state.stopReason === undefined
       ? interrupted ? 'interrupted' : 'running'
       : statusFromStopReason(state.stopReason),
-    phases: [...phases].map(([key, group]) => ({
-      key,
-      phase: group.phase,
-      members: group.members,
-    })),
+    phases,
   }
 }
 
@@ -232,6 +216,17 @@ function settleMember(state: WorkflowRunState, data: ToolWorkflowAgentEndData): 
     members: state.members.map((member, memberIndex) => memberIndex === index
       ? { ...member, outcome: data.outcome }
       : member),
+  }
+}
+
+function memberView(member: WorkflowRunMemberState, interrupted: boolean): WorkflowRunMemberView {
+  return {
+    seq: member.seq,
+    label: member.label,
+    childId: member.childId,
+    status: member.outcome === undefined
+      ? interrupted ? 'interrupted' : 'running'
+      : statusFromOutcome(member.outcome),
   }
 }
 

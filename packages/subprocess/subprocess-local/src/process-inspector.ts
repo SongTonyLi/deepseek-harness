@@ -197,17 +197,26 @@ function readLinuxTerminalDevice(
 }
 
 /**
- * Report whether a Linux process group has an executing member. `false`
- * means the group contains only zombie/dead entries; `undefined` means the
- * process table could not prove either outcome.
+ * Find an executing member of a Linux process group. `false` means the group
+ * contains only zombie/dead entries; `undefined` means the process table could
+ * not prove either outcome. A still-executing `knownMember` is returned from
+ * its own stat entry without enumerating `/proc`, so repeated polls of a
+ * long-lived group cost one file read instead of one per host process.
  * @param processGroupId - POSIX process-group id to inspect.
+ * @param knownMember - member PID returned by an earlier call, if any.
  * @param internals - injectable process-table operations.
- * @returns Live-member presence, or `undefined` when unavailable/absent.
+ * @returns An executing member's PID; `false` when every group entry is
+ * zombie/dead; `undefined` when `/proc` is unreadable or lists no group entry.
  */
-export function linuxProcessGroupHasLiveMembers(
+export function linuxProcessGroupLiveMember(
   processGroupId: number,
+  knownMember?: number,
   internals: ProcessInspectorInternals = DEFAULT_INTERNALS,
-): boolean | undefined {
+): number | false | undefined {
+  if (knownMember !== undefined) {
+    const known = readLinuxStat(internals, knownMember)
+    if (known?.pgrp === processGroupId && !quiescent(known.state)) return knownMember
+  }
   let entries: string[]
   try {
     entries = internals.readDir('/proc')
@@ -220,7 +229,7 @@ export function linuxProcessGroupHasLiveMembers(
     const stat = readLinuxStat(internals, Number(entry))
     if (stat?.pgrp !== processGroupId) continue
     matched = true
-    if (!/^[ZXx]$/.test(stat.state)) return true
+    if (!quiescent(stat.state)) return stat.pid
   }
   return matched ? false : undefined
 }
@@ -485,22 +494,22 @@ class LinuxProcessInspector extends PosixProcessInspector {
 
 }
 
-// `ps` exposes neither the session id nor a state column in this format, so a
-// macOS row can answer presence and parentage but never session membership.
+// macOS status suffixes describe additional flags; the first character is the
+// process state. This table omits session ids, so session membership stays unknown.
 function macProcessTable(internals: ProcessInspectorInternals): { rows: ProcessRow[]; complete: boolean } {
   let complete = true
-  const rows = internals.exec('/bin/ps', ['-axo', 'pid=,ppid=,lstart=']).split('\n').flatMap((line) => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
-    if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) {
+  const rows = internals.exec('/bin/ps', ['-axo', 'pid=,ppid=,stat=,lstart=']).split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S)\S*\s+(.+?)\s*$/.exec(line)
+    if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined || match[4] === undefined) {
       if (line.trim().length > 0) complete = false
       return []
     }
     return [{
       pid: Number(match[1]),
       parentPid: Number(match[2]),
-      started: match[3],
+      started: match[4],
       session: undefined,
-      state: undefined,
+      state: match[3],
     }]
   })
   return { rows, complete }
@@ -522,7 +531,7 @@ class MacProcessInspector extends PosixProcessInspector {
 
   isAlive(identity: ProcessIdentity): boolean {
     return macProcessTable(this.internals).rows
-      .some(entry => entry.pid === identity.pid && entry.started === identity.started)
+      .some(entry => entry.pid === identity.pid && entry.started === identity.started && !quiescent(entry.state))
   }
 
   snapshot(): ProcessSnapshot {

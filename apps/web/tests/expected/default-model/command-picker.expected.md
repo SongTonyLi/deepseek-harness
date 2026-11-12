@@ -5,6 +5,14 @@
     - text: DeepSeek
     - option "DeepSeek-V4-Flash"
     - option "DeepSeek-V4-Flash-Vision-Exp"
+  - group "Cursor":
+    - text: Cursor
+    - option "Composer 2"
+    - option "Composer 2 Fast"
+    - option "Composer 1.5"
+    - option "Claude 4.5 Sonnet"
+    - option "Claude 4.6 Opus"
+    - option "GPT-5.1"
   - group "Origin Gateway":
     - text: Origin Gateway
     - option "Origin Large"

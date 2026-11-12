@@ -11,6 +11,11 @@
   - paragraph: 填入各提供商的 API 密钥即可使用其模型。
   - list:
     - listitem:
+      - text: Cursor
+      - button "编辑 Cursor (cursor)": 编辑
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
+    - listitem:
       - text: minimax-cn
       - img "API 密钥已配置"
       - button "编辑 minimax-cn": 编辑
@@ -36,6 +41,13 @@
           - option "OpenAI Chat Completions"
           - option "OpenAI Responses"
           - option "Anthropic Messages" [selected]
+          - option "Gemini API"
+        - group "重试策略":
+          - text: 重试策略
+          - combobox "重试策略":
+            - option "默认（仅临时错误）" [selected]
+            - option "仅临时错误"
+            - option "所有错误"
         - region "模型目录":
           - text: 模型目录 已自定义模型目录
           - button "恢复默认模型"

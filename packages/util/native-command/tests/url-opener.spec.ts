@@ -1,7 +1,6 @@
 /** Credential-scrubbed default-browser handoff behavior. */
 
-import { spawn, type ChildProcess } from 'node:child_process'
-import { EventEmitter } from 'node:events'
+import { ChildProcess, spawn } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openNativeUrl } from '../src/index.ts'
@@ -14,7 +13,7 @@ vi.mock('node:child_process', async importOriginal => ({
 type BrowserLauncher = ChildProcess & { stderr: PassThrough }
 
 function launcher(): BrowserLauncher {
-  return Object.assign(new EventEmitter(), { stderr: new PassThrough() }) as unknown as BrowserLauncher
+  return Object.assign(new ChildProcess(), { stderr: new PassThrough() })
 }
 
 afterEach(() => {

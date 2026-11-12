@@ -7,7 +7,7 @@
 import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { InboxTarget } from '@deepseek-ai/dsh-agent'
-import { maskCredentialText } from '@deepseek-ai/dsh-client-ui-secret-mask'
+import type { CredentialMasker } from '@deepseek-ai/dsh-util-credential-mask'
 import { BODY_MARGIN, bodyLine, bottomRule, fitLegend, topRule, type FrameTone } from './frame.ts'
 import { paintKeys } from './key-chips.ts'
 import { HINTS, QUEUE_ENTRY_HINT } from './keys.ts'
@@ -30,6 +30,8 @@ export interface QueuePanelRender {
   palette: Palette
   /** Terminal columns available to the panel. */
   width: number
+  /** Draws recognized credentials masked; the owner passes the masker it keeps for its draws. */
+  masker: CredentialMasker
   /** Selected row while the panel owns the keyboard; absent while unfocused. */
   selected?: number
 }
@@ -94,12 +96,12 @@ function followUpLines(text: string, room: number, glyph: string): string[] {
  * panel names the key that enters it. Recognized credentials draw masked, as
  * sent user text does; the rows keep the raw text for editing and sending.
  * @param rows - pending prompts in claim order.
- * @param render - palette, terminal width, and optional selection.
+ * @param render - palette, terminal width, credential masker, and optional selection.
  * @returns panel text, or the empty string when no prompt waits.
  */
 export function renderQueuePanel(rows: readonly QueuePanelRow[], render: QueuePanelRender): string {
   if (rows.length === 0) return ''
-  const { palette, selected } = render
+  const { palette, selected, masker } = render
   const width = Math.max(1, render.width)
   const tone: FrameTone = selected === undefined ? 'muted' : 'focus'
   const heading = tone === 'focus' ? palette.accent('follow-ups') : palette.dim('follow-ups')
@@ -107,7 +109,7 @@ export function renderQueuePanel(rows: readonly QueuePanelRow[], render: QueuePa
   const room = Math.max(1, width - BODY_MARGIN)
   for (const [index, row] of rows.entries()) {
     const glyph = selected === index ? palette.accent(FOLLOW_UP_GLYPH) : FOLLOW_UP_GLYPH
-    for (const content of followUpLines(maskCredentialText(row.text), room, glyph)) {
+    for (const content of followUpLines(masker.mask(row.text), room, glyph)) {
       lines.push(bodyLine(content, width, palette, tone))
     }
   }

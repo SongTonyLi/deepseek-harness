@@ -10,7 +10,6 @@
 
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { ProcessTerminal, type Terminal } from '@earendil-works/pi-tui'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
@@ -18,7 +17,6 @@ import type { AgentOptions, AgentSetup, ModelSelection } from '@deepseek-ai/dsh-
 import { BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwSeed, restrictBtwAgent } from './btw.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { canOpenNativePath, openNativeUrl } from '@deepseek-ai/dsh-native-command'
 import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-query'
 // Empty type imports carry the loader Context merge for the settlement await
@@ -32,7 +30,8 @@ import { STREAM_PACE_FRAMES, TOOL_REVEAL_FRAMES } from './pace.ts'
 import { FOCUS_PREVIEW_LINES } from './inspector.ts'
 import { QUIT_NOTICE_MS, quitOutcome, runQuit, safeWork, type QuitWork } from './quit.ts'
 import { READER_MIN_COLUMNS } from './reader.ts'
-import { colorEnabled, createPalette, paletteDepth, type PaletteDepth } from './style.ts'
+import { createPalette } from './style.ts'
+import { internals, type TuiHost } from './internals.ts'
 import { TOAST_MS } from './toast.ts'
 import { describeFailure } from './transcript.ts'
 
@@ -245,60 +244,6 @@ export const Config: z<Config> = z.object({
   btwTools: z.array(z.string()).default([...BTW_TOOLS]),
   btwSandboxedTools: z.array(z.string()).default([...BTW_SANDBOXED_TOOLS]),
 })
-
-/** Process-facing effects of one run: the terminal, the error stream, and the launcher's bounded exit request. */
-interface TuiHost {
-  /** Create the terminal the tree renders into. */
-  createTerminal(): Terminal
-  /** Drop the process's reference to terminal input once the terminal has stopped. */
-  releaseInput(): void
-  stderr: { write(chunk: string): unknown }
-  /** Whether SGR styling is emitted. */
-  color: boolean
-  /** How the palette encodes its hues. */
-  depth: PaletteDepth
-  /** Whether this Host can hand a URL to a local desktop. */
-  canOpenUrl(): boolean
-  /** Hand an authorization page to the local default browser. */
-  openUrl(url: string): Promise<void>
-  /** Request process exit with `code` after the tree disposes. */
-  exit(code: number): void
-  /**
-   * Listen for a process signal.
-   * @param signal - `SIGINT` forces a quit already under way; `SIGHUP` reports that the terminal went away.
-   * @param handler - runs once per delivery.
-   * @returns the disposer that removes the listener.
-   */
-  onSignal(signal: 'SIGINT' | 'SIGHUP', handler: () => void): () => void
-  /** Keep a write error on stdout or stderr from becoming an uncaught exception once the terminal is gone. */
-  swallowStreamErrors(): void
-}
-
-/** The process-bound pieces of the host; tests substitute a fake terminal and captured streams. */
-export const internals: Pick<TuiHost, 'createTerminal' | 'releaseInput' | 'stderr' | 'color' | 'depth' | 'canOpenUrl' | 'openUrl' | 'onSignal' | 'swallowStreamErrors'> = {
-  /* v8 ignore next -- the process terminal owns raw stdin; tests substitute a fake */
-  createTerminal: () => new ProcessTerminal(),
-  /* v8 ignore next -- process stdin is the host's; tests substitute a recorder */
-  releaseInput: () => { process.stdin.unref() },
-  stderr: process.stderr,
-  color: colorEnabled(process.env, process.stdout.isTTY),
-  depth: paletteDepth(process.env),
-  canOpenUrl: () => canOpenNativePath(),
-  openUrl: openNativeUrl,
-  /* v8 ignore start -- process signals and streams are the host's; tests substitute recorders */
-  onSignal: (signal, handler) => {
-    process.on(signal, handler)
-    return () => { process.off(signal, handler) }
-  },
-  swallowStreamErrors: () => {
-    const ignore = (): void => {
-      // A terminal that closed leaves stdout and stderr failing with EIO or EPIPE; the quit still has to finish.
-    }
-    process.stdout.on('error', ignore)
-    process.stderr.on('error', ignore)
-  },
-  /* v8 ignore stop */
-}
 
 /**
  * Events the terminal binds after the Agent has taken the write handle.

@@ -53,6 +53,8 @@ A request selects the route with `provider: cursor`. Model ids pass through; bun
 | `toolCallSettleMs` | `1,000` | Wait for further parallel tool calls when Cursor has not yet sent the checkpoint that ends the model message |
 | `retryPolicy` | normal, 5 retries | Provider-owned retry policy executed by `dsh-llm-retry` |
 
+Settings edits apply without restarting the plugin: context budgets reach the next model resolution, and credential, installed-login reuse, and streaming options reach the next request. Retry-policy edits refresh the runtime registration without replacing the adapter or its parked Runs; stored OAuth grants remain available. Active requests keep their captured options, and an already parked Run keeps its existing expiry. Invalid options are rejected before the profile patch is saved.
+
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-cursor) is the exhaustive source for every accepted field and its JSDoc.
 
 ### Sign in

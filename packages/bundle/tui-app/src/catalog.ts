@@ -10,7 +10,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
-import { pluginFiberPhase } from '@deepseek-ai/dsh-host-plugin-inventory'
+import { pluginFiberPhase } from './plugin-phase.ts'
 import type { BundleInfo, ChangeResult, PluginManager } from '@deepseek-ai/dsh-plugin-manager'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
@@ -116,12 +116,14 @@ export async function setSetting(ctx: Context, ns: string, path: string, rawValu
 
 /** JSON when the text parses, otherwise the text itself. */
 function parseSettingValue(rawValue: string): unknown {
+  let value: unknown
   try {
-    return JSON.parse(rawValue) as unknown
+    value = JSON.parse(rawValue)
   } catch {
     // Only a SyntaxError from malformed JSON reaches here; plain text is a valid string value.
     return rawValue
   }
+  return value
 }
 
 /**

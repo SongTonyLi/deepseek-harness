@@ -1,5 +1,6 @@
 /** Sign-in controller: the flow join, one attempt's frames, answers, and sign-out. */
 import { describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import type { AuthorizationFlowView, AuthorizationFrame } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   createSignInOperations, isSubscriptionMethod, providerOf, SignInController, type SignInOperations,
@@ -53,7 +54,7 @@ function scriptedStream() {
   const queue: AuthorizationFrame[] = []
   const waiters = new Set<() => void>()
   let done = false
-  let failure: Error | undefined
+  let failure: { readonly error: unknown } | undefined
   const wake = (): void => {
     for (const waiter of [...waiters]) waiter()
     waiters.clear()
@@ -61,13 +62,13 @@ function scriptedStream() {
   return {
     push: (frame: AuthorizationFrame): void => { queue.push(frame); wake() },
     end: () => { done = true; wake() },
-    fail: (error: Error) => { failure = error; done = true; wake() },
+    fail: (error: unknown) => { failure = { error }; done = true; wake() },
     async *iterate(signal: AbortSignal): AsyncGenerator<AuthorizationFrame> {
       while (!signal.aborted) {
         const next = queue.shift()
         if (next !== undefined) { yield next; continue }
         if (done) {
-          if (failure !== undefined) throw failure
+          if (failure !== undefined) throw failure.error
           return
         }
         await new Promise<void>((resolve) => {
@@ -139,7 +140,7 @@ describe('the Host operations', () => {
       decline: vi.fn(() => Promise.resolve(answers['decline'])),
       signOut: vi.fn(() => Promise.resolve(answers['signOut'])),
     }
-    const ctx = { remote: { authorization: namespace } } as unknown as Parameters<typeof createSignInOperations>[0]
+    const ctx = new Context().extend({ remote: { authorization: namespace } })
     return { ctx, namespace }
   }
 
@@ -290,7 +291,7 @@ describe('one attempt', () => {
     const { controller, stream } = bench()
     const running = controller.begin(CODEX, 'openai-codex')
     await settled(controller, state => state.attempt !== undefined)
-    stream.fail('the connection dropped' as unknown as Error)
+    stream.fail('the connection dropped')
     await running
     expect(controller.store.getSnapshot().attempt).toMatchObject({
       outcome: { kind: 'failed', message: 'the connection dropped' },

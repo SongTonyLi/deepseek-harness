@@ -46,13 +46,11 @@ export interface WorkerBootstrap {
  * @param fs - Filesystem mapping host bootstrap assets into the process world.
  * @param config - resolved worker invocation.
  * @param maxMessageBytes - Validated frame and queued-write limit.
- * @param persistent - Whether the selected mode requires retained-process launch support.
  * @returns Arguments following the resolved Node executable, and the paths they make the worker read.
  */
-export function workerBootstrap(fs: Pick<FileSystem, 'processPathFromHostPath'>, config: LaunchConfig, maxMessageBytes: number, persistent = false): WorkerBootstrap {
+export function workerBootstrap(fs: Pick<FileSystem, 'processPathFromHostPath'>, config: LaunchConfig, maxMessageBytes: number): WorkerBootstrap {
   switch (config.kind) {
     case 'embedded':
-      if (persistent) throw new Error('Persistent PTC requires a node-script launch')
       return { args: [String(maxMessageBytes)], readPaths: [] }
     case 'node-script': {
       const script = scriptBootstrap(fs, config.bootstrapPath, maxMessageBytes)

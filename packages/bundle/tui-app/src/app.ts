@@ -67,6 +67,7 @@ import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { JobId, type JobEvent, type JobRegistry, type JobView } from '@deepseek-ai/dsh-jobs'
 import { UserQuestionError, type AskUserQuestionAnswer, type AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
+import { createCredentialMasker } from '@deepseek-ai/dsh-util-credential-mask'
 import { PartialArguments, assertNever } from '@deepseek-ai/dsh-util-values'
 // Empty type imports carry the Context merges for the services this app reads through `ctx.get`.
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -870,6 +871,8 @@ export class TuiApp {
   /** Draws the focused transcript section, and nothing at all while the keyboard is elsewhere. */
   private readonly inspector: InspectorPane
   private readonly editor: BarCursorEditor
+  /** Draws recognized credentials masked in the prompts and follow-ups this app shows. */
+  private readonly masker = createCredentialMasker()
   /** Holds {@link queue} exactly while the bound Agent's inbox has a prompt waiting. */
   private readonly queueSlot = new Container()
   /**
@@ -2054,6 +2057,7 @@ export class TuiApp {
       this.queue.setText(renderQueuePanel(rows, {
         palette: this.deps.palette,
         width: this.contentWidth(),
+        masker: this.masker,
         ...this.focus === 'queue' ? { selected } : {},
       }))
     }
@@ -4518,7 +4522,7 @@ export class TuiApp {
       // durable `user/message` that follows is not drawn a second time.
       this.submittedIds.add(message.id)
       const shown = submitted.length === 0 ? text : `${text}\n${submitted.map(attachment => `[${attachment.block.type}: ${attachment.name}]`).join(' ')}`
-      this.chat.addChild(new UserBlock(this.theme, shown, this.turn))
+      this.chat.addChild(new UserBlock(this.theme, shown, this.turn, this.masker))
       agent.followup(message)
     } else if (mode === 'steer') {
       // A prompt that waits in the inbox is drawn above the editor instead,
@@ -6579,7 +6583,7 @@ export class TuiApp {
     if (source.kind === 'user') {
       const attachments = message.content.filter(block => block.type !== 'text').map(block => `[${block.type}]`)
       const text = [contentText(message.content), ...attachments].filter(part => part !== '').join('\n')
-      this.chat.addChild(new UserBlock(this.theme, text, this.turn, this.turnStepped ? 'injected' : 'prompt'))
+      this.chat.addChild(new UserBlock(this.theme, text, this.turn, this.masker, this.turnStepped ? 'injected' : 'prompt'))
       return
     }
     const view = injectedContextView(source, message.content)
