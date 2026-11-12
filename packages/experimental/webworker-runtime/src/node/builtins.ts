@@ -30,6 +30,7 @@ import * as nodeEvents from './builtin_modules/implemented/events.ts'
 import * as nodeFs from './builtin_modules/implemented/fs.ts'
 import * as nodeFsPromises from './builtin_modules/implemented/fs/promises.ts'
 import * as nodeHttp from './builtin_modules/implemented/http.ts'
+import * as nodeHttp2 from './builtin_modules/mock/http2.ts'
 import * as nodeHttps from './builtin_modules/mock/https.ts'
 import * as nodeModule from './builtin_modules/implemented/module.ts'
 import * as nodeOs from './builtin_modules/implemented/os.ts'
@@ -77,6 +78,7 @@ const BUILTINS: Record<string, StaticModuleFactory> = {
   fs: () => nodeFs,
   'fs/promises': () => nodeFsPromises,
   http: () => nodeHttp,
+  http2: () => nodeHttp2,
   https: () => nodeHttps,
   module: () => nodeModule,
   net: () => nodeNet,

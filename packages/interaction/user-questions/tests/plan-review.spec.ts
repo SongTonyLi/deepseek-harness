@@ -2,7 +2,8 @@
 
 import { describe, expect, it } from 'vitest'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
-import { planReviewOptions, type AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
+import type { AskUserQuestionItem } from '../src/types.ts'
+import { planReviewOptions } from '../src/plan-review.ts'
 
 const approve = { label: 'Approve' }
 const decline = { label: 'Decline', description: 'back to the drawing board' }

@@ -12,7 +12,7 @@ Status: implemented
 
 播放按钮通过现有 Session prompt API 提交 `content: []`。API 指定 `source.kind: 'retry'`；AgentLoop 沿用普通准入，记录空 `user/message` 并开启正常闭合的新轮次。Chat 显示轻量的继续请求记录，日志保留空输入。原失败轮次保持闭合。
 
-Session API 拥有固定大小的 `conversationContinuation` 投影，向浏览器发布相同的值。准入要求失败符合条件、持有真正的空闲状态且没有待消费的用户输入。追加的空重试消息使新轮次获得准入，因此请求再次失败后仍保留继续资格。
+[session-continuation 服务](../../../../packages/session/session-continuation/README.zh.md)拥有固定大小的 `conversationContinuation` 投影；Session API 向浏览器发布相同的值。[控制器兼容性](../architecture/2026-11-12-session-controller-continuation-compatibility.zh.md)记录独立的 Web 控制器与 TUI 直接重试路径。准入要求失败符合条件、持有真正的空闲状态且没有待消费的用户输入。追加的空重试消息使新轮次获得准入，因此请求再次失败后仍保留继续资格。
 
 六码手动白名单独立于提供方重试策略。非唤醒的注入上下文随请求进入。inbox 输入被领取后，已接受的用户消息仍支持 request-id 去重。复用普通消息准入避免增加 Loop 分支及独立持久接受事件。
 

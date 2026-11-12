@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
+import type { ModuleJob } from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import AuthorizationService from '@deepseek-ai/dsh-authorization'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
@@ -67,13 +68,20 @@ async function loadComposition(): Promise<Context> {
     ['@deepseek-ai/dsh-llm-pi-ai', LlmPiAi],
     ['@deepseek-ai/dsh-api-authorization-controller', AuthorizationController],
   ])
+  // The composition serves only Loader imports; the rest of the Node module-loader surface throws if reached.
+  const unused = (): never => { throw new Error('the composition fixture serves only Loader imports') }
   ctx.loader.internal = {
     version: 'v2',
+    loadCache: Object.assign(new Map<string, Record<string, ModuleJob>>(), { get: unused, set: unused, has: unused }),
     async import(specifier: string) {
       if (!modules.has(specifier)) throw new Error(`unexpected Loader import: ${specifier}`)
       return modules.get(specifier)
     },
-  } as unknown as NonNullable<typeof ctx.loader.internal>
+    register: unused,
+    getOrCreateModuleJob: unused,
+    resolveSync: unused,
+    load: unused,
+  }
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
   return ctx

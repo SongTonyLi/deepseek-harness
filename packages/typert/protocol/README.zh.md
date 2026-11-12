@@ -83,6 +83,8 @@ throw new RemoteError('goal/not-found', `goal "${id}" does not exist`, { goalId:
 
 拥有方在失败点直接抛出；没有任何包再写错误类家族或出口映射函数。调用方按 `code` 判别——绝不用 `instanceof`——且 `code` 分支无需 cast 即收窄 `details`，因为 `RemoteFailure` 就是 `RemoteError` 实例按码判别的 union。需要识别跨模块或跨 realm 类副本传来的失败时，基础设施调用 `remoteErrorOf(value)`，它读结构标记而不是原型链。
 
+方法若需要超出生成 codec 的领域约束，就调用 `parseRemoteRequest(method, schema, value)`，它返回 schema 解析后的输出。`schema` 参数是结构式的：任何带 `safeParse` 方法的对象都符合，例如 Zod schema。无效的请求载荷会抛出 code 为 `gateway/bad-request` 的 `RemoteError`，message 为 `invalid payload for <method>`，schema 的 issues 放在 `details.issues` 中。
+
 ### 在 Client 侧接收转发的 Host 事件
 
 Host 装配以转发给消费方的 Cordis 事件扩展 `TypertRemoteEventSelection`，从而收窄 `ctx.remote.$on` 的键集。`TypertForwardableEvent` 接受无作用域且返回 `void` 的通知，以及最后一个 `next()` 回调返回事件结果类型的异步作用域 waterfall（瀑布式事件）。`TypertClientEventListener` 从同一条 `Events` 成员派生 Client listener，并保留 signal、可选和只读字段、数组、回调与结果类型。`TypertClientRemote` 只公开 `$mount()` 与 `$on()`；事件传输仍由 Gateway 私有持有。
@@ -126,6 +128,7 @@ Host 装配以转发给消费方的 Cordis 事件扩展 `TypertRemoteEventSelect
 | [`src/remote-access.ts`](src/remote-access.ts) | 基于 `TypertResourceMap` 的 `RemoteAccessResource`、`RemoteAccessResourceKind` 与 `RemoteAccessResourceOf` |
 | [`src/json-value.ts`](src/json-value.ts) | 各载体共享的无损 JSON 校验 `isRemoteJsonValue` 与 `isRemoteUplinkItem` |
 | [`src/remote-error.ts`](src/remote-error.ts) | `RemoteError` 与结构式识别函数 `remoteErrorOf` |
+| [`src/remote-request.ts`](src/remote-request.ts) | `parseRemoteRequest`，通过结构式 `safeParse` schema 校验请求载荷，不通过时以 `gateway/bad-request` 拒绝 |
 | [`src/remote-info.ts`](src/remote-info.ts) | 纯惰性 info factory 与直接方法类型守卫 |
 | [`src/types.ts`](src/types.ts) | 协议映射、`RemoteErrorDetailsMap`、`RemoteResult`、`RemoteStream`、`RemoteStreamHandle`、`PrincipalMap`、`Principal`、`PeerScope`、`RemoteInvocation`、`InvocationDescriptor`、编解码器、提供方约定、注册表接口、`TypertClientRemote` |
 

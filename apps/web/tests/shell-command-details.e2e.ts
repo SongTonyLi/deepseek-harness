@@ -119,10 +119,10 @@ it.each([
             await page.keyboard.press('Tab')
             const focusTarget = background ? inputSection : card.getByRole('button', { name: 'Copy', exact: true })
             expect(await focusTarget.evaluate(element => document.activeElement === element)).toBe(true)
-            await page.keyboard.press('End')
+            await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'End')
             await expect.poll(() => inputSection.evaluate(element =>
               element.scrollTop + element.clientHeight >= element.scrollHeight - 1)).toBe(true)
-            await page.keyboard.press('Home')
+            await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Home')
             await expect.poll(() => inputSection.evaluate(element => element.scrollTop)).toBe(0)
           }
         }

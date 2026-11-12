@@ -27,6 +27,11 @@
     toolName: subagent_fork
     modelSelection: true
 
+# The shipped base disables `interrupt_agent`; the terminal surface keeps it on, as it does Agent Teams.
+- id: tool-subagent-control
+  config:
+    interrupt: true
+
 # The terminal confines commands with the Apple container backend below
 # instead of the base local sandbox row.
 - id: sandbox

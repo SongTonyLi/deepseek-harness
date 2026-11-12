@@ -15,6 +15,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createNodeBuiltins, REPLACED_PREFIXES } from '../../src/node/builtins.ts'
+import { MODULE_PROXIES } from '../../src/module-proxies.ts'
 import { WorkerModuleLoader, type WorkerRequire } from '../../src/module-system/module-loader.ts'
 import { MemoryVfs } from '../../src/storage/memory.ts'
 
@@ -41,6 +42,19 @@ describe('the replacement table', () => {
   it('keys every builtin with and without the node: prefix', () => {
     const table = createNodeBuiltins()
     expect(Object.keys(table)).toEqual(expect.arrayContaining(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']))
+  })
+
+  it.each(['http2', 'node:http2'])('registers %s for pack-time reachability and build-time replacement', (specifier) => {
+    const vfs = new MemoryVfs()
+    vfs.seedDirectory('/dsh')
+    // The packer's sweep seeds static modules from proxy keys, not the runtime builtin table.
+    const loader = new WorkerModuleLoader({
+      vfs, root: '/dsh',
+      staticModules: Object.fromEntries(Object.keys(MODULE_PROXIES).map(name => [name, () => ({})])),
+    })
+    expect(loader.resolve(specifier, '/dsh')).toMatchObject({ kind: 'static' })
+    expect(MODULE_PROXIES[specifier]).toBe('./node/builtin_modules/mock/http2.ts')
+    expect(createNodeBuiltins()[specifier]?.()).toBe(createNodeBuiltins()['node:http2']?.())
   })
 
   it('leaves process out, because the host installs that global itself', () => {
@@ -78,6 +92,32 @@ describe('module identity through the loader', () => {
     expect(require('repl')).toBe(repl)
     vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(() => repl.start()).toThrow(expect.objectContaining({ code: 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM' }))
+  })
+
+  it.each(['http2', 'node:http2'])('identifies %s as a builtin through the worker module export', (specifier) => {
+    const module = loaderRequire()('node:module') as Pick<typeof import('node:module'), 'isBuiltin'>
+    expect(module.isBuiltin(specifier)).toBe(true)
+  })
+
+  it('loads HTTP2 for packaged providers and refuses native connections through named and default exports', () => {
+    const require = loaderRequire()
+    const http2 = require('node:http2') as {
+      connect: typeof import('node:http2').connect
+      default: Pick<typeof import('node:http2'), 'connect'>
+      __esModule: boolean
+    }
+    expect(require('http2')).toBe(http2)
+    expect(require.resolve.paths('node:http2')).toBeNull()
+    expect(http2.__esModule).toBe(true)
+    expect(http2.default.connect).toBe(http2.connect)
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {})
+    for (const connect of [http2.connect, http2.default.connect]) {
+      expect(() => connect('https://cursor.example')).toThrow(expect.objectContaining({
+        code: 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM',
+        message: 'web-preview: node:http2.connect is not available in the worker host',
+      }))
+    }
+    expect(report).toHaveBeenCalledWith('web-preview: node:http2.connect is not available in the worker host')
   })
 
   it('exposes async and synchronous resolution through the Cordis internal seam', async () => {

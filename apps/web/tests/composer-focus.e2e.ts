@@ -114,7 +114,8 @@ async function exerciseComposer(page: Page): Promise<string[]> {
   })
   await page.keyboard.insertText('alpha beta gamma')
   await expect.poll(() => input.getAttribute('data-selection-ready')).toBe('inserted')
-  await page.keyboard.press('Home')
+  // Native line-start is fixture setup; macOS uses Command+Left in the editor.
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowLeft' : 'Home')
   for (let index = 0; index < 10; index++) await page.keyboard.press('ArrowRight')
   for (let index = 0; index < 4; index++) await page.keyboard.press('Shift+ArrowLeft')
   const selected = { focused: true, draft: 'alpha beta gamma', text: 'beta', anchor: 10, focus: 6 }

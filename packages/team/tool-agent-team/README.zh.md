@@ -91,6 +91,8 @@ kind: "package-reference"
 
 一次插件注册提供动态的 `team:policy` 段落和四个条件任务工具。各提供方读取调用者根 Session 的选择，包括 fork 子级。根不可用时禁用 Team 工具与指导。树权限从 `ctx.subagents.rootOf(agent)` 派生；在 `ctx.agentTeams` 中任务负责人保留为 Session id。所有者参数通过 `ctx.subagents.resolveName()` 解析，解析不授予权限。结果以 `owner: ownerName ?? ownerId` 取代保存的 `ownerId` 和 `ownerName` 字段。展示任务或编辑其内容无需读取后代目录。身份、发现、通信和等待属于 [subagent 控制工具](../../subagent/tool-subagent-control/README.zh.md)，在切换 Team 模式时保持不变。subagent 运行时负责投递最终结果。
 
+`team_task_list` 与 `team_task_get` 选择与同批并行安全调用并发调度，因为它们只读取任务板。`team_task_create` 与 `team_task_update` 仍按独占方式执行，因为它们会追加到 Lead 日志。
+
 ### 按作用域注册与拆除
 
 工具的 `when` 条件在步骤准备时求值，包括新建、分叉和恢复的 Agent 的首个步骤。策略文本在提示词组装时求值。已经准备好的步骤保留其工具选择，但任务操作在开始前检查当前模式。插件释放时由各注册所属的 effect 移除全部注册。
@@ -124,13 +126,13 @@ kind: "package-reference"
 ##### Team 策略
 
 ```markdown
-A shared task board is available in this session. Task owners are agent names from list_agents. The root can reassign tasks to itself or any continuable descendant; other agents claim ready tasks themselves.
+Agent Teams is available in this session.
 
 The root agent orchestrates the work. It first breaks the request into subtasks and classifies each as exploration or research, implementation of a separable part, review or verification, or testing. It keeps small, sequential, tightly coupled work and work requiring the whole conversation. It delegates independent work with disjoint write scopes or work that benefits from a focused role with fresh context. It does not create an agent for trivial work, and reuses an inactive agent with send_message when its role matches. Each delegated agent gets one role, a role-revealing description, and a prompt stating its responsibility. The root records each delegated subtask with acceptance criteria, write scopes, and dependencies, then assigns it using the returned agent name or asks the agent to claim it. The root integrates and verifies the results before the final answer.
 
-Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
+The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
 
-Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. The root agent must wait for required teammates before giving the final answer.
+Use the names returned by subagent, subagent_fork, or list_agents as owner when assigning or filtering shared tasks. The root can reassign tasks to itself or any continuable descendant; other agents claim ready tasks themselves. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. The root agent must wait for required teammates before giving the final answer.
 
 Task changes do not end wait_agent calls, add inbox messages, or start idle agents. Use send_message when another agent needs to act on a task.
 ```

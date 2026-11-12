@@ -3,8 +3,9 @@
  * tree. Entries replace Node builtins, external npm packages, and the native
  * flock subpath; other workspace and vendored modules are mounted as they ship.
  *
- * The build turns these into bundler aliases, and `node/builtins.ts` turns the
- * same modules into the loader's static table — one list, two consumers.
+ * The build uses these bundler aliases, and the packer uses their keys for
+ * reachability resolution. `node/builtins.ts` must serve the same replacements
+ * through the running worker's static module table.
  *
  * The replacement path states the classification. `./node/builtin_modules/implemented/<module>.ts`
  * carries the module's real semantics over a worker-side data source (VFS, the
@@ -59,6 +60,8 @@ export const MODULE_PROXIES: Record<string, string> = {
   // the VFS, because a browser worker has no processes to fork.
   'node:child_process': './node/builtin_modules/implemented/child_process.ts',
   // Structural mocks: every symbol exists, every call throws.
+  'node:http2': './node/builtin_modules/mock/http2.ts',
+  'http2': './node/builtin_modules/mock/http2.ts',
   'node:https': './node/builtin_modules/mock/https.ts',
   'node:dns/promises': './node/builtin_modules/mock/dns/promises.ts',
   'dns/promises': './node/builtin_modules/mock/dns/promises.ts',

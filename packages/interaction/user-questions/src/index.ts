@@ -34,7 +34,7 @@ export type {
   AskUserQuestionOption, PendingUserQuestion, SettledUserQuestion, UserQuestionProjectionView,
   UserQuestionState,
 } from './types.ts'
-export { planReviewOptions, type PlanReviewOptions } from './plan-review.ts'
+export type { PlanReviewOptions } from './plan-review.ts'
 export { isTimedAskUserQuestionSchema, TIMED_WAIT_PARAMETER } from './projection.ts'
 
 /** Request for a human answer. */

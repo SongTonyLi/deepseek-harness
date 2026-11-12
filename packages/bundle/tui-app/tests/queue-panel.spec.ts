@@ -2,9 +2,12 @@
 
 import { describe, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createCredentialMasker } from '@deepseek-ai/dsh-util-credential-mask'
 import { createPalette } from '../src/style.ts'
 import { queuePanelRows, renderQueuePanel } from '../src/queue-panel.ts'
 import { testContextSource } from './message-sources.ts'
+
+const masker = createCredentialMasker()
 
 /** One ordinary user prompt for the panel. */
 function message(text: string) {
@@ -18,7 +21,7 @@ describe('follow-up panel', () => {
       ['next-step', 'steer now'],
       ['next-turn', 'later'],
     ])
-    const shown = renderQueuePanel(rows, { palette: createPalette(false), width: 60 })
+    const shown = renderQueuePanel(rows, { palette: createPalette(false), width: 60, masker })
     expect(shown).toContain('follow-ups')
     expect(shown).not.toContain('QUEUE')
     expect(shown).toContain('○ steer now')
@@ -34,6 +37,7 @@ describe('follow-up panel', () => {
     const shown = renderQueuePanel(queuePanelRows([], [message('revise this')]), {
       palette: createPalette(false),
       width: 72,
+      masker,
       selected: 0,
     })
     expect(shown).toContain('○ revise this')
@@ -46,6 +50,7 @@ describe('follow-up panel', () => {
     const shown = renderQueuePanel(queuePanelRows([], [message(text)]), {
       palette: createPalette(false),
       width: 44,
+      masker,
       selected: 0,
     })
     expect(shown).toContain('○ also implement')
@@ -56,7 +61,7 @@ describe('follow-up panel', () => {
   it('draws a credential in a queued follow-up masked while the row keeps the sent text', () => {
     const key = 'sk-a1b2c3d4e5f6g7h8i9j0'
     const rows = queuePanelRows([], [message(`use ${key} now`)])
-    const shown = renderQueuePanel(rows, { palette: createPalette(false), width: 60 })
+    const shown = renderQueuePanel(rows, { palette: createPalette(false), width: 60, masker })
     expect(shown).toContain('○ use sk-a1b2c')
     expect(shown).toContain('*')
     expect(shown).not.toContain(key)
@@ -64,7 +69,7 @@ describe('follow-up panel', () => {
   })
 
   it('draws nothing for an empty inbox', () => {
-    expect(renderQueuePanel([], { palette: createPalette(true), width: 40 })).toBe('')
+    expect(renderQueuePanel([], { palette: createPalette(true), width: 40, masker })).toBe('')
   })
 
   it('omits injected notices so a ! result waiting for the next prompt is not a queued prompt', () => {

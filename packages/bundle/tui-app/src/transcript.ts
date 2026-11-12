@@ -337,12 +337,14 @@ export function subagentRowFacts(args: unknown): SubagentRowFacts {
  * @returns the parsed value, or undefined when it is not JSON.
  */
 export function parseArguments(argumentsJson: string): unknown {
+  let value: unknown
   try {
-    return JSON.parse(argumentsJson) as unknown
+    value = JSON.parse(argumentsJson)
   } catch {
     // The model may emit malformed JSON; the card then shows the raw string.
     return undefined
   }
+  return value
 }
 
 /**

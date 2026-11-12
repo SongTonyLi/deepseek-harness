@@ -1,7 +1,7 @@
 /** Status facts read from the projection snapshot and their footer, report, and notice text. */
 
 import { describe, expect, it } from 'vitest'
-import type { Session } from '@deepseek-ai/dsh-session'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionKeySelection, ProjectionSnapshot, SessionProjectionViewValues } from '@deepseek-ai/dsh-session-projection'
 import type { GoalId, GoalProjection } from '@deepseek-ai/dsh-goal/types'
 import type { LlmRetryEventData, RetryId } from '@deepseek-ai/dsh-llm-retry/types'
@@ -19,7 +19,8 @@ import {
   type StatusProjections,
 } from '../src/status.ts'
 
-const session = {} as unknown as Session
+// The status readers pass the Session to the snapshot, and this registry ignores it.
+const session = Session.create(SessionId('status-session'))
 
 /** A registry whose one snapshot serves exactly `values`, recording the keys it was asked for. */
 function registryOf(values: Partial<SessionProjectionViewValues>): StatusProjections & { keys: ProjectionKeySelection | undefined } {

@@ -9,15 +9,21 @@ import { SignInCard, type SignInCardProps } from '../src/client/SignInCard.tsx'
 import { SignInDialog, type SignInDialogProps } from '../src/client/SignInDialog.tsx'
 import { SignInFooter, type SignInFooterProps } from '../src/client/SignInFooter.tsx'
 import type { SignInAttempt, SignInState } from '../src/client/store.ts'
-import { en, type SignInKey } from '../src/client/locales.ts'
+import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { en } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
-const t: SignInDialogProps['t'] = (key: SignInKey, params?: Record<string, string>): string =>
-  Object.entries(params ?? {}).reduce(
-    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
-    en[key],
+/** The English copy by key; the card and dialog only ever ask for sign-in keys. */
+const phrases: Readonly<Record<string, string>> = en
+const t: TranslateNS<'settings.signin'> = (key, params) => {
+  const phrase = phrases[key]
+  if (phrase === undefined) throw new Error(`no English sign-in copy for key "${key}"`)
+  return Object.entries(params ?? {}).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+    phrase,
   )
+}
 
 const CODEX: AuthorizationFlowView = {
   key: 'llm-pi-ai/openai-codex',
@@ -29,6 +35,23 @@ const CODEX: AuthorizationFlowView = {
   configured: false,
 }
 
+/** A framework seat the sign-in components are typed to receive; they never call it, so each throws if reached. */
+const unusedSeat = (): never => { throw new Error('the sign-in fixture does not drive this framework seat') }
+
+/** The root-scope framework seats every component receives, stubbed for these props-only specs. */
+const frameworkSeats = {
+  useSessions: unusedSeat,
+  useSessionStatus: unusedSeat,
+  useSessionRetainInfo: unusedSeat,
+  useSessionAccess: unusedSeat,
+  usePanelInfo: unusedSeat,
+  useResource: unusedSeat,
+  useRemoteAccess: unusedSeat,
+  useContextMenu: unusedSeat,
+  useWorkspaces: unusedSeat,
+  useWorkspaceAccess: unusedSeat,
+}
+
 function cardProps(state: Partial<SignInState>, overrides: Partial<SignInCardProps> = {}): SignInCardProps {
   const store = createSnapshotStore<SignInState>({
     loaded: true,
@@ -36,7 +59,8 @@ function cardProps(state: Partial<SignInState>, overrides: Partial<SignInCardPro
     attempt: undefined,
     ...state,
   })
-  return {
+  const props: SignInCardProps = {
+    ...frameworkSeats,
     t,
     provider: { provider: 'openai-codex', displayName: 'openai-codex', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'openai-codex'], active: false },
     configured: false,
@@ -45,7 +69,8 @@ function cardProps(state: Partial<SignInState>, overrides: Partial<SignInCardPro
     signIn: vi.fn(),
     signOut: vi.fn(() => Promise.resolve(undefined)),
     ...overrides,
-  } as unknown as SignInCardProps
+  }
+  return props
 }
 
 function attempt(overrides: Partial<SignInAttempt> = {}): SignInAttempt {
@@ -170,13 +195,14 @@ describe('the dialog seat', () => {
       flows: new Map(),
       attempt: attempt({ directions: [{ message: 'Continue in your browser' }] }),
     })
-    const props = {
+    const props: SignInFooterProps = {
+      ...frameworkSeats,
       t,
       useSignIn: bindSnapshotSelector(store),
       answer: vi.fn(),
       decline: vi.fn(),
       close: vi.fn(),
-    } as unknown as SignInFooterProps
+    }
     render(<SignInFooter {...props} />)
     expect(screen.getByRole('dialog', { name: 'Sign in to openai-codex' })).toBeTruthy()
     expect(screen.getByText('Continue in your browser')).toBeTruthy()
@@ -186,13 +212,14 @@ describe('the dialog seat', () => {
 
   it('renders nothing while the snapshot carries no attempt', () => {
     const store = createSnapshotStore<SignInState>({ loaded: true, flows: new Map(), attempt: undefined })
-    const props = {
+    const props: SignInFooterProps = {
+      ...frameworkSeats,
       t,
       useSignIn: bindSnapshotSelector(store),
       answer: vi.fn(),
       decline: vi.fn(),
       close: vi.fn(),
-    } as unknown as SignInFooterProps
+    }
     const { container } = render(<SignInFooter {...props} />)
     expect(container.innerHTML).toBe('')
   })

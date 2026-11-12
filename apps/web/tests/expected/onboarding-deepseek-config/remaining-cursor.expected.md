@@ -1,0 +1,11 @@
+- group "模型与推理等级":
+  - searchbox "搜索模型…"
+  - menu "模型":
+    - group "Cursor":
+      - text: Cursor
+      - menuitemradio "Composer 2"
+      - menuitemradio "Composer 2 Fast"
+      - menuitemradio "Composer 1.5"
+      - menuitemradio "Claude 4.5 Sonnet"
+      - menuitemradio "Claude 4.6 Opus"
+      - menuitemradio "GPT-5.1"

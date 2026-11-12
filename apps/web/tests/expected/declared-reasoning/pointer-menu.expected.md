@@ -5,6 +5,14 @@
       - text: DeepSeek
       - menuitemradio "DeepSeek-V4-Flash"
       - menuitemradio "DeepSeek-V4-Flash-Vision-Exp"
+    - group "Cursor":
+      - text: Cursor
+      - menuitemradio "Composer 2"
+      - menuitemradio "Composer 2 Fast"
+      - menuitemradio "Composer 1.5"
+      - menuitemradio "Claude 4.5 Sonnet"
+      - menuitemradio "Claude 4.6 Opus"
+      - menuitemradio "GPT-5.1"
     - group "Acme Gateway":
       - text: Acme Gateway
       - menuitemradio "Acme Think"

@@ -8,7 +8,7 @@ import {
   levenshteinDistance,
   rankClosestCatalogNames,
   unknownSkillLine,
-} from '@deepseek-ai/dsh-tool-skill'
+} from '../src/unknown-skill.ts'
 
 describe('unknown-skill diagnostics', () => {
   it('orders catalog names by code point', () => {

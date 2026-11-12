@@ -10,7 +10,7 @@ import type { AssistantChatData } from '../contract/chat-nodes.ts'
 import { CHAT_SYNTHETIC_SEQ_OFFSETS, chatNode } from './common.ts'
 import {
   emptyAssistantBlock, isTokenDelta, toAssistantBlock, toAssistantBlocks,
-} from './event-projection.ts'
+} from '../contract/event-projection.ts'
 
 declare module '../contract/chat-nodes.ts' {
   interface ChatNodeDataMap {

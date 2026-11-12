@@ -207,16 +207,27 @@ function fakeAgent(
   reserve: () => (() => void) | undefined,
   maintenanceSignal = new AbortController().signal,
 ): Agent {
+  const unused = (): never => { throw new Error('manual-compaction fixture does not drive this Agent surface') }
   return {
+    id: session.id,
     session,
+    ctx: new Context(),
     options: { provider: MODEL, model: MODEL },
     model: { current: () => ({ provider: MODEL, model: MODEL }), select: () => {} },
+    get inbox() { return unused() },
+    status: 'idle',
+    cancel: unused,
+    whenIdle: unused,
+    send: unused,
+    followup: unused,
+    steer: unused,
+    inject: unused,
     runMaintenance<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> {
       const release = reserve()
       if (release === undefined) throw new Error('agent already has active work')
       return task(maintenanceSignal).finally(release)
     },
-  } as unknown as Agent
+  }
 }
 
 /** Service over a store-detached session for failure classification. */

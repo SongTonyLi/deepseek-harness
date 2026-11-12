@@ -7,7 +7,8 @@
 
 import { Input, Markdown, SelectList, Text, fuzzyFilter, matchesKey, wrapTextWithAnsi, type Component, type SelectItem, type SelectListLayoutOptions, type TUI } from '@earendil-works/pi-tui'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
-import { planReviewOptions, type AskUserQuestionAnswerItem, type AskUserQuestionItem, type AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
+import { planReviewOptions } from '@deepseek-ai/dsh-user-questions/plan-review'
+import type { AskUserQuestionAnswerItem, AskUserQuestionItem, AskUserQuestionOption } from '@deepseek-ai/dsh-user-questions'
 import { paintKeys } from './key-chips.ts'
 import { typedText } from './keys.ts'
 import { markdownTheme, selectListTheme, type Palette } from './style.ts'

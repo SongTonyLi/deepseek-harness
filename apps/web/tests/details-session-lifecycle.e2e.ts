@@ -230,7 +230,8 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
       page.waitForResponse('**/api/terminal/close'),
       blankColumn.locator('[data-dockkit-tab][aria-selected="true"] [data-dockkit-tab-close]').click(),
     ])
-    expect(await closed.json()).toMatchObject({ result: { ok: true } })
+    const closeResult: unknown = await closed.json()
+    expect(closeResult, JSON.stringify(closeResult)).toMatchObject({ result: { ok: true } })
     expect(scaffold.ctx.terminalController.list(agent.id)).toEqual([])
     await blankColumn.locator('[data-dockkit-tab]').filter({ hasText: 'before-chat.md' }).click()
     await compareOrRefreshGolden(BLANK_EXPECTED, [

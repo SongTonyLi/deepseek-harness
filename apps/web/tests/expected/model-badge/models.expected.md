@@ -8,6 +8,14 @@
     - menuitemradio "DeepSeek-V4-Pro"
     - menuitemradio "DeepSeek model with a very long release and capability description that exceeds the selector width Preview"
     - menuitemradio "Invalid badge model"
+  - group "Cursor":
+    - text: Cursor
+    - menuitemradio "Composer 2"
+    - menuitemradio "Composer 2 Fast"
+    - menuitemradio "Composer 1.5"
+    - menuitemradio "Claude 4.5 Sonnet"
+    - menuitemradio "Claude 4.6 Opus"
+    - menuitemradio "GPT-5.1"
   - group "External":
     - text: External
     - menuitemradio "DeepSeek-V4.1-Flash"

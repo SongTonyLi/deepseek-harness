@@ -9,7 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { CredentialInfo } from '@deepseek-ai/dsh-credentials/types'
-import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { parseRemoteRequest, Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
 
 /**
@@ -26,15 +26,6 @@ const describeRequestSchema = z.object({
 const setRequestSchema = z.object({ ref: credentialRefSchema, value: z.string().min(1) })
 const unsetRequestSchema = z.object({ ref: credentialRefSchema })
 
-/** Parse the domain constraints that are more specific than generated TypeScript codecs. */
-function parseRequest<T>(method: string, schema: z.ZodType<T>, value: unknown): T {
-  const parsed = schema.safeParse(value)
-  if (!parsed.success) {
-    throw new RemoteError('gateway/bad-request', `invalid payload for ${method}`, { issues: parsed.error.issues })
-  }
-  return parsed.data
-}
-
 /**
  * Copy exactly the fields {@link CredentialInfo} declares. The Gateway returns
  * a business result without decoding it, so a provider whose `describe` carried
@@ -47,6 +38,7 @@ function projectCredentialInfo(info: CredentialInfo): CredentialInfo {
     configured: info.configured,
     ...info.source === undefined ? {} : { source: info.source },
     writable: info.writable,
+    ...info.masked === undefined ? {} : { masked: info.masked },
   }
 }
 
@@ -61,7 +53,7 @@ declare module '@deepseek-ai/cordis' {
  * Host service backing the generated `ctx.remote.credentials` namespace. It
  * carries every wire obligation the credential seam itself does not: the batch
  * fan-out bound, the field-by-field view projection, the reference-grammar
- * guard, and the refusal mapping. Secret values cross in one direction only —
+ * guard, and the refusal mapping. Full secret values cross in one direction only —
  * no method here returns one.
  */
 export class CredentialsController extends TypertRemoteService {
@@ -81,7 +73,7 @@ export class CredentialsController extends TypertRemoteService {
    */
   @Remote
   async describe(refs: string[]): Promise<Record<string, CredentialInfo>> {
-    const request = parseRequest('credentials.describe', describeRequestSchema, { refs })
+    const request = parseRemoteRequest('credentials.describe', describeRequestSchema, { refs })
     const branded = request.refs.map(ref => [ref, credentialRef(ref)] as const)
     const credentials = this.provider()
     const entries = await Promise.all(branded.map(async ([ref, key]) =>
@@ -98,7 +90,7 @@ export class CredentialsController extends TypertRemoteService {
    */
   @Remote
   async set(ref: string, value: string): Promise<void> {
-    const request = parseRequest('credentials.set', setRequestSchema, { ref, value })
+    const request = parseRemoteRequest('credentials.set', setRequestSchema, { ref, value })
     const branded = credentialRef(request.ref)
     const credentials = this.provider()
     await this.write(request.ref, () => credentials.set(branded, request.value))
@@ -111,7 +103,7 @@ export class CredentialsController extends TypertRemoteService {
    */
   @Remote
   async unset(ref: string): Promise<void> {
-    const request = parseRequest('credentials.unset', unsetRequestSchema, { ref })
+    const request = parseRemoteRequest('credentials.unset', unsetRequestSchema, { ref })
     const branded = credentialRef(request.ref)
     const credentials = this.provider()
     await this.write(request.ref, () => credentials.unset(branded))

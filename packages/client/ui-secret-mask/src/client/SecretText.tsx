@@ -3,7 +3,7 @@ import { useState } from 'react'
 import type { UserTextNodeProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { NS } from './locales.ts'
-import { MASK } from './credential-masks.ts'
+import { MASK } from '@deepseek-ai/dsh-util-credential-mask'
 import css from './SecretText.module.css'
 
 const EYE_CONTOUR = 'M1.5 8C2.9 5.25 5.25 3.5 8 3.5C10.75 3.5 13.1 5.25 14.5 8C13.1 10.75 10.75 12.5 8 12.5C5.25 12.5 2.9 10.75 1.5 8Z'
@@ -21,19 +21,24 @@ function EyeGlyph({ path }: { readonly path: string }) {
 }
 
 /**
- * Split the masked form into kept text and mask runs. Mask runs keep their
- * characters for copying and assistive technology but draw centered marks,
- * because a font's own asterisk sits near the cap height.
+ * Keep the masked form's inline partitions on reveal to preserve text-run rounding.
+ * CredentialMasks emits one mark per code point, including surrogate pairs; retained
+ * text and line breaks keep their code points. Literal asterisks need no special mapping.
+ * Mask runs keep their characters for copying and assistive technology but draw
+ * centered marks, because a font's own asterisk sits near the cap height.
  */
-function MaskedText({ masked }: { readonly masked: string }) {
+function PartitionedText({ masked, raw }: { readonly masked: string; readonly raw: string | undefined }) {
+  const original = raw === undefined ? undefined : Array.from(raw)
   let offset = 0
   return masked.split(MASK_RUNS).map((part) => {
     const key = offset
-    offset += part.length
+    offset += Array.from(part).length
     if (part === '') return null
-    return part.startsWith(MASK)
-      ? <span key={key} className={css.mask}>{part}</span>
-      : <span key={key}>{part}</span>
+    return (
+      <span key={key} className={original === undefined && part.startsWith(MASK) ? css.mask : undefined}>
+        {original === undefined ? part : original.slice(key, offset).join('')}
+      </span>
+    )
   })
 }
 
@@ -51,7 +56,7 @@ export function SecretText({ node, raw, interactive, t }: SecretTextProps) {
   const revealed = interactive && revealedRaw === raw
   return (
     <span className={css.secret} data-secret="">
-      <span className={css.value}>{revealed ? raw : <MaskedText masked={node.data.masked} />}</span>
+      <span className={css.value}><PartitionedText masked={node.data.masked} raw={revealed ? raw : undefined} /></span>
       {interactive && (
         <button
           type="button"

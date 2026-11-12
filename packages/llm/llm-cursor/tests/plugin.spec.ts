@@ -29,7 +29,7 @@ async function home(): Promise<string> {
   return dir
 }
 
-async function boot(dir: string, config: LlmCursor.Config = { reuseInstalledCursorLogin: false }): Promise<Context> {
+async function boot(dir: string, config: LlmCursor.Options = { reuseInstalledCursorLogin: false }): Promise<Context> {
   vi.stubEnv('DSH_HOME', dir)
   const ctx = new Context()
   cleanups.push(async () => { await ctx.fiber.dispose() })

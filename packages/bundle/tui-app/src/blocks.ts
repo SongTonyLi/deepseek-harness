@@ -29,7 +29,7 @@
  */
 
 import { Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui'
-import { maskCredentialText } from '@deepseek-ai/dsh-client-ui-secret-mask'
+import type { CredentialMasker } from '@deepseek-ai/dsh-util-credential-mask'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { sliceColumns } from './columns.ts'
 import { fadeInSlice, recolorLines, recolorTail, type FadeSpan, type FadeStyle } from './fade.ts'
@@ -331,7 +331,8 @@ export type UserPromptKind = 'prompt' | 'injected'
  * background band that spans every row of the prompt: the palette's band and
  * bold text for a prompt that opened its turn, and the darker
  * {@link Palette.injectedBand} with dim text for one steered or injected into
- * a running turn, so it recedes behind the turn it joined.
+ * a running turn, so it recedes behind the turn it joined. Recognized
+ * credentials draw through the {@link CredentialMasker} the owner passes in.
  */
 export class UserBlock implements Component, UserSection {
   readonly navigable = true as const
@@ -349,6 +350,7 @@ export class UserBlock implements Component, UserSection {
     private readonly theme: BlockTheme,
     private readonly text: string,
     readonly turn: number,
+    private readonly masker: CredentialMasker,
     private readonly kind: UserPromptKind = 'prompt',
   ) {}
 
@@ -379,7 +381,7 @@ export class UserBlock implements Component, UserSection {
     const { marked, content: inner } = focusFrame(width, this.highlight)
     const lines = this.drawn.get(`${String(width)}:${String(marked)}`, () => {
       // Recognized credentials draw masked; the section rows keep the sent text for copying.
-      const body = wrapTextWithAnsi(maskCredentialText(this.text), Math.max(1, inner - 2))
+      const body = wrapTextWithAnsi(this.masker.mask(this.text), Math.max(1, inner - 2))
       if (this.kind === 'injected') {
         return ['', ...body.map((line, index) => bandRow(palette, palette.dim(`${index === 0 ? USER_GLYPH : ' '} ${line}`), inner, palette.injectedBand))]
       }

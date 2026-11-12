@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createProcessInspector,
-  linuxProcessGroupHasLiveMembers,
+  linuxProcessGroupLiveMember,
   parseProcStat,
 } from '@deepseek-ai/dsh-subprocess-local/src/process-inspector.ts'
 import type { ProcessInspectorInternals } from '@deepseek-ai/dsh-subprocess-local/src/process-inspector.ts'
@@ -115,17 +115,40 @@ describe('Linux process inspector', () => {
 
   it('treats zombie-only process groups as quiescent and fails closed when unobservable', () => {
     const fake = fakeInternals()
-    expect(linuxProcessGroupHasLiveMembers(77, fake.internals)).toBeUndefined()
+    expect(linuxProcessGroupLiveMember(77, undefined, fake.internals)).toBeUndefined()
 
     fake.dirs.set('/proc', ['self', '10', '11', '12'])
     fake.files.set('/proc/10/stat', stat(10, 77, 10, -1, '500', 1, 'Z'))
     fake.files.set('/proc/11/stat', stat(11, 77, 10, -1, '501', 1, 'X'))
     fake.files.set('/proc/12/stat', stat(12, 88, 12, -1, '502'))
-    expect(linuxProcessGroupHasLiveMembers(77, fake.internals)).toBe(false)
-    expect(linuxProcessGroupHasLiveMembers(99, fake.internals)).toBeUndefined()
+    expect(linuxProcessGroupLiveMember(77, undefined, fake.internals)).toBe(false)
+    expect(linuxProcessGroupLiveMember(99, undefined, fake.internals)).toBeUndefined()
 
     fake.files.set('/proc/11/stat', stat(11, 77, 10, -1, '501'))
-    expect(linuxProcessGroupHasLiveMembers(77, fake.internals)).toBe(true)
+    expect(linuxProcessGroupLiveMember(77, undefined, fake.internals)).toBe(11)
+  })
+
+  it('rechecks a known live group member without enumerating /proc', () => {
+    const fake = fakeInternals()
+    let scans = 0
+    fake.internals.readDir = (path) => {
+      scans += 1
+      return fake.dirs.get(path) ?? []
+    }
+    fake.dirs.set('/proc', ['10', '11', '12'])
+    fake.files.set('/proc/10/stat', stat(10, 77, 10, -1, '500', 1, 'Z'))
+    fake.files.set('/proc/11/stat', stat(11, 77, 10, -1, '501'))
+    fake.files.set('/proc/12/stat', stat(12, 77, 10, -1, '502'))
+    expect(linuxProcessGroupLiveMember(77, 11, fake.internals)).toBe(11)
+    expect(scans).toBe(0)
+
+    fake.files.set('/proc/11/stat', stat(11, 77, 10, -1, '501', 1, 'Z'))
+    expect(linuxProcessGroupLiveMember(77, 11, fake.internals)).toBe(12)
+    fake.files.set('/proc/12/stat', stat(12, 88, 12, -1, '502'))
+    expect(linuxProcessGroupLiveMember(77, 12, fake.internals)).toBe(false)
+    fake.files.delete('/proc/12/stat')
+    expect(linuxProcessGroupLiveMember(77, 12, fake.internals)).toBe(false)
+    expect(scans).toBe(3)
   })
 
   it('parses stat safely, captures only the rooted process tree, and signals identities', () => {
@@ -306,10 +329,51 @@ describe('Linux process inspector', () => {
 })
 
 describe('macOS process inspector', () => {
+  it.each(['Z', 'Z+', 'X', 'x'])('treats %s process rows as quiescent without signalling them', (state) => {
+    const fake = fakeInternals()
+    const exec = fake.internals.exec.bind(fake.internals)
+    fake.internals.exec = (file, args) => {
+      expect([file, ...args]).toEqual(['/bin/ps', '-axo', 'pid=,ppid=,stat=,lstart='])
+      return exec(file, args)
+    }
+    fake.setPs(` 10 1 S+ Mon Jul 21 10:00:00 2026\n 11 10 ${state} Mon Jul 21 10:00:01 2026\n`)
+    const inspector = createProcessInspector('darwin', 'arm64', fake.internals)
+    const observed = inspector.snapshot()
+    const [identity] = observed.tree(11)
+    if (identity === undefined) throw new Error('Process row is absent from the tree')
+
+    inspector.signalProcess(identity, 'SIGKILL')
+
+    expect({ snapshot: observed.alive(identity), current: inspector.isAlive(identity), signals: fake.kills })
+      .toEqual({ snapshot: false, current: false, signals: [] })
+    expect(identity).toEqual({ pid: 11, started: 'Mon Jul 21 10:00:01 2026' })
+  })
+
+  it('keeps live process identities signallable while refusing missing and reused identities', () => {
+    const fake = fakeInternals()
+    fake.setPs(' 11 10 S+ Mon Jul 21 10:00:01 2026\n')
+    const inspector = createProcessInspector('darwin', 'arm64', fake.internals)
+    const identity = { pid: 11, started: 'Mon Jul 21 10:00:01 2026' }
+    expect(inspector.snapshot().alive(identity)).toBe(true)
+    expect(inspector.isAlive(identity)).toBe(true)
+    inspector.signalProcess(identity, 'SIGTERM')
+    expect(fake.kills).toEqual([[11, 'SIGTERM']])
+
+    fake.setPs(' 11 10 R+ Mon Jul 21 10:00:02 2026\n')
+    expect(inspector.snapshot().alive(identity)).toBe(false)
+    expect(inspector.isAlive(identity)).toBe(false)
+    inspector.signalProcess(identity, 'SIGKILL')
+    fake.setPs('')
+    expect(inspector.snapshot().alive(identity)).toBe(false)
+    expect(inspector.isAlive(identity)).toBe(false)
+    inspector.signalProcess(identity, 'SIGKILL')
+    expect(fake.kills).toEqual([[11, 'SIGTERM']])
+  })
+
   it('reads tpgid and process trees, contains cycles, and identity-fences signals', () => {
     const fake = fakeInternals()
     fake.setTpgid('55\n')
-    fake.setPs(' 10 1 Mon Jul 21 10:00:00 2026\n 11 10 Mon Jul 21 10:00:01 2026\n 12 11 Mon Jul 21 10:00:02 2026\n 13 99 Mon Jul 21 10:00:03 2026\nmalformed\n')
+    fake.setPs(' 10 1 S Mon Jul 21 10:00:00 2026\n 11 10 R Mon Jul 21 10:00:01 2026\n 12 11 T Mon Jul 21 10:00:02 2026\n 13 99 I Mon Jul 21 10:00:03 2026\nmalformed\n')
     const inspector = createProcessInspector('darwin', 'arm64', fake.internals)
     expect(inspector.foregroundPgid(10)).toBe(55)
     expect(inspector.isStdinWaiting(55, 10)).toBe(false)
@@ -327,7 +391,7 @@ describe('macOS process inspector', () => {
     inspector.signalProcess({ pid: 12, started: 'missing' }, 'SIGTERM')
     expect(fake.kills).toEqual([[-55, 'SIGTSTP'], [11, 'SIGKILL']])
 
-    fake.setPs(' 10 11 Mon Jul 21 10:00:00 2026\n 11 10 Mon Jul 21 10:00:01 2026\n')
+    fake.setPs(' 10 11 S Mon Jul 21 10:00:00 2026\n 11 10 R Mon Jul 21 10:00:01 2026\n')
     expect(inspector.snapshot().tree(10)).toEqual([
       { pid: 11, started: 'Mon Jul 21 10:00:01 2026' },
       { pid: 10, started: 'Mon Jul 21 10:00:00 2026' },
@@ -336,7 +400,7 @@ describe('macOS process inspector', () => {
 
   it('re-reads the process table before signalling instead of trusting an earlier observation', () => {
     const fake = fakeInternals()
-    fake.setPs(' 11 10 Mon Jul 21 10:00:01 2026\n')
+    fake.setPs(' 11 10 S Mon Jul 21 10:00:01 2026\n')
     const inspector = createProcessInspector('darwin', 'arm64', fake.internals)
     inspector.snapshot()
     // The member exits after that observation; a recycled pid would otherwise

@@ -11,7 +11,7 @@ import {
   isSubagentDelegationTool, sameTurnProcessSpec, type TurnProcessSpec,
 } from '../contract/turn-process.ts'
 import { CHAT_SYNTHETIC_SEQ_OFFSETS, chatNode } from './common.ts'
-import { toAssistantBlocks } from './event-projection.ts'
+import { toAssistantBlocks } from '../contract/event-projection.ts'
 
 declare module '../contract/chat-nodes.ts' {
   interface ChatNodeDataMap {

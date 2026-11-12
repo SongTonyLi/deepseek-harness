@@ -19,4 +19,9 @@
       - group: 自定义设置
       - button "取消"
       - button "保存"
+    - listitem:
+      - text: Cursor
+      - button "编辑 Cursor (cursor)": 编辑
+      - button "登录"
+      - paragraph: 该提供方使用订阅登录，而不是 API 密钥。
   - button "添加模型提供商"

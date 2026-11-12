@@ -3,12 +3,10 @@
  * alone: provider key and token prefixes, JSON Web Tokens, private key blocks,
  * and the password of an address that carries credentials. Free-form passwords
  * and `name=value` assignments have no such format and stay plain. The formats
- * live in [credential-formats.ts](./credential-formats.ts); scanning lives in
- * [credential-scanner.ts](./credential-scanner.ts).
+ * live in `@deepseek-ai/dsh-util-credential-mask`, which also scans them.
  */
 import type { UserTextRule } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { CredentialScanner } from './credential-scanner.ts'
-import { formatTables } from './format-tables.ts'
+import { CredentialScanner, formatTables } from '@deepseek-ai/dsh-util-credential-mask'
 
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface UserTextDataMap {

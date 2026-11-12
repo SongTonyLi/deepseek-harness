@@ -53,6 +53,8 @@ kind: "package-reference"
 | `toolCallSettleMs` | `1,000` | Cursor 尚未发送结束模型消息的检查点时，等待更多并行工具调用的时长 |
 | `retryPolicy` | 普通模式，5 次重试 | 由 `dsh-llm-retry` 执行的提供方自有重试策略 |
 
+设置修改无需重启插件即可生效：上下文预算用于下一次模型解析，凭据、已安装登录复用与流式选项用于下一次请求。重试策略修改会刷新运行时注册，但不会替换适配器或其挂起的 Run；已存储的 OAuth 授权仍然可用。进行中的请求保留已捕获的选项，已经挂起的 Run 保留现有到期时间。无效选项会在配置补丁保存前被拒绝。
+
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-cursor)是每个已接受字段及其 JSDoc 的完整来源。
 
 ### 登录

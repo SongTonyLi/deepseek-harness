@@ -184,10 +184,11 @@ describe('unary HTTP/2', () => {
     stream.write = () => {}
     stream.end = () => {}
     stream.destroy = () => {}
-    const session = new EventEmitter() as unknown as CursorHttp2Session & EventEmitter
-    session.request = () => stream
-    session.close = () => {}
-    session.destroy = () => {}
+    const session = Object.assign(new EventEmitter(), {
+      request: () => stream,
+      close: () => {},
+      destroy: () => {},
+    })
     const pending = callUnary(
       { accessToken: 't', rpcPath: '/x' },
       new Uint8Array(),
@@ -218,10 +219,11 @@ describe('unary HTTP/2', () => {
     hanging.write = () => {}
     hanging.end = () => {}
     hanging.destroy = () => {}
-    const abortSession = new EventEmitter() as unknown as CursorHttp2Session & EventEmitter
-    abortSession.request = () => hanging
-    abortSession.close = () => { throw new Error('close') }
-    abortSession.destroy = () => { throw new Error('destroy') }
+    const abortSession = Object.assign(new EventEmitter(), {
+      request: () => hanging,
+      close: () => { throw new Error('close') },
+      destroy: () => { throw new Error('destroy') },
+    })
     const later = callUnary(
       { accessToken: 't', rpcPath: '/x', signal: aborting.signal },
       new Uint8Array(),
@@ -297,10 +299,11 @@ describe('streaming HTTP/2', () => {
     emitter.write = () => {}
     emitter.end = () => {}
     emitter.destroy = () => { throw new Error('stream closed') }
-    const session = new EventEmitter() as unknown as CursorHttp2Session & EventEmitter
-    session.request = () => emitter
-    session.close = () => { throw new Error('close') }
-    session.destroy = () => { throw new Error('destroy') }
+    const session = Object.assign(new EventEmitter(), {
+      request: () => emitter,
+      close: () => { throw new Error('close') },
+      destroy: () => { throw new Error('destroy') },
+    })
     const opened = openConnectStream(
       { accessToken: 't', rpcPath: '/run', signal: new AbortController().signal },
       () => session,
@@ -347,14 +350,15 @@ describe('streaming HTTP/2', () => {
     hanging.emit('error', new Error('again'))
     liveAbort.destroy()
 
-    const sessionFail = new EventEmitter() as unknown as CursorHttp2Session & EventEmitter
     const failStream = new EventEmitter() as CursorHttp2Stream & EventEmitter
     failStream.write = () => {}
     failStream.end = () => {}
     failStream.destroy = () => {}
-    sessionFail.request = () => failStream
-    sessionFail.close = () => {}
-    sessionFail.destroy = () => {}
+    const sessionFail = Object.assign(new EventEmitter(), {
+      request: () => failStream,
+      close: () => {},
+      destroy: () => {},
+    })
     const failed = openConnectStream({ accessToken: 't', rpcPath: '/run' }, () => sessionFail)
     const failedWait = failed.frames[Symbol.asyncIterator]().next()
     sessionFail.emit('error', new Error('session down'))

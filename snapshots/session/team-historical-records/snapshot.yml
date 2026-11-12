@@ -5,5 +5,5 @@ composition: team-session-mode
 recording: authored
 header:
   class: team-session-mode
-  systemPromptSource: text-turn
-  toolSchemasSource: text-turn
+  systemPromptSource: team-session-mode
+  toolSchemasSource: team-session-mode

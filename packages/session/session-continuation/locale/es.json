@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Continuación de la sesión",
+    "description": "Continúa los turnos del modelo fallidos que cumplen los requisitos mediante un reintento vacío admitido mientras el agente está inactivo."
+  }
+}

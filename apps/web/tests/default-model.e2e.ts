@@ -356,8 +356,22 @@ describe('web e2e: the composer model switch is the default for later sessions',
           : [{ id: MODEL, name: 'Acme Large' }],
       } },
     })
+    const loaderEntry = (id: string) => {
+      const entry = [...scaffold.ctx.loader.entries()].find(row => row.options.id === id)
+      if (entry === undefined) throw new Error(`Missing Loader entry "${id}"`)
+      return entry
+    }
+    const cursorDisabled = loaderEntry('llm-cursor').options.disabled
+    const piAiDisabled = loaderEntry('llm-pi-ai').options.disabled
+    const unloadCursor = async (): Promise<void> => {
+      await loaderEntry('llm-cursor').update({ disabled: true })
+      await scaffold.ctx.loader.await()
+      expect(scaffold.ctx.llm.listProviders().some(provider => provider.id === 'cursor')).toBe(false)
+    }
     try {
       await setModels(false)
+      // A settings write reconciles the full profile, so unload after each write.
+      await unloadCursor()
       await trigger.click()
       await page.getByRole('menuitem', { name: /模型/ }).click()
       await expect.poll(() => page.getByRole('menuitemradio').count()).toBe(4)
@@ -379,15 +393,40 @@ describe('web e2e: the composer model switch is the default for later sessions',
       await commandSearch.press('Escape')
       await page.locator('[data-composer-input]').first().fill('')
       expect(await rows.count()).toBe(0)
-    } finally {
-      await page.keyboard.press('Escape')
-      await page.keyboard.press('Escape')
       await setModels(true)
+      await unloadCursor()
       await trigger.click()
       await page.getByRole('menuitem', { name: /模型/ }).click()
       await expect.poll(() => page.getByRole('menuitemradio').count()).toBe(5)
       await search.waitFor()
-      await search.press('Escape')
+    } finally {
+      try {
+        await page.keyboard.press('Escape')
+        await page.keyboard.press('Escape')
+      } finally {
+        try {
+          await setModels(true)
+        } finally {
+          await loaderEntry('llm-cursor').update({ disabled: cursorDisabled ?? null })
+          await scaffold.ctx.loader.await()
+          // Reinstall the scenario's routes after Cursor to restore their provider order.
+          const piAi = loaderEntry('llm-pi-ai')
+          try {
+            await piAi.update({ disabled: true })
+          } finally {
+            await piAi.update({ disabled: piAiDisabled ?? null })
+            await scaffold.ctx.loader.await()
+          }
+        }
+      }
+    }
+    await trigger.click()
+    try {
+      await page.getByRole('menuitem', { name: /模型/ }).click()
+      await expect.poll(() => page.getByRole('menuitemradio').count()).toBe(11)
+      expect(await page.locator('[role="menuitemradio"] [data-provider-id="cursor"]').count()).toBe(6)
+    } finally {
+      await page.keyboard.press('Escape')
       await page.keyboard.press('Escape')
     }
   })
@@ -408,10 +447,11 @@ describe('web e2e: the composer model switch is the default for later sessions',
       await page.getByRole('menuitem', { name: /模型/ }).click()
       const scroller = page.getByRole('menu', { name: '模型', exact: true })
       const headings = surface.locator('section[role="group"] > div')
+      await expect.poll(() => headings.allTextContents()).toEqual(['DeepSeek', 'Cursor', 'Origin Gateway', 'Acme Gateway'])
       const readPinned = () => headings.evaluateAll(nodes => nodes.map(node => node.hasAttribute('data-stuck')))
       const resetScroll = async (): Promise<void> => {
         await scroller.evaluate((node) => { node.scrollTop = 0 })
-        await expect.poll(readPinned).toEqual([false, false, false])
+        await expect.poll(readPinned).toEqual([false, false, false, false])
       }
       for (const platform of ['web', 'win32', 'darwin']) {
         for (const dark of [false, true]) {
@@ -429,27 +469,27 @@ describe('web e2e: the composer model switch is the default for later sessions',
           })
           expect(await scroller.evaluate(node => node.scrollHeight - node.clientHeight)).toBeGreaterThanOrEqual(secondTop)
           await scroller.evaluate((node) => { node.scrollTop = 10 })
-          await expect.poll(readPinned).toEqual([true, false, false])
+          await expect.poll(readPinned).toEqual([true, false, false, false])
           expect(await headings.first().evaluate(node => getComputedStyle(node).backgroundColor))
             .toBe(dark ? 'rgba(48, 49, 54, 0.94)' : 'rgba(248, 249, 250, 0.94)')
           await scroller.evaluate((node, top) => { node.scrollTop = top }, secondTop)
-          await expect.poll(readPinned).toEqual([false, true, false])
+          await expect.poll(readPinned).toEqual([false, true, false, false])
           await scroller.evaluate((node) => { node.scrollTop = 10 })
-          await expect.poll(readPinned).toEqual([true, false, false])
+          await expect.poll(readPinned).toEqual([true, false, false, false])
           await resetScroll()
         }
       }
       await scroller.evaluate((node) => { node.scrollTop = 10 })
-      await expect.poll(readPinned).toEqual([true, false, false])
+      await expect.poll(readPinned).toEqual([true, false, false, false])
       await search.fill('Origin Large')
       await expect.poll(() => headings.count()).toBe(1)
       await expect.poll(readPinned).toEqual([false])
       await page.getByRole('button', { name: '清除搜索', exact: true }).click()
-      await expect.poll(readPinned).toEqual([false, false, false])
+      await expect.poll(readPinned).toEqual([false, false, false, false])
       await search.fill('zzzz')
       await expect.poll(() => surface.locator('[data-stuck]').count()).toBe(0)
       await page.getByRole('button', { name: '清除搜索', exact: true }).click()
-      await expect.poll(readPinned).toEqual([false, false, false])
+      await expect.poll(readPinned).toEqual([false, false, false, false])
       await search.press('Escape')
       await page.keyboard.press('Escape')
       await trigger.click()
@@ -535,6 +575,9 @@ describe('web e2e: the composer model switch is the default for later sessions',
       getComputedStyle(row.querySelector('span span')!).fontWeight,
     ))
     expect(new Set(modelWeights)).toEqual(new Set(['400']))
+    const modelList = page.getByRole('menu', { name: '模型', exact: true })
+    await modelList.evaluate((node) => { node.scrollTop = 0 })
+    await expect.poll(() => modelList.locator('[data-stuck]').count()).toBe(0)
     const headingPalettes = await page.getByRole('group', { name: '模型与推理等级', exact: true }).evaluate((menu) => {
       const html = menu.ownerDocument.documentElement
       const body = menu.ownerDocument.body

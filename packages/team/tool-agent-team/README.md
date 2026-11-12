@@ -91,6 +91,8 @@ The [subagent teammates Agent Note](../../../.agents/notes/implemented/architect
 
 One plugin registration provides a dynamic `team:policy` section and four conditional task tools. Each provider reads the caller’s root Session selection, including fork children. An unavailable root disables Team tools and guidance. Tree authority comes from `ctx.subagents.rootOf(agent)`; task owners remain Session ids in `ctx.agentTeams`. Owner arguments resolve through `ctx.subagents.resolveName()`, which grants no authority. Results replace the saved `ownerId` and `ownerName` fields with `owner: ownerName ?? ownerId`. Displaying a task or editing its content requires no descendant catalog reads. Identity, discovery, communication, and waiting belong to [subagent controls](../../subagent/tool-subagent-control/README.md) and remain unchanged when Team mode switches. The subagent runtime delivers final results.
 
+`team_task_list` and `team_task_get` opt into concurrent scheduling with sibling parallel-safe calls because they only read the board. `team_task_create` and `team_task_update` stay exclusive because they append to the Lead log.
+
 ### Scoped registration and teardown
 
 Tool `when` conditions resolve at step preparation, including the first step of new, forked, and resumed Agents. Policy text is evaluated during prompt assembly. An already prepared step retains its tool selection, but task operations check the current mode before starting. Plugin disposal removes all registrations through their owning effects.
@@ -124,13 +126,13 @@ Every Team member's system prompt carries one `team:policy` section; the Lead an
 ##### Team policy
 
 ```markdown
-A shared task board is available in this session. Task owners are agent names from list_agents. The root can reassign tasks to itself or any continuable descendant; other agents claim ready tasks themselves.
+Agent Teams is available in this session.
 
 The root agent orchestrates the work. It first breaks the request into subtasks and classifies each as exploration or research, implementation of a separable part, review or verification, or testing. It keeps small, sequential, tightly coupled work and work requiring the whole conversation. It delegates independent work with disjoint write scopes or work that benefits from a focused role with fresh context. It does not create an agent for trivial work, and reuses an inactive agent with send_message when its role matches. Each delegated agent gets one role, a role-revealing description, and a prompt stating its responsibility. The root records each delegated subtask with acceptance criteria, write scopes, and dependencies, then assigns it using the returned agent name or asks the agent to claim it. The root integrates and verifies the results before the final answer.
 
-Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
+The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
 
-Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. The root agent must wait for required teammates before giving the final answer.
+Use the names returned by subagent, subagent_fork, or list_agents as owner when assigning or filtering shared tasks. The root can reassign tasks to itself or any continuable descendant; other agents claim ready tasks themselves. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. The root agent must wait for required teammates before giving the final answer.
 
 Task changes do not end wait_agent calls, add inbox messages, or start idle agents. Use send_message when another agent needs to act on a task.
 ```

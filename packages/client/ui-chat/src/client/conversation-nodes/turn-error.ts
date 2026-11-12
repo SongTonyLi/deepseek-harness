@@ -4,7 +4,7 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { TurnEndReason } from '@deepseek-ai/dsh-session/types'
 import { chatNode } from './common.ts'
-import { displayFailure } from './event-projection.ts'
+import { displayFailure } from '../contract/event-projection.ts'
 
 declare module '../contract/chat-nodes.ts' {
   interface ChatNodeDataMap {

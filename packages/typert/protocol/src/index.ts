@@ -14,6 +14,8 @@ import type {
 } from './types.ts'
 
 export { RemoteError, remoteErrorOf } from './remote-error.ts'
+export { parseRemoteRequest } from './remote-request.ts'
+export type { RemoteRequestSchema } from './remote-request.ts'
 export { TYPERT_OWNED_VALUE, isTypertOwnedValue, typertOwnedValue } from './owned-value.ts'
 export type { TypertOwnedValue } from './owned-value.ts'
 export { isRemoteJsonValue, isRemoteUplinkItem } from './json-value.ts'

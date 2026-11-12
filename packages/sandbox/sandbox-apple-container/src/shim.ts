@@ -15,8 +15,10 @@
  * @module @deepseek-ai/dsh-sandbox-apple-container/shim
  */
 
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { constants } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 /** Exit status of a shim or container-runtime failure that happened before the command started. */
 export const SHIM_FAILURE_EXIT = 125
@@ -212,4 +214,20 @@ export async function runShim(args: ShimArgs, deps: ShimDeps): Promise<number> {
     unsubscribe()
     deps.removeEnvFile(envFile)
   }
+}
+
+/**
+ * The exec-shim launch prefix for a provider module at `moduleUrl`: the built
+ * sibling `exec-shim.js` under plain Node when present, otherwise the source
+ * entry through tsx pinned to this checkout's TypeScript paths.
+ * @param moduleUrl - the provider module's `import.meta.url`.
+ * @returns `[node, ...loader, entry]`.
+ */
+export function shimInvocation(moduleUrl: string): string[] {
+  const built = fileURLToPath(new URL('./exec-shim.js', moduleUrl))
+  if (existsSync(built)) return [process.execPath, built]
+  const source = fileURLToPath(new URL('./exec-shim.ts', moduleUrl))
+  const tsconfig = fileURLToPath(new URL('../../../../tsconfig.base.json', moduleUrl))
+  const registration = `import { register } from ${JSON.stringify(import.meta.resolve('tsx/esm/api'))}; register({ tsconfig: ${JSON.stringify(tsconfig)} });`
+  return [process.execPath, '--import', `data:text/javascript,${encodeURIComponent(registration)}`, source]
 }

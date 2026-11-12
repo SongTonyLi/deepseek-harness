@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-[ui-secret-mask](../../../../packages/client/ui-secret-mask/README.zh.md) 在每条已发送用户文本上识别凭据。UserText 调度器在每个被采纳的节点之后再查询一次匹配器，一段文本的成本是它全部查询之和。大部分文本不含凭据，所以首要目标是让不含凭据的文本尽量少付成本；其次是含凭据文本的成本只与凭据个数和长度成正比；对抗输入必须保持线性。约束：正则不回溯；按前缀剪枝；一段文本的全部查询合计线性；返回节点之前不分配内存。
+Web 的 secret 规则位于 [ui-secret-mask](../../../../packages/client/ui-secret-mask/README.zh.md)，借助 [dsh-util-credential-mask](../../../../packages/util/credential-mask/README.zh.md) 中的匹配器，在每条已发送用户文本上识别凭据；匹配器的放置位置记录于[同步上游后与上游不同的 fork 运行时决策](../architecture/2026-11-12-fork-runtime-decisions-after-upstream-sync.zh.md)。UserText 调度器在每个被采纳的节点之后再查询一次匹配器，一段文本的成本是它全部查询之和。大部分文本不含凭据，所以首要目标是让不含凭据的文本尽量少付成本；其次是含凭据文本的成本只与凭据个数和长度成正比；对抗输入必须保持线性。约束：正则不回溯；按前缀剪枝；一段文本的全部查询合计线性；返回节点之前不分配内存。
 
 ## 决定
 

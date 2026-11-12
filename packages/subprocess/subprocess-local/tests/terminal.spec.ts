@@ -871,9 +871,9 @@ describe('process-table read amplification', () => {
 
   /** A shell at pid 123 with `count` descendants chained beneath it. */
   function shellTable(count: number): string {
-    const rows = [' 123 1 Mon Jul 21 10:00:00 2026']
+    const rows = [' 123 1 S Mon Jul 21 10:00:00 2026']
     for (let index = 0; index < count; index += 1) {
-      rows.push(` ${String(124 + index)} ${String(123 + index)} Mon Jul 21 10:00:${String(index + 1).padStart(2, '0')} 2026`)
+      rows.push(` ${String(124 + index)} ${String(123 + index)} S Mon Jul 21 10:00:${String(index + 1).padStart(2, '0')} 2026`)
     }
     return `${rows.join('\n')}\n`
   }

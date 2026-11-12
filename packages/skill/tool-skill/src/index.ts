@@ -29,21 +29,6 @@ import {
   formatUnknownSkillError,
 } from './unknown-skill.ts'
 
-export {
-  CLOSED_SKILL_CATALOG_LINE,
-  CLOSED_SKILL_CATALOG_THIS_TURN,
-  MAX_CLOSE_SKILL_DISTANCE,
-  MAX_CLOSE_SKILL_SUGGESTIONS,
-  MAX_LISTED_CATALOG_NAMES,
-  UNKNOWN_SKILL_STREAK_LIMIT,
-  compareCatalogNames,
-  formatUnknownSkillError,
-  isSubsequenceOf,
-  levenshteinDistance,
-  rankClosestCatalogNames,
-  unknownSkillLine,
-} from './unknown-skill.ts'
-
 export const name = 'tool-skill'
 export const inject = ['agents', 'tools', 'skills', 'workingDirectory']
 

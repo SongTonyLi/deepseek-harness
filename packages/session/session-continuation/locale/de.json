@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Sitzungsfortsetzung",
+    "description": "Setzt berechtigte fehlgeschlagene Modellzüge durch einen leeren Wiederholungsversuch fort, der bei inaktivem Agent zugelassen wird."
+  }
+}

@@ -43,7 +43,7 @@ function blobOf(payload: CursorRunPayload, id: Uint8Array): Uint8Array {
 function rootPromptOf(payload: CursorRunPayload): unknown[] {
   // oxlint-disable-next-line typescript/no-deprecated -- Cursor still reads this prompt field
   return (decodeRun(payload).conversationState?.rootPromptMessagesJson ?? [])
-    .map(id => JSON.parse(new TextDecoder().decode(blobOf(payload, id))) as unknown)
+    .map((id): unknown => JSON.parse(new TextDecoder().decode(blobOf(payload, id))))
 }
 
 function userActionText(payload: CursorRunPayload): string | undefined {

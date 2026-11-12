@@ -4,7 +4,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage, LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { BuiltinLlmFailureCode, GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import SessionContinuation, { SessionContinuationBusyError } from '../src/index.ts'
@@ -14,7 +14,7 @@ import type { RetrySource, SessionRequestId } from '../src/types.ts'
 class ContinuationAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
 
-  constructor(private readonly failure: string) { super() }
+  constructor(private readonly failure: BuiltinLlmFailureCode) { super() }
 
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return Promise.resolve({ provider, id: model, name: model })
@@ -35,7 +35,7 @@ const source = (id: string): RetrySource => ({
 })
 const human = (text: string) => createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
 
-async function setup(code = 'SERVER') {
+async function setup(code: BuiltinLlmFailureCode = 'SERVER') {
   const ctx = new Context()
   onTestFinished(() => ctx.fiber.dispose())
   await mountAgentLoopTestDependencies(ctx)

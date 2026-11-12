@@ -31,7 +31,7 @@ Call `ask()` when work cannot continue without the answer. Call `askTimed()` whe
 - `ctx.userQuestions.ask(request): Promise<AskUserQuestionAnswer>` Dispatch the answerer waterfall and wait for the first accepted answer.
 - `ctx.userQuestions.askTimed(request, callId, timeoutMs): Promise<TimedUserQuestionResult>` Wait for a foreground answer window, then return `{ pending: true, callId }` if it closes without an answer.
 - `ctx.userQuestions.attachWait(agent, callId, signal)` Claim a timed wait from an answer UI and receive the Host-computed remaining duration.
-- `planReviewOptions(question): PlanReviewOptions | undefined` (also at `@deepseek-ai/dsh-user-questions/plan-review`, free of the Service Definition for Client bundles) Narrow one question to its approve and decline options when it is a binary `plan-review`; the browser card and the terminal prompt share this narrowing.
+- `planReviewOptions(question): PlanReviewOptions | undefined` at `@deepseek-ai/dsh-user-questions/plan-review`, free of the Service Definition for Client bundles. It narrows one question to its approve and decline options when it is a binary `plan-review`; the browser card and the terminal prompt share this narrowing.
 
 ### Key Types
 

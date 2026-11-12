@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-11-12-session-controller-continuation-compatibility.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-12-session-controller-continuation-compatibility.md
+/agent-note-session-controller-continuation-move-and-its-compatibility:
+  en: ed89efc741cd1c96
+  zh: 9160fb63a111af47
+/agent-note-session-controller-continuation-move-and-its-compatibility/problem:
+  en: ff612bdc32b9d55a
+  zh: adfa43a587ba825e
+/agent-note-session-controller-continuation-move-and-its-compatibility/decision:
+  en: b4b1a8a20382dcb4
+  zh: b923f60c570f04f1
+/agent-note-session-controller-continuation-move-and-its-compatibility/facts:
+  en: 9cafa5d0f97a7ac6
+  zh: 47cf9f8f40bb8202
+/agent-note-session-controller-continuation-move-and-its-compatibility/compatibility-with-the-tui-and-terminal-controller:
+  en: 647eaa679368c27c
+  zh: 897822778cdaa4c1
+/agent-note-session-controller-continuation-move-and-its-compatibility/alternatives-considered:
+  en: 431e504fa8fbf5dc
+  zh: 60fa88f8bb40a548
+/agent-note-session-controller-continuation-move-and-its-compatibility/consequences:
+  en: ce87a4e413de3f41
+  zh: 92ac1d612851d30f
+/agent-note-session-controller-continuation-move-and-its-compatibility/verification:
+  en: 34b6a17864c09858
+  zh: 1dc00749141d9cda
