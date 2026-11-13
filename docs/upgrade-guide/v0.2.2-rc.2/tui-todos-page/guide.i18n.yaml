@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-rc.2/tui-todos-page/guide.md
+/:
+  en: ccdfe23b093c1cc4
+  zh: 164e6387d8226b67
+/todos-in-the-tui-opens-a-full-screen-todos-page:
+  en: ce7d42836960cea3
+  zh: c8458f89e1b7ea70
+/todos-in-the-tui-opens-a-full-screen-todos-page/change:
+  en: 976b2840d66a3a90
+  zh: 251cc02f228267f5
+/todos-in-the-tui-opens-a-full-screen-todos-page/migration:
+  en: bee4dd7159e82e49
+  zh: 8464fdcc87a51112

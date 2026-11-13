@@ -30,6 +30,14 @@ const WORKFLOW_TOOL = 'workflow'
 const WORKFLOW_MARKER = 'CLI_WORKFLOW_CHILD'
 /** The text every workflow child replies with. */
 const WORKFLOW_CHILD_REPLY = 'CLI_WORKFLOW_CHILD_OK'
+/** The model-facing name of the todo tool the shipped profiles compose. */
+const TODO_TOOL = 'todo_write'
+/** The list the todo hook writes: one item of each status. */
+const TODO_LIST = [
+  { content: 'Read the CLI round trip', status: 'completed' },
+  { content: 'Write the CLI todo list', status: 'in_progress' },
+  { content: 'Check the CLI todos page', status: 'pending' },
+]
 
 /**
  * Whether the conversation is a delegated child or has already delegated.
@@ -70,6 +78,10 @@ function firstToolCall(workflow: boolean, messages: readonly RequestMessage[]): 
       }),
     }
   }
+  if (process.env.DSH_CLI_MOCK_TODOS === '1'
+    && !messages.some(message => message.role === 'assistant' && message.content.some(block => block.type === 'tool-call' && block.name === TODO_TOOL))) {
+    return { tool: TODO_TOOL, args: JSON.stringify({ todos: TODO_LIST }) }
+  }
   if (process.env.DSH_CLI_MOCK_DELEGATE === '1' && !delegationHandled(messages)) {
     return { tool: DELEGATION_TOOL, args: JSON.stringify({ description: 'Delegated shell call', prompt: `Make the CLI shell call. ${DELEGATED_MARKER}` }) }
   }
@@ -97,6 +109,9 @@ function firstToolCall(workflow: boolean, messages: readonly RequestMessage[]): 
  *   {@link DELEGATED_MARKER}; the child, whose conversation carries the
  *   marker, makes the shell call. Later turns of the delegating conversation
  *   make the shell call themselves.
+ * - `DSH_CLI_MOCK_TODOS=1` makes a conversation that has not called the
+ *   `todo_write` tool yet call it with {@link TODO_LIST}; the tool result then
+ *   gets the ordinary round-trip reply.
  * - `DSH_CLI_MOCK_WORKFLOW=1` makes a conversation that has not called the
  *   `workflow` tool yet call it with a script that starts one child whose
  *   prompt carries {@link WORKFLOW_MARKER}; that child replies

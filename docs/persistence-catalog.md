@@ -7977,7 +7977,7 @@ Sources: [`packages/core/tools/src/index.ts:28`](../packages/core/tools/src/inde
 
 SHA-256: `a41636c87362f664550b08d346b231cf57622c324bb272224c1829925cf9d880`
 
-Sources: [`packages/bundle/tui-app/src/app.ts:56`](../packages/bundle/tui-app/src/app.ts)
+Sources: [`packages/bundle/tui-app/src/app.ts:55`](../packages/bundle/tui-app/src/app.ts)
 
 | Property | Presence | Type |
 |---|---|---|
