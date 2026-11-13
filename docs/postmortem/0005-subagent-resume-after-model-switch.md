@@ -2,7 +2,7 @@
 
 English | [中文](0005-subagent-resume-after-model-switch.zh.md)
 
-Status: operational workaround applied; individual child failures not fully diagnosed
+Status: resolved. Cold resume still keeps the recorded route. A local error notice now names that route and a redacted cause.
 
 ## Executive summary
 
@@ -28,7 +28,7 @@ The checkout's [subagent descriptor](../../packages/subagent/subagent/src/descri
 
 [Model discovery](../../packages/subagent/tool-subagent/src/list-models.ts) filters providers through the Session's authorized routes. Without a recorded model-selection policy, it restricts discovery to the current parent route. [Explicit child selection](../../packages/subagent/tool-subagent/src/model-selection.ts) performs a separate authorization check. A parent model switch therefore does not imply that every old child route remains selectable or that an existing child has changed models.
 
-Repeatedly sending another message does not itself replace a recorded route. However, a discovery denial alone does not demonstrate which check or provider request failed during an existing child's wake-up. This incident lacks the failed turns' structured error, nested cause, and runtime route-resolution trace. It does not establish credential revocation, token exhaustion, incompatible reasoning effort, or a failure of every model switch. No automatic-fallback behavior or runtime fix is claimed here.
+Repeatedly sending another message does not itself replace a recorded route. However, a discovery denial alone does not demonstrate which check or provider request failed during an existing child's wake-up. This incident lacks the failed turns' structured error, nested cause, and runtime route-resolution trace. It does not establish credential revocation, token exhaustion, incompatible reasoning effort, or a failure of every model switch. Cold resume still keeps the recorded route. There is no automatic fallback onto the parent's later route. A local epoch that ends as an error now puts that route and a redacted cause on the parent notice.
 
 ## Why the investigation repeated work
 
@@ -42,8 +42,11 @@ The orchestrator reused old agents before refreshing model discovery after the s
 4. Reassign the shared task explicitly when its owner changes. Task readiness does not start an idle agent; send the new owner its assignment.
 5. If the original child's identity and history must be retained, preserve them and obtain its error and route-availability evidence before choosing a runtime repair. Creating a replacement is not migration of the old child.
 
-These are operational recommendations derived from this session, not newly implemented runtime guarantees.
+The route check and replacement steps remain operational. The parent notice's route and cause are now part of local settlement.
 
-## Remaining diagnostic work
+## Guardrails
 
-A complete runtime diagnosis needs a controlled switch-and-resume reproduction with the child's route before and after the switch, the current authorization policy, the actual provider resolution result, and the structured turn failure. Compare an old child with a newly created child under the same policy. Also test switching while the old route remains authorized, to distinguish model switching itself from loss of route access. Surface the failing route and actionable cause in the parent notification without exposing credentials; that behavior is proposed work, not part of this sync.
+- A local epoch that ends as `error` includes `Child route <provider>/<model> failed (<code>): <message>` on the activation result and the parent notice. With no route, the sentence is `Child turn failed (<code>): <message>`.
+- `<message>` is the committed turn failure's own text, or the live error's own message when `turn/end` was not committed. Bearer tokens, `sk-` keys, and `api_key`, `access_token`, or `secret` assignments become `[redacted]`. Request ids and cause chains are omitted. The text is limited to 4096 UTF-8 bytes.
+- Cold resume still uses the child's recorded route. One test completes a parent turn on a new route while the old provider still serves the old child, and a new child uses the parent's route. The same switch after that provider is unregistered names `NO_ADAPTER` and the recorded route.
+- The cases live in [`continuation.spec.ts`](../../packages/subagent/subagent/tests/continuation.spec.ts). Redaction and the byte limit live in [`local-failure.spec.ts`](../../packages/subagent/subagent/tests/local-failure.spec.ts). The parent transcript for one local failure is [`subagent-local-failure-notice`](../../snapshots/session/subagent-local-failure-notice/snapshot.yml).

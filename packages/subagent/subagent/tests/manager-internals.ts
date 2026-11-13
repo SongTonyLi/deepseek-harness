@@ -49,6 +49,7 @@ export function bindSubagentActivation(
     outputStart: child.session.seq,
     structured: undefined,
     failureAt: undefined,
+    failure: undefined,
     poke: Promise.withResolvers(),
     omitClosingText: false,
     delivery: 'caller',

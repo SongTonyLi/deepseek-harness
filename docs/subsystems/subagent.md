@@ -254,7 +254,7 @@ The parent-owned `subagentCatalog` projection lists all local children and paren
 
 ## Results and backend handles
 
-SubagentResult is available to program consumers. The activation registry retains the external backend handle until disposal completes. A cleanup failure does not replace a captured execution result: the activation result and parent notice retain it, while dispose rejects and the live subagent/end event reports error. Backend-owned diagnostics must satisfy the safe-detail requirements below.
+SubagentResult is available to program consumers. The activation registry retains the external backend handle until disposal completes. A cleanup failure does not replace a captured execution result: the activation result and parent notice retain it, while dispose rejects and the live subagent/end event reports error. Backend-owned diagnostics must satisfy the safe-detail requirements below. A local error epoch supplies the route, code, and redacted message defined on `diagnostic`.
 
 ```ts type-equiv
 /**
@@ -278,10 +278,15 @@ interface SubagentResult {
    */
   readonly structured?: unknown
   /**
-   * Provider-authored, non-assistant failure detail for a non-`completed`
-   * result. Providers keep this text free of tool inputs, file contents,
-   * environment values, credentials, and raw protocol payloads, and limit it
-   * to 4096 UTF-8 bytes. Consumers present it separately from {@link output}.
+   * Non-assistant failure detail for a non-`completed` result. Providers keep
+   * this text free of tool inputs, file contents, environment values,
+   * credentials, and raw protocol payloads. A local epoch that ends as
+   * `error` supplies `Child route <provider>/<model> failed (<code>): <message>`,
+   * or `Child turn failed (<code>): <message>` when the child has no route.
+   * Bearer tokens, `sk-` keys, and `api_key`, `access_token`, or `secret`
+   * assignments inside `<message>` are replaced with `[redacted]`. Request ids
+   * and cause chains are omitted. The text is limited to 4096 UTF-8 bytes.
+   * Consumers present it separately from {@link output}.
    */
   readonly diagnostic?: string
   /** Why the run ended. A non-`completed` reason means `output` may be partial. */

@@ -275,10 +275,15 @@ export interface SubagentResult {
    */
   readonly structured?: unknown
   /**
-   * Provider-authored, non-assistant failure detail for a non-`completed`
-   * result. Providers keep this text free of tool inputs, file contents,
-   * environment values, credentials, and raw protocol payloads, and limit it
-   * to 4096 UTF-8 bytes. Consumers present it separately from {@link output}.
+   * Non-assistant failure detail for a non-`completed` result. Providers keep
+   * this text free of tool inputs, file contents, environment values,
+   * credentials, and raw protocol payloads. A local epoch that ends as
+   * `error` supplies `Child route <provider>/<model> failed (<code>): <message>`,
+   * or `Child turn failed (<code>): <message>` when the child has no route.
+   * Bearer tokens, `sk-` keys, and `api_key`, `access_token`, or `secret`
+   * assignments inside `<message>` are replaced with `[redacted]`. Request ids
+   * and cause chains are omitted. The text is limited to 4096 UTF-8 bytes.
+   * Consumers present it separately from {@link output}.
    */
   readonly diagnostic?: string
   /** Why the run ended. A non-`completed` reason means `output` may be partial. */

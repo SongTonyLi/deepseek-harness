@@ -351,6 +351,9 @@ describe('in-process structured output', () => {
     const result = await run.result
     expect(result.stopReason).toBe('error')
     expect(result.structured).toBeUndefined()
+    expect(result.diagnostic).toBe(
+      'Child route mock/mock failed (STRUCTURED_OUTPUT_MISSING): the child finished without recording structured output.',
+    )
     // Exactly one model request and one caller-supplied user message: no nudge turn exists.
     expect(adapter.requests.length).toBe(1)
     const child = run.localAgent

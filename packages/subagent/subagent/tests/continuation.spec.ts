@@ -18,7 +18,8 @@ import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
 import type { ContentBlock, GenerateOptions, MessageId, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { ToolCallId, createUserMessage, LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage, LlmAdapter, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ProviderRequestId } from '@deepseek-ai/dsh-llm/brand'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MockAdapter, maxTokensResponse, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import SubagentRuntime, {
@@ -865,6 +866,35 @@ describe('SubagentRuntime.startActivation', () => {
     expect(firstHeader?.type === 'request/header' && firstHeader.data.header.config).toMatchObject({
       provider: 'mock', model: 'mock', reasoningEffort: low,
     })
+  })
+
+  it('does not pin the parent effort when a fork changes model without naming one', async () => {
+    const high = ReasoningEffortId('high')
+    const adapter = new MockAdapter([
+      textResponse('parent turn'),
+      textResponse('forked child'),
+    ], {
+      efforts: [{ id: high, name: 'High' }],
+      defaultEffort: high,
+    })
+    const { ctx, parent } = await setupWith(adapter)
+    parent.model.select({ provider: 'mock', model: 'mock', reasoningEffort: high })
+    parent.followup(createUserMessage({ content: message('parent work'), source: { kind: 'user' } }))
+    await parent.whenIdle()
+    parkParent(ctx, parent)
+
+    const started = await ctx.subagents.startActivation({
+      ...startSpec(parent, 'fork'),
+      delivery: 'caller',
+      agentOptions: { provider: 'mock', model: 'child-model' },
+    })
+    await waitNoActivation(ctx, started.childId)
+
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    const ownHeaders = loaded.events.slice(loaded.inheritedEventCount)
+      .flatMap(event => event.type === 'request/header' ? [event.data.header] : [])
+    expect(ownHeaders[0]?.config).toMatchObject({ provider: 'mock', model: 'child-model' })
+    expect(ownHeaders[0]?.adapterDefaults?.reasoningEffort).toBe(true)
   })
 
   it('continues turn numbering after an inherited fork prefix and pre-turn descriptor', async () => {
@@ -2157,7 +2187,10 @@ describe('continuable review regressions', () => {
       let settled = false
       const result = started.result.then((value) => { settled = true; return value })
       await vi.waitFor(() => { expect(settled).toBe(true) })
-      await expect(result).resolves.toMatchObject({ stopReason: 'error' })
+      await expect(result).resolves.toMatchObject({
+        stopReason: 'error',
+        diagnostic: `Child route mock/mock failed (UNKNOWN): first ${failedEvent} unavailable`,
+      })
       expect(ends).toHaveLength(1)
       expect(ends[0]!.stopReason).toBe('error')
       expect(adapter.requests).toHaveLength(failedEvent === 'turn/start' ? 0 : 1)
@@ -3203,7 +3236,8 @@ describe('continuable settlement delivery', () => {
     const child = await loadStoredSession(ctx.sessionPersistence, started.childId)
     expect(hasUserText(child.events, 'second task')).toBe(false)
     expect(settlementNotices(parent)[0]!.text).toBe(
-      `Background subagent ${started.name} failed before it finished.\nIts closing message:\nthe answer`,
+      `Background subagent ${started.name} failed before it finished.\nIts closing message:\nthe answer\n`
+      + 'Child route mock/mock failed (UNKNOWN): ENOSPC: no space left on device',
     )
   })
 
@@ -3971,6 +4005,144 @@ describe('continuable errors', () => {
     expect(resumed.events.flatMap(event => event.type === 'request/header'
       ? [event.data.header.config.reasoningEffort]
       : [])).toEqual([effort, effort])
+  })
+
+  it('keeps a recorded child route after the parent completes a turn on another route', async () => {
+    const retained = new MockAdapter([textResponse('old child'), textResponse('old child resumed')])
+    const current = new MockAdapter([textResponse('parent switched'), textResponse('fresh child')])
+    const { ctx, parent } = await setupWith(new MockAdapter([]))
+    ctx.llm.registerAdapter(['retained'], retained)
+    ctx.llm.registerAdapter(['current'], current)
+    parent.model.select({ provider: 'current', model: 'current-model' })
+    parent.followup(createUserMessage({ content: message('switch'), source: { kind: 'user' } }))
+    await parent.whenIdle()
+    parkParent(ctx, parent)
+
+    const old = await ctx.subagents.startActivation({
+      ...startSpec(parent),
+      delivery: 'caller',
+      agentOptions: { provider: 'retained', model: 'retained-model' },
+    })
+    await waitNoActivation(ctx, old.childId)
+    await queuePrompt(ctx, old.childId, message('again'))
+    await waitNoActivation(ctx, old.childId)
+    expect(retained.requests.map(request => ({
+      provider: request.provider, model: request.model, sessionId: request.sessionId,
+    }))).toEqual([
+      { provider: 'retained', model: 'retained-model', sessionId: old.childId },
+      { provider: 'retained', model: 'retained-model', sessionId: old.childId },
+    ])
+
+    const fresh = await ctx.subagents.startActivation({ ...startSpec(parent), delivery: 'caller' })
+    await waitNoActivation(ctx, fresh.childId)
+    expect(current.requests.map(request => ({
+      provider: request.provider, model: request.model, sessionId: request.sessionId,
+    }))).toEqual([
+      { provider: 'current', model: 'current-model', sessionId: parent.id },
+      { provider: 'current', model: 'current-model', sessionId: fresh.childId },
+    ])
+  })
+
+  it('names the recorded route when a resumed child can no longer call its provider', async () => {
+    const retained = new MockAdapter([textResponse('old child')])
+    const current = new MockAdapter([
+      textResponse('parent switched'),
+      textResponse('ack success'),
+      textResponse('ack failure'),
+      textResponse('fresh child'),
+    ])
+    const { ctx, parent } = await setupWith(new MockAdapter([]))
+    const retainedRegistration = ctx.llm.registerAdapter(['retained'], retained)
+    ctx.llm.registerAdapter(['current'], current)
+    parent.model.select({ provider: 'current', model: 'current-model' })
+    parent.followup(createUserMessage({ content: message('switch'), source: { kind: 'user' } }))
+    await parent.whenIdle()
+
+    const old = await ctx.subagents.startActivation({
+      ...startSpec(parent),
+      delivery: 'parent',
+      agentOptions: { provider: 'retained', model: 'retained-model' },
+    })
+    await waitNoActivation(ctx, old.childId)
+    await parent.whenIdle()
+    retainedRegistration.replace([])
+    await queuePrompt(ctx, old.childId, message('again'))
+    await waitNoActivation(ctx, old.childId)
+    await parent.whenIdle()
+
+    const failure = settlementNotices(parent).find(notice => notice.stopReason === 'error')
+    expect(failure?.text).toContain(
+      'Child route retained/retained-model failed (NO_ADAPTER): no adapter registered for provider "retained"',
+    )
+    const fresh = await ctx.subagents.startActivation({ ...startSpec(parent), delivery: 'caller' })
+    await waitNoActivation(ctx, fresh.childId)
+    expect(current.requests.some(request =>
+      request.sessionId === fresh.childId && request.provider === 'current' && request.model === 'current-model',
+    )).toBe(true)
+  })
+
+  it('reports the child route and redacts credential-like failure text', async () => {
+    const { ctx, parent } = await setup([[
+      {
+        type: 'finish',
+        reason: {
+          kind: 'error',
+          failure: {
+            message: 'provider rejected the key Bearer secret-token sk-testsecretvalue api_key=supersecret access_token: tok secret=hideme but not a secret word',
+            code: 'AUTH',
+            requestId: ProviderRequestId('req-should-not-leak'),
+          },
+        },
+      },
+    ]])
+    const started = await ctx.subagents.startActivation({ ...startSpec(parent), delivery: 'parent' })
+    await waitNoActivation(ctx, started.childId)
+    await vi.waitFor(() => { expect(settlementNotices(parent)).toHaveLength(1) })
+    const text = settlementNotices(parent)[0]!.text
+    expect(text).toContain(
+      'Child route mock/mock failed (AUTH): provider rejected the key [redacted] [redacted] [redacted] [redacted] [redacted] but not a secret word',
+    )
+    expect(text).not.toContain('secret-token')
+    expect(text).not.toContain('sk-testsecretvalue')
+    expect(text).not.toContain('supersecret')
+    expect(text).not.toContain('req-should-not-leak')
+    expect(text).toContain('It left no closing message.')
+  })
+
+  it('names a turn failure without a route when the child has no model', async () => {
+    const { ctx } = await setup([])
+    const routeless = await ctx.agentLoop.create(SessionId('routeless-error'), {})
+    const started = await ctx.subagents.startActivation({ ...startSpec(routeless), delivery: 'caller' })
+    const settled = await started.result
+    expect(settled.stopReason).toBe('error')
+    expect(settled.diagnostic).toMatch(/^Child turn failed \(UNKNOWN\): /)
+    expect(settled.diagnostic).not.toContain('Child route ')
+  })
+
+  it.each([
+    ['a HarnessError', (): unknown => new LlmError('adapter missing', 'NO_ADAPTER'), 'Child route mock/mock failed (NO_ADAPTER): adapter missing'],
+    ['a non-Error', (): unknown => 'plain failure', 'Child route mock/mock failed (UNKNOWN): unknown failure'],
+  ])('reports %s when turn startup fails before the ending is committed', async (_label, thrown, diagnostic) => {
+    const { ctx, parent } = await setup([textResponse('unused')])
+    ctx.on('subagent/start', ({ id }) => {
+      const child = ctx.agents.get(id)!
+      const append = child.session.append.bind(child.session)
+      const spy = vi.spyOn(child.session, 'append')
+      spy.mockImplementation(((type: string, ...rest: never[]) => {
+        if (type === 'turn/start') {
+          spy.mockRestore()
+          throw thrown()
+        }
+        return (append as (...args: never[]) => unknown)(type as never, ...rest)
+      }) as never)
+    })
+    const started = await ctx.subagents.startActivation({ ...startSpec(parent), delivery: 'caller' })
+    try {
+      await expect(started.result).resolves.toMatchObject({ stopReason: 'error', diagnostic })
+    } finally {
+      await started.dispose()
+      await ctx.fiber.dispose()
+    }
   })
 
   it('unloading the manager drains its live activations', async () => {

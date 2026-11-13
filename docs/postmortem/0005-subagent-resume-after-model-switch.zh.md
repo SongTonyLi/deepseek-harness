@@ -2,7 +2,7 @@
 
 [English](0005-subagent-resume-after-model-switch.md) | 中文
 
-Status: operational workaround applied; individual child failures not fully diagnosed
+Status: resolved. 冷恢复仍保留记录的路由。本地错误通知现在写明该路由和脱敏后的原因。
 
 ## 执行摘要
 
@@ -28,7 +28,7 @@ Status: operational workaround applied; individual child failures not fully diag
 
 [模型发现](../../packages/subagent/tool-subagent/src/list-models.ts)按照 Session 获授权的路由筛选提供方。没有记录模型选择策略时，它将发现范围限制在父智能体的当前路由。[显式子模型选择](../../packages/subagent/tool-subagent/src/model-selection.ts)另行执行授权检查。因此，父智能体切换模型，并不意味着所有旧子路由仍可选择，也不意味着已有子智能体已切换模型。
 
-反复发送消息本身不会替换记录的路由。但是，单凭发现结果中的拒绝，不能证明已有子智能体唤醒时到底是哪项检查或提供方请求失败。本次事故缺少失败轮次的结构化错误、嵌套原因，以及运行时路由解析跟踪。它不能证明凭据撤销、令牌耗尽、推理强度不兼容，也不能证明每次模型切换都会失败。本文不声称存在自动回退行为，也不声称已修复运行时。
+反复发送消息本身不会替换记录的路由。但是，单凭发现结果中的拒绝，不能证明已有子智能体唤醒时到底是哪项检查或提供方请求失败。本次事故缺少失败轮次的结构化错误、嵌套原因，以及运行时路由解析跟踪。它不能证明凭据撤销、令牌耗尽、推理强度不兼容，也不能证明每次模型切换都会失败。冷恢复仍保留记录的路由，不会自动改用父智能体后来的路由。本地结果以错误结束时，父级通知现在包含该路由和脱敏后的原因。
 
 ## 为什么调查重复了工作
 
@@ -42,8 +42,11 @@ Status: operational workaround applied; individual child failures not fully diag
 4. 负责人变化时，显式重新分配共享任务。任务就绪不会启动空闲智能体；应向新负责人发送任务说明。
 5. 如需保留原子智能体的身份和历史，先保留它们，并获取错误及路由可用性的证据，再选择运行时修复方案。新建替代者不等于迁移旧子智能体。
 
-这些是从本次会话总结的操作建议，不是新实现的运行时保证。
+路由检查和替换步骤仍是操作建议。父级通知中的路由和原因现在属于本地结算结果。
 
-## 尚需完成的诊断
+## 防护
 
-完整的运行时诊断需要受控的切换与恢复复现，记录子智能体切换前后的路由、当前授权策略、实际提供方解析结果，以及结构化轮次错误。应在相同策略下比较旧子智能体与新建子智能体。还应测试旧路由仍获授权时的切换，以区分模型切换本身与路由访问权限丢失。向父智能体的通知应显示失败路由与可操作原因，同时不暴露凭据；这属于待议工作，而不是本次同步的一部分。
+- 本地结果以 `error` 结束时，activation 结果和父级通知包含 `Child route <provider>/<model> failed (<code>): <message>`。没有路由时，句子是 `Child turn failed (<code>): <message>`。
+- `<message>` 是已提交轮次失败的自身文本；若 `turn/end` 未能提交，则是实时错误的自身消息。Bearer 令牌、`sk-` 密钥，以及 `api_key`、`access_token` 或 `secret` 赋值会变成 `[redacted]`。请求 id 和 cause 链不进入通知。文本限制为 4096 个 UTF-8 字节。
+- 冷恢复仍使用子智能体记录的路由。一项测试让父智能体在新路由上完成一轮，同时旧提供方继续服务旧子智能体，新建子智能体则使用父级路由。同一切换在该提供方注销后，通知写明 `NO_ADAPTER` 和记录的路由。
+- 这些用例在 [`continuation.spec.ts`](../../packages/subagent/subagent/tests/continuation.spec.ts)。脱敏和字节限制在 [`local-failure.spec.ts`](../../packages/subagent/subagent/tests/local-failure.spec.ts)。一条本地失败的父级记录在 [`subagent-local-failure-notice`](../../snapshots/session/subagent-local-failure-notice/snapshot.yml)。

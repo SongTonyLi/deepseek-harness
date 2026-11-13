@@ -52,10 +52,20 @@ it.each([false, true])('settles an activation after factory unload with queue-cl
     expect(ctx.agents.get(started.childId)).toBeUndefined()
     release.resolve(undefined)
     const stopReason = rejectQueueClear ? 'error' : 'completed'
-    expect(await started.result).toMatchObject({
+    const settled = await started.result
+    expect(settled).toMatchObject({
       output: [{ type: 'text', text: 'answer' }],
       stopReason,
     })
+    if (rejectQueueClear) {
+      expect(settled.diagnostic).toContain(
+        'failed (ACTIVATION_TEARDOWN_FAILED): subagent "',
+      )
+      expect(settled.diagnostic).toContain('activation handle disposal failed: queue clear rejected')
+      expect(settled.diagnostic?.startsWith('Child route mock/mock failed (ACTIVATION_TEARDOWN_FAILED): ')).toBe(true)
+    } else {
+      expect(settled.diagnostic).toBeUndefined()
+    }
     expect(state.resident.has(started.childId)).toBe(false)
     expect(released).toHaveBeenCalledTimes(1)
     expect(ended).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ stopReason }))
