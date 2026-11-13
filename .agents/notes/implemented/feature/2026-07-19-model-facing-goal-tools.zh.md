@@ -16,9 +16,9 @@ Status: implemented
 
 ### 工具与模型约定
 
-`get_goal()` 返回当前目标或 `null`。非空结果包含用于比较并交换的 id 与修订号、目标描述、持久阶段、已接纳和最大 Goal Round 数、可能存在的阻塞原因，以及进程本地激活态观察。`create_goal(objective, max_goal_rounds?)` 创建一个长时间运行的同会话目标。`update_goal(goal_id, revision, action, objective?, max_goal_rounds?, blocked_reason?)` 支持 `edit`、`pause`、`resume`、`complete` 和 `blocked`；替换字段仅在 `edit` 时使用，非空的 `blocked_reason` 仅在 `blocked` 时必填，并以稳定代码 `model-reported` 持久化。持久 paused goal 会以 `GOAL_TOOL_RESUME_PAUSED` 拒绝 `resume`；面向用户的命令或 Web 控件拥有该转换。对于 `edit`，值恰好为空字符串的目标描述和值为 0 的 `max_goal_rounds` 视为省略，且至少需要一个有实际意义的替换字段。每个 action 都忽略它不使用的已知可选字段（[理由](../bug-fix/2026-09-20-unambiguous-tool-arguments.zh.md)）。
+`get_goal()` 返回当前目标或 `null`。非空结果包含用于比较并交换的 id 与修订号、目标描述、持久阶段、已接纳和最大 Goal Round 数、可能存在的阻塞原因，以及进程本地激活态观察。`create_goal(objective, max_goal_rounds?)` 创建一个长时间运行的同会话目标。`update_goal(goal_id, revision, action, objective?, max_goal_rounds?, blocked_reason?)` 支持 `edit`、`pause`、`resume`、`complete` 和 `blocked`；替换字段仅在 `edit` 时使用，非空的 `blocked_reason` 仅在 `blocked` 时必填，并以稳定代码 `model-reported` 持久化。人类直接轮次可以对 active-but-disarmed、paused 或 blocked 的 goal 执行 `resume`。[暂停 goal 的 resume 决策](../bug-fix/2026-11-12-agent-resume-paused-goal.zh.md)拥有这条规则；Web 与 `/goal resume` 仍然可用。对于 `edit`，值恰好为空字符串的目标描述和值为 0 的 `max_goal_rounds` 视为省略，且至少需要一个有实际意义的替换字段。每个 action 都忽略它不使用的已知可选字段（[理由](../bug-fix/2026-09-20-unambiguous-tool-arguments.zh.md)）。
 
-提示词告诉模型：它可以从任何措辞或语言的直接人类请求中推断目标意图，但不应把常规单轮工作转换为目标。更新前必须读取当前目标，并复制准确的 id 和修订号。对于恢复或 fork 后处于活跃但未激活状态的目标，人类在语义上要求继续即可成为执行 `resume` 的依据。提示词不会静态声明持久 paused 的边界；执行时以 `GOAL_TOOL_RESUME_PAUSED` 拒绝该尝试，面向用户的恢复路径拥有该转换。只有目标已经实现时才能标记完成，困难或不确定性本身不构成阻塞；阻塞报告必须说明具体条件。
+提示词告诉模型：它可以从任何措辞或语言的直接人类请求中推断目标意图，但不应把常规单轮工作转换为目标。更新前必须读取当前目标，并复制准确的 id 和修订号。对于恢复或 fork 后处于活跃但未激活状态的目标，人类在语义上要求继续即可成为执行 `resume` 的依据。提示词没有点名 paused goal。人类直接轮次仍然可以 resume 它，如[暂停 goal 的 resume 决策](../bug-fix/2026-11-12-agent-resume-paused-goal.zh.md)所记录。只有目标已经实现时才能标记完成，困难或不确定性本身不构成阻塞；阻塞报告必须说明具体条件。
 
 三个工具都采用独占执行，使模型排序的批次可以观察此前变更及其新修订号。结果为紧凑 JSON。UI 展示是参数的纯函数，使用通用读取或变更卡片；变更卡片选择输入时，先取有实际意义的操作值，再取目标 id，因此允许的占位值不会使卡片输入留空。激活态仅作为实时观察返回，绝不会写入回放状态。
 
@@ -38,7 +38,7 @@ Status: implemented
 
 ## 测试
 
-单元测试固定注册与 dispose（资源释放）、独占调度、生成的提示词策略、可安全处理占位值的通用展示、非英语轮次中的直接人类创建、精确/陈旧/非运行中智能体与驱动检查、实时子智能体拒绝、恢复后 fork 根的权限、steering、发起者不匹配、读取/创建/部分字段编辑/暂停行为（包括严格 schema 占位值）、持久 paused 的 resume 拒绝、条件式阻塞说明、会话启动边沿后的重新激活、权限检查先于条件参数检查的失败行为、准确 Goal Round 的完成、仅自主 Round 触发终止、已配置的阻塞阈值，以及人类立即阻塞。无密钥回放快照把目标领域和工具挂载到真实的 headless 单次运行应用中，通过随附循环与持久化栈驱动一次携带严格 schema 占位值的 `update_goal` 探测，以及对 `create_goal` 和 `get_goal` 的调用，固定 stream-json transcript（文本记录），并检查外部持久化的目标变更。这里有意不把 echo-agent fixture（测试前置数据）当作应用 UX 的替代品。
+单元测试固定注册与 dispose（资源释放）、独占调度、生成的提示词策略、可安全处理占位值的通用展示、非英语轮次中的直接人类创建、精确/陈旧/非运行中智能体与驱动检查、实时子智能体拒绝、恢复后 fork 根的权限、steering、发起者不匹配、读取/创建/部分字段编辑/暂停行为（包括严格 schema 占位值）、人类直接轮次中对持久 paused goal 的 resume，以及 Goal Round 中对该 resume 的拒绝、条件式阻塞说明、会话启动边沿后的重新激活、权限检查先于条件参数检查的失败行为、准确 Goal Round 的完成、仅自主 Round 触发终止、已配置的阻塞阈值，以及人类立即阻塞。无密钥回放快照把目标领域和工具挂载到真实的 headless 单次运行应用中，通过随附循环与持久化栈驱动一次携带严格 schema 占位值的 `update_goal` 探测，以及对 `create_goal` 和 `get_goal` 的调用，固定 stream-json transcript（文本记录），并检查外部持久化的目标变更。这里有意不把 echo-agent fixture（测试前置数据）当作应用 UX 的替代品。
 
 ## 考虑过的替代方案
 
@@ -54,7 +54,7 @@ Status: implemented
 
 - 模型获得稳定而紧凑的生命周期 API，无需直接访问目标服务。
 - 改变状态的调用要求实时运行时根 agent、当前轮次中人类直接发送的消息，以及持久比较并交换引用。
-- 人类可以通过普通自然语言请求创建目标，并重新激活已恢复或 blocked 的目标；持久 paused goal 需要面向用户的恢复路径。
+- 人类可以通过普通自然语言请求创建目标，并恢复会话恢复后的、paused 的或 blocked 的目标。Web 与 `/goal resume` 也可以恢复相同的目标。
 - Goal Round 可以完成或报告重复阻塞，但不能自行扩大任务权限。
 - 部署策略选择阻塞下限；同一个解析后的值同时控制执行与提示词指导。
 - 系统可兼容采用严格 schema 的提供方所填入的占位值，同时不会放行有实际意义的跨操作更新。
@@ -62,7 +62,7 @@ Status: implemented
 ## 已知限制与暂缓事项
 
 - 是否属于重大目标、是否要求继续、目标是否完成以及阻塞条件是否相同，仍由模型进行语义分类。独立评估器或完成证书予以延期。
-- 模型不能恢复持久 paused goal；该用户独占路径由独立的[用户独占 goal 暂停参考](../../../../packages/goal/tool-goal/README.zh.md)强制执行。
+- Goal Round 不能 resume 一个 paused goal；这仍然需要人类直接轮次，如[暂停 goal 的 resume 决策](../bug-fix/2026-11-12-agent-resume-paused-goal.zh.md)所记录。
 - 这些工具会改变目标状态，但不调度 Goal Round、不分类异常驱动停止，也不取消活跃轮次；这些行为由同会话驱动器负责。
 - 除非另行挂载的继续执行驱动器接纳了目标来源的用户轮次，否则 Goal Round 权限路径处于休眠状态；本工具包本身不会制造这种权限。
 - 面向人类的斜杠命令发现与渲染由独立的 [`dsh-command-goal`](../../../../packages/goal/command-goal/README.zh.md) 插件负责。

@@ -54,7 +54,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 
 ### resume、fork 或卸载之后
 
-把驱动器挂载到现有 agent 上绝不会启用任何 goal 的续行；会话 resume 或 fork 后，active 的 goal 会保持停用续行，直到用户明确授权 resume。驱动器不会在插件挂载或会话 resume 时自行重新启用续行。直接的人类 continue-intent——整段文本或首行恰好是 `continue`、`keep going`、`resume`、`go on`、`continue the work` 或 `continue with the work`（可带一个尾随句号）的用户消息——会为仍有 Round 额度的 active-disarmed goal 重新启用续行，并追加一条通知，说明 goal 已 resume、本已 armed，或因 paused、blocked、complete 而未 resume，以及上一已关闭轮次是否改动了工作区。持久 paused 的 goal 保持暂停；由 `/goal resume` 负责恢复。卸载插件会取消进行中的 Round，并确保不再启动后续 Round。
+把驱动器挂载到现有 agent 上绝不会启用任何 goal 的续行；会话 resume 或 fork 后，active 的 goal 会保持停用续行，直到用户明确授权 resume。驱动器不会在插件挂载或会话 resume 时自行重新启用续行。直接的人类 continue-intent——整段文本或首行恰好是 `continue`、`keep going`、`resume`、`go on`、`continue the work` 或 `continue with the work`（可带一个尾随句号）的用户消息——会为仍有 Round 额度的 active-disarmed 或 paused goal 执行 resume，并追加一条通知，说明 goal 已 resume、本已 armed，或因 blocked、complete 而未 resume，以及上一已关闭轮次是否改动了工作区。没有剩余 Round 额度的 paused 或 active-disarmed goal 保持原状，且不会收到已 resume 的通知。卸载插件会取消进行中的 Round，并确保不再启动后续 Round。
 
 -----
 
@@ -78,7 +78,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：驱动器状态机、竞态防护、teardown |
-| [`src/continue.ts`](src/continue.ts) | 人类 continue-intent 检测、重新启用续行与通知 |
+| [`src/continue.ts`](src/continue.ts) | 人类 continue-intent 检测、resume 与通知 |
 | [`src/prompt.ts`](src/prompt.ts) | 保留的 `<goal_round>` 续行提示词 |
 
 ### Round 提示词
@@ -96,6 +96,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 
 - [goal 服务](../goal/README.zh.md)——本驱动器继续推进的 goal 状态与生命周期。
 - [goal 工具](../tool-goal/README.zh.md)——面向模型的工具及其执行时权限检查。
+- [暂停 goal 的 resume](../../../.agents/notes/implemented/bug-fix/2026-11-12-agent-resume-paused-goal.zh.md)——人类直接轮次与 continue-intent 对 paused goal 的 resume。
 
 -----
 
@@ -120,7 +121,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 
 #### 模型看到的内容
 
-当已领取的人类消息是 continue-intent 且当前存在 goal 时，驱动器会追加一条插件通知。通知会说明 goal 已 resume、本已 armed，或因 paused、blocked、complete 而未 resume。它还会恰好包含以下子句之一：`the previous turn made no file changes; do not repeat its plan` 或 `the previous turn changed the workspace; continue from the current files`。
+当已领取的人类消息是 continue-intent 且当前存在 goal 时，驱动器会追加一条插件通知。通知会说明 goal 已 resume、本已 armed，或因 blocked、complete 而未 resume。它还会恰好包含以下子句之一：`the previous turn made no file changes; do not repeat its plan` 或 `the previous turn changed the workspace; continue from the current files`。
 
 #### Token 影响
 

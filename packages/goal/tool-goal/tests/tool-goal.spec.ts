@@ -430,17 +430,14 @@ describe('goal tool state transitions', () => {
       goal_id: goal['id'], revision: goal['revision'], action: 'pause',
     }, root.agent))
     expect(goal).toMatchObject({ phase: 'paused', revision: 3 })
-    const rejected = await execute(ctx, 'update_goal', {
+    const resumed = await execute(ctx, 'update_goal', {
       goal_id: goal['id'], revision: goal['revision'], action: 'resume',
     }, root.agent)
-    expect(rejected.error?.info?.code).toBe('GOAL_TOOL_RESUME_PAUSED')
-    const resumed = ctx.goals.resume(root.agent, {
-      id: GoalId(goal['id'] as string), revision: goal['revision'] as number,
-    })
-    expect(resumed).toMatchObject({ phase: 'active', revision: 4 })
+    expect(resultGoal(resumed)).toMatchObject({ phase: 'active', revision: 4 })
+    expect(resultJson(resumed)['activation']).toBe('armed')
   })
 
-  it('rejects update_goal resume of a durable paused goal in a later human turn', async () => {
+  it('resumes a durable paused goal in a later human turn', async () => {
     const { ctx, root } = await harness()
     const firstTurn = openTurn(root, { kind: 'user' })
     let goal = resultGoal(await execute(ctx, 'create_goal', { objective: 'pause me' }, root.agent))
@@ -450,10 +447,27 @@ describe('goal tool state transitions', () => {
     closeTurn(root, firstTurn)
 
     openTurn(root, { kind: 'user' }, 'later unrelated request')
-    const rejected = await execute(ctx, 'update_goal', {
+    const resumed = await execute(ctx, 'update_goal', {
       goal_id: goal['id'], revision: goal['revision'], action: 'resume',
     }, root.agent)
-    expect(rejected.error?.info?.code).toBe('GOAL_TOOL_RESUME_PAUSED')
+    expect(resultGoal(resumed)).toMatchObject({ phase: 'active', revision: goal['revision'] as number + 1 })
+    expect(resultJson(resumed)['activation']).toBe('armed')
+    expect(ctx.goals.get(root.agent)).toMatchObject({ phase: 'active', activation: 'armed' })
+  })
+
+  it('rejects update_goal resume of a paused goal in a goal round without human input', async () => {
+    const { ctx, root } = await harness()
+    const humanTurn = openTurn(root, { kind: 'user' })
+    const created = ctx.goals.create(root.agent, { objective: 'paused then round' })
+    closeTurn(root, humanTurn)
+    openTurn(root, {
+      kind: 'goal', goalId: created.id, revision: created.revision, round: 1,
+    })
+    const paused = ctx.goals.pause(root.agent, created)
+    const result = await execute(ctx, 'update_goal', {
+      goal_id: paused.id, revision: paused.revision, action: 'resume',
+    }, root.agent)
+    expect(result.error?.info?.code).toBe('GOAL_TOOL_AUTHORITY_REQUIRED')
     expect(ctx.goals.get(root.agent)).toMatchObject({ phase: 'paused', activation: 'disarmed' })
   })
 

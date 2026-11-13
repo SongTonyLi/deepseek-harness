@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-12-agent-resume-paused-goal.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-11-12-agent-resume-paused-goal.md
+/agent-note-agent-resume-of-a-paused-goal:
+  en: 2b9f5c6cab3a9970
+  zh: d02ae73ddeeaa39a
+/agent-note-agent-resume-of-a-paused-goal/problem:
+  en: c3742a112bc996f0
+  zh: e77d763bbe23bdd9
+/agent-note-agent-resume-of-a-paused-goal/decision:
+  en: a68f4033e321f2e7
+  zh: 54dbbe808c1a9688
+/agent-note-agent-resume-of-a-paused-goal/alternatives-considered:
+  en: 9a7b71a140bd048a
+  zh: 32958618ff48d126
+/agent-note-agent-resume-of-a-paused-goal/testing:
+  en: baa15bfdc32c68ee
+  zh: 9b7180a30ed0e150
+/agent-note-agent-resume-of-a-paused-goal/consequences:
+  en: ececbd6b0b8c52f7
+  zh: fb7aaea87fdb2a55
