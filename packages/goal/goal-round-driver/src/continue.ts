@@ -30,7 +30,7 @@ const MUTATING_TOOLS = new Set(['edit', 'write', 'bash'])
 const NO_MUTATION_CLAUSE = 'the previous turn made no file changes; do not repeat its plan'
 const MUTATION_CLAUSE = 'the previous turn changed the workspace; continue from the current files'
 
-type ContinueStatus = 'resumed' | 'armed' | 'paused' | 'blocked' | 'complete'
+type ContinueStatus = 'resumed' | 'armed' | 'blocked' | 'complete'
 
 /** Human-readable unexpected values for logs. */
 function renderThrown(value: unknown): string {
@@ -77,7 +77,6 @@ function lastClosedTurn(events: readonly SessionEvent[]): readonly SessionEvent[
 
 /** Whether that closed turn recorded a successful edit, write, or bash result. */
 function lastClosedTurnMutatedWorkspace(session: Session): boolean {
-  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
   const window = lastClosedTurn(session.snapshotEvents())
   const names = new Map<string, string>()
   for (const event of window) {
@@ -99,8 +98,6 @@ function continueStatusLine(goal: GoalView, status: ContinueStatus): string {
       return 'The active goal was resumed'
     case 'armed':
       return 'The active goal is already armed'
-    case 'paused':
-      return 'The goal was not resumed because it is paused'
     case 'blocked':
       return `The goal was not resumed because it is blocked: ${goal.blockedReason?.message ?? 'blocked'}`
     case 'complete':
@@ -125,8 +122,12 @@ function renderContinueNotice(
   })
 }
 
-/** Human-authorized rearm of an active-disarmed goal that still has capacity. */
-function resumeActiveDisarmed(ctx: Context, agent: Agent, goal: GoalView): ContinueStatus | undefined {
+/**
+ * Resume an active-disarmed or paused goal that still has round capacity.
+ * An exhausted goal stays unchanged and produces no notice.
+ */
+function resumeWithCapacity(ctx: Context, agent: Agent, goal: GoalView): ContinueStatus | undefined {
+  if (goal.roundsStarted >= goal.maxGoalRounds) return undefined
   try {
     ctx.goals.resume(agent, { id: goal.id, revision: goal.revision })
     return 'resumed'
@@ -136,15 +137,14 @@ function resumeActiveDisarmed(ctx: Context, agent: Agent, goal: GoalView): Conti
   }
 }
 
-/** Decide whether continue-intent may rearm, and what the notice should claim. */
+/** Decide whether a continue-intent resumes the goal, and what the notice should claim. */
 function authorizeContinue(ctx: Context, agent: Agent, goal: GoalView): ContinueStatus | undefined {
   switch (goal.phase) {
     case 'active':
       if (goal.activation === 'armed') return 'armed'
-      if (goal.roundsStarted >= goal.maxGoalRounds) return undefined
-      return resumeActiveDisarmed(ctx, agent, goal)
+      return resumeWithCapacity(ctx, agent, goal)
     case 'paused':
-      return 'paused'
+      return resumeWithCapacity(ctx, agent, goal)
     case 'blocked':
       return 'blocked'
     case 'complete':
@@ -153,7 +153,7 @@ function authorizeContinue(ctx: Context, agent: Agent, goal: GoalView): Continue
 }
 
 /**
- * Rearm an active-disarmed goal from a human continue-intent and build the notice.
+ * Resume an active-disarmed or paused goal from a human continue-intent and build the notice.
  * @param ctx - host context with the goal service.
  * @param agent - live agent whose claimed batch is entering a step.
  * @param messages - claimed pre-step batch.

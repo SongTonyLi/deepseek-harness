@@ -54,7 +54,7 @@ A round starts only at whole-agent idle and, when the subagent service is loaded
 
 ### After resume, fork, or unload
 
-Mounting the driver over an existing agent never arms a goal, and after session resume or fork an active goal stays disarmed until an explicit human-authorized resume. The driver does not rearm on plugin mount or session resume by itself. A direct human continue-intent — a user message whose whole text or first line is exactly `continue`, `keep going`, `resume`, `go on`, `continue the work`, or `continue with the work`, optionally with a trailing period — rearms an active-disarmed goal that still has round capacity and appends a notice stating whether the goal was resumed, already armed, or not resumed because it is paused, blocked, or complete, plus whether the last closed turn mutated the workspace. Durable paused goals stay paused; `/goal resume` owns those. Unloading the plugin cancels any in-flight round and ensures no later round starts.
+Mounting the driver over an existing agent never arms a goal, and after session resume or fork an active goal stays disarmed until an explicit human-authorized resume. The driver does not rearm on plugin mount or session resume by itself. A direct human continue-intent — a user message whose whole text or first line is exactly `continue`, `keep going`, `resume`, `go on`, `continue the work`, or `continue with the work`, optionally with a trailing period — resumes an active-disarmed or paused goal that still has round capacity and appends a notice stating whether the goal was resumed, already armed, or not resumed because it is blocked or complete, plus whether the last closed turn mutated the workspace. A paused or active-disarmed goal with no remaining rounds stays unchanged and gets no resumed notice. Unloading the plugin cancels any in-flight round and ensures no later round starts.
 
 -----
 
@@ -78,7 +78,7 @@ This section explains how the driver schedules rounds without races; the observa
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: driver state machine, race fences, teardown |
-| [`src/continue.ts`](src/continue.ts) | Human continue-intent detection, rearm, and notice |
+| [`src/continue.ts`](src/continue.ts) | Human continue-intent detection, resume, and notice |
 | [`src/prompt.ts`](src/prompt.ts) | The retained `<goal_round>` continuation prompt |
 
 ### The round prompt
@@ -96,6 +96,7 @@ The driver consumes the goal state and defers policy to the goal tools; read the
 
 - [Goal service](../goal/README.md) — the goal state and lifecycle this driver continues.
 - [Goal tools](../tool-goal/README.md) — the model-facing tools and their execution-time authority checks.
+- [Paused-goal resume](../../../.agents/notes/implemented/bug-fix/2026-11-12-agent-resume-paused-goal.md) — direct-human and continue-intent resume of a paused goal.
 
 -----
 
@@ -120,7 +121,7 @@ Append-only within an epoch: each admitted round extends the existing conversati
 
 #### What the model sees
 
-When a claimed human message is a continue-intent and a current goal exists, the driver appends one plugin notice. The notice states that the goal was resumed, is already armed, or was not resumed because it is paused, blocked, or complete. It also includes exactly one of these clauses: `the previous turn made no file changes; do not repeat its plan` or `the previous turn changed the workspace; continue from the current files`.
+When a claimed human message is a continue-intent and a current goal exists, the driver appends one plugin notice. The notice states that the goal was resumed, is already armed, or was not resumed because it is blocked or complete. It also includes exactly one of these clauses: `the previous turn made no file changes; do not repeat its plan` or `the previous turn changed the workspace; continue from the current files`.
 
 #### Token effect
 

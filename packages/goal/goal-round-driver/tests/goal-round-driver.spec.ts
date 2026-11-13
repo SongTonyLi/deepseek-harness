@@ -1478,25 +1478,21 @@ describe('continue-intent rearm', () => {
     expect(requestText(test.adapter.requests[1]!)).toContain('<goal_round>')
   })
 
-  it('does not resume a durable paused goal', async () => {
-    const test = await harness([textResponse('acknowledged pause')])
-    const created = test.ctx.goals.create(test.agent, { objective: 'stay paused' })
+  it('resumes a durable paused goal when the user says continue', async () => {
+    const test = await harness([textResponse('after continue'), textResponse('goal round')])
+    const created = test.ctx.goals.create(test.agent, { objective: 'resume after pause', maxGoalRounds: 1 })
     const paused = test.ctx.goals.pause(test.agent, created)
 
     followUser(test, 'continue')
-    await test.agent.whenIdle()
+    const goal = await waitForGoal(test.ctx, test.agent, current => current?.phase === 'blocked')
 
-    expect(test.ctx.goals.get(test.agent)).toMatchObject({
-      id: paused.id,
-      revision: paused.revision,
-      phase: 'paused',
-      activation: 'disarmed',
-    })
-    expect(test.adapter.requests).toHaveLength(1)
-    expect(requestNoticeTexts(test.adapter.requests[0]!)).toEqual([
-      'The goal was not resumed because it is paused; the previous turn made no file changes; do not repeat its plan.',
-    ])
-    expect(requestText(test.adapter.requests[0]!)).not.toContain('<goal_round>')
+    expect(goal).toMatchObject({ id: paused.id, phase: 'blocked', roundsStarted: 1 })
+    expect(test.adapter.requests).toHaveLength(2)
+    const notices = requestNoticeTexts(test.adapter.requests[0]!)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain('The active goal was resumed')
+    expect(notices[0]).toContain('the previous turn made no file changes; do not repeat its plan')
+    expect(requestText(test.adapter.requests[1]!)).toContain('<goal_round>')
   })
 
   it('injects the no-progress clause when the last turn used only todo or skill tools', async () => {
