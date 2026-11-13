@@ -4120,9 +4120,9 @@ describe('continuable errors', () => {
   })
 
   it.each([
-    ['a HarnessError', () => new LlmError('adapter missing', 'NO_ADAPTER'), 'Child route mock/mock failed (NO_ADAPTER): adapter missing'],
-    ['a non-Error', () => 'plain failure', 'Child route mock/mock failed (UNKNOWN): unknown failure'],
-  ] as const)('reports %s when turn startup fails before the ending is committed', async (_label, thrown, diagnostic) => {
+    ['a HarnessError', (): unknown => new LlmError('adapter missing', 'NO_ADAPTER'), 'Child route mock/mock failed (NO_ADAPTER): adapter missing'],
+    ['a non-Error', (): unknown => 'plain failure', 'Child route mock/mock failed (UNKNOWN): unknown failure'],
+  ])('reports %s when turn startup fails before the ending is committed', async (_label, thrown, diagnostic) => {
     const { ctx, parent } = await setup([textResponse('unused')])
     ctx.on('subagent/start', ({ id }) => {
       const child = ctx.agents.get(id)!
