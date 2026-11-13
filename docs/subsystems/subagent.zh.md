@@ -254,7 +254,7 @@ type SubagentInterruptAuthority =
 
 ## 结果与后端句柄
 
-SubagentResult 供程序消费方读取。activation 注册表保留外部后端句柄，直到释放完成。清理失败不会覆盖已捕获的执行结果：activation 结果与父级通知保留该结果，dispose 拒绝，而在线 subagent/end 事件报告 error。后端提供的诊断必须满足下述安全信息要求。
+SubagentResult 供程序消费方读取。activation 注册表保留外部后端句柄，直到释放完成。清理失败不会覆盖已捕获的执行结果：activation 结果与父级通知保留该结果，dispose 拒绝，而在线 subagent/end 事件报告 error。后端提供的诊断必须满足下述安全信息要求。以 error 结束的本地结果在 `diagnostic` 中提供路由、代码和已脱敏的消息。
 
 ```ts type-equiv
 /**
@@ -278,10 +278,15 @@ interface SubagentResult {
    */
   readonly structured?: unknown
   /**
-   * Provider-authored, non-assistant failure detail for a non-`completed`
-   * result. Providers keep this text free of tool inputs, file contents,
-   * environment values, credentials, and raw protocol payloads, and limit it
-   * to 4096 UTF-8 bytes. Consumers present it separately from {@link output}.
+   * Non-assistant failure detail for a non-`completed` result. Providers keep
+   * this text free of tool inputs, file contents, environment values,
+   * credentials, and raw protocol payloads. A local epoch that ends as
+   * `error` supplies `Child route <provider>/<model> failed (<code>): <message>`,
+   * or `Child turn failed (<code>): <message>` when the child has no route.
+   * Bearer tokens, `sk-` keys, and `api_key`, `access_token`, or `secret`
+   * assignments inside `<message>` are replaced with `[redacted]`. Request ids
+   * and cause chains are omitted. The text is limited to 4096 UTF-8 bytes.
+   * Consumers present it separately from {@link output}.
    */
   readonly diagnostic?: string
   /** Why the run ended. A non-`completed` reason means `output` may be partial. */

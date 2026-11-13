@@ -46,6 +46,7 @@ import { attachStructuredRuntime } from './structured.ts'
 import type { StructuredAttachment } from './structured.ts'
 import type { SubagentDelivery } from './control-types.ts'
 import { ActivationPool, ChildLock, activationAgent, captureLocalResult, observeLocalFailure, requireLocalActivation } from './activation.ts'
+import { childFailureDiagnostic } from './local-failure.ts'
 import type { Activation, ActivationResource, LocalActivation } from './activation.ts'
 
 /** Inputs shared by model steering and human prompt delivery. */
@@ -877,6 +878,7 @@ export class SubagentManager {
         outputStart: handle.agent.session.seq,
         structured,
         failureAt: undefined,
+        failure: undefined,
         poke: Promise.withResolvers<void>(),
         omitClosingText: false,
       }
@@ -1104,7 +1106,11 @@ export class SubagentManager {
     }
     if (failure !== undefined && result.stopReason === 'completed' && child !== undefined
       && (child.inbox.nextStep.length > 0 || child.inbox.nextTurn.length > 0)) {
-      result = { ...result, stopReason: 'error' }
+      result = {
+        ...result,
+        stopReason: 'error',
+        diagnostic: childFailureDiagnostic(child.model.current(), failure.code, failure.message),
+      }
     }
     this.resident.delete(childId)
     activation.releaseSlot()

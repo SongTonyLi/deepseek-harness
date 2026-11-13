@@ -1,0 +1,47 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call_failing_child",
+        "name": "subagent",
+        "argumentsDelta": "{\"description\":\"Fail the child turn\",\"prompt\":\"Answer the delegated task.\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call_failing_child",
+          "name": "subagent",
+          "arguments": "{\"description\":\"Fail the child turn\",\"prompt\":\"Answer the delegated task.\"}"
+        }
+      },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "PARENT_AFTER_TOOL" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "PARENT_AFTER_TOOL" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 2 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "PARENT_SAW_FAILURE" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "PARENT_SAW_FAILURE" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 3 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

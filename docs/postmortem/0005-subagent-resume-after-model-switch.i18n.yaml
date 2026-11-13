@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/postmortem/0005-subagent-resume-after-model-switch.md
 /post-mortem-0005-resuming-old-subagents-after-a-parent-model-switch:
-  en: 5f98d3df7a4eee95
-  zh: f2e4e2cc33cf482d
+  en: 3bf52c53cc0dbc75
+  zh: 138422f8bd0c387c
 /post-mortem-0005-resuming-old-subagents-after-a-parent-model-switch/executive-summary:
   en: c8ec06c52c9828dc
   zh: 6c9c3591f8b880e6
@@ -12,14 +12,14 @@
   en: 270b934c9666a0fa
   zh: 324da631581b2595
 /post-mortem-0005-resuming-old-subagents-after-a-parent-model-switch/mechanism-and-evidence-limits:
-  en: ca80fa8c2e6caffc
-  zh: c0209d9a0be57732
+  en: 0b47c659f432d00f
+  zh: 78ab80bc303cbb64
 /post-mortem-0005-resuming-old-subagents-after-a-parent-model-switch/why-the-investigation-repeated-work:
   en: 60467b23337cd99d
   zh: 61014e5fe582dc1a
 /post-mortem-0005-resuming-old-subagents-after-a-parent-model-switch/operational-mitigation:
-  en: 5ab179fde4280317
-  zh: 682c9ec4ad70b37c
-/post-mortem-0005-resuming-old-subagents-after-a-parent-model-switch/remaining-diagnostic-work:
-  en: 085c0a91b744a5ff
-  zh: 1005397247802fb9
+  en: ed1cb2c8a18870ae
+  zh: e4e927c0e3b0f258
+/post-mortem-0005-resuming-old-subagents-after-a-parent-model-switch/guardrails:
+  en: b8985e77bc0aace0
+  zh: ccca441044521ee0
