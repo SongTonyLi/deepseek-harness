@@ -12,11 +12,11 @@
  */
 
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
-import type { SubagentChoice } from './catalog.ts'
 import { fitLegend } from './frame.ts'
 import { paintKeys } from './key-chips.ts'
+import { PAGE_CLOSE_HINT, type ScreenPage, type ScreenPageAction } from './screen-page.ts'
 import type { Palette } from './style.ts'
-import { memberRoleText, teamBrowseRows, type TeamBrowseRow } from './team.ts'
+import { memberRoleText, teamBrowseRows } from './team.ts'
 import type { TeamMemberRow, TeamTaskRow } from './team-panel.ts'
 
 /**
@@ -28,7 +28,7 @@ export const TEAM_PLAY_HINTS: readonly [string, ...string[]] = [
   '↑↓ member · Enter opens · f filters · PgUp PgDn scroll · Esc closes',
   '↑↓ member · Enter opens · f filters · Esc closes',
   '↑↓ · Enter · f · Esc closes',
-  'Esc q closes',
+  PAGE_CLOSE_HINT,
 ]
 
 /** Drawn under the lead while the team has no teammate. */
@@ -185,13 +185,6 @@ export interface TeamRoomFrame {
   animated: boolean
 }
 
-/** What a key asks the application to do. */
-export type TeamRoomAction =
-  /** Leave the page and give the conversation its screen back. */
-  | { readonly kind: 'close' }
-  /** Leave the page and open this teammate's session, as `/team` does. */
-  | { readonly kind: 'open'; readonly entry: TeamBrowseRow; readonly choice: SubagentChoice }
-
 /**
  * Exchanges recorded in one session log.
  *
@@ -329,7 +322,7 @@ export function teamRoomFrame(draw: TeamRoomDraw): TeamRoomFrame {
 /**
  * The page that shows the team on the alternate screen.
  */
-export class TeamPlay {
+export class TeamPlay implements ScreenPage {
   private selected: string | undefined
   private filtered = false
   private back = 0
@@ -359,7 +352,7 @@ export class TeamPlay {
    * @param data - the raw key bytes.
    * @returns what the application should do, or undefined when the page handled the key itself.
    */
-  handleInput(data: string): TeamRoomAction | undefined {
+  handleInput(data: string): ScreenPageAction | undefined {
     this.notice = undefined
     if (matchesKey(data, 'escape') || data === 'q') return { kind: 'close' }
     if (data === 'f') {
@@ -421,7 +414,7 @@ export class TeamPlay {
    * Open the selected member as `/team` does, or say why nothing opens.
    * @returns the open action for a running or inactive teammate, otherwise undefined with the notice raised.
    */
-  private open(): TeamRoomAction | undefined {
+  private open(): ScreenPageAction | undefined {
     const members = this.options.source().members
     const member = members.find(candidate => candidate.id === this.selected) ?? members[0]
     if (member === undefined) return undefined
@@ -433,11 +426,11 @@ export class TeamPlay {
 }
 
 /**
- * Why `Enter` opens no session for a member.
+ * Why `Enter` opens no session for a member. The todos page says the same.
  * @param member - the lead, a provisioning member, or a failed member.
  * @returns the one-line notice.
  */
-function unopenable(member: TeamMemberRow): string {
+export function unopenable(member: TeamMemberRow): string {
   if (member.role === 'lead') return 'the lead has no teammate session to open'
   return member.status === 'provisioning'
     ? `${member.name} is still being created`
@@ -978,11 +971,12 @@ function text(value: unknown): string | undefined {
 }
 
 /**
- * The own fields of a plain object.
+ * The own fields of a plain object, for reading session-log data whose type
+ * is unknown. The work tree reads `team/task` records through it too.
  * @param value - the candidate.
  * @returns those fields, or undefined for anything that is not a plain object.
  */
-function fields(value: unknown): Record<string, unknown> | undefined {
+export function fields(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const out: Record<string, unknown> = {}
   for (const [key, field] of Object.entries(value)) out[key] = field

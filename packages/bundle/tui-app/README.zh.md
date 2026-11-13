@@ -86,7 +86,7 @@ dsh tui --no-open                         # print sign-in URLs without opening a
 | `Shift+Down` | 在子 agent 面板已绘制时放到其第一行，再否则放到状态栏 |
 | `Ctrl+G` | 整屏读出对话记录，停在其最新小节 |
 | `Ctrl+O` | 展开或折叠所有工具卡片与上下文行 |
-| `Ctrl+T` | 浏览 agent 的 todo 列表，与 `/todos` 打开的是同一个列表 |
+| `Ctrl+T` | 打开 todos 页面，与 `/todos` 打开的是同一个页面；在该页面上按下则关闭它 |
 | `Ctrl+B` | 轮次运行期间，把它正在运行的工具调用移为后台作业，让 agent 继续工作；轮次之外由编辑器把光标左移 |
 | `Ctrl+P` | 从子 agent 视图返回进入它之前的会话，或结束 `/btw` 旁路 agent，与 `/parent` 相同 |
 | `Ctrl+L` | 从头重绘整个屏幕 |
@@ -171,7 +171,7 @@ follow-ups 面板持有键盘时：
 
 到达阅读器的其他每个按键都被消费，而关闭它同样打开那 750 ms 的交接窗口，因此连按多少次 `Esc` 都到不了编辑器的停止。
 
-每个聚焦的分段都在第二行展开其最重要的事实。除 `todo` 之外，`Enter` 把这些事实打印到对话记录，并指出改变它们的方式：模型分段指出 `/model`，推理强度分段指出 `Shift+Tab` 与 `/effort` 共用的选择器，权限分段指出其预设以及 `/permission` 选择器；`turn` 分段——绘制在权限与用量分段之间、形如 `turn <elapsed>`，且只在轮次进行时出现——给出轮次编号、其开始时间、已用时间与排队消息数量；用量、上下文、目标与计划分段打印 `/status` 报告中对应的小节，workspace 分段显示完整路径，附件分段列出待发送的附件。`todo` 分段展开按状态统计的计数以及正在进行的条目（若无正在进行的条目则为下一条待办），`Enter` 打开 agent 的 todo 列表，与 `/todos` 打开的是同一个列表。
+每个聚焦的分段都在第二行展开其最重要的事实。除 `todo` 之外，`Enter` 把这些事实打印到对话记录，并指出改变它们的方式：模型分段指出 `/model`，推理强度分段指出 `Shift+Tab` 与 `/effort` 共用的选择器，权限分段指出其预设以及 `/permission` 选择器；`turn` 分段——绘制在权限与用量分段之间、形如 `turn <elapsed>`，且只在轮次进行时出现——给出轮次编号、其开始时间、已用时间与排队消息数量；用量、上下文、目标与计划分段打印 `/status` 报告中对应的小节，workspace 分段显示完整路径，附件分段列出待发送的附件。`todo` 分段展开按状态统计的计数以及正在进行的条目（若无正在进行的条目则为下一条待办），`Enter` 打开 todos 页面，与 `/todos` 打开的是同一个页面。
 
 在编辑器开头输入 `/` 会补全终端自身的命令与共享注册表的命令；任意位置的 `@` 补全引用。非空的 `!command` 或 `!!command` 行经 `ctx.shell` 在会话 cwd 以 `danger-full-access` 运行；草稿与对话记录中的 `$ command` 行使用语法高亮，暗色输出或 JSON 树画在该行之下。`!` 会注入一条插件通知供下一步领取；`!!` 不会。单独的 `!` 仍是普通提示。草稿以 `!` 开头时，编辑器边框改为警告色。
 
@@ -198,7 +198,7 @@ follow-ups 面板持有键盘时：
 | `/export [dir]` | 把本会话的日志 ZIP（含子会话与附件）写入 `dir`，默认 workspace |
 | `/status` | 上下文窗口用量与构成、含缓存命中的 token 总计、会话统计、todo、目标、计划模式与权限 |
 | `/context` | 上下文窗口此刻的用法：200 个单元格的网格，旁边是模型、占用，以及系统提示词、工具定义、指令文件、技能、其他注入上下文与消息的估算 token，最后是剩余空间。每个类别以自己的色相绘制单元格——系统提示词蓝色、工具青色、指令橙色、技能黄色、其他上下文绿色、消息品红色。保存最新一轮新增 token 的单元格是热区，以粗体绘制，并在 `▲ hot` 行计数。终端运行动效时，网格在打开时逐格填充，一道亮带扫过热区；轮次进行期间，报告每四分之一秒重新读取用量、标记为 `live`，并让第一个空闲单元格闪烁。当没有轮次进行且打开动画结束、另一个 `/context` 打开、会话切换，或它离开重绘窗口时，报告定格。减弱动效时只绘制定格后的报告 |
-| `/todos` | 浏览 agent 的 todo 列表；已完成行会被划掉；`Enter` 完整打开其中一条，含其状态、位置与轮次 |
+| `/todos` | 在独立屏幕上打开 todos 页面：共享任务及其负责人与子任务，以及本 agent 的 todo 列表，每项标为 delivered、in progress、stuck、deferred 或 pending；`Enter` 打开任务负责人的会话，`Esc` 关闭 |
 | `/outline` | 本会话各轮次及其提示与回复预览 |
 | `/deliverables` | agent 交付的文件，按轮次分组 |
 | `/changes [turn]` | 浏览最近一轮（或第 `turn` 轮）改动的文件及其行数；`Enter` 打开某个文件从轮次开始到结束的对比 |
@@ -223,11 +223,13 @@ TUI 在 `subagent` 与 `subagent_fork` 上均公开可选的 `provider`、`model
 
 `/team-play` 在备用屏幕上打开团队室。第一行是 `team play · <n> teammates · <n> working · tasks <done>/<total> done`，第二行是按键图例，或 `Enter` 没有打开任何会话的原因。Members 区先列 lead，再列每名 teammate，每行有状态字形、名称、角色和此刻在做的事。running 的成员除非开启减弱动效，否则随旋转指示 tick 转动，inactive 成员画 `○`。角色对 lead 是 `orchestrator`，对可继续后代是 `teammate`。当前工作是该成员负责的进行中任务的主题，否则是它最近叙述的最后一句，再否则是它的状态。Tasks 区把每条未删除的任务列为 `#<id> <glyph> <subject>`、负责人或 `unowned`，仍有阻塞项时再加 `blocked by #<id>`。Messages 区把绑定会话记录的往来列为 `<from> → <to>  <kind>: <text>`，旧的在前，最新的在底部：每次创建只列一次并附带其分派内容，每次任务状态或负责人变化，本会话发出或收到的每条消息，以及记录过团队邮件的旧团队日志中的每条消息，发送方和接收方都通过 subagent 目录解析。成员与任务超过八行时折叠为 `+<n> more`，成员列表让所选成员保持在视野内，消息占用剩余的行。没有 teammate 的团队显示 lead 和 `No teammates yet — ask for work that splits into independent parts and the lead will delegate it.`。`team/` 事件、子 agent 事件或叙述到来时团队室重绘，只有成员在运行时才推进旋转指示。`/subagents` 仍然打开一份对话记录。
 
+`/todos` 在备用屏幕上打开 todos 页面，它是团队室在分工维度上的对应页面。第一行是 `todos · <delivered>/<total> delivered`，后接非零的 in progress、stuck 与 deferred 计数；第二行是按键图例，或 `Enter` 没有打开任何会话的原因。左栏是一棵树：每条未删除的共享任务列为 `#<id> <subject>`，随后是本 agent 自己的 todo 列表，作为一个分支，以它在名册中的名称为标题（没有团队时为 `agent`）。进行中的任务在其负责人的 Agent 于本进程中存活时，把负责人当前的 todo 列表列为子任务；同时负责多条进行中任务的负责人，只把列表放在它最后认领的那条任务下。每行以状态开头：`✓` delivered（已完成的任务或 todo）、`◐` in progress（由轮次正在运行的负责人推进）、`⊘` stuck（有未完成阻塞项的待办任务，或负责人启动失败或没有运行中轮次的进行中任务）、`◌` deferred（被负责人交还或被重新打开的任务，或在能推进它的轮次结束后仍未完成的条目）以及 `○` pending。计数覆盖共享任务与本 agent 自己的 todo。右栏详述所选行：标题、`owner  <name> · <role> · <status>` 或 `unowned`、状态及其原因、子任务、它等待和阻塞的任务、写入范围、负责人最近的叙述、任务描述；对于本 agent 自己的 todo，还给出它首次写入的轮次与状态最后改变的轮次。窄于 72 列时两栏上下堆叠，树在分隔线之上。`↑` `↓`（或 `k` `j`）移动，`→` 展开分支或进入分支，`←` 折叠或退出分支，`g` 与 `G` 跳到第一行和最后一行，`PgUp` `PgDn` 滚动详情，`Enter` 像 `/team` 一样打开任务负责人的会话，或说明为何无法打开，`Esc`、`q`、`Ctrl+C` 或 `Ctrl+T` 关闭页面。进行中与 stuck 的任务以及 agent 自己的分支初始为展开状态。动效开启时，页面打开时各行自上而下出现，展开的分支逐一显示其子任务，状态改变的行会提亮几步，进行中的行会转动；减弱动效、禁用调色板、`NO_COLOR` 与 `TERM=dumb` 直接画出静止的页面。页面在 todo 写入、`team/` 事件或子 agent 事件到来时重绘；没有任何 todo 和共享任务时，`/todos` 打印 `no todos yet` 而不打开页面。
+
 其他每条 `/name` 行都交给共享命令注册表，因此 `/compact`、`/goal` 与插件命令的行为和浏览器中一致。`/compact` 在轮次之间运行：有轮次正在进行时，它打印 `/compact runs between turns: let this turn finish, or stop it (Esc twice)`。运行期间，工作旋转指示显示 `compacting context · Esc cancels`，`Esc` 会取消它并给出通知 `/compact cancelled`，其间提交的提示在 follow-ups 列表中等待并提示 `queued: the prompt starts once compaction finishes`，切换会话也会等它结束；它落地的压缩块就是其结果，因此不再打印它自己的成功文本。运行中的轮次里发生的自动压缩，会把该轮次的旋转指示标为 `compacting`，直到下一次模型调用开始。
 
-终端打开的每个选择器——`/model` 的模型列表与推理强度列表、空参数 `/effort` 与编辑器 `Shift+Tab` 共用的当前模型推理强度列表、空参数 `/permission` 打开的权限预设列表、`/resume` 与 `/sessions` 共用的持久化会话列表、`/subagents` 与 `/todos` 的列表，以及 `/signin` 与 `/login` 引出的各行——都随输入过滤其行：查询同时匹配每行的标签与描述，其以空白与斜杠分隔的各段必须全部匹配，各行按最佳匹配在前排序，因此 `dsk chat` 与 `deepseek/chat` 都能找到 `deepseek/deepseek-chat`，`gpt5` 能找到 `gpt-5`。`Backspace` 删除最后一个字符，`Ctrl+U` 清空查询，`Esc` 在查询非空时清空查询、在查询为空时取消选择器，`Up` / `Down` 在匹配行之间移动，`Enter` 选中高亮行。行上方的暗色行在查询为空时显示 `type to filter · Enter selects · Esc cancels`，此后显示 `filter: <query> · <kept>/<total>`；无任何行匹配的查询会以 `no row matches "<query>"` 取代这些行，而生效行上的 `✓`——也就是选择器打开时定位的那一行——只在查询为空时显示。
+终端打开的每个选择器——`/model` 的模型列表与推理强度列表、空参数 `/effort` 与编辑器 `Shift+Tab` 共用的当前模型推理强度列表、空参数 `/permission` 打开的权限预设列表、`/resume` 与 `/sessions` 共用的持久化会话列表、`/subagents` 的列表，以及 `/signin` 与 `/login` 引出的各行——都随输入过滤其行：查询同时匹配每行的标签与描述，其以空白与斜杠分隔的各段必须全部匹配，各行按最佳匹配在前排序，因此 `dsk chat` 与 `deepseek/chat` 都能找到 `deepseek/deepseek-chat`，`gpt5` 能找到 `gpt-5`。`Backspace` 删除最后一个字符，`Ctrl+U` 清空查询，`Esc` 在查询非空时清空查询、在查询为空时取消选择器，`Up` / `Down` 在匹配行之间移动，`Enter` 选中高亮行。行上方的暗色行在查询为空时显示 `type to filter · Enter selects · Esc cancels`，此后显示 `filter: <query> · <kept>/<total>`；无任何行匹配的查询会以 `no row matches "<query>"` 取代这些行，而生效行上的 `✓`——也就是选择器打开时定位的那一行——只在查询为空时显示。
 
-`/todos`、状态栏的 `todo` 分段与 `/subagents` 中外部或无法读取的行共用同一套先列表、后详情的交互：选择器列出各条目，`Enter` 把高亮条目作为只读页面打开，`Up` / `Down` 与 `PageUp` / `PageDown` 滚动该页面，`Enter`、`Esc` 或 `Left` 返回列表并停在刚读过的条目上，因此连续查看多个条目无需重新输入命令；在列表上按 `Esc` 返回编辑器。详情无法读取的条目会在其页面上说明原因，而不会关闭列表。
+`/subagents` 中外部或无法读取的行使用先列表、后详情的交互：选择器列出各条目，`Enter` 把高亮条目作为只读页面打开，`Up` / `Down` 与 `PageUp` / `PageDown` 滚动该页面，`Enter`、`Esc` 或 `Left` 返回列表并停在刚读过的条目上，因此连续查看多个条目无需重新输入命令；在列表上按 `Esc` 返回编辑器。详情无法读取的条目会在其页面上说明原因，而不会关闭列表。
 
 ### 后台工具调用
 
@@ -302,7 +304,7 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 
 ### 渲染模型
 
-持久事实来自会话日志：`system/message`（非空提示词完整画出；空的绘制则省略）、`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——以暗色 `⬡` 行完整画出，快照按具名贡献各成一部分；压缩检查点以及工具或模型来源则省略）、`compaction/start`、`compaction/summary`、检查点替换与 `compaction/end`（依据每个事件的 `surfaceOp` 维护的 surface 镜像写明被替换与仍保留的节点，结束标记绘出压缩块或失败的 `/compact` 通知；归属于轮次的 `compaction/start` 会改写运行中的旋转指示标签）、`assistant/attempt`（由嵌入流确定的诊断文本与推理）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`workspace/changes`（在 Host 仍保存摘要时，以一行通知给出该轮的文件数与行数）、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（某条 todo 的详情页所报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目；同一次写入还从 `todos` 投影刷新 activity board）。后代会话的 `turn/start`、`assistant/message` 或 `turn/end`，以及绑定父会话的 `subagent/start` / `subagent/end`，会更新该子会话在板上自己的那一行——消息文本块的最后一句话，从不使用推理、工具调用或工具结果，轮次结束后则是停止用语；尚未说过话的子会话只画出标签；绑定会话的 `turn/end` 与 bind 会清空该板。实时增量来自 `agent/assistant-stream` 的文本、推理、工具调用与用量增量：模型一报出工具名就挂上卡片，工作时的旋转指示跟随该流以及持久的 `tool/call` / `tool/result`，从而标出 `thinking`、`writing` 或 `calling <tool>`，并带着该次调用的实时 `↑` 发送与 `↓` 接收。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器身份、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供选择器标题使用的实时或缓存 `title` 投影、供页脚、`/status`、`/context`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `/context` 使用的 `tokenMeter`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
+持久事实来自会话日志：`system/message`（非空提示词完整画出；空的绘制则省略）、`user/message`（自己提交的消息只绘制一次，其回显按消息 id 跳过；注入的上下文——instructions、catalogs、snapshots、notices、relays、recalls 以及未声明的形式——以暗色 `⬡` 行完整画出，快照按具名贡献各成一部分；压缩检查点以及工具或模型来源则省略）、`compaction/start`、`compaction/summary`、检查点替换与 `compaction/end`（依据每个事件的 `surfaceOp` 维护的 surface 镜像写明被替换与仍保留的节点，结束标记绘出压缩块或失败的 `/compact` 通知；归属于轮次的 `compaction/start` 会改写运行中的旋转指示标签）、`assistant/attempt`（由嵌入流确定的诊断文本与推理）、`assistant/message`（用已提交文本替换流式块，并把用量折入页脚）、`tool/call` 与 `tool/result`（工具声明 `presentCall` 与 `presentResult` 视图时据此绘制，否则回退到原始参数与原始结果）、`turn/end` 通知、`workspace/changes`（在 Host 仍保存摘要时，以一行通知给出该轮的文件数与行数）、`session/title`（页眉）、`permission/preset`（页脚），以及所属 `turn/start` 之下的 `todo/write`（todos 页面为本 agent 的某条 todo 报告的轮次；该列表不带逐条标识，因此改写措辞的条目算作新条目；同一次写入还从 `todos` 投影刷新 activity board）。后代会话的 `turn/start`、`assistant/message` 或 `turn/end`，以及绑定父会话的 `subagent/start` / `subagent/end`，会更新该子会话在板上自己的那一行——消息文本块的最后一句话，从不使用推理、工具调用或工具结果，轮次结束后则是停止用语；尚未说过话的子会话只画出标签；绑定会话的 `turn/end` 与 bind 会清空该板。实时增量来自 `agent/assistant-stream` 的文本、推理、工具调用与用量增量：模型一报出工具名就挂上卡片，工作时的旋转指示跟随该流以及持久的 `tool/call` / `tool/result`，从而标出 `thinking`、`writing` 或 `calling <tool>`，并带着该次调用的实时 `↑` 发送与 `↓` 接收。日志之外的会话事实来自浏览器读取的同一批服务：`sessionTitle`、`permissionPresets`、供选择器身份、`/deliverables` 与子 agent 详情使用的 `sessionQuery`、供选择器标题使用的实时或缓存 `title` 投影、供页脚、`/status`、`/context`、`/todos` 与 `/outline` 使用的 `sessionProjections`、供 `/context` 使用的 `tokenMeter`、供 `@` 补全使用的 `fileReferences` 与 `sessionReferenceResolver`、`attachments`、`skills`、`authorization`、`settings`、`subagents`，以及供 `/plugins` 使用的 Loader 条目。模态提示是进程本地的呈现，从不写入日志。
 
 ### 基于 base 的 patch 面
 
@@ -363,7 +365,10 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`src/activity-board.ts`](src/activity-board.ts) | activity board：todo 状态符号、已完成内容划掉、行数上限、子 agent 行所示的自述，以及每个子 agent 一行的绘制 |
 | [`src/catalog.ts`](src/catalog.ts) | `/settings`、`/plugins`、`/subagents`、`/deliverables`、`/changes` 与 `/outline` 的行，以及 `/plugins` 的管理动作 |
 | [`src/view-banner.ts`](src/view-banner.ts) | 输入框上方标明已打开的子 agent 视图或 `/btw` 旁路 agent 及返回按键的一行 |
-| [`src/todos.ts`](src/todos.ts) | todo 列表：状态符号、已完成内容划掉的选择器行与单个条目的详情行 |
+| [`src/todos.ts`](src/todos.ts) | todo 状态符号、已完成内容所用的划线样式，以及按条目保存的轮次事实 |
+| [`src/screen-page.ts`](src/screen-page.ts) | 全屏页面为同时显示团队室与 todos 页面的唯一宿主所实现的接口，以及每个页面图例都以之结尾的关闭步骤 |
+| [`src/work-tree.ts`](src/work-tree.ts) | 以树表示的分工：共享任务及其负责人与负责人的 todo、本 agent 自己的分支、五种状态及其原因，以及从日志读取的任务修订 |
+| [`src/todos-page.ts`](src/todos-page.ts) | todos 页面：树栏与详情栏、它们的堆叠布局、按键，以及出现、展开与状态变化的动效 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端 patch |
 | — | 不发布运行时不变量伴随模块；应用只在一个 Agent 上注册监听器，不持有其他观察者可能与之矛盾的可变关系。 |
 | [`tests/app.spec.ts`](tests/app.spec.ts) | 基于伪终端的渲染、按键、命令、停止与退出的装填、编辑器上方的 follow-ups 行、activity board 与两个接缝 |
@@ -391,7 +396,10 @@ runner 等待完整应用就绪（`ctx.get('loader')?.await()`），并在核心
 | [`tests/shell.spec.ts`](tests/shell.spec.ts) | 提交时解析的 `!` / `!!` 分发、实时草稿解析、下一步 inject、Esc 取消，以及缺少 shell 时的通知 |
 | [`tests/effort.spec.ts`](tests/effort.spec.ts) | 共用的推理强度名称、选择器行、当前强度提示与输入参数匹配 |
 | [`tests/permission.spec.ts`](tests/permission.spec.ts) | 共用的权限名称、选择器行、当前预设提示与输入参数匹配 |
-| [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、可导航的子 agent 与 todo 列表、目录命令、命令提示与审批详情 |
+| [`tests/panels.spec.ts`](tests/panels.spec.ts) | 状态页脚与报告、可导航的子 agent 列表、从 `/todos`、`Ctrl+T` 与状态栏打开的 todos 页面、目录命令、命令提示与审批详情 |
+| [`tests/work-tree.spec.ts`](tests/work-tree.spec.ts) | 工作树的状态、原因、子任务的放置位置与任务修订 |
+| [`tests/todos-page.spec.ts`](tests/todos-page.spec.ts) | 以文本检验 todos 页面：各种尺寸下的两种布局、详情块、按键与每种动效 |
+| [`tests/todos-page-app.spec.ts`](tests/todos-page-app.spec.ts) | 通过应用检验 todos 页面：团队的分工、未运行的 teammate、实时重绘、离开页面的按键、尺寸变化与退出 |
 | [`tests/transcript-focus.spec.ts`](tests/transcript-focus.spec.ts) | 走遍对话记录、区域序列、检视面板、实时会话上的阅读器连同它接管与交还的终端，以及重绘窗口内的原地标记条 |
 | [`tests/context.spec.ts`](tests/context.spec.ts) | 把系统提示词与注入上下文投影为对话记录小节 |
 | [`tests/context-usage.spec.ts`](tests/context-usage.spec.ts) | `/context` 的归类、单元格网格、图例与块动画 |
@@ -503,6 +511,7 @@ The user moved this call to the background. It keeps running as job <id>. You ar
 
 - **同一时间一个会话**——`/resume`、`/sessions`、`/new`、`/clear` 与 `/fork` 在会话间移动终端，但只有绑定的 Agent 流式显示，子 agent 视图也是用一个子会话替换它所来自的会话来绘制；浏览器可并排展示多个会话。
 - **团队室只显示绑定会话自己的消息**——两个 teammate 之间的消息只记录在它们自己的会话中，所以 lead 的 `/team-play` 列出 lead↔teammate 的消息，不列 teammate↔teammate 的消息；从团队室打开某个 teammate 可以看到它那一方。
+- **todos 页面只读取存活的 teammate**——teammate 的 todo 列表从其存活的 Agent 读取，因此 `/resume` 之后，负责人未在运行的进行中任务显示为 stuck 且没有子任务，直到继续该 teammate；已交付的任务不保留子任务，因为没有任何记录按任务保存负责人的列表；被交还或重新打开的任务只在 lead 的视图中显示为 deferred，因为只有它的日志保存任务修订。
 - **审批为一次性**——提示只提供允许一次或拒绝，与审批接缝的词汇一致；没有记忆的授权。
 - **仅浏览器的页面留在浏览器**——workspace 与目录选择器、在应用中打开的链接、轨迹账本与逐条消息的点赞/点踩没有终端对应物；`/settings`、`/plugins`、`/subagents`、`/outline` 与共享的 `/feedback` 以文本覆盖其事实，子 agent 的对话记录在子 agent 视图中阅读。
 - **交付物只列名、不打开**——`/deliverables` 列出交付路径，`/changes` 显示逐行对比；浏览器会预览这些文件。

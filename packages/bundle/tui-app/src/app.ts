@@ -38,7 +38,6 @@ import {
   visibleWidth,
   type OverlayHandle,
   type RgbColor,
-  type SelectListLayoutOptions,
   type Terminal,
 } from '@earendil-works/pi-tui'
 import type { Context } from '@deepseek-ai/cordis'
@@ -88,8 +87,11 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import { AlternateScreen } from './alt-screen.ts'
+import type { ScreenPage, ScreenPageAction } from './screen-page.ts'
 import { TeamIntro } from './team-intro.ts'
 import { TeamPlay, beatsFromEvents, type TeamRoomSource } from './team-play.ts'
+import { TodosPage, type TodosPageSource } from './todos-page.ts'
+import { taskRevisions, workTree, type WorkTree } from './work-tree.ts'
 import {
   TEAM_ABSENT_NOTICE,
   TEAM_EMPTY_NOTICE,
@@ -253,7 +255,7 @@ import {
   type SubagentPanelRow,
   type SubagentPanelView,
 } from './subagent-panel.ts'
-import { listTodoChoices, todoDetail, type TodoTransition } from './todos.ts'
+import type { TodoTransition } from './todos.ts'
 import type { QuitCause, QuitRequest, QuitWork } from './quit.ts'
 import {
   NOTHING_TO_READ_TOAST,
@@ -358,16 +360,6 @@ const READER_GONE = 'the transcript changed · reader closed'
 
 /** What the transcript is told when a fold key named a block the renderer can no longer rewrite. */
 const ABOVE_WINDOW_NOTICE = 'above the repaint window · opened in the reader'
-
-/**
- * Row layout of the todo picker: the label column grows with the widest todo
- * line instead of stopping at the list's 32-column default, which would cut a
- * todo well inside the width its rows are built for. 68 columns hold the
- * status glyph, the row's own content cap, and the gap before the status
- * column. A presentation choice of this terminal surface, not a deployment
- * setting.
- */
-const TODO_ROW_LAYOUT: SelectListLayoutOptions = { minPrimaryColumnWidth: 1, maxPrimaryColumnWidth: 68 }
 
 /** The panel draw of a session with no subagent rows. */
 const EMPTY_PANEL_VIEW: SubagentPanelView = { rows: [], hidden: 0, ticking: false }
@@ -727,7 +719,7 @@ const LOCAL_COMMANDS: readonly CompletableCommand[] = [
   { name: 'export', description: 'Write this session log as a ZIP archive (/export [directory])' },
   { name: 'status', description: 'Show context usage, token totals, session stats, todos, goal, plan, and permission' },
   { name: 'context', description: 'Show how the context window is used right now, by category, with the newest turn\'s tokens highlighted' },
-  { name: 'todos', description: 'Browse the agent\'s todo list (Enter shows one item in full)' },
+  { name: 'todos', description: 'Open the work page: shared tasks with their owners and subtasks, and this agent\'s todo list, each delivered, in progress, stuck, deferred, or pending (Enter opens an owner, Esc closes)' },
   { name: 'outline', description: 'List the turns of this session with their prompts and replies' },
   { name: 'deliverables', description: 'List the files the agent presented in this session' },
   { name: 'changes', description: 'Browse the files the last turn changed (/changes <turn> for an earlier one; Enter shows a file\'s diff)' },
@@ -1055,8 +1047,8 @@ export class TuiApp {
   private reader: { pane: ReaderPane } | undefined
   /** The empty-session card shown while Agent Teams is mounted. */
   private teamIntro: TeamIntro | undefined
-  /** The team room on the alternate screen, while one is open. */
-  private teamPlay: TeamPlay | undefined
+  /** The full-screen page on the alternate screen, while one is open. */
+  private screenPage: ScreenPage | undefined
   /**
    * Team-relevant events of the bound session: the history at bind, then
    * events that arrive after it. `/team-play` lists the exchanges in this log.
@@ -1446,7 +1438,7 @@ export class TuiApp {
     for (const dispose of this.disposers.splice(0)) dispose()
     this.modals.withdrawActive()
     this.writeOnQuit(gone, () => {
-      this.dropTeamPlay()
+      this.dropScreenPage()
       this.dropReader()
     })
     this.hideToast()
@@ -1508,7 +1500,7 @@ export class TuiApp {
     // reader off a conversation it was never opened on, and it would keep the
     // key stream. The new transcript says so once it is drawn.
     const reading = this.dropReader()
-    this.dropTeamPlay()
+    this.dropScreenPage()
     this.teamIntro = undefined
     this.teamLog = [...next.history]
     this.focusEditor()
@@ -1911,6 +1903,51 @@ export class TuiApp {
   }
 
   /**
+   * The division of work right now: the shared tasks with their owners and
+   * the owners' todo lists, and the bound session's own todo list. A session
+   * without a team, or whose roster the service cannot read, yields its own
+   * list alone. A member's todo list is read only while this process holds
+   * its live Agent.
+   * @param snapshot - the bound session's Team rows, or why there are none.
+   * @returns the tree.
+   */
+  private workTree(snapshot: TeamSnapshot): WorkTree {
+    const projections = this.deps.ctx.get('sessionProjections')
+    const agents = this.deps.ctx.get('agents')
+    return workTree({
+      members: snapshot.kind === 'team' ? snapshot.members : [],
+      tasks: snapshot.kind === 'team' ? snapshot.tasks : [],
+      boundId: this.agent.session.id,
+      boundName: 'agent',
+      ownTodos: this.statusFacts().todos?.items ?? [],
+      ownTurnOpen: this.agent.status === 'running',
+      memberTodos: (id) => {
+        const child = agents?.get(SessionId(id))
+        if (child === undefined || projections === undefined) return undefined
+        return projections.snapshot(child.session, ['todos']).values.todos ?? []
+      },
+      revisions: taskRevisions(this.teamLog.map(event => ({ type: event.type, data: event.data }))),
+      note: id => this.activitySubagents.get(SessionId(id))?.note,
+      turns: content => this.todoTurns.get(content),
+    })
+  }
+
+  /**
+   * What the todos page draws right now.
+   * @returns the tree, the spinner frames, and the roster rows for one key or frame.
+   */
+  private todosPageSource(): TodosPageSource {
+    const snapshot = readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries)
+    const members = snapshot.kind === 'team' ? snapshot.members : []
+    return {
+      tree: this.workTree(snapshot),
+      member: id => members.find(row => row.id === id),
+      // The page asks only while it moves, which reduced motion already rules out.
+      spinner: slot => spinnerFrame(TOOL_SPINNERS.todo, this.deps.now(), this.deps.spinnerMs, slot % SPINNER_CYCLE),
+    }
+  }
+
+  /**
    * Draw the start card on an empty root session while Agent Teams is mounted.
    * A session that already has a user message, and a subagent view, draw none.
    * The card plays its entrance on the fade tick from this instant; a
@@ -1935,63 +1972,71 @@ export class TuiApp {
     this.tui.requestRender()
   }
 
-  /** Open the team room on the alternate screen. */
-  private openTeamPlay(): void {
-    if (this.loadedTeam() === undefined) return
-    this.dropReader()
-    /* v8 ignore next -- the open room consumes every key, so no second /team-play reaches here */
-    if (this.teamPlay !== undefined) return
-    this.teamPlay = new TeamPlay({
-      palette: this.deps.palette,
-      source: () => this.teamRoomSource(),
-    })
-    this.tui.renderNow()
-    this.tui.suspend(() => { this.paintTeamPlay() })
-    this.readerScreen.enter()
-    this.paintTeamPlay()
-    this.updateSpinTicker()
-  }
-
-  /** Draw the open team room. */
-  private paintTeamPlay(): void {
-    const play = this.teamPlay
-    if (play === undefined || !this.readerScreen.active) return
-    const rows = Math.max(1, this.deps.terminal.rows)
-    this.readerScreen.paint(play.render(this.deps.terminal.columns, rows))
-  }
-
   /**
-   * Draw the open team room after the team changed, and keep the spinner tick
-   * running exactly while a member works. A room that is not open is left alone.
+   * Show a full-screen page on the alternate screen. An open reader comes
+   * down first; the page then takes every key until it closes.
+   * @param page - the page to show.
    */
-  private repaintTeamPlay(): void {
-    if (this.teamPlay === undefined) return
-    this.paintTeamPlay()
+  private openScreenPage(page: ScreenPage): void {
+    this.dropReader()
+    /* v8 ignore next -- an open page consumes every key, so no second page command reaches here */
+    if (this.screenPage !== undefined) return
+    this.screenPage = page
+    this.tui.renderNow()
+    this.tui.suspend(() => { this.paintScreenPage() })
+    this.readerScreen.enter()
+    this.paintScreenPage()
+    this.updateSpinTicker()
+  }
+
+  /** Draw the open full-screen page. */
+  private paintScreenPage(): void {
+    const page = this.screenPage
+    if (page === undefined || !this.readerScreen.active) return
+    const rows = Math.max(1, this.deps.terminal.rows)
+    this.readerScreen.paint(page.render(this.deps.terminal.columns, rows))
+  }
+
+  /**
+   * Draw the open full-screen page after a session changed, and keep the
+   * spinner tick running exactly while the page animates. With no page open
+   * this does nothing.
+   */
+  private repaintScreenPage(): void {
+    if (this.screenPage === undefined) return
+    this.paintScreenPage()
     this.updateSpinTicker()
   }
 
   /**
-   * Answer one key while the team room holds the terminal: `Ctrl+C` and the
-   * room's own close keys give the conversation its screen back, and `Enter`
-   * on a teammate leaves the room for that teammate's session.
-   * @param play - the open room.
+   * Answer one key while a full-screen page holds the terminal: `Ctrl+C` and
+   * the page's own close keys give the conversation its screen back, and an
+   * `open` action leaves the page for that teammate's session.
+   * @param page - the open page.
    * @param data - the raw key bytes.
    */
-  private onTeamPlayKey(play: TeamPlay, data: string): void {
-    const action = matchesKey(data, 'ctrl+c') ? { kind: 'close' } as const : play.handleInput(data)
+  private onScreenPageKey(page: ScreenPage, data: string): void {
+    const action: ScreenPageAction | undefined = matchesKey(data, 'ctrl+c') ? { kind: 'close' } : page.handleInput(data)
     if (action === undefined) {
-      this.paintTeamPlay()
+      this.paintScreenPage()
       return
     }
-    this.closeTeamPlay()
-    if (action.kind === 'open') {
-      this.navigate('teammate session', () => this.enterSubagent(action.choice, this.teamBrowseEntry(action.entry)))
+    this.closeScreenPage()
+    switch (action.kind) {
+      case 'close':
+        return
+      case 'open':
+        this.navigate('teammate session', () => this.enterSubagent(action.choice, this.teamBrowseEntry(action.entry)))
+        return
+      /* v8 ignore next 2 -- closed-union exhaustiveness guard */
+      default:
+        assertNever(action, 'tui screen page action')
     }
   }
 
-  /** Leave the team room and give the conversation its screen back. */
-  private closeTeamPlay(): void {
-    this.teamPlay = undefined
+  /** Leave the full-screen page and give the conversation its screen back. */
+  private closeScreenPage(): void {
+    this.screenPage = undefined
     this.readerScreen.leave()
     this.tui.resume()
     this.updateSpinTicker()
@@ -2000,12 +2045,12 @@ export class TuiApp {
   }
 
   /**
-   * Take the team room down without moving focus, for a session switch or a
-   * quit. A room that is not open is left alone.
+   * Take the full-screen page down without moving focus, for a session switch
+   * or a quit. With no page open this does nothing.
    */
-  private dropTeamPlay(): void {
-    if (this.teamPlay === undefined) return
-    this.teamPlay = undefined
+  private dropScreenPage(): void {
+    if (this.screenPage === undefined) return
+    this.screenPage = undefined
     this.readerScreen.leave()
     this.tui.resume()
     this.updateSpinTicker()
@@ -2771,14 +2816,12 @@ export class TuiApp {
    * their place, so the list stays open.
    * @param title - the picker heading.
    * @param rows - the entries to walk, in list order.
-   * @param layout - how each row splits its width between label and description; the picker's default when omitted.
    */
-  private async browse(title: string, rows: readonly BrowseRow[], layout?: SelectListLayoutOptions): Promise<void> {
+  private async browse(title: string, rows: readonly BrowseRow[]): Promise<void> {
     let visited: string | undefined
     for (;;) {
       const picked = await this.showModal(new PickPrompt(this.deps.palette, title, rows.map(row => row.item), {
         ...visited === undefined ? {} : { current: visited },
-        ...layout === undefined ? {} : { layout },
       }))
       if (picked === undefined) return
       const row = rows.find(candidate => candidate.item.value === picked.value)
@@ -3083,30 +3126,21 @@ export class TuiApp {
   }
 
   /**
-   * Walk the agent's todo list: one row per item, and entering a row shows
-   * that item in full with its position, the list's counts by status, and the
-   * turns it was first written in and last changed status in.
+   * Open the todos page on the alternate screen, or print `no todos yet` when
+   * the bound session has no todo and its team no shared task.
    */
-  private async browseTodos(): Promise<void> {
-    const items = this.statusFacts().todos?.items ?? []
-    const { palette } = this.deps
-    const choices = listTodoChoices(
-      this.deps.ctx,
-      this.agent.session,
-      content => palette.dim(palette.strikethrough(content)),
-    )
-    if (choices.length === 0) {
+  private openTodosPage(): void {
+    if (this.workTree(readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries)).total === 0) {
       this.notice('no todos yet')
       return
     }
-    // Nothing is awaited between the two reads above, so both see one list:
-    // the counts and position an entered page prints agree with the rows drawn.
-    const tracked = items.map(item => this.todoTurns.get(item.content))
-    await this.browse('Todos', choices.map((choice): BrowseRow => ({
-      item: { value: String(choice.index), label: choice.label, description: choice.description },
-      heading: `Todo ${String(choice.index + 1)}`,
-      detail: () => Promise.resolve(todoDetail(items, choice.index, tracked[choice.index])),
-    })), TODO_ROW_LAYOUT)
+    this.openScreenPage(new TodosPage({
+      palette: this.deps.palette,
+      source: () => this.todosPageSource(),
+      now: () => this.deps.now(),
+      stepMs: this.deps.spinnerMs,
+      motion: this.fading,
+    }))
   }
 
   /**
@@ -3349,12 +3383,13 @@ export class TuiApp {
       this.modals.withdrawActive()
       return { consume: true }
     }
-    // The reader owns its whole key stream the same way: while it holds the
-    // terminal every key is its own, and `Ctrl+C` alone brings the keyboard
-    // back here. Nothing is left for the editor, so the renderer is never
-    // asked for a frame of a conversation the terminal is not showing.
-    if (this.teamPlay !== undefined && this.readerScreen.active) {
-      this.onTeamPlayKey(this.teamPlay, data)
+    // A full-screen page and the reader own their whole key stream the same
+    // way: while one holds the terminal every key is its own, and `Ctrl+C`
+    // alone brings the keyboard back here. Nothing is left for the editor, so
+    // the renderer is never asked for a frame of a conversation the terminal
+    // is not showing.
+    if (this.screenPage !== undefined && this.readerScreen.active) {
+      this.onScreenPageKey(this.screenPage, data)
       return { consume: true }
     }
     const reading = this.reader
@@ -3401,11 +3436,11 @@ export class TuiApp {
 
   /**
    * Scroll the reader, opening it at the newest section on the first wheel tick.
-   * Modal prompts retain the terminal and ignore the wheel.
+   * A full-screen page and modal prompts retain the terminal and ignore the wheel.
    * @param step - -1 for up, 1 for down.
    */
   private onScroll(step: -1 | 1): void {
-    if (this.teamPlay !== undefined) return
+    if (this.screenPage !== undefined) return
     if (this.modals.isActive() || this.queuedModals > 0) return
     if (this.reader === undefined) this.openReader()
     if (!this.readerScreen.active) return
@@ -3997,8 +4032,8 @@ export class TuiApp {
       this.showBlock(segment.detail.rows.map(row => paintKeys(this.deps.palette, row, plainText, 'prose')))
       return
     }
-    // The todo list is the one page the bar hands to the app today.
-    this.navigate('/todos', () => this.browseTodos())
+    // The todos page is the one page the bar hands to the app today.
+    this.openTodosPage()
   }
 
   /**
@@ -4670,7 +4705,7 @@ export class TuiApp {
         this.showContextUsage()
         return
       case 'todos':
-        await this.browseTodos()
+        this.openTodosPage()
         return
       case 'outline':
         this.showRows(sessionOutline(this.deps.ctx, this.agent.session), 'no completed turn yet')
@@ -4688,7 +4723,11 @@ export class TuiApp {
         return
       }
       case 'team-play':
-        this.openTeamPlay()
+        if (this.loadedTeam() === undefined) return
+        this.openScreenPage(new TeamPlay({
+          palette: this.deps.palette,
+          source: () => this.teamRoomSource(),
+        }))
         return
       case 'team': {
         if (argument !== '') {
@@ -5823,15 +5862,16 @@ export class TuiApp {
 
   /**
    * Arm the spinner tick while the activity line animates, a card spins, an
-   * in-progress todo spins, or the team summary's glyph spins, and disarm it
-   * otherwise, so a session with nothing running runs no spinner timer.
-   * Exactly one runs at a time, and a stopped app runs none.
+   * in-progress todo spins, the open full-screen page animates, or the team
+   * summary's glyph spins, and disarm it otherwise, so a session with nothing
+   * running runs no spinner timer. Exactly one runs at a time, and a stopped
+   * app runs none.
    */
   private updateSpinTicker(): void {
     const spinning = this.streaming?.spinning() === true
       || this.spinners.size > 0 || this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0 || this.workflowSpinners.size > 0
-    const teamMotion = this.teamPlay?.animates() === true || this.teamLineSpins
-    if (!this.stopped && (this.loaderAnimates() || spinning || teamMotion)) {
+    const motion = this.screenPage?.animates() === true || this.teamLineSpins
+    if (!this.stopped && (this.loaderAnimates() || spinning || motion)) {
       this.spinTicker ??= this.deps.tick(() => { this.onSpinTick() }, this.deps.spinnerMs)
       return
     }
@@ -5855,7 +5895,7 @@ export class TuiApp {
       if (!block.spinning()) this.workflowSpinners.delete(block)
     }
     if (this.loaderAnimates()) this.refreshLoader()
-    this.paintTeamPlay()
+    this.paintScreenPage()
     if (this.teamLineSpins) this.refreshTeamPanel()
     if (this.boardSpinners.size > 0 || this.boardChildSpinners.size > 0) this.refreshActivityBoard()
     else if (this.streaming?.spinning() === true || this.spinners.size > 0 || this.workflowSpinners.size > 0) this.tui.requestRender()
@@ -6172,7 +6212,7 @@ export class TuiApp {
   private onSessionEvent(session: Session, event: SessionEvent): void {
     if (!this.replaying && session === this.agent.session) {
       this.teamLog.push(event)
-      this.repaintTeamPlay()
+      this.repaintScreenPage()
     }
     if (session !== this.agent.session) {
       // Every live session of this process reaches here, the subagent
@@ -6181,7 +6221,7 @@ export class TuiApp {
       // under the bound session.
       this.markSubagentsStale()
       if (this.isBoundDescendant(session)) this.onDescendantActivity(session, event)
-      this.repaintTeamPlay()
+      this.repaintScreenPage()
       return
     }
     // A logged event is drawn after the streamed text that preceded it.
@@ -6216,6 +6256,8 @@ export class TuiApp {
       case 'todo/write':
         this.trackTodoTurns(event.data.todos)
         this.syncActivityTodos()
+        // The page drew this write at the top of this handler, before its turns were tracked.
+        this.repaintScreenPage()
         break
       case 'user/message':
         this.onUserMessage(event.data)

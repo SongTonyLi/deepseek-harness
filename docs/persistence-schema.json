@@ -488,7 +488,7 @@
     {"digest":"a3a259a1aa5401af786ce08c4a8419681d3000d73467991b5fc563389bc4ebd2","names":[],"sources":[]},
     {"digest":"a3c6f1ea38e9a61d7a9706057ba65aabe02dfe6d9dd90d4736aa62325d874531","names":[],"sources":[]},
     {"digest":"a3edd1efd1fef21b72c55e213c8a8b24196b091abde2b89db52be0b2aaae3cfa","names":[],"sources":[]},
-    {"digest":"a41636c87362f664550b08d346b231cf57622c324bb272224c1829925cf9d880","names":[],"sources":["packages/bundle/tui-app/src/app.ts:56"]},
+    {"digest":"a41636c87362f664550b08d346b231cf57622c324bb272224c1829925cf9d880","names":[],"sources":["packages/bundle/tui-app/src/app.ts:55"]},
     {"digest":"a43327a1739c3fa477f32981071fef7d8ba6ae5f32a84fd70f547b2eee59e93e","names":[],"sources":[]},
     {"digest":"a4afec59b75aad5d13ef82d6931f35cc2d98918503916cf069355b77c5e42302","names":[],"sources":["packages/api/session-controller/src/types.ts:397"]},
     {"digest":"a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc","names":[],"sources":[]},

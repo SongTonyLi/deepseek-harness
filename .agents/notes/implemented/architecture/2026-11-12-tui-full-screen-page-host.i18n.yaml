@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-11-12-tui-full-screen-page-host.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-12-tui-full-screen-page-host.md
+/agent-note-one-host-for-the-tui-s-full-screen-pages:
+  en: 49dbc95881ba14e1
+  zh: ae7660e9ded10bbb
+/agent-note-one-host-for-the-tui-s-full-screen-pages/problem:
+  en: 84a7f4b4471cd317
+  zh: 6cf69f3037977484
+/agent-note-one-host-for-the-tui-s-full-screen-pages/decision:
+  en: 090e6205e50f9496
+  zh: a56e7646aad2ff57
+/agent-note-one-host-for-the-tui-s-full-screen-pages/alternatives-considered:
+  en: 5d339af54cb88a8e
+  zh: d86b5c26eb166cc2
+/agent-note-one-host-for-the-tui-s-full-screen-pages/consequences:
+  en: 728724c14872e445
+  zh: 9a455239a05025d8

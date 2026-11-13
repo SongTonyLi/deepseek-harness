@@ -11,7 +11,7 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { FADE_TICK_MS } from '../src/fade.ts'
 import { ENTRY_HINTS, HINTS, widestHint } from '../src/keys.ts'
 import { LANDING_TICKS, SEGMENT_TICKS } from '../src/motion.ts'
-import { KEY, bench, spinning, type Bench } from './bench.ts'
+import { BENCH_SPINNER_MS, KEY, bench, spinning, type Bench } from './bench.ts'
 
 function typeLine(terminal: { type(data: string): void }, text: string): void {
   for (const char of text) terminal.type(char)
@@ -466,114 +466,115 @@ describe('subagent sessions', () => {
   })
 })
 
-describe('todo list', () => {
+describe('todos page', () => {
+  const ENTER_ALT = '\u001b[?1049h'
+  const LEAVE_ALT = '\u001b[?1049l'
+  const CTRL_T = '\u0014'
   const mixed: TodoItem[] = [
     { content: 'read the spec', status: 'completed' },
     { content: 'write the data layer', status: 'in_progress' },
-    { content: 'wire the picker', status: 'pending' },
+    { content: 'wire the page', status: 'pending' },
   ]
 
-  it('walks the list, shows one item in full, and reopens the list on it', async () => {
+  /** What the alternate screen drew since the page last opened, escape sequences removed. */
+  function page(test: Bench): string {
+    const written = test.terminal.written
+    return written.slice(written.lastIndexOf(ENTER_ALT)).replace(/\u001b\[[0-9;?]*[A-Za-z]/gu, '')
+  }
+
+  it('opens the todo list on its own screen, details the selected item, and gives the editor back on Esc', async () => {
     const test = await bench({ projections: projectionsStub(() => ({ todos: mixed })).stub })
     typeLine(test.terminal, '/todos')
     await test.settle()
-    const listed = test.terminal.text()
-    expect(listed).toContain('? Todos')
-    expect(listed).toContain('✓ read the spec')
-    expect(listed).toContain('▸ write the data layer')
-    expect(listed).toContain('being worked on now')
-    expect(test.terminal.output).not.toContain('\u001b[9m')
+    expect(test.terminal.written).toContain(ENTER_ALT)
+    const drawn = page(test)
+    expect(drawn).toContain('todos · 1/3 delivered')
+    expect(drawn).toContain('agent · 1/3')
+    expect(drawn).toContain('✓ read the spec')
+    expect(drawn).toContain('wire the page')
+    expect(drawn).toContain('owner  agent · orchestrator')
 
     test.terminal.type(KEY.down)
-    test.terminal.type(KEY.enter)
+    test.terminal.type(KEY.down)
     await test.settle()
-    const detail = test.terminal.text()
-    expect(detail).toContain('Todo 2')
-    expect(detail).toContain('status: in progress')
-    expect(detail).toContain('item 2 of 3')
-    expect(detail).toContain('1 completed · 1 in progress · 1 pending')
-
-    // Leaving the item reopens the list on it.
-    test.terminal.type(KEY.enter)
-    await test.settle()
-    expect(test.terminal.text()).toContain('write the data layer ✓')
-
-    test.terminal.type(KEY.up)
-    test.terminal.type(KEY.enter)
-    await test.settle()
-    expect(test.terminal.text()).toContain('status: completed')
-    expect(test.terminal.text()).toContain('item 1 of 3')
+    expect(page(test)).toContain('state  deferred · left open when the turn ended')
 
     test.terminal.type(KEY.escape)
     await test.settle()
-    test.terminal.type(KEY.escape)
-    await test.settle()
+    expect(test.terminal.written.endsWith(LEAVE_ALT) || test.terminal.written.includes(LEAVE_ALT)).toBe(true)
     typeLine(test.terminal, 'back to typing')
     await test.settle()
     expect(test.calls.followups.map(message => message.content)).toEqual([[{ type: 'text', text: 'back to typing' }]])
   })
 
-  it('scratches out completed todo content in the picker when color is on', async () => {
-    const test = await bench({
-      color: true,
-      projections: projectionsStub(() => ({ todos: mixed })).stub,
-    })
+  it('reveals the rows on the spinner tick when color is on, then settles with delivered content scratched out', async () => {
+    const test = await bench({ color: true, projections: projectionsStub(() => ({ todos: mixed })).stub })
     typeLine(test.terminal, '/todos')
     await test.settle()
-    expect(test.terminal.output).toContain('\u001b[2m\u001b[9mread the spec\u001b[29m\u001b[22m')
-    expect(test.terminal.output).not.toContain('\u001b[9mwrite the data layer')
-    expect(test.terminal.text()).toContain('✓')
-    expect(test.terminal.text()).toContain('write the data layer')
+    // The opening reveal draws the branch first and its todos on later steps;
+    // until then only the detail pane names the delivered todo. Each later
+    // paint writes only the rows it changed, so the count only grows.
+    const named = (): number => page(test).split('✓ read the spec').length - 1
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(true)
+    expect(named()).toBe(1)
+    for (let step = 0; step < 16 && test.tickArmed(BENCH_SPINNER_MS); step += 1) test.runTick(BENCH_SPINNER_MS)
+    await test.settle()
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
+    expect(named()).toBeGreaterThan(1)
+    expect(test.terminal.written).toContain('\u001b[9mread the spec')
+    expect(test.terminal.written).not.toContain('\u001b[9mwrite the data layer')
   })
 
-  it('draws a todo line too wide for the list default beside its status', async () => {
-    const content = 'Wire the navigable todo list into the terminal status bar'
-    const test = await bench({ projections: projectionsStub(() => ({ todos: [{ content, status: 'pending' }] })).stub })
+  it('draws the settled page at once and arms no tick for it under reduced motion', async () => {
+    const test = await bench({ color: true, reducedMotion: true, projections: projectionsStub(() => ({ todos: mixed })).stub })
     typeLine(test.terminal, '/todos')
     await test.settle()
-    expect(test.terminal.text()).toContain(`○ ${content}`)
-    expect(test.terminal.text()).toContain('pending')
+    expect(page(test)).toContain('✓ read the spec')
+    expect(page(test)).toContain('wire the page')
+    expect(test.tickArmed(BENCH_SPINNER_MS)).toBe(false)
   })
 
-  it('opens the same list from the status bar, leaving the segment label alone', async () => {
+  it('opens the same page from Ctrl+T and from the status bar, and Ctrl+T closes it', async () => {
     const test = await bench({ projections: projectionsStub(() => ({ todos: mixed })).stub })
     await test.settle()
-    expect(test.terminal.text()).toContain('todo 1/3')
-    expect(test.terminal.text()).not.toMatch(/\+\d/u)
+    test.terminal.type(CTRL_T)
+    await test.settle()
+    expect(page(test)).toContain('todos · 1/3 delivered')
+    test.terminal.type(CTRL_T)
+    await test.settle()
+    expect(test.terminal.written.lastIndexOf(LEAVE_ALT)).toBeGreaterThan(test.terminal.written.lastIndexOf(ENTER_ALT))
+
     // The bar holds the model segment first; effort is always next, then todo.
     test.terminal.type(KEY.shiftDown)
-    await test.settle()
-    expect(test.terminal.text()).toContain('todo 1/3')
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.right)
     test.terminal.type(KEY.enter)
     await test.settle()
-    expect(test.terminal.text()).toContain('? Todos')
-    // The list replaced the printed section, so /status keeps its own wording.
-    expect(test.terminal.text()).not.toContain('todos: 1 done')
+    expect(test.terminal.written.lastIndexOf(ENTER_ALT)).toBeGreaterThan(test.terminal.written.lastIndexOf(LEAVE_ALT))
+    expect(page(test)).toContain('todos · 1/3 delivered')
     test.terminal.type(KEY.escape)
     await test.settle()
-    typeLine(test.terminal, 'after the list')
+    typeLine(test.terminal, 'after the page')
     await test.settle()
     expect(test.calls.followups).toHaveLength(1)
   })
 
-  it('notices an empty list instead of opening a picker', async () => {
+  it('notices an empty list instead of opening the page', async () => {
     const unmounted = await bench({ projections: 'none' })
     typeLine(unmounted.terminal, '/todos')
     await unmounted.settle()
     expect(unmounted.terminal.text()).toContain('no todos yet')
-    expect(unmounted.terminal.text()).not.toContain('? Todos')
+    expect(unmounted.terminal.written).not.toContain(ENTER_ALT)
     const unwritten = await bench({ projections: projectionsStub(() => ({ todos: null })).stub })
     typeLine(unwritten.terminal, '/todos')
     typeLine(unwritten.terminal, '/help')
     await unwritten.settle()
     expect(unwritten.terminal.text()).toContain('no todos yet')
-    expect(unwritten.terminal.text()).toContain('/todos')
-    expect(unwritten.terminal.text()).toContain('Browse the agent\'s todo list (Enter shows one item in full)')
+    expect(unwritten.terminal.text()).toContain('Open the work page')
+    expect(unwritten.terminal.written).not.toContain(ENTER_ALT)
   })
 
-  it('reports the turn an item was written in and the turn its status moved', async () => {
+  it('repaints a todo write while open, with the turn an item was written in and the turn its status moved', async () => {
     let todos: TodoItem[] = []
     const test = await bench({ projections: projectionsStub(() => ({ todos })).stub })
     /** Log one turn that replaces the todo list with `next`. */
@@ -587,25 +588,24 @@ describe('todo list', () => {
     write(2, [{ content: 'read the spec', status: 'completed' }, { content: 'ship it', status: 'pending' }])
     // The third turn drops the second item, so its return in the fourth starts it over.
     write(3, [{ content: 'read the spec', status: 'completed' }])
-    write(4, [{ content: 'read the spec', status: 'completed' }, { content: 'ship it', status: 'pending' }])
     await test.settle()
 
     typeLine(test.terminal, '/todos')
     await test.settle()
-    test.terminal.type(KEY.enter)
-    await test.settle()
-    expect(test.terminal.text()).toContain('first written in turn 1')
-    expect(test.terminal.text()).toContain('status last changed in turn 2')
-
-    test.terminal.type(KEY.enter)
-    await test.settle()
     test.terminal.type(KEY.down)
-    test.terminal.type(KEY.enter)
     await test.settle()
-    const screen = test.terminal.text()
-    expect(screen).toContain('first written in turn 4')
+    expect(page(test)).toContain('first written in turn 1')
+    expect(page(test)).toContain('status last changed in turn 2')
+
+    write(4, [{ content: 'read the spec', status: 'completed' }, { content: 'ship it', status: 'pending' }])
+    await test.settle()
+    expect(page(test)).toContain('todos · 1/2 delivered')
+    test.terminal.type(KEY.down)
+    await test.settle()
+    const drawn = page(test).slice(page(test).lastIndexOf('ship it'))
+    expect(drawn).toContain('first written in turn 4')
     // The item has held its status since it came back, so it reports no change.
-    expect(screen.split('status last changed in turn')).toHaveLength(2)
+    expect(drawn).not.toContain('status last changed in turn')
   })
 
   it('forgets the turn facts of the session it left', async () => {
@@ -619,29 +619,10 @@ describe('todo list', () => {
     await test.settle()
     typeLine(test.terminal, '/todos')
     await test.settle()
-    test.terminal.type(KEY.enter)
+    test.terminal.type(KEY.down)
     await test.settle()
-    expect(test.terminal.text()).toContain('status: pending')
-    expect(test.terminal.text()).not.toContain('first written in turn')
-  })
-
-  it('reports a failing todo read from the status bar instead of crashing', async () => {
-    const test = await bench({
-      projections: {
-        // Only the list's own one-key read fails, so the bar still draws its segments.
-        snapshot: (_session: Session, keys: readonly string[]) => {
-          if (keys.length === 1) throw new Error('the todos projection failed')
-          return { asOfSeq: 1, values: { todos: [{ content: 'read the spec', status: 'pending' }] } }
-        },
-        onChanged: () => () => {},
-      },
-    })
-    test.terminal.type(KEY.shiftDown)
-    test.terminal.type(KEY.right)
-    test.terminal.type(KEY.right)
-    test.terminal.type(KEY.enter)
-    await test.settle()
-    expect(test.terminal.text()).toContain('/todos failed: the todos projection failed')
+    expect(page(test)).toContain('read the spec')
+    expect(page(test)).not.toContain('first written in turn')
   })
 })
 
