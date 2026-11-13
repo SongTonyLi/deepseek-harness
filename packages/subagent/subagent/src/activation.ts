@@ -191,7 +191,6 @@ function committedFailure(events: readonly SessionEvent[]): { code: string; mess
  * @returns final output, stop reason, and committed structured value.
  */
 export function captureLocalResult(activation: LocalActivation): SubagentResult {
-  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
   const events = activation.handle.agent.session.snapshotEvents(activation.outputStart)
   const output = finalAssistantOutput(events) ?? []
   const pending = activation.failureAt !== undefined
