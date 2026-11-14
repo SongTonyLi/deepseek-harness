@@ -30,17 +30,18 @@ export function grantExpiryFromAccess(token: string, now: () => number = Date.no
   if (parts.length !== 3 || payload === undefined || payload.length === 0) {
     return now() + TOKEN_FALLBACK_TTL_MS
   }
+  let decoded: unknown
   try {
-    const decoded: unknown = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
-    if (
-      typeof decoded === 'object'
-      && decoded !== null
-      && typeof (decoded as { exp?: unknown }).exp === 'number'
-    ) {
-      return (decoded as { exp: number }).exp * 1000 - TOKEN_EXPIRY_SKEW_MS
-    }
+    decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
   } catch (_malformedJwtPayload) {
-    // Opaque or malformed JWT payload: treat as a one-hour bearer.
+    // Opaque or malformed JWT payload: `decoded` stays undefined and takes the fallback below.
+  }
+  if (
+    typeof decoded === 'object'
+    && decoded !== null
+    && typeof (decoded as { exp?: unknown }).exp === 'number'
+  ) {
+    return (decoded as { exp: number }).exp * 1000 - TOKEN_EXPIRY_SKEW_MS
   }
   return now() + TOKEN_FALLBACK_TTL_MS
 }

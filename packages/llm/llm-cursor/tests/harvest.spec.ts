@@ -248,6 +248,31 @@ describe('readInstalledCursorSources', () => {
     }
     expect(await readInstalledCursorSources(host)).toEqual([{ refreshToken: 'only-rt' }])
   })
+
+  it('skips a profile whose query or close fails, even after its token was read', async () => {
+    const profileHost = (failure: 'query' | 'close'): HarvestHost => ({
+      platform: () => 'linux',
+      homedir: () => '/home/ada',
+      env: { WSL_DISTRO_NAME: 'Ubuntu', USERPROFILE: 'C:\\Users\\Ada' },
+      execFile: vi.fn(),
+      exists: () => true,
+      openSqlite: (path: string) => {
+        const wslMount = path.includes('/mnt/c/Users')
+        return {
+          get: (sql: string) => {
+            if (wslMount) return sql.includes('refreshToken') ? { value: 'wsl-rt' } : undefined
+            if (failure === 'query' && sql.includes('refreshToken')) throw new Error('query failed')
+            return { value: sql.includes('accessToken') ? 'home-at' : 'home-rt' }
+          },
+          close: () => {
+            if (!wslMount && failure === 'close') throw new Error('close failed')
+          },
+        }
+      },
+    })
+    expect(await readInstalledCursorSources(profileHost('query'))).toEqual([{ refreshToken: 'wsl-rt' }])
+    expect(await readInstalledCursorSources(profileHost('close'))).toEqual([{ refreshToken: 'wsl-rt' }])
+  })
 })
 
 describe('harvestInstalledCursorLogin', () => {

@@ -20,7 +20,7 @@ export type Inject<M = Dict> = (keyof M)[] | { [K in keyof M]?: M[K] }
 
 /** Context keys that correspond to services with typed intercept config. */
 export type InjectKey = keyof {
-  [K in keyof Context & string as Context[K] extends { [symbols.config]: any } ? K : never]: any
+  [K in keyof Context & string as Context[K] extends { [symbols.metadata]: any } ? K : never]: any
 }
 
 /**
@@ -28,13 +28,12 @@ export type InjectKey = keyof {
  *
  * On classes it contributes to the plugin's static `inject` map. On methods it
  * delays the method call until the declared services are available.
- */
-/**
+ *
  * @param name — the required service name.
- * @param config — optional intercept config applied for that service.
+ * @param config — optional intercept metadata injected for that service.
  * @returns the class or method decorator.
  */
-export function Inject<K extends InjectKey>(name: K, config?: Context[K] extends { [symbols.config]: infer T } ? T : never) {
+export function Inject<K extends InjectKey>(name: K, config?: Context[K] extends { [symbols.metadata]: infer T } ? T : never) {
   return function (value: any, decorator: ClassDecoratorContext<any> | ClassMethodDecoratorContext<any>) {
     if (decorator.kind === 'class') {
       if (!Object.hasOwn(value, 'inject')) {
@@ -43,7 +42,7 @@ export function Inject<K extends InjectKey>(name: K, config?: Context[K] extends
       }
       value.inject[name] = config
     } else if (decorator.kind === 'method') {
-      const inject = (value[symbols.metadata] ??= {}).inject ??= Object.create(null)
+      const inject = (value[symbols.decorator] ??= {}).inject ??= Object.create(null)
       inject[name] = config
       decorator.addInitializer(function () {
         const property = this[symbols.tracker]?.property

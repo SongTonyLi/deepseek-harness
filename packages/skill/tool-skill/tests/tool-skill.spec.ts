@@ -7,11 +7,12 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
-import { createUserMessage, ToolCallId, type Message } from '@deepseek-ai/dsh-llm'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import { createUserMessage, type ToolCallId, type Message } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed, MessageSource } from '@deepseek-ai/dsh-llm'
 import { createScope, type Scope } from '@deepseek-ai/dsh-scope'
 import SessionStore, {
-  SESSION_FORMAT_VERSION, Session, SessionId, type SessionEvent, type UserMessage,
+  SESSION_FORMAT_VERSION, Session, type SessionId, type SessionEvent, type UserMessage,
 } from '@deepseek-ai/dsh-session'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
@@ -70,7 +71,7 @@ async function setup(home: string, config: toolSkill.Config = {}): Promise<Conte
 }
 
 function agentForCwd(cwd: string): Agent {
-  const id = SessionId(`tool-skill-${cwd}`)
+  const id = brandString<SessionId>(`tool-skill-${cwd}`)
   const session = Session.create(id, [], {
     version: SESSION_FORMAT_VERSION, id, createdAt: 0, cwd, isSeeded: false,
   })
@@ -98,7 +99,7 @@ function sessionAgent(
   options: Agent['options'] = { provider: 'cursor' },
 ): Agent {
   const agent: Agent = {
-    id: SessionId(id),
+    id: brandString<SessionId>(id),
     options,
     session,
     model: unsupportedModel(),
@@ -206,7 +207,7 @@ async function executeSkill(
 ): Promise<ToolExecutionResult> {
   return await executeToolFixture(ctx, {
     signal: testToolSignal,
-    callId: ToolCallId(callId),
+    callId: brandString<ToolCallId>(callId),
     name: 'skill',
     arguments: { name },
     ...agent === undefined ? {} : { agent },
@@ -412,7 +413,7 @@ describe('dsh-tool-skill', () => {
       invalidate = control.invalidate
       return provider
     })
-    const session = Session.create(SessionId('incomplete-prefix'))
+    const session = Session.create(brandString<SessionId>('incomplete-prefix'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
 
@@ -440,7 +441,7 @@ describe('dsh-tool-skill', () => {
     const ctx = await setup(home)
     const definition = { name: 'recovering-skill', description: 'Recovering skill', source: 'runtime' as const, content: 'Recovered body.' }
     const unregister = ctx.skills.register(definition)
-    const session = Session.create(SessionId('incomplete-empty-update'))
+    const session = Session.create(brandString<SessionId>('incomplete-empty-update'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     await composePrefixForAgent(ctx, agent)
@@ -475,7 +476,7 @@ describe('dsh-tool-skill', () => {
   it('records an empty baseline across repeated step observations', async () => {
     const home = await tempDir('tool-empty-step')
     const ctx = await setup(home)
-    const session = Session.create(SessionId('empty-step'))
+    const session = Session.create(brandString<SessionId>('empty-step'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
 
@@ -494,7 +495,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'First body.',
     })
-    const session = Session.create(SessionId('proposed-catalog'))
+    const session = Session.create(brandString<SessionId>('proposed-catalog'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     await fireStep(ctx, agent, 1, 1)
@@ -528,7 +529,7 @@ describe('dsh-tool-skill', () => {
   it('removes a stale proposed catalog before the first empty baseline', async () => {
     const home = await tempDir('tool-proposed-empty-catalog')
     const ctx = await setup(home)
-    const session = Session.create(SessionId('proposed-empty-catalog'))
+    const session = Session.create(brandString<SessionId>('proposed-empty-catalog'))
     const malformed = createUserMessage({
       content: [{ type: 'text', text: 'preserve unreadable claimed context' }],
       source: { kind: 'skill-catalog', form: 'catalog' } as never,
@@ -556,7 +557,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'First body.',
     })
-    const session = Session.create(SessionId('matching-proposal'))
+    const session = Session.create(brandString<SessionId>('matching-proposal'))
     const proposed = createUserMessage({
       content: catalogContent(['- `first-skill`: First skill']),
       source: {
@@ -580,7 +581,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'First body.',
     })
-    const session = Session.create(SessionId('dynamic-catalog'))
+    const session = Session.create(brandString<SessionId>('dynamic-catalog'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
 
@@ -629,7 +630,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'Resumed body.',
     })
-    const session = Session.create(SessionId('catalog-resume'))
+    const session = Session.create(brandString<SessionId>('catalog-resume'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     session.append('user/message', createUserMessage({
@@ -679,7 +680,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'Live body.',
     })
-    const session = Session.create(SessionId('catalog-malformed'))
+    const session = Session.create(brandString<SessionId>('catalog-malformed'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     for (const source of [
@@ -710,7 +711,7 @@ describe('dsh-tool-skill', () => {
   it('rejects a missing event below the current Session length', async () => {
     const home = await tempDir('tool-catalog-missing-event')
     const ctx = await setup(home)
-    const session = Session.create(SessionId('catalog-missing-event'))
+    const session = Session.create(brandString<SessionId>('catalog-missing-event'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     Object.defineProperty(session, 'eventAt', { value: () => undefined })
@@ -728,7 +729,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'First body.',
     })
-    const session = Session.create(SessionId('catalog-compaction'))
+    const session = Session.create(brandString<SessionId>('catalog-compaction'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     expect(JSON.stringify(await composePrefixForAgent(ctx, agent))).toContain('first-skill')
@@ -753,7 +754,7 @@ describe('dsh-tool-skill', () => {
     const root = join(home, '.dsh/skills')
     await writeSkill(root, 'body-skill', 'Stable description', 'First body.')
     const ctx = await setup(home)
-    const session = Session.create(SessionId('body-refresh'))
+    const session = Session.create(brandString<SessionId>('body-refresh'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
 
@@ -764,7 +765,7 @@ describe('dsh-tool-skill', () => {
 
     const result = await executeToolFixture(ctx, {
       signal: testToolSignal,
-      callId: ToolCallId('body-refresh'),
+      callId: brandString<ToolCallId>('body-refresh'),
       name: 'skill',
       arguments: { name: 'body-skill' },
       agent,
@@ -792,7 +793,7 @@ describe('dsh-tool-skill', () => {
 
     const scoped = await executeToolFixture(ctx, {
       signal: testToolSignal,
-      callId: ToolCallId('scoped-load'),
+      callId: brandString<ToolCallId>('scoped-load'),
       name: 'skill',
       arguments: { name: 'preset-only-skill' },
       agent,
@@ -802,7 +803,7 @@ describe('dsh-tool-skill', () => {
 
     const foreign = await executeToolFixture(ctx, {
       signal: testToolSignal,
-      callId: ToolCallId('foreign-load'),
+      callId: brandString<ToolCallId>('foreign-load'),
       name: 'skill',
       arguments: { name: 'preset-only-skill' },
       agent: agentForCwd('/workspace/other'),
@@ -820,7 +821,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'Stable body.',
     })
-    const session = Session.create(SessionId('incomplete-catalog'))
+    const session = Session.create(brandString<SessionId>('incomplete-catalog'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     expect(JSON.stringify(await composePrefixForAgent(ctx, agent))).toContain('stable-skill')
@@ -842,7 +843,7 @@ describe('dsh-tool-skill', () => {
     })
     expect(JSON.stringify(catalogMessages(session)[1]?.data.content)).toContain('Some skills could not be checked')
     const result = await executeToolFixture(ctx, {
-      signal: testToolSignal, callId: ToolCallId('partial-load'),
+      signal: testToolSignal, callId: brandString<ToolCallId>('partial-load'),
       name: 'skill', arguments: { name: 'stable-skill' }, agent,
     })
     expect(result.isError).toBe(false)
@@ -867,7 +868,7 @@ describe('dsh-tool-skill', () => {
       async get() { return undefined },
     }))
     ctx.skills.register({ name: 'readable-skill', description: 'Readable', source: 'runtime', content: 'Body.' })
-    const session = Session.create(SessionId('partial-initial'))
+    const session = Session.create(brandString<SessionId>('partial-initial'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     await composePrefixForAgent(ctx, agent)
@@ -887,7 +888,7 @@ describe('dsh-tool-skill', () => {
     const home = await tempDir('tool-restricted-catalog')
     const ctx = await setup(home)
     ctx.skills.register({ name: 'listed-skill', description: 'Listed', source: 'runtime', content: 'body' })
-    const session = Session.create(SessionId('restricted-catalog'))
+    const session = Session.create(brandString<SessionId>('restricted-catalog'))
     const agent = sessionAgent(session)
     openMessageTurn(session)
     const { scope } = await mintAgentScope(ctx, agent)
@@ -960,7 +961,7 @@ describe('dsh-tool-skill', () => {
 
     const result = await executeToolFixture(ctx, {
       signal: testToolSignal,
-      callId: ToolCallId('c1'),
+      callId: brandString<ToolCallId>('c1'),
       name: 'skill',
       arguments: { name: 'project-skill' },
       agent: { session: { header: { cwd: project }, requestHeader: () => undefined }, options: {} } as never,
@@ -1019,9 +1020,9 @@ describe('dsh-tool-skill', () => {
       content: 'Provider instructions.',
     })
 
-    const opaque = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c2'), name: 'skill', arguments: { name: 'opaque-skill' } })
-    const url = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c3'), name: 'skill', arguments: { name: 'url-skill' } })
-    const provider = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c4'), name: 'skill', arguments: { name: 'provider-skill' } })
+    const opaque = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c2'), name: 'skill', arguments: { name: 'opaque-skill' } })
+    const url = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c3'), name: 'skill', arguments: { name: 'url-skill' } })
+    const provider = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c4'), name: 'skill', arguments: { name: 'provider-skill' } })
 
     if (opaque.content[0]?.type !== 'text' || url.content[0]?.type !== 'text' || provider.content[0]?.type !== 'text') {
       throw new Error('expected text tool results')
@@ -1043,7 +1044,7 @@ describe('dsh-tool-skill', () => {
       content: 'Rogue instructions.',
     })
 
-    const result = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c5'), name: 'skill', arguments: { name: 'rogue-resource-skill' } })
+    const result = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c5'), name: 'skill', arguments: { name: 'rogue-resource-skill' } })
 
     expect(result.isError).toBe(true)
     expect(result.error?.info?.code).toBe('INVALID_TOOL_OUTPUT')
@@ -1065,15 +1066,20 @@ describe('dsh-tool-skill', () => {
       content: 'Model-only instructions.',
     })
 
-    const unknown = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c1'), name: 'skill', arguments: { name: 'missing' } })
-    const invalid = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c2'), name: 'skill', arguments: { name: 'Bad_Name' } })
-    const disabled = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c3'), name: 'skill', arguments: { name: 'hidden-skill' } })
-    const modelOnly = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c4'), name: 'skill', arguments: { name: 'model-only-skill' } })
+    const unknown = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c1'), name: 'skill', arguments: { name: 'missing' } })
+    const invalid = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c2'), name: 'skill', arguments: { name: 'Bad_Name' } })
+    const disabled = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c3'), name: 'skill', arguments: { name: 'hidden-skill' } })
+    const modelOnly = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c4'), name: 'skill', arguments: { name: 'model-only-skill' } })
 
     expect(unknown.isError).toBe(true)
     expect(invalid.isError).toBe(true)
     expect(disabled.isError).toBe(true)
     expect(modelOnly.isError).toBe(false)
+    expect(unknown.error?.info).toEqual({ name: 'SkillError', code: 'SKILL_NOT_FOUND' })
+    expect(invalid.error).toEqual({
+      message: 'invalid arguments: invalid skill name "Bad_Name"', info: { name: 'ToolArgsError', code: 'INVALID_ARGS' },
+    })
+    expect(disabled.error?.info).toEqual({ name: 'SkillError', code: 'SKILL_NOT_MODEL_INVOCABLE' })
     const unknownBlock = unknown.content[0]
     if (unknownBlock?.type !== 'text') throw new Error('expected text tool result')
     expect(unknownBlock.text).toContain('skill "missing" is unknown or no longer available')
@@ -1127,14 +1133,17 @@ describe('dsh-tool-skill', () => {
       },
     }))
 
-    const denied = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c6'), name: 'skill', arguments: { name: 'denied-skill' } })
-    const raced = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c7'), name: 'skill', arguments: { name: 'policy-race-skill' } })
-    const vanished = await executeToolFixture(ctx, { signal: testToolSignal, callId: ToolCallId('c8'), name: 'skill', arguments: { name: 'vanishing-skill' } })
+    const denied = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c6'), name: 'skill', arguments: { name: 'denied-skill' } })
+    const raced = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c7'), name: 'skill', arguments: { name: 'policy-race-skill' } })
+    const vanished = await executeToolFixture(ctx, { signal: testToolSignal, callId: brandString<ToolCallId>('c8'), name: 'skill', arguments: { name: 'vanishing-skill' } })
 
     expect(denied.isError).toBe(true)
     expect(raced.isError).toBe(true)
     expect(vanished.isError).toBe(true)
     expect(getCalls).toEqual(['policy-race-skill', 'vanishing-skill'])
+    expect(denied.error?.info).toEqual({ name: 'SkillError', code: 'SKILL_NOT_MODEL_INVOCABLE' })
+    expect(raced.error?.info).toEqual({ name: 'SkillError', code: 'SKILL_NOT_MODEL_INVOCABLE' })
+    expect(vanished.error?.info).toEqual({ name: 'SkillError', code: 'SKILL_NOT_FOUND' })
     for (const result of [denied, raced]) {
       const block = result.content[0]
       if (block?.type !== 'text') throw new Error('expected text tool result')
@@ -1222,7 +1231,7 @@ describe('dsh-tool-skill', () => {
     const home = await tempDir('tool-unknown-stop')
     const ctx = await setup(home)
     registerRuntimeSkill(ctx, 'real-skill')
-    const agent = sessionAgent(Session.create(SessionId('unknown-stop')))
+    const agent = sessionAgent(Session.create(brandString<SessionId>('unknown-stop')))
 
     expect(toolText(await executeSkill(ctx, 'nope-one', agent, 'u1')))
       .toContain('skill "nope-one" is unknown or no longer available')
@@ -1243,7 +1252,7 @@ describe('dsh-tool-skill', () => {
     const ctx = await setup(home)
     registerRuntimeSkill(ctx, 'real-skill')
     const agent = sessionAgent(
-      Session.create(SessionId('unknown-not-cursor')),
+      Session.create(brandString<SessionId>('unknown-not-cursor')),
       'unknown-not-cursor',
       { provider: 'deepseek-official' },
     )
@@ -1260,7 +1269,7 @@ describe('dsh-tool-skill', () => {
     const home = await tempDir('tool-unknown-header-cursor')
     const ctx = await setup(home)
     registerRuntimeSkill(ctx, 'real-skill')
-    const session = Session.create(SessionId('unknown-header-cursor'))
+    const session = Session.create(brandString<SessionId>('unknown-header-cursor'))
     session.append('request/header', {
       header: { config: { provider: 'cursor', model: 'composer-2' } },
       reason: 'initial',
@@ -1278,7 +1287,7 @@ describe('dsh-tool-skill', () => {
     const home = await tempDir('tool-unknown-reset-success')
     const ctx = await setup(home)
     registerRuntimeSkill(ctx, 'real-skill')
-    const agent = sessionAgent(Session.create(SessionId('unknown-reset-success')))
+    const agent = sessionAgent(Session.create(brandString<SessionId>('unknown-reset-success')))
 
     await executeSkill(ctx, 'nope-one', agent, 'r1')
     await executeSkill(ctx, 'nope-two', agent, 'r2')
@@ -1297,7 +1306,7 @@ describe('dsh-tool-skill', () => {
     const ctx = await setup(home)
     await ctx.plugin(SessionStore)
     registerRuntimeSkill(ctx, 'real-skill')
-    const session = ctx.sessions.create(SessionId('unknown-reset-turn'), { meta: { cwd: home } })
+    const session = ctx.sessions.create(brandString<SessionId>('unknown-reset-turn'), { meta: { cwd: home } })
     const agent = sessionAgent(session)
     session.append('turn/start', { turn: 1 })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -1318,7 +1327,7 @@ describe('dsh-tool-skill', () => {
     const home = await tempDir('tool-invalid-no-stop')
     const ctx = await setup(home)
     registerRuntimeSkill(ctx, 'real-skill')
-    const agent = sessionAgent(Session.create(SessionId('invalid-no-stop')))
+    const agent = sessionAgent(Session.create(brandString<SessionId>('invalid-no-stop')))
 
     await executeSkill(ctx, 'nope-one', agent, 'i1')
     await executeSkill(ctx, 'nope-two', agent, 'i2')
@@ -1341,7 +1350,7 @@ describe('dsh-tool-skill', () => {
       source: 'runtime',
       content: 'Hidden body.',
     })
-    const agent = sessionAgent(Session.create(SessionId('disabled-no-stop')))
+    const agent = sessionAgent(Session.create(brandString<SessionId>('disabled-no-stop')))
 
     await executeSkill(ctx, 'nope-one', agent, 'd1')
     await executeSkill(ctx, 'nope-two', agent, 'd2')

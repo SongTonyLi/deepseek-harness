@@ -162,9 +162,9 @@ describe('WorkspaceFileSearch', () => {
         join(nest, 'linked-out'),
         process.platform === 'win32' ? 'junction' : 'dir',
       )
-    } catch {
-      // Windows may deny symlink creation without Developer Mode; the product
-      // still skips a directory whose final path is a symlink when one exists.
+    } catch (_symlinkDenied) {
+      // Windows may deny symlink creation without Developer Mode. The expected listing is empty
+      // either way; without the link only the skip path goes untested.
     }
     homeControl.root = nest
     const files = search(root)

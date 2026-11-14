@@ -81,7 +81,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 throw new RemoteError('goal/not-found', `goal "${id}" does not exist`, { goalId: id })
 ```
 
-An owner throws at the failure point; no package writes an error-class family or an exit-mapping function. A caller discriminates by `code` — never by `instanceof` — and a `code` branch narrows `details` with no cast, because `RemoteFailure` is the code-discriminated union of `RemoteError` instances. Infrastructure that must recognize a failure carried across a module or realm copy of the class calls `remoteErrorOf(value)`, which reads a structural marker instead of the prototype chain.
+An owner throws at the failure point; no package writes an error-class family or an exit-mapping function. A caller discriminates by `code` — never by `instanceof` — and a `code` branch narrows `details` with no cast, because `RemoteFailure` is the code-discriminated union of `RemoteError` instances. Infrastructure that must recognize a failure carried across a module or realm copy of the class calls `remoteErrorOf(value)`, which reads a structural marker instead of the prototype chain. `RemoteError` extends `HarnessError` from [`@deepseek-ai/dsh-error`](../../util/error/README.md), so a tool body that throws one records `name: 'RemoteError'` and its Remote `code` on `tool/result`.
 
 A method whose payload needs domain constraints beyond the generated codecs calls `parseRemoteRequest(method, schema, value)`, which returns the schema's parsed output. The `schema` parameter is structural: any object with a `safeParse` method, such as a Zod schema, qualifies. An invalid payload throws `RemoteError` with code `gateway/bad-request`, the message `invalid payload for <method>`, and the schema's issues in `details.issues`.
 

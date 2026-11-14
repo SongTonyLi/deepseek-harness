@@ -206,13 +206,14 @@ function appendUserTurn(turns: CursorTurn[], text: string, asQuery: boolean): vo
 }
 
 function parseArguments(raw: string): Record<string, unknown> {
+  let parsed: unknown
   try {
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
+    parsed = JSON.parse(raw)
   } catch (_invalidToolHistoryJson) {
     // Historical tool input that is not JSON becomes an empty object on the wire.
+  }
+  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>
   }
   return {}
 }

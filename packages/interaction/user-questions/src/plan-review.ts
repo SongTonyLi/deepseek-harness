@@ -5,7 +5,7 @@
  * @module @deepseek-ai/dsh-user-questions/plan-review
  */
 
-import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
+import type { ToolCallId } from '@deepseek-ai/dsh-llm/types'
 import type { AskUserQuestionItem, AskUserQuestionOption } from './types.ts'
 
 /** The two verdict options of a plan-review question. */

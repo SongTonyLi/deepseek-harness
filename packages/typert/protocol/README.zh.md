@@ -81,7 +81,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 throw new RemoteError('goal/not-found', `goal "${id}" does not exist`, { goalId: id })
 ```
 
-拥有方在失败点直接抛出；没有任何包再写错误类家族或出口映射函数。调用方按 `code` 判别——绝不用 `instanceof`——且 `code` 分支无需 cast 即收窄 `details`，因为 `RemoteFailure` 就是 `RemoteError` 实例按码判别的 union。需要识别跨模块或跨 realm 类副本传来的失败时，基础设施调用 `remoteErrorOf(value)`，它读结构标记而不是原型链。
+拥有方在失败点直接抛出；没有任何包再写错误类家族或出口映射函数。调用方按 `code` 判别——绝不用 `instanceof`——且 `code` 分支无需 cast 即收窄 `details`，因为 `RemoteFailure` 就是 `RemoteError` 实例按码判别的 union。需要识别跨模块或跨 realm 类副本传来的失败时，基础设施调用 `remoteErrorOf(value)`，它读结构标记而不是原型链。`RemoteError` 继承 [`@deepseek-ai/dsh-error`](../../util/error/README.zh.md) 的 `HarnessError`，因此工具体抛出它时，`tool/result` 会记录 `name: 'RemoteError'` 及其 Remote `code`。
 
 方法若需要超出生成 codec 的领域约束，就调用 `parseRemoteRequest(method, schema, value)`，它返回 schema 解析后的输出。`schema` 参数是结构式的：任何带 `safeParse` 方法的对象都符合，例如 Zod schema。无效的请求载荷会抛出 code 为 `gateway/bad-request` 的 `RemoteError`，message 为 `invalid payload for <method>`，schema 的 issues 放在 `details.issues` 中。
 

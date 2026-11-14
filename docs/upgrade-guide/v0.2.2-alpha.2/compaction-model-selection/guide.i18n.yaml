@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-alpha.2/compaction-model-selection/guide.md
 /:
-  en: fe263db25c2272ca
-  zh: c4b3f8830a53a39f
+  en: df0c846dba67c118
+  zh: 25abe495605061c1
 /compaction-follows-model-selection:
   en: b7f465db63f4a02a
   zh: 02474b401b4bb4e1
 /compaction-follows-model-selection/change:
-  en: 11758bc579767693
-  zh: bf09c00246034066
+  en: 5839cf1d22788331
+  zh: c1e2cb4b447f4306
 /compaction-follows-model-selection/migration:
-  en: fa2ab6eeb7392c41
-  zh: 8ee0e8a3b63c4d21
+  en: 88d9612940e81264
+  zh: 66503bfdd951ca8e

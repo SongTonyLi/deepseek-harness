@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, ToolArgsError } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, type UserMessage } from '@deepseek-ai/dsh-session'
 import {
@@ -18,6 +18,7 @@ import {
   isSkillName,
   isUserInvocable,
   renderSkillContent,
+  SkillError,
   type SkillDefinition,
   type SkillInvocationSource,
   type SkillViewOptions,
@@ -161,7 +162,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         throw new Error(CLOSED_SKILL_CATALOG_THIS_TURN)
       }
       if (!isSkillName(args.name)) {
-        throw new Error(`invalid skill name "${args.name}"`)
+        throw new ToolArgsError([`invalid skill name "${args.name}"`])
       }
       // The agent is its own scope key, so the lookup resolves the layered
       // registry exactly as this agent's composition sees it.
@@ -303,12 +304,12 @@ function throwUnknownSkill(
   streak: UnknownSkillStreak | undefined,
 ): never {
   if (streak !== undefined) streak.consecutiveUnknown += 1
-  throw new Error(formatUnknownSkillError(name, catalogNames))
+  throw new SkillError(formatUnknownSkillError(name, catalogNames), 'SKILL_NOT_FOUND')
 }
 
 function assertModelInvocable(name: string, skill: Pick<SkillSummary, 'invocation'>): void {
   if (!isModelInvocable(skill)) {
-    throw new Error(`skill "${name}" is not available for model invocation`)
+    throw new SkillError(`skill "${name}" is not available for model invocation`, 'SKILL_NOT_MODEL_INVOCABLE')
   }
 }
 

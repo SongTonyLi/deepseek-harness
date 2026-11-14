@@ -55,25 +55,36 @@ function spawnBrowserLauncher(url: string): ChildProcess {
  * not after the browser window closes. Browser-launch failures reject with the
  * helper's first stderr line when available. The helper receives a scrubbed
  * environment so Harness credentials do not reach the browser process.
+ * Aborting `signal` kills the launcher. The promise then settles only after the launcher exits,
+ * rejecting with the abort reason.
  * @param url - absolute HTTP(S) URL to open.
+ * @param signal - cancels the handoff before or during launch.
  * @returns once the operating-system launcher has accepted the URL.
  */
-export async function openNativeUrl(url: string): Promise<void> {
+export async function openNativeUrl(url: string, signal?: AbortSignal): Promise<void> {
   const protocol = new URL(url).protocol
   if (protocol !== 'http:' && protocol !== 'https:') {
     throw new Error(`native URL opener supports only HTTP(S), not ${protocol}`)
   }
+  signal?.throwIfAborted()
   const launcher = spawnBrowserLauncher(url)
   let launcherStderr = ''
   launcher.stderr?.setEncoding('utf8')
   launcher.stderr?.on('data', (chunk: string) => { launcherStderr += chunk })
   await new Promise<void>((resolve, reject) => {
+    const abort = (): void => { launcher.kill() }
     function onError(error: Error): void {
       launcher.off('close', onClose)
+      signal?.removeEventListener('abort', abort)
       reject(error)
     }
     function onClose(code: number | null): void {
       launcher.off('error', onError)
+      signal?.removeEventListener('abort', abort)
+      if (signal?.aborted) {
+        reject(signal.reason instanceof Error ? signal.reason : new Error('Browser handoff cancelled', { cause: signal.reason }))
+        return
+      }
       if (code !== 0) {
         const firstLine = launcherStderr.trim().split(/\r?\n/u)[0]
         const reason = firstLine === undefined || firstLine === ''
@@ -87,5 +98,7 @@ export async function openNativeUrl(url: string): Promise<void> {
     }
     launcher.once('error', onError)
     launcher.once('close', onClose)
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
   })
 }
