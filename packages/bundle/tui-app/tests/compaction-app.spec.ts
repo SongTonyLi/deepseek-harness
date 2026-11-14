@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import CommandRuntime, { type CommandInvocation } from '@deepseek-ai/dsh-commands'
-import type { CommandId } from '@deepseek-ai/dsh-commands/brand'
+import type { CommandId } from '@deepseek-ai/dsh-commands/types'
 import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction'
 import { createAssistantMessage, createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionSeq, type Session, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'

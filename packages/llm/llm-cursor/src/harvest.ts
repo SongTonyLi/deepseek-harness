@@ -139,30 +139,48 @@ function vscdbPaths(host: HarvestHost): string[] {
   return paths
 }
 
+/** One open `state.vscdb` handle, as {@link HarvestHost.openSqlite} returns it. */
+type VscdbDatabase = ReturnType<NonNullable<HarvestHost['openSqlite']>>
+
+/**
+ * Read the access and refresh rows of one profile, closing the handle whether or not a read fails.
+ * @param db - open profile database.
+ * @returns both row values, each `undefined` when its key is absent.
+ * @throws when a query or the close fails; the caller treats the whole profile as unreadable.
+ */
+function readProfileRows(db: VscdbDatabase): {
+  access: { value?: string } | undefined
+  refresh: { value?: string } | undefined
+} {
+  try {
+    return {
+      access: db.get("SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'"),
+      refresh: db.get("SELECT value FROM ItemTable WHERE key = 'cursorAuth/refreshToken'"),
+    }
+  } finally {
+    db.close()
+  }
+}
+
 function readVscdbTokens(host: HarvestHost): InstalledCursorTokens {
   if (host.openSqlite === undefined) return {}
   const fallback: InstalledCursorTokens = {}
   for (const dbPath of vscdbPaths(host)) {
+    let rows: ReturnType<typeof readProfileRows> | undefined
     try {
-      const db = host.openSqlite(dbPath)
-      let accessRow: { value?: string } | undefined
-      let refreshRow: { value?: string } | undefined
-      try {
-        accessRow = db.get("SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'")
-        refreshRow = db.get("SELECT value FROM ItemTable WHERE key = 'cursorAuth/refreshToken'")
-      } finally {
-        db.close()
-      }
-      const accessToken = typeof accessRow?.value === 'string' ? accessRow.value.trim() : undefined
-      const refreshToken = typeof refreshRow?.value === 'string' ? refreshRow.value.trim() : undefined
-      if (accessToken !== undefined && accessToken.length > 0) {
-        return { accessToken, ...refreshToken === undefined ? {} : { refreshToken } }
-      }
-      if (fallback.refreshToken === undefined && refreshToken !== undefined && refreshToken.length > 0) {
-        fallback.refreshToken = refreshToken
-      }
+      rows = readProfileRows(host.openSqlite(dbPath))
     } catch (_unreadableVscdb) {
-      // Missing or unreadable profile: try the next path.
+      // Missing or unreadable profile: it yields no tokens and holds no open handle; try the next path.
+    }
+    if (rows === undefined) continue
+    const { access, refresh } = rows
+    const accessToken = typeof access?.value === 'string' ? access.value.trim() : undefined
+    const refreshToken = typeof refresh?.value === 'string' ? refresh.value.trim() : undefined
+    if (accessToken !== undefined && accessToken.length > 0) {
+      return { accessToken, ...refreshToken === undefined ? {} : { refreshToken } }
+    }
+    if (fallback.refreshToken === undefined && refreshToken !== undefined && refreshToken.length > 0) {
+      fallback.refreshToken = refreshToken
     }
   }
   return fallback
@@ -243,12 +261,13 @@ export async function harvestInstalledCursorLogin(options: {
   for (const source of await options.readSources()) {
     if (isFreshAccess(source.accessToken, now)) return source.accessToken
     if (source.refreshToken !== undefined && source.refreshToken.length > 0) {
+      let granted: CursorOauthGrant | undefined
       try {
-        const granted = await options.refresh(source.refreshToken)
-        return granted.access
+        granted = await options.refresh(source.refreshToken)
       } catch (_staleInstalledRefresh) {
         // A stale IDE refresh does not fail the DSH request; try the next source.
       }
+      if (granted !== undefined) return granted.access
     }
   }
   return undefined

@@ -46,6 +46,10 @@ describe('dsh badge assembled snapshot', () => {
             },
           ],
           "error": {
+            "info": {
+              "code": "SKILL_NOT_FOUND",
+              "name": "SkillError",
+            },
             "message": "skill "dsh-badge" is unknown or no longer available
       No close catalog name matches.
       The skill catalog is empty.

@@ -42,6 +42,8 @@ Mount the driver beside the goal service and the goal tools; the driver itself t
   name: '@deepseek-ai/dsh-goal-round-driver'
 ```
 
+The driver also requires `dsh-session-projection`, which `dsh-agent` already needs; the shipped base bundle mounts both.
+
 `maxGoalRounds` belongs to the goal definition, while the model-facing blocked threshold belongs to `dsh-tool-goal`; duplicating either value in the driver could produce divergent policy.
 
 ### What each round does
@@ -72,6 +74,7 @@ This section explains how the driver schedules rounds without races; the observa
 - **Race fences.** The `agent/pre-step` listener verifies the complete claimed record against the current goal both before and after downstream listeners, so a stale, cancelled, or competing prompt is rejected before its step enters. A claimed batch without a goal-round source may rearm from a human continue-intent, and that path always calls `next()`. Human work that arrives before a reservation makes automatic work yield until the agent is idle again.
 - **Durability checkpoint.** `goal/changed` creates a durability obligation: before queuing work the driver awaits `ctx.sessions.flush()` and rechecks the goal revision and competing input after the await. A flush failure arriving through `agent/error` disarms continuation before another round can start.
 - **Fail-closed teardown.** Teardown closes admission, disarms every live goal, cancels active work with the `parent` cause, and awaits the driver plus agent quiescence while its event fence remains installed.
+- **Workspace-mutation projection.** `goalRoundWorkspaceMutation` (see [`src/projection.ts`](src/projection.ts)) is a host-only session projection. Its fold keeps the mutating calls of the open turn that await a result, sets the open turn's flag when one of them succeeds, and `turn/end` commits the flag as the last closed turn's value. The continue notice reads the committed value after its resume decision, so a resumed Session recovers the signal from the projection's checkpoint and suffix replay rather than by scanning history.
 
 ### Source map
 
@@ -79,6 +82,7 @@ This section explains how the driver schedules rounds without races; the observa
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: driver state machine, race fences, teardown |
 | [`src/continue.ts`](src/continue.ts) | Human continue-intent detection, resume, and notice |
+| [`src/projection.ts`](src/projection.ts) | The `goalRoundWorkspaceMutation` projection recording whether the last closed turn mutated the workspace |
 | [`src/prompt.ts`](src/prompt.ts) | The retained `<goal_round>` continuation prompt |
 
 ### The round prompt
@@ -97,6 +101,7 @@ The driver consumes the goal state and defers policy to the goal tools; read the
 - [Goal service](../goal/README.md) — the goal state and lifecycle this driver continues.
 - [Goal tools](../tool-goal/README.md) — the model-facing tools and their execution-time authority checks.
 - [Paused-goal resume](../../../.agents/notes/implemented/bug-fix/2026-11-12-agent-resume-paused-goal.md) — direct-human and continue-intent resume of a paused goal.
+- [Session projections](../../session/session-projection/README.md) — the projection unit contract behind the workspace-mutation signal.
 
 -----
 
@@ -143,6 +148,7 @@ These limits define when the driver is a poor fit or needs special care. They ar
 - **Accepted-queue unload race** — Cordis plugin unload is asynchronous. A goal prompt already accepted by the agent inbox can begin and consume its round before unload starts; teardown then cancels the request, disarms the goal, and awaits quiescence. No later round starts.
 - **Round cap, not resource budget** — token, currency, time, and provider quota policies remain independent. Their session events are not attributed to the goal message or mapped into goal blocker codes.
 - **No abnormal auto-retry** — transient provider and persistence failures require a later human-authorized resume rather than an implicit retry policy.
+- **Result pairing is by callId within the open turn** — a `tool/result` counts only when a mutating `tool/call` with the same callId was recorded earlier in that turn and has not yet been answered. The loop records each call before its result, so this pairs a result with the call that produced it; a reused callId pairs with the call still open, and a result that precedes its call does not count.
 
 <a id="dev-note"></a>
 ### Dev Note

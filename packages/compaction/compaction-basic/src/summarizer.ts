@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { contentHasImage, BlockAssembler, LlmError } from '@deepseek-ai/dsh-llm'
 import { deepFreeze } from '@deepseek-ai/dsh-util-values'
 import type {
-  ContentBlock, FinishReason, GenerateOptions, LlmCallConfig, Message, RequestMessage, TokenUsage, ToolSchema,
+  ContentBlock, FinishReason, GenerateOptions, Message, RequestMessage, TokenUsage, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 
@@ -17,6 +17,9 @@ interface SummaryConfig {
   readonly summarizationModel: string
   readonly maxTokens: number
 }
+
+/** Exact provider/model pair that receives one summarization request. */
+export type SummaryRoute = Pick<GenerateOptions, 'provider' | 'model'>
 
 /** Tags wrapping the structured summary inside the landed checkpoint node. */
 const SUMMARY_OPEN_TAG = '<compacted-summary>'
@@ -93,8 +96,8 @@ const CHECKPOINT_PREAMBLE =
  * compaction instruction is then the only novel input.
  */
 export interface SummarizationInput {
-  /** Selected route for switch or manual compaction; explicit summarization configuration takes precedence. */
-  readonly target?: Pick<LlmCallConfig, 'provider' | 'model'>
+  /** Destination for a model switch or manual compaction; the `summarize` hook decides when it applies. */
+  readonly target?: SummaryRoute
   /** The conversation's tool schemas, reused for prefix-cache alignment; absent when the request carried none. */
   readonly tools?: readonly ToolSchema[]
   /** The derived system head, when present, followed by the shadowed region in surface order. */
@@ -131,7 +134,8 @@ export type SummaryResult = {
  * @param ctx - context providing the LLM service.
  * @param config - resolved backend configuration.
  * @param input - replayed conversation prefix (system, tools, and leading messages) to condense.
- * @param agent - supplies routed-model history, fallback model, and session id.
+ * @param agent - supplies tool history and session id.
+ * @param conversation - route used when `config` names no summary target; `undefined` when the conversation has none.
  * @param signal - optional cancellation forwarded to the adapter.
  * @returns safe text-only summary blocks and the exact call envelope and output.
  */
@@ -140,19 +144,13 @@ export async function summarizeWithLlm(
   config: SummaryConfig,
   input: SummarizationInput,
   agent: Agent,
+  conversation: SummaryRoute | undefined,
   signal?: AbortSignal,
 ): Promise<SummaryResult> {
-  const latest = agent.session.requestHeader()?.config
   const configured = config.summarizationProvider.length === 0
     ? undefined
     : { provider: config.summarizationProvider, model: config.summarizationModel }
-  const agentTarget = agent.options.provider !== undefined
-    && agent.options.provider.length > 0
-    && agent.options.model !== undefined
-    && agent.options.model.length > 0
-    ? { provider: agent.options.provider, model: agent.options.model }
-    : undefined
-  const target = configured ?? input.target ?? latest ?? agentTarget
+  const target = configured ?? conversation
   if (target === undefined) {
     throw new Error(
       'no provider/model available for summarization: set both BasicCompactionConfig summarization fields, route one request, or set both AgentOptions fields',

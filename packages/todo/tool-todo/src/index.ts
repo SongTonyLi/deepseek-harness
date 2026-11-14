@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, ToolArgsError, ToolContextUnavailableError } from '@deepseek-ai/dsh-tools'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from './types.ts'
 // Type-only: resolves the required ctx.sessionProjections service declaration.
@@ -83,20 +83,20 @@ function toTodoList(raw: { content: string; status: string }[], allowParallel: b
   const todos: TodoItem[] = []
   const seen = new Set<string>()
   let active = 0
-  for (const item of raw) {
+  for (const [index, item] of raw.entries()) {
     const content = item.content.trim()
     if (content.length === 0) {
-      throw new Error('invalid todo: `content` must be a non-empty string')
+      throw new ToolArgsError([`todos[${index}].content must be a non-empty string`])
     }
     if (seen.has(content)) {
-      throw new Error(`invalid todos: duplicate content ${JSON.stringify(content)}`)
+      throw new ToolArgsError([`todos[${index}].content duplicates ${JSON.stringify(content)}`])
     }
     seen.add(content)
     if (item.status === 'in_progress') active++
     todos.push({ content, status: item.status as TodoItem['status'] })
   }
   if (!allowParallel && active > 1) {
-    throw new Error(`invalid todos: at most one task may be in_progress (got ${active})`)
+    throw new ToolArgsError([`at most one task may be in_progress (got ${active})`])
   }
   return todos
 }
@@ -221,7 +221,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (!exec.agent) {
         // The list is per-agent-session state; a non-agent caller (no owning
         // session) has nowhere to write it. Reject rather than silently no-op.
-        throw new Error('todo_write requires an owning agent session')
+        throw new ToolContextUnavailableError('todo_write requires an owning agent session')
       }
       const previous = latestWrittenTodos(exec.agent.session)
       const unchanged = previous !== undefined && sameTodoList(previous, todos)

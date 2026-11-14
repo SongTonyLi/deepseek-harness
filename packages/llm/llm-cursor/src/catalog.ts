@@ -14,6 +14,7 @@ import type { ConnectHttp2 } from './connect.ts'
 import {
   GetUsableModelsRequestSchema,
   GetUsableModelsResponseSchema,
+  type GetUsableModelsResponse,
 } from './native/agent_pb.ts'
 import { CURSOR_USABLE_MODELS_PATH, PROVIDER } from './protocol.ts'
 
@@ -83,6 +84,29 @@ function parseCached(raw: string): CursorCatalogModel[] | undefined {
 }
 
 /**
+ * Decode a GetUsableModels body, accepting the Connect unary frame or the bare protobuf message.
+ * @param body - HTTP/2 response body.
+ * @returns the decoded response, or `undefined` when neither form parses.
+ */
+function decodeUsableModels(body: Buffer): GetUsableModelsResponse | undefined {
+  const payload = decodeUnaryBody(body)
+  let decoded: GetUsableModelsResponse | undefined
+  try {
+    decoded = fromBinary(GetUsableModelsResponseSchema, payload)
+  } catch (_unframedBody) {
+    // Not a Connect-framed message: the body itself may be the bare protobuf message.
+  }
+  if (decoded === undefined) {
+    try {
+      decoded = fromBinary(GetUsableModelsResponseSchema, body)
+    } catch (_undecodableBody) {
+      // Neither form parses: the caller keeps the previous list.
+    }
+  }
+  return decoded
+}
+
+/**
  * Live catalog with fallback, disk cache, and optional GetUsableModels refresh.
  */
 export class CursorCatalog {
@@ -127,48 +151,52 @@ export class CursorCatalog {
   async hydrate(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
+    let raw: string | undefined
     try {
-      const cached = parseCached(await readFile(this.path, 'utf8'))
-      if (cached !== undefined) this.models = cached
-    } catch (_missingCache) {
-      // Missing cache keeps the bundled fallback.
+      raw = await readFile(this.path, 'utf8')
+    } catch (_unreadableCache) {
+      // Missing or unreadable cache keeps the bundled fallback.
     }
+    const cached = raw === undefined ? undefined : parseCached(raw)
+    if (cached !== undefined) this.models = cached
   }
 
   /**
-   * Replace the catalog from GetUsableModels. Failures keep the previous list.
+   * Replace the catalog from GetUsableModels. A failed fetch or undecodable body keeps the previous
+   * list; a failed cache write does not revert the replacement.
    * @param accessToken - bearer token.
    * @param signal - caller abort.
    * @returns once the attempt has settled.
    */
   async refresh(accessToken: string, signal?: AbortSignal): Promise<void> {
+    const requestBytes = toBinary(GetUsableModelsRequestSchema, create(GetUsableModelsRequestSchema, {}))
+    let response: { status: number; body: Buffer } | undefined
     try {
-      const requestBytes = toBinary(GetUsableModelsRequestSchema, create(GetUsableModelsRequestSchema, {}))
-      const response = await callUnary({
+      response = await callUnary({
         accessToken,
         rpcPath: CURSOR_USABLE_MODELS_PATH,
         ...signal === undefined ? {} : { signal },
       }, requestBytes, this.connect)
-      if (response.status < 200 || response.status >= 300 || response.body.length === 0) return
-      const payload = decodeUnaryBody(response.body)
-      let decoded
-      try {
-        decoded = fromBinary(GetUsableModelsResponseSchema, payload)
-      } catch (_unframedBody) {
-        decoded = fromBinary(GetUsableModelsResponseSchema, response.body)
-      }
-      const models = decoded.models
-        .map(entry => ({
-          id: entry.modelId,
-          name: entry.displayName || entry.displayModelId || entry.modelId,
-        }))
-        .filter(entry => entry.id.length > 0)
-      if (models.length === 0) return
-      this.models = models
-      this.loaded = true
+    } catch (_catalogFetchFailed) {
+      // Best-effort: a failed fetch keeps the previous list and must not fail login or the request.
+    }
+    if (response === undefined) return
+    if (response.status < 200 || response.status >= 300 || response.body.length === 0) return
+    const decoded = decodeUsableModels(response.body)
+    if (decoded === undefined) return
+    const models = decoded.models
+      .map(entry => ({
+        id: entry.modelId,
+        name: entry.displayName || entry.displayModelId || entry.modelId,
+      }))
+      .filter(entry => entry.id.length > 0)
+    if (models.length === 0) return
+    this.models = models
+    this.loaded = true
+    try {
       await writeFileAtomic(this.path, `${JSON.stringify({ models })}\n`, { mode: 0o600, dirMode: 0o700 })
-    } catch (_catalogRefreshFailed) {
-      // Best-effort: a failed fetch must not fail login or the request.
+    } catch (_cacheWriteFailed) {
+      // The fetched list already serves this process; only the disk cache is stale.
     }
   }
 }

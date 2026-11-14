@@ -1,10 +1,11 @@
 import { appendFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { loadReplayScript, resolveScriptedEntry, type ReplayEntry } from '@deepseek-ai/dsh-llm-replay'
 import {
-  ToolCallId,
+  type ToolCallId,
   LlmAdapter,
-  ReasoningEffortId,
+  type ReasoningEffortId,
   type GenerateOptions,
   type LlmResolvedModelInfo,
   type RequestMessage,
@@ -12,8 +13,8 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-tools'
 
-const HIGH = ReasoningEffortId('high')
-const OFF = ReasoningEffortId('off')
+const HIGH = brandString<ReasoningEffortId>('high')
+const OFF = brandString<ReasoningEffortId>('off')
 const SHELL_TOOL = process.platform === 'win32' ? 'pwsh' : 'bash'
 const SHELL_COMMAND = process.platform === 'win32'
   ? "Write-Output 'CLI_TOOL_ROUND_TRIP'"
@@ -204,8 +205,8 @@ class CliMockAdapter extends LlmAdapter {
       yield { type: 'reasoning-delta', index: 0, text: reasoning }
       yield { type: 'block-end', index: 0, block: { type: 'reasoning', text: reasoning } }
       yield { type: 'block-start', index: 1, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 1, id: ToolCallId('cli-smoke-call'), name: tool, argumentsDelta: args }
-      yield { type: 'block-end', index: 1, block: { type: 'tool-call', id: ToolCallId('cli-smoke-call'), name: tool, arguments: args } }
+      yield { type: 'tool-call-delta', index: 1, id: brandString<ToolCallId>('cli-smoke-call'), name: tool, argumentsDelta: args }
+      yield { type: 'block-end', index: 1, block: { type: 'tool-call', id: brandString<ToolCallId>('cli-smoke-call'), name: tool, arguments: args } }
       yield { type: 'usage', usage: { inputTokens: 11, outputTokens: 3, cacheReadTokens: 2 } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return

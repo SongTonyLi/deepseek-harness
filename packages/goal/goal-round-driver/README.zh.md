@@ -42,6 +42,8 @@ kind: "package-reference"
   name: '@deepseek-ai/dsh-goal-round-driver'
 ```
 
+驱动器还需要 `dsh-session-projection`；`dsh-agent` 已依赖它，随附的 base bundle 同时挂载两者。
+
 `maxGoalRounds` 属于 goal 定义，面向模型的阻塞阈值属于 `dsh-tool-goal`；在驱动器中重复任一数值都可能产生分歧策略。
 
 ### 每轮做什么
@@ -72,6 +74,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 - **竞态防护。** `agent/pre-step` 监听器会在下游监听器前后验证完整的已领取记录与当前 goal，因此陈旧、已取消或竞争中的提示词会在其步骤进入前被拒绝。不含 goal-round 来源的已领取批次可按人类 continue-intent 重新启用续行，且该路径必须调用 `next()`。在预留前到达的人类工作会让自动工作让行，直到 agent 重新进入 idle。
 - **持久性检查点。** `goal/changed` 会产生持久性义务：排队工作前，驱动器会等待 `ctx.sessions.flush()`，并在等待后重新检查 goal revision 与竞争输入。通过 `agent/error` 到达的 flush 失败会停用续行，避免另一 Round 启动。
 - **fail-closed teardown。** Teardown 会关闭准入、停用所有活跃 goal 的续行、以 `parent` 原因取消进行中的工作，并在事件防护仍生效的情况下等待驱动器和 agent 完全停稳。
+- **工作区改动投影。** `goalRoundWorkspaceMutation`（见 [`src/projection.ts`](src/projection.ts)）是仅宿主可见的会话投影。其折叠过程保留开放轮次中尚待结果的改动类工具调用，其中一次成功时设置开放轮次的标记，`turn/end` 再把该标记提交为上一已关闭轮次的值。continue 通知在做出 resume 决定之后读取已提交的值，因此恢复后的会话从投影检查点与后缀重放中取回该信号，而不是扫描历史。
 
 ### 源码地图
 
@@ -79,6 +82,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：驱动器状态机、竞态防护、teardown |
 | [`src/continue.ts`](src/continue.ts) | 人类 continue-intent 检测、resume 与通知 |
+| [`src/projection.ts`](src/projection.ts) | `goalRoundWorkspaceMutation` 投影，记录上一已关闭轮次是否改动了工作区 |
 | [`src/prompt.ts`](src/prompt.ts) | 保留的 `<goal_round>` 续行提示词 |
 
 ### Round 提示词
@@ -97,6 +101,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 - [goal 服务](../goal/README.zh.md)——本驱动器继续推进的 goal 状态与生命周期。
 - [goal 工具](../tool-goal/README.zh.md)——面向模型的工具及其执行时权限检查。
 - [暂停 goal 的 resume](../../../.agents/notes/implemented/bug-fix/2026-11-12-agent-resume-paused-goal.zh.md)——人类直接轮次与 continue-intent 对 paused goal 的 resume。
+- [会话投影](../../session/session-projection/README.zh.md)——工作区改动信号所依赖的投影单元契约。
 
 -----
 
@@ -143,6 +148,7 @@ Round 只在整个 agent 进入 idle 时启动；加载了子 agent 服务时，
 - **已接受队列的卸载竞态**——Cordis 插件卸载是异步的。已经被 agent inbox 接受的 goal 提示词可以在卸载开始前启动并消耗其 Round；teardown 随后会取消请求、停用 goal 的续行并等待完全停稳。不会再启动后续 Round。
 - **只有 Round 上限，不是资源预算**——token、货币、时间与提供方配额策略保持独立。对应的会话事件不会归属于 goal 消息，也不会映射为 goal 阻塞代码。
 - **异常情况不自动重试**——暂时性的提供方与持久化失败需要之后由用户授权 resume，而不会采用隐式重试策略。
+- **结果按开放轮次内的 callId 配对**——只有当同一轮次中此前已记录、且尚未收到结果的改动类 `tool/call` 带有相同 callId 时，`tool/result` 才会计入。循环总是先记录调用、再记录结果，因此结果与产生它的调用配对；被复用的 callId 与仍处于开放状态的调用配对；先于调用出现的结果不计入。
 
 <a id="dev-note"></a>
 ### 开发备注

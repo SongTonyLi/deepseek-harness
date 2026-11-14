@@ -5,7 +5,6 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -24,8 +23,6 @@ const CONTINUE_PHRASES = new Set([
   'continue the work',
   'continue with the work',
 ])
-
-const MUTATING_TOOLS = new Set(['edit', 'write', 'bash'])
 
 const NO_MUTATION_CLAUSE = 'the previous turn made no file changes; do not repeat its plan'
 const MUTATION_CLAUSE = 'the previous turn changed the workspace; continue from the current files'
@@ -63,32 +60,6 @@ function isContinueIntentMessage(message: UserMessage): boolean {
   if (isContinuePhrase(text)) return true
   const newline = text.indexOf('\n')
   return newline >= 0 && isContinuePhrase(text.slice(0, newline))
-}
-
-/** Events from the last `turn/start` through its matching `turn/end`. */
-function lastClosedTurn(events: readonly SessionEvent[]): readonly SessionEvent[] {
-  const closed = events.findLast((event): event is SessionEvent & { type: 'turn/end' } =>
-    event.type === 'turn/end')
-  if (closed === undefined) return []
-  const start = events.findLastIndex(event =>
-    event.type === 'turn/start' && event.data.turn === closed.data.turn)
-  return events.slice(Math.max(start, 0), events.lastIndexOf(closed) + 1)
-}
-
-/** Whether that closed turn recorded a successful edit, write, or bash result. */
-function lastClosedTurnMutatedWorkspace(session: Session): boolean {
-  const window = lastClosedTurn(session.snapshotEvents())
-  const names = new Map<string, string>()
-  for (const event of window) {
-    if (event.type === 'tool/call') names.set(event.data.callId, event.data.name)
-  }
-  for (const event of window) {
-    if (event.type !== 'tool/result') continue
-    if (event.data.message.isError === true) continue
-    const name = names.get(event.data.message.source.callId) ?? ''
-    if (MUTATING_TOOLS.has(name)) return true
-  }
-  return false
 }
 
 /** One-line resume outcome for the notice body. */
@@ -157,19 +128,21 @@ function authorizeContinue(ctx: Context, agent: Agent, goal: GoalView): Continue
  * @param ctx - host context with the goal service.
  * @param agent - live agent whose claimed batch is entering a step.
  * @param messages - claimed pre-step batch.
+ * @param lastClosedTurnMutatedWorkspace - reads whether the last closed turn of this agent's Session recorded a successful mutating result.
  * @returns a plugin notice when continue-intent applies to a current goal, otherwise `undefined`.
  */
 export function applyContinueIntent(
   ctx: Context,
   agent: Agent,
   messages: readonly UserMessage[],
+  lastClosedTurnMutatedWorkspace: () => boolean,
 ): UserMessage | undefined {
   if (!messages.some(isContinueIntentMessage)) return undefined
   const goal = ctx.goals.get(agent)
   if (goal === undefined) return undefined
   const status = authorizeContinue(ctx, agent, goal)
   if (status === undefined) return undefined
-  return renderContinueNotice(goal, status, lastClosedTurnMutatedWorkspace(agent.session))
+  return renderContinueNotice(goal, status, lastClosedTurnMutatedWorkspace())
 }
 
 /**

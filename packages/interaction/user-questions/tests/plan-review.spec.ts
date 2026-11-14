@@ -1,7 +1,7 @@
 /** The plan-review narrowing shared by every surface that draws an approve/decline card. */
 
 import { describe, expect, it } from 'vitest'
-import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
+import type { ToolCallId } from '@deepseek-ai/dsh-llm/types'
 import type { AskUserQuestionItem } from '../src/types.ts'
 import { planReviewOptions } from '../src/plan-review.ts'
 

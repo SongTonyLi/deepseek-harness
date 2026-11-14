@@ -13,12 +13,13 @@ import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-ll
 import type { Session, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
 import { applyContinueIntent, attachContinueNotice } from './continue.ts'
 import type {} from '@deepseek-ai/dsh-subagent'
+import { goalRoundWorkspaceMutationDefinition } from './projection.ts'
 import { renderGoalRoundPrompt } from './prompt.ts'
 
 export { renderGoalRoundPrompt } from './prompt.ts'
 
 export const name = 'goal-round-driver'
-export const inject = ['agents', 'goals', 'sessions']
+export const inject = ['agents', 'goals', 'sessions', 'sessionProjections']
 
 /** Identity reserved before a goal continuation enters the agent inbox. */
 interface RoundIdentity {
@@ -74,8 +75,15 @@ function renderThrown(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
 }
 
-/** Install automatic same-session continuation and its race fences. */
-export function apply(ctx: Context): void {
+/**
+ * Install automatic same-session continuation and its race fences. The listeners install
+ * synchronously, so no step runs without the fence; only the continue-intent path awaits
+ * the workspace-mutation projection registration.
+ * @param ctx - plugin context carrying the agents, goals, sessions, and projection services.
+ * @returns when the projection registration settles; rejects when the registration fails.
+ */
+export async function apply(ctx: Context): Promise<void> {
+  const workspaceMutation = ctx.sessionProjections.register(goalRoundWorkspaceMutationDefinition)
   const states = new Map<Agent, DriverState>()
   // Releases drivers still joining subagents when the plugin unloads.
   const unloading = Promise.withResolvers<void>()
@@ -391,7 +399,13 @@ export function apply(ctx: Context): void {
       if (submitted === undefined) {
         let notice: UserMessage | undefined
         try {
-          notice = applyContinueIntent(ctx, agent, messages)
+          const projection = await workspaceMutation
+          notice = applyContinueIntent(
+            ctx,
+            agent,
+            messages,
+            () => projection.stateOf(agent.session).lastClosedTurnMutated,
+          )
         } catch (error: unknown) {
           ctx.logger.warn(`goal-round-driver: continue-intent handling failed for agent "${agent.id}": ${renderThrown(error)}`)
         }
@@ -490,4 +504,6 @@ export function apply(ctx: Context): void {
       states.clear()
     }
   }, 'goal-round-driver lifecycle')
+  // Activation fails when the projection cannot register.
+  await workspaceMutation
 }

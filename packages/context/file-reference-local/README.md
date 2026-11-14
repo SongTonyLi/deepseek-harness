@@ -106,7 +106,7 @@ When the addressed agent has an effective `read` tool, the provider contributes 
 ##### File-reference instruction
 
 ```markdown
-Tokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root; absolute paths identify files or directories on the host. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.
+Tokens prefixed with @ are paths the user explicitly referenced: relative to the workspace root, ../ from that root, ~/ from the home directory, or absolute. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.
 ```
 
 #### Token effect
