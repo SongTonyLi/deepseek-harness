@@ -88,7 +88,6 @@ import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import { AlternateScreen } from './alt-screen.ts'
 import type { ScreenPage, ScreenPageAction } from './screen-page.ts'
-import { TeamIntro } from './team-intro.ts'
 import { TeamPlay, beatsFromEvents, type TeamRoomSource } from './team-play.ts'
 import { TodosPage, type TodosPageSource } from './todos-page.ts'
 import { taskRevisions, workTree, type WorkTree } from './work-tree.ts'
@@ -1045,8 +1044,6 @@ export class TuiApp {
   private panelLift: MotionLevel = 0
   /** The reader on the alternate screen right now, while one is open. */
   private reader: { pane: ReaderPane } | undefined
-  /** The empty-session card shown while Agent Teams is mounted. */
-  private teamIntro: TeamIntro | undefined
   /** The full-screen page on the alternate screen, while one is open. */
   private screenPage: ScreenPage | undefined
   /**
@@ -1501,7 +1498,6 @@ export class TuiApp {
     // key stream. The new transcript says so once it is drawn.
     const reading = this.dropReader()
     this.dropScreenPage()
-    this.teamIntro = undefined
     this.teamLog = [...next.history]
     this.focusEditor()
     this.highlighted = undefined
@@ -1566,7 +1562,6 @@ export class TuiApp {
     this.refreshJobs()
     // Seeding the panel is a listing of its own, not an event handler's read.
     void this.reconcileSubagents()
-    this.mountTeamIntro()
     this.refreshTeamPanel()
   }
 
@@ -1945,31 +1940,6 @@ export class TuiApp {
       // The page asks only while it moves, which reduced motion already rules out.
       spinner: slot => spinnerFrame(TOOL_SPINNERS.todo, this.deps.now(), this.deps.spinnerMs, slot % SPINNER_CYCLE),
     }
-  }
-
-  /**
-   * Draw the start card on an empty root session while Agent Teams is mounted.
-   * A session that already has a user message, and a subagent view, draw none.
-   * The card plays its entrance on the fade tick from this instant; a
-   * terminal that runs no motion draws it settled.
-   */
-  private mountTeamIntro(): void {
-    if (this.parents.length > 0 || readTeamSnapshot(this.deps.ctx, this.agent, this.teamEntries).kind !== 'team') return
-    if (this.teamLog.some(event => event.type === 'user/message' || event.type === 'tool/call' || event.type === 'assistant/message')) return
-    this.teamIntro = new TeamIntro(this.deps.palette, this.fading
-      ? {
-        startedAt: this.deps.now(),
-        spinnerMs: this.deps.spinnerMs,
-        fadeStepMs: this.deps.fadeStepMs,
-        fadeSteps: this.deps.fadeSteps,
-        now: () => this.deps.now(),
-        style: () => this.fadeStyle,
-      }
-      : undefined)
-    this.chat.addChild(this.teamIntro)
-    this.motions.add(this.teamIntro)
-    this.updateFadeTicker()
-    this.tui.requestRender()
   }
 
   /**
@@ -6073,7 +6043,6 @@ export class TuiApp {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
       if (child instanceof ContextUsageBlock) child.setRepaintFloor(repaintFloor(start, viewportTop))
-      if (child instanceof TeamIntro && child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       if (fades && (child instanceof AssistantBlock || child instanceof ToolBlock)) {
         if (child.setRepaintFloor(repaintFloor(start, viewportTop))) changed = true
       }
@@ -6230,15 +6199,7 @@ export class TuiApp {
     const loggedType: string = event.type
     if (isTeamPanelEvent(loggedType)) {
       this.refreshTeamSurfaces()
-      if (loggedType === 'team/mode') {
-        if (this.teamIntro !== undefined) {
-          this.teamIntro.settle()
-          this.chat.removeChild(this.teamIntro)
-          this.teamIntro = undefined
-        }
-        this.mountTeamIntro()
-        this.markSubagentsStale()
-      }
+      if (loggedType === 'team/mode') this.markSubagentsStale()
     }
     const compaction = this.compactions.observe(event, this.turn)
     if (compaction !== undefined) this.showCompaction(compaction)

@@ -217,7 +217,7 @@ follow-ups 面板持有键盘时：
 | `/btw <question>` | 打开一个带有本会话上下文的临时旁路 agent 并向它提问；它可以使用只读工具，本会话继续工作且看不到它，`Ctrl+P` 结束它。在旁路 agent 中，`/btw <question>` 向它再提一个问题 |
 | `/quit`、`/exit` | 保存会话并退出 |
 
-启用 Team 模式的空根会话画出一张三行起始卡片。TUI profile 默认开启 Team 模式。左侧图形是 lead `◆` 分叉到三名 teammate `●`，右侧依次是 `Agent Teams`、`The lead splits the work; each teammate takes one role.` 和 `/team-play live room · /team roster and tasks · /team off`；不足 40 列时只保留这三行文字。卡片每次挂载时（新的或恢复的空会话，或在空会话中执行 `/team on`），都会播放一段以 spinner 周期计时的入场：lead 变亮，主干伸出，每条分支依次到达，其槽位以各自的相位播放委派动画、对应文字行渐显，随后各槽位相隔一步落定为 `●`；默认 `spinnerMs` 下共 0.8 秒。减弱动效、禁用调色板、`NO_COLOR` 和 `TERM=dumb` 直接画出落定的卡片；首行位于渲染器重绘窗口之上的卡片也是如此。Team 模式开启时，标题行以 `· ✦ team · /team-play · /help` 结尾。
+TUI profile 默认开启 Team 模式。Team 模式开启时，标题行以 `· ✦ team · /team-play · /help` 结尾。
 
 TUI 在 `subagent` 与 `subagent_fork` 上均公开可选的 `provider`、`model` 和 `reasoning_effort` 字段，并通过 `list_subagent_models` 发现 Session 策略允许的路由。省略这些字段会继承 lead 的模型。显式 fork 路由记录在继承历史之后；更换路由可能使父级缓存前缀无法复用。
 
