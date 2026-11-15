@@ -1,9 +1,8 @@
-/** The terminal Team start card and live room use standard child discovery. */
+/** The terminal Team room uses standard child discovery. */
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
 import { KEY, bench, type Bench } from './bench.ts'
 import { listed, provideTeam } from './team-bench.ts'
-import { TEAM_INTRO_SENTENCE, TEAM_INTRO_TITLE, TEAM_OFF_COMMAND } from '../src/team-intro.ts'
 
 const ENTER_ALT = '\u001b[?1049h'
 const LEAVE_ALT = '\u001b[?1049l'
@@ -19,14 +18,15 @@ function alt(test: Bench): string {
   return test.terminal.written.slice(entered).replace(/\u001b\[[0-9;?]*[A-Za-z]/gu, '')
 }
 
-describe('Team start card and live room', () => {
-  it('explains the enabled feature and gives a session mode command', async () => {
+describe('Team room', () => {
+  it('draws no start card, and the header names the room while Team mode is on', async () => {
     const bare = await bench()
-    expect(await bare.screen()).not.toContain(TEAM_INTRO_SENTENCE)
+    expect(await bare.screen()).not.toContain('The lead splits the work')
     const test = await bench({ before(ctx) { provideTeam(ctx) } })
     const screen = await test.screen()
-    for (const line of [TEAM_INTRO_TITLE, TEAM_INTRO_SENTENCE, TEAM_OFF_COMMAND]) expect(screen).toContain(line)
-    expect(screen).toContain('◆ ─┬─ ●')
+    expect(screen).toContain('· ✦ team · /team-play · /help')
+    expect(screen).not.toContain('The lead splits the work')
+    expect(screen).not.toContain('◆ ─┬─')
   })
 
   it('rejects opening a room when the service is absent or Team mode is off', async () => {
