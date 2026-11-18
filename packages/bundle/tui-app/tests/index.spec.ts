@@ -105,10 +105,11 @@ async function bench(
         inbox.splice(event.data.target, event.data.start, event.data.removedCount ?? 0, [...event.data.inserted])
       }
     }
-    const resolvedOptions = {
-      provider: agentOptions?.provider ?? 'test-provider',
-      model: agentOptions?.model ?? 'test-model',
-      ...agentOptions?.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
+    // A child created without a route has none, so its model falls back to the launch default.
+    const resolvedOptions = agentOptions === undefined ? {} : {
+      provider: agentOptions.provider ?? 'test-provider',
+      model: agentOptions.model ?? 'test-model',
+      ...agentOptions.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
     }
     const agent: Agent = {
       id: session.id,
@@ -858,6 +859,7 @@ describe('tui runner', () => {
     apply(ctx, config())
     await settled()
     await ctx.agents.create({ sessionId: 'session-kid' as SessionId, meta: { cwd: '/kid' } })
+    expect(ctx.agents.get('session-kid' as SessionId)?.model.current()).toBeUndefined()
     typeLine(observed.terminal, '/subagents')
     await settled()
     observed.terminal.type(KEY.enter)
@@ -868,6 +870,29 @@ describe('tui runner', () => {
     expect(side?.meta).toEqual({ cwd: '/kid', parentSession: 'session-kid', isSeeded: false, origin: 'subagent' })
     expect(side?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
     expect(side === undefined ? undefined : ctx.agents.get(side.sessionId)).toBeDefined()
+  })
+
+  it('starts a /btw side agent in the launch directory when the viewed session records no directory', async () => {
+    const { ctx, observed } = await bench({ observed: [] })
+    ctx.provide('subagents', {
+      listDescendants: () => Promise.resolve([{ kind: 'child', id: 'session-kid', activity: 'running', mode: 'one-shot', hasChildren: false, parentId: 'root', depth: 1 }]),
+    } as never)
+    apply(ctx, config())
+    await settled()
+    await ctx.agents.create({
+      sessionId: 'session-kid' as SessionId,
+      meta: {},
+      agentOptions: { provider: 'kid-provider', model: 'kid-model' },
+    })
+    typeLine(observed.terminal, '/subagents')
+    await settled()
+    observed.terminal.type(KEY.enter)
+    await settled()
+    typeLine(observed.terminal, '/btw why')
+    await settled()
+    const side = observed.created.at(-1)
+    expect(side?.meta).toEqual({ cwd: process.cwd(), parentSession: 'session-kid', isSeeded: false, origin: 'subagent' })
+    expect(side?.agentOptions).toEqual({ provider: 'kid-provider', model: 'kid-model' })
   })
 
   it('refuses to fork without a query engine or a completed turn', async () => {
