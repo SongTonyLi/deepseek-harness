@@ -61,6 +61,29 @@ function namesOf(entries: readonly AssembledContext[]): string[] {
   return entries.map(entry => entry.name)
 }
 
+/**
+ * Make the narration fiber of each matching announced agent reject its disposal,
+ * after the real disposal has removed the entry.
+ * @param ctx - context whose announced agents are matched.
+ * @param reason - the value the disposal rejects with; a JavaScript caller may reject with any value.
+ * @param matches - selects the agents whose narration disposal fails; every agent by default.
+ */
+function failNarrationDisposal(ctx: Context, reason: unknown, matches: (agent: Agent) => boolean = () => true): void {
+  ctx.on('agent/created', ({ agent }) => {
+    if (!matches(agent)) return
+    const inject = agent.ctx.inject.bind(agent.ctx)
+    vi.spyOn(agent.ctx, 'inject').mockImplementation(((...args: Parameters<typeof inject>) => {
+      const fiber = inject(...args)
+      const dispose = fiber.dispose.bind(fiber)
+      return {
+        dispose: () => dispose().then(() => {
+          throw reason
+        }),
+      }
+    }) as never)
+  }, { prepend: true })
+}
+
 describe('subagent narration', () => {
   it('gives an in-process child the entry directly after its delegation statement, at a distinct order', async () => {
     const { ctx, loop } = await mount()
@@ -133,5 +156,87 @@ describe('subagent narration', () => {
 
     expect(namesOf(await runtimeContextOf(ctx, child))).toContain(NARRATION_CONTEXT)
     expect(namesOf(await runtimeContextOf(ctx, parent))).not.toContain(NARRATION_CONTEXT)
+  })
+
+  it('registers one narration entry when an agent is announced again', async () => {
+    const { ctx, loop } = await mount()
+    const registrations = vi.spyOn(SystemPrompt.prototype, 'context')
+    await ctx.plugin(installSubagentNarration)
+    const parent = await loop.create(brandString<SessionId>('parent'))
+    const child = await spawnChild(ctx, parent, 'child')
+
+    await ctx.serial('agent/created', { agent: child, source: 'resume' })
+
+    expect(namesOf(await runtimeContextOf(ctx, child)).filter(name => name === NARRATION_CONTEXT)).toHaveLength(1)
+    expect(registrations.mock.calls.filter(([entry]) => entry.name === NARRATION_CONTEXT)).toHaveLength(1)
+  })
+
+  it('ignores a disposal for an agent without a narration fiber, including a repeated disposal', async () => {
+    const { ctx, loop } = await mount()
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    await ctx.plugin(installSubagentNarration)
+    const parent = await loop.create(brandString<SessionId>('parent'))
+    const child = await spawnChild(ctx, parent, 'child')
+
+    ctx.emit('agent/disposed', { agent: parent })
+    ctx.emit('agent/disposed', { agent: child })
+    await vi.waitFor(async () => {
+      expect(namesOf(await runtimeContextOf(ctx, child))).not.toContain(NARRATION_CONTEXT)
+    })
+    ctx.emit('agent/disposed', { agent: child })
+
+    expect(namesOf(await runtimeContextOf(ctx, parent))).not.toContain(NARRATION_CONTEXT)
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('subagent narration'))
+  })
+
+  it.each([
+    ['an error', new Error('disposal failed'), 'disposal failed'],
+    ['a non-error value', 'cleanup refused', 'cleanup refused'],
+  ])('logs a warning when a narration disposal rejects with %s, and still removes the entry', async (_kind, reason, message) => {
+    const { ctx, loop } = await mount()
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    failNarrationDisposal(ctx, reason)
+    await ctx.plugin(installSubagentNarration)
+    const parent = await loop.create(brandString<SessionId>('parent'))
+    const child = await spawnChild(ctx, parent, 'child')
+
+    ctx.emit('agent/disposed', { agent: child })
+
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(`tui-app: subagent narration cleanup failed: ${message}`)
+    })
+    await vi.waitFor(async () => {
+      expect(namesOf(await runtimeContextOf(ctx, child))).not.toContain(NARRATION_CONTEXT)
+    })
+  })
+
+  it('disposes every pending narration when the installation is disposed, even when one disposal rejects', async () => {
+    const { ctx, loop } = await mount()
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    failNarrationDisposal(ctx, new Error('second cleanup failed'), agent => agent.id === brandString<SessionId>('second'))
+    const installed = await ctx.plugin(installSubagentNarration)
+    const parent = await loop.create(brandString<SessionId>('parent'))
+    const first = await spawnChild(ctx, parent, 'first')
+    const second = await spawnChild(ctx, parent, 'second')
+    expect(namesOf(await runtimeContextOf(ctx, first))).toContain(NARRATION_CONTEXT)
+    expect(namesOf(await runtimeContextOf(ctx, second))).toContain(NARRATION_CONTEXT)
+
+    await installed.dispose()
+
+    expect(namesOf(await runtimeContextOf(ctx, first))).not.toContain(NARRATION_CONTEXT)
+    expect(namesOf(await runtimeContextOf(ctx, second))).not.toContain(NARRATION_CONTEXT)
+    expect(warn).toHaveBeenCalledWith('tui-app: subagent narration cleanup failed: second cleanup failed')
+  })
+
+  it('registers the narration only for the child, never for the top-level agent', async () => {
+    const { ctx, loop } = await mount()
+    const registrations = vi.spyOn(SystemPrompt.prototype, 'context')
+    await ctx.plugin(installSubagentNarration)
+    const parent = await loop.create(brandString<SessionId>('parent'))
+    const narrationRegistrations = (): number => registrations.mock.calls.filter(([entry]) => entry.name === NARRATION_CONTEXT).length
+
+    expect(narrationRegistrations()).toBe(0)
+    await spawnChild(ctx, parent, 'child')
+    expect(narrationRegistrations()).toBe(1)
   })
 })
