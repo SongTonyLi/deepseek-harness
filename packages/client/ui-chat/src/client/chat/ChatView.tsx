@@ -18,6 +18,7 @@ import { ContextInjectionRow } from './ContextInjectionRow.tsx'
 import { contextForm, contextProducer } from '../contract/event-projection.ts'
 import { markdownLabels } from '../markdown-labels.ts'
 import { TurnNavigator } from './TurnNavigator.tsx'
+import { ChatAside } from './ChatAside.tsx'
 import { mergeTurnRailItems } from './turn-rail-items.ts'
 import { useTextInteraction } from './text-interaction.ts'
 import { useChatScroll } from './use-chat-scroll.ts'
@@ -245,6 +246,7 @@ export function ChatView({
           t={t}
         />
       )}
+      <ChatAside renderSlot={renderSlot} />
       <div className={css.root} data-chat-following-tail={scroll.followingTail ? '' : undefined}>
         <div ref={scroll.listRef} className={css.scroll}>
           <div ref={scroll.columnRef} className={css.column} data-chat-flow=""
