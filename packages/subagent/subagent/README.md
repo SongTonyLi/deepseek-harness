@@ -208,7 +208,7 @@ The guidance remains in the child's retained task history. It does not change th
 
 #### What the model sees
 
-Every in-process child's runtime-context snapshot carries the `subagent:delegation` statement below, after the sandbox-policy and approval-policy sentences. Only the terminal profile adds a progress sentence to its children; see [subagent progress narration](../../bundle/tui-app/README.md#subagent-progress-narration).
+Every in-process child's runtime-context snapshot carries the `subagent:delegation` statement below, after the sandbox-policy and approval-policy sentences. Only the terminal profile adds a progress sentence to its children; see [subagent progress narration](../../bundle/tui-app/README.md) in the terminal README.
 
 ##### The delegation-scope statement
 

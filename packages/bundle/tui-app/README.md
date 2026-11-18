@@ -502,8 +502,6 @@ Each side agent request carries the inherited history plus the notice and the si
 
 The side agent uses the working session's last logged provider and model, but its tool catalog is the read-only subset, so a provider that caches the tool declarations ahead of the history recomputes the inherited history on the first side request; later side requests append to that prefix. The working agent's request prefix is unchanged.
 
-<a id="subagent-progress-narration"></a>
-
 ### Subagent progress narration
 
 #### What the model sees

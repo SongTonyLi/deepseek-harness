@@ -208,7 +208,7 @@ Your final answer is delivered automatically if your parent is still online. Inc
 
 #### 模型看到什么
 
-每个进程内子 agent 的运行时上下文快照都携带下方的 `subagent:delegation` 声明，位于沙箱策略与审批策略语句之后。只有终端配置会为其子 agent 额外添加进度叙述语句；参见[子 agent 进度叙述](../../bundle/tui-app/README.zh.md#subagent-progress-narration)。
+每个进程内子 agent 的运行时上下文快照都携带下方的 `subagent:delegation` 声明，位于沙箱策略与审批策略语句之后。只有终端配置会为其子 agent 额外添加进度叙述语句；参见[子 agent 进度叙述](../../bundle/tui-app/README.zh.md)（终端 README）。
 
 ##### 委派范围声明
 

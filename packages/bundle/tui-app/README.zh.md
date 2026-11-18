@@ -502,8 +502,6 @@ The user moved this call to the background. It keeps running as job <id>. You ar
 
 旁路 agent 使用工作会话最后记录的 provider 与模型，但它的工具目录是只读子集，因此把工具声明缓存在历史之前的 provider 会在第一次旁路请求时重新计算继承的历史；之后的旁路请求追加在该前缀之后。工作 agent 的请求前缀不变。
 
-<a id="subagent-progress-narration"></a>
-
 ### 子 agent 进度叙述
 
 #### 模型看到什么
