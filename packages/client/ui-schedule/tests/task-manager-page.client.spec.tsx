@@ -1770,11 +1770,13 @@ describe('Task manager details', () => {
   })
 
   it('states the next run in the device zone even when the rule stores another one', () => {
-    const stored: Entry = { ...daily, rrule: 'DTSTART;TZID=America/New_York:20261001T230000\nRRULE:FREQ=DAILY' }
+    // The rule's zone must differ from the runtime zone for the assertion below to mean anything.
+    const ruleTimeZone = new Date(daily.scheduledAt).getTimezoneOffset() === -540 ? 'America/New_York' : 'Asia/Tokyo'
+    const stored: Entry = { ...daily, rrule: `DTSTART;TZID=${ruleTimeZone}:20261001T230000\nRRULE:FREQ=DAILY` }
     mount({ records: [stored] })
     const locale = en['time.locale']
     const ruleZone = new Intl.DateTimeFormat(locale, {
-      timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+      timeZone: ruleTimeZone, month: 'short', day: 'numeric', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(Date.parse(stored.scheduledAt))
     const device = absoluteNextRun(stored.scheduledAt, en)
@@ -1787,9 +1789,9 @@ describe('Task manager details', () => {
     expect(nextRunTime(detail)?.textContent).toBe(device)
     // The rule keeps stating its own zone where the zone belongs.
     const frequency = frequencyText(stored, en)
-    expect(frequency).toContain(zoneLabel('America/New_York', makeTranslate(en)))
+    expect(frequency).toContain(zoneLabel(ruleTimeZone, makeTranslate(en)))
     expect(within(detail).getByRole('button', { name: new RegExp('^' + en['timing.zone'] + ' ') }).textContent)
-      .toContain(zoneLabel('America/New_York', makeTranslate(en)))
+      .toContain(zoneLabel(ruleTimeZone, makeTranslate(en)))
   })
 
   /**

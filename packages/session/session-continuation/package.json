@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-session-continuation",
   "description": "Failed-turn continuation eligibility and admission",
-  "version": "0.2.2-rc.4",
+  "version": "0.2.2-rc.5",
   "publishConfig": { "access": "public" },
   "repository": { "type": "git", "url": "git+https://github.com/deepseek-ai/deepseek-harness.git", "directory": "packages/session/session-continuation" },
   "type": "module",

@@ -1518,7 +1518,6 @@ interface ToolOutputMap {
       inProgress: number;
       completed: number;
     };
-    unchanged: boolean;
   };
   update_goal: {
     goal: null;

@@ -28,11 +28,11 @@ Edit this package when the installation's bundle selection or the plugin manager
 
 ### Profile templates
 
-`PROFILE_TEMPLATES` maps each shipped profile name (`web`, `headless`, `acp`, `sdk`, `sdk-minimal`) to its ordered bundle layer list. App-boot initializes a missing shipped profile from its template, and `dsh --profile <name> --from-default-profile <template>` copies one into a custom profile. `DEFAULT_PROFILE_BUNDLES` is the list `dsh plugin` uses for a profile name with no template. `INSTALLATION_OWNED_PROFILE_TUPLES` names bundle lists that an earlier release wrote into a shipped profile; app-boot replaces an exact match with the current template.
+`PROFILE_TEMPLATES` maps each shipped profile name (`web`, `headless`, `acp`, `sdk`, `sdk-minimal`, `tui`) to its ordered bundle layer list. App-boot initializes a missing shipped profile from its template, and `dsh --profile <name> --from-default-profile <template>` copies one into a custom profile. `DEFAULT_PROFILE_BUNDLES` is the list `dsh plugin` uses for a profile name with no template. `INSTALLATION_OWNED_PROFILE_TUPLES` names bundle lists that an earlier release wrote into a shipped profile; app-boot replaces an exact match with the current template.
 
 ### Optional and retired bundles
 
-`OPTIONAL_BUNDLES` names the bundles the installation ships for a person to switch on. Each must be a runtime dependency of the `dsh` app that declares `dsh.bundle.patch`, an icon, and `./locale/*.json` display metadata, and no template may select it; [`verify-default-product-isolation`](../../../scripts/verify-default-product-isolation.ts) checks these rules. The [plugin manager](../../boot/plugin-manager/README.md#use-this-package) reports these bundles as `optional`. `RETIRED_BUNDLES` names bundles the installation no longer carries; app-boot removes them from a profile's bundle list when it loads the profile.
+`OPTIONAL_BUNDLES` names the bundles the installation ships for a person to switch on. Each must be a runtime dependency of the `dsh` app that declares `dsh.bundle.patch`, an icon, and `./locale/*.json` display metadata, and only the shipped TUI template may select one (currently Auto review), while every other shipped template leaves it off; [`verify-default-product-isolation`](../../../scripts/verify-default-product-isolation.ts) checks these rules. The [plugin manager](../../boot/plugin-manager/README.md#use-this-package) reports these bundles as `optional`. `RETIRED_BUNDLES` names bundles the installation no longer carries; app-boot removes them from a profile's bundle list when it loads the profile.
 
 <a id="plugin-manager-lists"></a>
 ### Plugin manager lists

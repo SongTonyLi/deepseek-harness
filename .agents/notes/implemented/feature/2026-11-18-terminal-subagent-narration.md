@@ -34,7 +34,7 @@ The entry sorts at `SUBAGENT_DELEGATION` + 0.5 (120.5), directly after the `suba
 
 ## Consequences
 
-- Web, headless, and SDK children do not narrate. The [upgrade guide](../../../../docs/upgrade-guide/v0.2.2-rc.4/child-progress-narration/guide.md) tells hosts that read a child's latest sentence as its progress how to migrate.
+- Web, headless, and SDK children do not narrate. The [upgrade guide](../../../../docs/upgrade-guide/v0.2.2-rc.5/child-progress-narration/guide.md) tells hosts that read a child's latest sentence as its progress how to migrate.
 - The terminal board keeps one row per running child. A child that skips the sentence draws its label alone.
 - Each child started by the terminal profile carries about 30 more tokens in its first runtime-context snapshot, written once and prefix-stable; the parent's requests do not change.
 - A child's result is still its last non-empty assistant message, so a narration sentence becomes the result only when it is the final text.

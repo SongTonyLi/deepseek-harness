@@ -111,11 +111,6 @@ const GENERIC_SKIPS: readonly GenericSkip[] = [
   { file: 'apps/cli/tests/optional-bundle-transitions.e2e.ts', upstream: ['cordis'] },
   { file: 'apps/web/tests/agent-preset-selection.e2e.ts', upstream: ['cordis'] },
   { file: 'apps/web/tests/developer-tools-settings.e2e.ts', upstream: ['cordis'] },
-  // These tests pass the `cordis` agent-preset id, and the subagent-interrupt guide names the `cordis` preset and composition.
-  { file: 'apps/web/tests/creator-persona.e2e.ts', upstream: ['cordis'] },
-  { file: 'packages/experimental/cua/tests/agent-scopes.spec.ts', upstream: ['cordis'] },
-  { file: 'docs/upgrade-guide/v0.2.2-rc.1/subagent-interrupt-default/guide.md', upstream: ['cordis'] },
-  { file: 'docs/upgrade-guide/v0.2.2-rc.1/subagent-interrupt-default/guide.zh.md', upstream: ['cordis'] },
   // The `schemastery` path segment under `@deepseek-ai` is the scoped package directory, not the upstream package name.
   { file: 'apps/web/tests/client-config-sync.e2e.ts', upstream: ['schemastery'] },
   { file: 'docs/tool-catalog.md', upstream: ['cordis'] },

@@ -7,7 +7,7 @@
 
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
@@ -69,7 +69,7 @@ function text(result: { content: { type: string; text?: string }[] }): string {
 
 async function mount(confining: boolean, mode: 'workspace-write' | 'danger-full-access' = 'workspace-write', approval = false): Promise<void> {
   ctx = new Context()
-  ctx.provide('workingDirectory', { ensure: () => Promise.resolve(current) })
+  ctx.provide('workingDirectory', { get: () => current, ensure: () => Promise.resolve(current) })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(SessionProjectionRegistry)
@@ -133,8 +133,7 @@ describe('sandbox read fence', () => {
     const { agent } = readingAgent()
     current = join(ws, 'sub')
     expect(text(await call('read', { file_path: 'b.txt' }, agent))).toContain('in the subdirectory')
-    current = outside
-    const refused = await call('read', { file_path: 'secret.txt' }, agent)
+    const refused = await call('read', { file_path: relative(current, join(outside, 'secret.txt')) }, agent)
     expect(refused.error).toMatchObject({ info: { code: 'FS_SANDBOX_DENIED' } })
     expect(text(refused)).toContain('the sandbox hides this path from this session')
   })
@@ -201,8 +200,9 @@ describe('sandbox read fence', () => {
 
     it('asks about the path resolved against the session current directory', async () => {
       const asked = await mountAnswering('rejected')
-      current = outside
-      const result = await call('read', { file_path: 'secret.txt' }, readingAgent().agent)
+      await mkdir(join(ws, 'sub'))
+      current = join(ws, 'sub')
+      const result = await call('read', { file_path: relative(current, join(outside, 'secret.txt')) }, readingAgent().agent)
       expect(text(result)).toContain('the user declined access')
       expect(asked.map(req => req.reason)).toEqual([`read outside the sandbox read scope: ${join(outside, 'secret.txt')}`])
     })
