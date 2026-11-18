@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Partially superseded: the every-child scope is replaced by [terminal-only narration](2026-11-18-terminal-subagent-narration.md); the wording and the board rationale remain.
+
 English | [中文](2026-10-23-subagent-progress-narration.zh.md)
 
 ## Problem
@@ -26,12 +28,12 @@ The sentence names no interface. It asks for task-relevant narration, and any ho
 
 ## Verification
 
-- `packages/subagent/subagent/tests/activation-policy.spec.ts` asserts that the child's runtime context carries the sentence and its system prompt does not.
-- Every recorded child session and expected child log under `snapshots/` and `apps/cli/tests/profiles/headless/tests/expected/` that carries the delegation statement carries the sentence, and replays through the shipped profiles in `test:snapshot` and `test:expected`. Retained historical generations keep the earlier text.
+- `packages/subagent/subagent/tests/activation-policy.spec.ts` asserts that the child's runtime context carries the delegation statement and its system prompt does not; the narration sentence is covered by the [TUI listener tests](2026-11-18-terminal-subagent-narration.md) instead.
+- Recorded child sessions under `snapshots/` and expected child logs under `apps/cli/tests/profiles/headless/tests/expected/` carry no narration sentence, so their replays through `test:snapshot` and `test:expected` do not include it.
 - No controlled probe measured how often the models follow the sentence, unlike the [end-turn guidance](../bug-fix/2026-10-21-subagent-end-turn-guidance.md). A child that skips it draws its label alone.
 
 ## Consequences
 
-- Each child's first runtime-context snapshot carries about 30 more tokens, written once and prefix-stable; the parent's requests do not change.
-- Children write one sentence of text before tool calls. It appears in the child's transcript and session view, and it can become the child's result only if it is the last non-empty assistant message.
+- Each child started by the terminal profile carries about 30 more tokens in its first runtime-context snapshot, written once and prefix-stable; the parent's requests do not change.
+- Terminal children write one sentence of text before tool calls. It appears in the child's transcript and session view, and it can become the child's result only if it is the last non-empty assistant message.
 - A model that ignores the sentence leaves its terminal row at the label and spinner.

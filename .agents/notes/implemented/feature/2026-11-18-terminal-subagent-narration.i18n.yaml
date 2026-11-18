@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-18-terminal-subagent-narration.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-11-18-terminal-subagent-narration.md
+/agent-note-subagent-progress-narration-in-the-terminal-profile:
+  en: bad97a6fb4bc353a
+  zh: 4a0e87097b1c5d81
+/agent-note-subagent-progress-narration-in-the-terminal-profile/problem:
+  en: 1bbf0b4bd08d55c4
+  zh: bd7aff35aa56dbfb
+/agent-note-subagent-progress-narration-in-the-terminal-profile/decision:
+  en: 62e236d3be4870b9
+  zh: a55805612f5bb1a8
+/agent-note-subagent-progress-narration-in-the-terminal-profile/alternatives-considered:
+  en: c014d6240b46675e
+  zh: 3bede6a7636e5195
+/agent-note-subagent-progress-narration-in-the-terminal-profile/verification:
+  en: c7d8fbb2bc9c80ff
+  zh: a89bde6e31583546
+/agent-note-subagent-progress-narration-in-the-terminal-profile/consequences:
+  en: 48f0e922b0c82964
+  zh: a4b0c0ffe6000971

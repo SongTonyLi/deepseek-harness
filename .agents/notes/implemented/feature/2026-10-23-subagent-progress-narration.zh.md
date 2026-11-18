@@ -2,6 +2,8 @@
 
 Status: implemented
 
+部分取代：每个子级的范围已由[仅终端叙述](2026-11-18-terminal-subagent-narration.zh.md)取代；措辞与看板理由保持不变。
+
 [English](2026-10-23-subagent-progress-narration.md) | 中文
 
 ## 问题
@@ -26,12 +28,12 @@ Status: implemented
 
 ## 验证
 
-- `packages/subagent/subagent/tests/activation-policy.spec.ts` 断言子级的运行时上下文带有这句，而它的 system prompt 不带。
-- `snapshots/` 与 `apps/cli/tests/profiles/headless/tests/expected/` 下每份带有委派声明的已录制子 Session 与预期子日志都带有这句，并在 `test:snapshot` 与 `test:expected` 中通过随附 profile 回放。保留的历史代际保持原文。
+- `packages/subagent/subagent/tests/activation-policy.spec.ts` 断言子级的运行时上下文带有委派声明，而它的 system prompt 不带；叙述句子改由[TUI 监听器测试](2026-11-18-terminal-subagent-narration.zh.md)覆盖。
+- `snapshots/` 下已录制的子 Session 与 `apps/cli/tests/profiles/headless/tests/expected/` 下的预期子日志都不含叙述句子，因此它们在 `test:snapshot` 与 `test:expected` 中的回放不包含该句。
 - 与[结束本轮指导](../bug-fix/2026-10-21-subagent-end-turn-guidance.zh.md)不同，没有受控探针测量模型遵循这句的频率。跳过它的子级只画出标签。
 
 ## 影响
 
-- 每个子级的第一份运行时上下文快照多约 30 个 token，只写一次且前缀稳定；父级的请求不变。
-- 子级会在工具调用前写一句文字。它出现在子级的对话记录与会话视图里，只有当它是最后一条非空 assistant 消息时才可能成为子级的结果。
+- 由终端 profile 启动的每个子级，其第一份运行时上下文快照多约 30 个 token，只写一次且前缀稳定；父级的请求不变。
+- 终端子级会在工具调用前写一句文字。它出现在子级的对话记录与会话视图里，只有当它是最后一条非空 assistant 消息时才可能成为子级的结果。
 - 忽略这句的模型，其终端行停留在标签与旋转指示。
