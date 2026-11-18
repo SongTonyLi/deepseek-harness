@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CredentialRecord } from '@deepseek-ai/dsh-credentials'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { LlmError } from '@deepseek-ai/dsh-llm'
+import { INVALID_CREDENTIAL_CODE, LlmError } from '@deepseek-ai/dsh-llm'
 import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { cursorGrantRecord, grantExpiryFromAccess, parseCursorGrant } from '../src/grant.ts'
 import { CURSOR_RECORD_KEY, resolveCursorAccessToken } from '../src/token.ts'
@@ -51,6 +51,17 @@ function credentialsStub(record: CredentialRecord | undefined, resolveValue?: st
     readRecord: async () => record,
     modifyRecord: async (_key, mutate) => mutate(record),
   }
+}
+
+/** The rejection a token resolution must produce; any other outcome fails the test. */
+async function rejectionOf(attempt: Promise<string>): Promise<LlmError> {
+  try {
+    await attempt
+  } catch (error) {
+    if (error instanceof LlmError) return error
+    throw error
+  }
+  throw new Error('expected the token resolution to reject')
 }
 
 describe('resolveCursorAccessToken', () => {
@@ -240,6 +251,89 @@ describe('resolveCursorAccessToken', () => {
       readHarvestSources: () => Promise.resolve([]),
       now: () => 10_000,
     })).rejects.toMatchObject({ code: 'INVALID_CREDENTIAL' })
+  })
+
+  it('returns a valid credential-store key with surrounding whitespace trimmed', async () => {
+    const token = await resolveCursorAccessToken({
+      apiKeyEnv: credentialRef(DEFAULT_API_KEY_ENV),
+      credentials: credentialsStub(undefined, '  cursor-token\n'),
+      environment: environment({}),
+      reuseInstalledCursorLogin: false,
+      refresh: () => Promise.reject(new Error('no')),
+      readHarvestSources: () => Promise.resolve([]),
+    })
+    expect(token).toBe('cursor-token')
+  })
+
+  it('falls through to the stored grant when the credential reference is absent', async () => {
+    const token = await resolveCursorAccessToken({
+      apiKeyEnv: credentialRef(DEFAULT_API_KEY_ENV),
+      credentials: credentialsStub({
+        kind: 'grant',
+        payload: { type: 'oauth', access: 'stored', refresh: 'r', expires: Date.now() + 60_000 },
+      }),
+      environment: environment({}),
+      reuseInstalledCursorLogin: false,
+      refresh: () => Promise.reject(new Error('no')),
+      readHarvestSources: () => Promise.resolve([]),
+    })
+    expect(token).toBe('stored')
+  })
+
+  it('rejects a blank credential-store key as an invalid credential', async () => {
+    const failure = await rejectionOf(resolveCursorAccessToken({
+      apiKeyEnv: credentialRef(DEFAULT_API_KEY_ENV),
+      credentials: credentialsStub(undefined, '   '),
+      environment: environment({}),
+      reuseInstalledCursorLogin: false,
+      refresh: () => Promise.reject(new Error('no')),
+      readHarvestSources: () => Promise.resolve([]),
+    }))
+    expect(failure.code).toBe(INVALID_CREDENTIAL_CODE)
+    expect(failure.message).toContain('is blank')
+  })
+
+  it('rejects a malformed credential-store key without echoing it', async () => {
+    const failure = await rejectionOf(resolveCursorAccessToken({
+      apiKeyEnv: credentialRef(DEFAULT_API_KEY_ENV),
+      credentials: credentialsStub(undefined, 'Bearer cursor-secret'),
+      environment: environment({}),
+      reuseInstalledCursorLogin: false,
+      refresh: () => Promise.reject(new Error('no')),
+      readHarvestSources: () => Promise.resolve([]),
+    }))
+    expect(failure.code).toBe(INVALID_CREDENTIAL_CODE)
+    expect(failure.message).toContain('CURSOR_ACCESS_TOKEN')
+    expect(failure.message).not.toContain('cursor-secret')
+  })
+
+  it('rejects a malformed launch-environment key as an invalid credential', async () => {
+    const failure = await rejectionOf(resolveCursorAccessToken({
+      apiKeyEnv: credentialRef(DEFAULT_API_KEY_ENV),
+      environment: environment({ CURSOR_ACCESS_TOKEN: 'Bearer cursor-secret' }),
+      reuseInstalledCursorLogin: false,
+      refresh: () => Promise.reject(new Error('no')),
+      readHarvestSources: () => Promise.resolve([]),
+    }))
+    expect(failure.code).toBe(INVALID_CREDENTIAL_CODE)
+    expect(failure.message).toContain('CURSOR_ACCESS_TOKEN')
+  })
+
+  it('rejects a malformed stored grant access token as an invalid credential', async () => {
+    const failure = await rejectionOf(resolveCursorAccessToken({
+      apiKeyEnv: credentialRef(DEFAULT_API_KEY_ENV),
+      credentials: credentialsStub({
+        kind: 'grant',
+        payload: { type: 'oauth', access: 'Bearer cursor-secret', refresh: 'r', expires: Date.now() + 60_000 },
+      }),
+      environment: environment({}),
+      reuseInstalledCursorLogin: false,
+      refresh: () => Promise.reject(new Error('no')),
+      readHarvestSources: () => Promise.resolve([]),
+    }))
+    expect(failure.code).toBe(INVALID_CREDENTIAL_CODE)
+    expect(failure.message).toContain(CURSOR_RECORD_KEY)
+    expect(failure.message).not.toContain('cursor-secret')
   })
 })
 

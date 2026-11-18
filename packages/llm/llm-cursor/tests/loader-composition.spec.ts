@@ -93,7 +93,7 @@ async function loadComposition(extraConfig: readonly string[] = [], entryId = 'l
   await writeFile(join(dir, 'cordis.yml'), '[]\n')
   const profile: ProfileContext = {
     name: 'test', startedBundles: ['test-cursor-bundle'], dir, patchPath: join(dir, 'cordis.patch.yml'),
-    installAnchor: join(root, 'package.json'), cwd: root, home: root, overlays: [], telemetryDisabledEnv: undefined,
+    installAnchor: join(root, 'package.json'), cwd: root, home: root, overlayPaths: [], telemetryDisabledEnv: undefined,
   }
   ctx.provide('profileContext', profile)
   await ctx.plugin(ConfigEditor)
