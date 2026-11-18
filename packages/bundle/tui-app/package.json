@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-tui-app",
   "description": "The dsh terminal-surface bundle: an interactive terminal UI over dsh-base with streaming replies, tool cards, approvals, questions, and slash commands in one process",
-  "version": "0.2.2-rc.3",
+  "version": "0.2.2-rc.4",
   "publishConfig": {
     "access": "public"
   },
@@ -63,6 +63,7 @@
     "@deepseek-ai/dsh-session-turn-outline": "workspace:*",
     "@deepseek-ai/dsh-tool-ask-user": "workspace:*",
     "@deepseek-ai/dsh-tool-present": "workspace:*",
+    "@deepseek-ai/dsh-tool-subagent": "workspace:*",
     "@deepseek-ai/dsh-user-questions": "workspace:*",
     "@deepseek-ai/dsh-util-credential-mask": "workspace:*",
     "@deepseek-ai/dsh-util-values": "workspace:*",
@@ -140,7 +141,6 @@
     "@deepseek-ai/dsh-system-prompt": "workspace:*",
     "@deepseek-ai/dsh-token-meter": "workspace:*",
     "@deepseek-ai/dsh-tool-jobs": "workspace:*",
-    "@deepseek-ai/dsh-tool-subagent": "workspace:*",
     "@deepseek-ai/dsh-tool-todo": "workspace:*",
     "@deepseek-ai/dsh-tool-workflow": "workspace:*",
     "@deepseek-ai/dsh-tools": "workspace:*",

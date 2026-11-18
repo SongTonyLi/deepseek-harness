@@ -14,7 +14,7 @@ import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentOptions, AgentSetup, ModelSelection } from '@deepseek-ai/dsh-agent'
-import { BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwSeed, restrictBtwAgent } from './btw.ts'
+import { BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwSeed, restrictBtwAgent, sharedPrefixEnd } from './btw.ts'
 import { installSubagentNarration } from './subagent-narration.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
@@ -287,10 +287,14 @@ function coreServices(ctx: Context): CoreServices | undefined {
  * @param ctx - plugin context carrying the session query engine.
  * @param id - the session to fork.
  * @param turn - the completed turn to cut after; the last one when omitted.
- * @returns the seed events.
+ * @returns the seed events, and the parent prefix the child shares with the parent.
  * @throws when no query engine is composed or the session has no such completed turn.
  */
-async function forkSeed(ctx: Context, id: SessionId, turn: number | undefined): Promise<SessionEvent[]> {
+async function forkSeed(
+  ctx: Context,
+  id: SessionId,
+  turn: number | undefined,
+): Promise<{ seed: SessionEvent[]; sharedEndSeq: SessionLogOffset }> {
   const query = ctx.get('sessionQuery')
   if (query === undefined) throw new Error('forking a session needs a composed session query engine')
   using source = await query.observeSession(id)
@@ -302,7 +306,10 @@ async function forkSeed(ctx: Context, id: SessionId, turn: number | undefined): 
   }
   let cut = boundary.seq + 1
   while (cut < source.events.length && source.events[cut]?.type !== 'turn/start') cut += 1
-  return source.events.slice(0, cut)
+  return {
+    seed: source.events.slice(0, cut),
+    sharedEndSeq: sharedPrefixEnd(SessionLogOffset(cut), source.persistedEventCount),
+  }
 }
 
 /**
@@ -347,14 +354,15 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
   }
   const create = (
     seed: SessionEvent[] | undefined,
-    parent: SessionId | undefined,
+    fork: { parent: SessionId; sharedEndSeq: SessionLogOffset } | undefined,
     initialSelection?: ModelSelection,
   ): Promise<BoundSession> => bind((setup) => {
     const model = initialSelection ?? defaultModel.currentSelection()
     return agents.create({
       sessionId: brandString<SessionId>(`session-${randomUUID()}`),
       ...seed === undefined ? {} : { seed, inheritedEventCount: SessionLogOffset(seed.length) },
-      meta: { cwd, ...parent === undefined ? {} : { parentSession: parent, isSeeded: true } },
+      ...fork === undefined ? {} : { parentSource: { sessionId: fork.parent, endSeq: fork.sharedEndSeq } },
+      meta: { cwd, ...fork === undefined ? {} : { parentSession: fork.parent, isSeeded: true } },
       agentOptions: agentOptionsFor(model),
       setup,
     })
@@ -376,28 +384,38 @@ function sessionHost(ctx: Context, core: CoreServices, cwd: string, btw: Pick<Co
   return {
     create: selection => create(undefined, undefined, selection),
     resume,
-    fork: async (id, turn) => create(await forkSeed(ctx, id, turn), id),
+    fork: async (id, turn) => {
+      const { seed, sharedEndSeq } = await forkSeed(ctx, id, turn)
+      return create(seed, { parent: id, sharedEndSeq })
+    },
     aside: async (parent) => {
       const session = parent.agent.session
       const query = ctx.get('sessionQuery')
       if (query === undefined) throw new Error('btw needs a composed session query engine')
       let events: readonly SessionEvent[]
+      let persistedEventCount: SessionLogOffset | undefined
       {
         using observed = await query.observeSession(session.id, { projectionMode: 'none' })
         events = observed.events
+        persistedEventCount = observed.persistedEventCount
       }
-      const { seed, inheritedEventCount } = btwSeed(events)
+      const { seed, inheritedEventCount, sharedEndSeq } = btwSeed(events, persistedEventCount)
       const model = parent.agent.model.current() ?? defaultModel.currentSelection()
       const aside = await bind((setup) => {
         // No parent Agent and no subagent catalog entry: the working Agent
         // neither owns nor lists the side agent, and the side agent is not
         // its continuable child, so it cannot message it.
+        // The side agent starts in the directory the working session works in now.
         /* v8 ignore next -- TUI sessions record cwd on create; process cwd is the fallback when a header omitted it */
-        const workdir = session.header.cwd ?? cwd
+        const workdir = ctx.get('workingDirectory')?.get(session) ?? session.header.cwd ?? cwd
         return agents.create({
           sessionId: brandString<SessionId>(`session-${randomUUID()}`),
-          ...seed.length === 0 ? {} : { seed, inheritedEventCount },
-          meta: { cwd: workdir, parentSession: session.id, isSeeded: true, origin: 'subagent' },
+          ...seed.length === 0 ? {} : {
+            seed,
+            inheritedEventCount,
+            parentSource: { sessionId: session.id, endSeq: sharedEndSeq },
+          },
+          meta: { cwd: workdir, parentSession: session.id, isSeeded: seed.length > 0, origin: 'subagent' },
           agentOptions: agentOptionsFor(model),
           setup: async (agentCtx, agent) => {
             await setup(agentCtx, agent)

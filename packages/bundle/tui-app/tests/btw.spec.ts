@@ -2,8 +2,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { createAssistantMessage, createUserMessage, type ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { BTW_BRIEF, BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwBriefMessage, btwSeed, restrictBtwAgent } from '../src/btw.ts'
+import { SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { BTW_BRIEF, BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwBriefMessage, btwSeed, restrictBtwAgent, sharedPrefixEnd } from '../src/btw.ts'
 
 /** A log whose second turn is still waiting on one tool call. */
 function openTurnLog(): SessionEvent[] {
@@ -41,8 +41,33 @@ describe('btwSeed', () => {
     expect(seed.map(event => event.seq)).toEqual(seed.map((_, index) => index))
   })
 
+  it('shares the whole copied log with a live parent, whose writer drains before the prefix is referenced', () => {
+    const events = openTurnLog()
+    expect(btwSeed(events).sharedEndSeq).toBe(events.length)
+  })
+
+  it('shares only the stored prefix of a cold read and copies the unstored repairs into its own suffix', () => {
+    const events = openTurnLog()
+    const stored = SessionLogOffset(3)
+    const { seed, inheritedEventCount, sharedEndSeq } = btwSeed(events, stored)
+    expect(inheritedEventCount).toBe(events.length)
+    expect(sharedEndSeq).toBe(3)
+    expect(seed.slice(0, events.length)).toEqual(events)
+  })
+
   it('seeds nothing from an empty log', () => {
-    expect(btwSeed([])).toEqual({ seed: [], inheritedEventCount: 0 })
+    expect(btwSeed([])).toEqual({ seed: [], inheritedEventCount: 0, sharedEndSeq: 0 })
+  })
+})
+
+describe('sharedPrefixEnd', () => {
+  it('bounds the copied cut by the parent\'s stored events', () => {
+    expect(sharedPrefixEnd(SessionLogOffset(5), SessionLogOffset(2))).toBe(2)
+    expect(sharedPrefixEnd(SessionLogOffset(5), SessionLogOffset(9))).toBe(5)
+  })
+
+  it('shares the whole cut when the parent is live and reports no stored count', () => {
+    expect(sharedPrefixEnd(SessionLogOffset(5), undefined)).toBe(5)
   })
 })
 

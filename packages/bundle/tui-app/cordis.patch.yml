@@ -58,6 +58,11 @@
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 
+    # Host-owned subagent model-selection authorization, sampled at Agent
+    # creation, as the browser composes it.
+    - id: subagent-model-selection-settings
+      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
+
     # `@path` workspace references: the editor completes them from this
     # service and the model reads the same prompt section as in the browser.
     - id: file-reference-local
