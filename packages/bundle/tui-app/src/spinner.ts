@@ -50,11 +50,12 @@ export type ActivityStatus = keyof typeof ACTIVITY_SPINNERS
 /**
  * The animation a running tool card draws, by tool family; a folded subagent
  * row draws `subagent`, and the activity board's in-progress todo rows draw
- * `todo`. Each cycle mixes flowers, blooms, and stars. No frame is braille,
- * no two families share a glyph, and the eight frames of one family all
- * differ, so two indicators of that family at different phases never draw the
- * same glyph at the same instant. A presentation choice of this terminal
- * surface, not a deployment setting.
+ * `todo`. Each cycle mixes flowers, blooms, and stars; the `worktree` family
+ * also draws two Miscellaneous Technical symbols, chosen for font coverage.
+ * No frame is braille, no two families share a glyph, and the eight frames of
+ * one family all differ, so two indicators of that family at different phases
+ * never draw the same glyph at the same instant. A presentation choice of this
+ * terminal surface, not a deployment setting.
  */
 export const TOOL_SPINNERS = {
   /** Command execution: four-pointed stars, teardrop blooms, and florettes. */
@@ -67,6 +68,8 @@ export const TOOL_SPINNERS = {
   subagent: ['✦', '✣', '❊', '❦', '❉', '✪', '✫', '❧'],
   /** Planning and scheduling, and an in-progress todo row: a florette, teardrop blooms, and stars. */
   todo: ['☆', '✥', '✼', '❅', '✻', '✬', '★', '✰'],
+  /** Worktree entry and exit: a four-lobed loop, a helm, a squared asterisk, small stars, and two technical symbols. */
+  worktree: ['⌘', '⎈', '⭑', '⌠', '⌂', '⁑', '⧆', '⭒'],
   /** A tool with no family of its own: a sparkle and a florette among stars. */
   other: ['∗', '❈', '⁎', '❆', '⚝', '✺', '⚹', '✯'],
 } as const satisfies Record<string, SpinnerFrames>
@@ -111,6 +114,7 @@ const SEARCH_TOOLS: ReadonlySet<string> = new Set([
   'web_search',
   'load_workspace_dependencies',
   'list_subagent_models',
+  'cordis_inspect',
 ])
 
 /** Tool names that delegate or steer a child agent, beyond `subagent` itself. */
@@ -126,6 +130,9 @@ const SUBAGENT_TOOLS: ReadonlySet<string> = new Set([
 
 /** Tool names that plan or schedule work. */
 const TODO_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'create_goal', 'get_goal', 'update_goal'])
+
+/** Tool names that move the Session into or out of a Git worktree. */
+const WORKTREE_TOOLS: ReadonlySet<string> = new Set(['enter_worktree', 'exit_worktree'])
 
 /**
  * Tool-name prefixes per family, checked after the exact sets above. An MCP
@@ -189,6 +196,7 @@ export function toolFamily(name: string): ToolFamily {
   if (SEARCH_TOOLS.has(name)) return 'search'
   if (isSubagentTool(name) || SUBAGENT_TOOLS.has(name)) return 'subagent'
   if (TODO_TOOLS.has(name)) return 'todo'
+  if (WORKTREE_TOOLS.has(name)) return 'worktree'
   for (const [prefix, family] of TOOL_PREFIXES) {
     if (name.startsWith(prefix)) return family
   }

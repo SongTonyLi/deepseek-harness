@@ -81,6 +81,21 @@ export interface BtwSeed {
   readonly seed: readonly SessionEvent[]
   /** Copied source events, excluding the marker and closers. */
   readonly inheritedEventCount: SessionLogOffset
+  /** The parent prefix the side agent shares: the copied events the working session has stored. */
+  readonly sharedEndSeq: SessionLogOffset
+}
+
+/**
+ * The end of the parent prefix a seeded child shares with its parent: the
+ * copied cut, bounded by the parent's stored events. A live log reports no
+ * stored count and shares the whole cut, because the storage backend drains
+ * the live writer before it references the prefix.
+ * @param cut - the copied prefix length of the child's seed.
+ * @param persistedEventCount - the parent's stored prefix length; absent for a live log.
+ * @returns the shared prefix length, at most `cut`.
+ */
+export function sharedPrefixEnd(cut: SessionLogOffset, persistedEventCount: SessionLogOffset | undefined): SessionLogOffset {
+  return SessionLogOffset(Math.min(cut, persistedEventCount ?? cut))
 }
 
 /**
@@ -88,12 +103,18 @@ export interface BtwSeed {
  * including an unfinished turn. Unanswered tool calls in the open step get
  * the fork's error results; the working session is only read.
  * @param events - the working session's log, contiguous from seq 0.
+ * @param persistedEventCount - the stored prefix length of a cold read; absent for a live log.
  * @returns the seed, or an empty seed when the log is empty.
  */
-export function btwSeed(events: readonly SessionEvent[]): BtwSeed {
+export function btwSeed(events: readonly SessionEvent[], persistedEventCount?: SessionLogOffset): BtwSeed {
   const last = events.at(-1)
-  if (last === undefined) return { seed: [], inheritedEventCount: SessionLogOffset(0) }
-  return { seed: buildForkSeed(events, last.seq), inheritedEventCount: SessionLogOffset(last.seq + 1) }
+  if (last === undefined) return { seed: [], inheritedEventCount: SessionLogOffset(0), sharedEndSeq: SessionLogOffset(0) }
+  const inheritedEventCount = SessionLogOffset(last.seq + 1)
+  return {
+    seed: buildForkSeed(events, last.seq),
+    inheritedEventCount,
+    sharedEndSeq: sharedPrefixEnd(inheritedEventCount, persistedEventCount),
+  }
 }
 
 /**

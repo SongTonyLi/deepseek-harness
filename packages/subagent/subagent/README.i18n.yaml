@@ -15,8 +15,8 @@
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
 /deepseek-ai-dsh-subagent/use-this-package:
-  en: 924b8c15f9529028
-  zh: 9fb0c399b5a79e3e
+  en: a1b7ee0ede0a92a4
+  zh: 239fea312abae13b
 /deepseek-ai-dsh-subagent/use-this-package/enabling-delegation:
   en: c0718955687ff245
   zh: eb2d3cdbe92e0fe2
@@ -51,8 +51,8 @@
   en: 5923a61c09d9ae04
   zh: 15202a92872a11e9
 /deepseek-ai-dsh-subagent/understand-the-implementation/provider-preparation-and-structured-output:
-  en: c1b5915a81d2c32c
-  zh: 43df9b3e1dfeaef1
+  en: ffc03bbedcb8bcf5
+  zh: a8bc21108fe6b2b3
 /deepseek-ai-dsh-subagent/understand-the-implementation/activation-settlement:
   en: fa834c857e7ce707
   zh: c3aa819bd5a82d3c
@@ -68,6 +68,18 @@
 /deepseek-ai-dsh-subagent/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
+/deepseek-ai-dsh-subagent/model-experience/message-authorship:
+  en: 4350a9a08e35641b
+  zh: 75cd6deac5f7430a
+/deepseek-ai-dsh-subagent/model-experience/message-authorship/what-the-model-sees:
+  en: 572bb322919ae1cb
+  zh: 5c49bbd85cf0fd31
+/deepseek-ai-dsh-subagent/model-experience/message-authorship/token-effect:
+  en: 8611aab0a4bcb5b4
+  zh: c2286d8a73b818ac
+/deepseek-ai-dsh-subagent/model-experience/message-authorship/kv-cache-effect:
+  en: 55d5610dcc9049e3
+  zh: 382e85de9c81cb11
 /deepseek-ai-dsh-subagent/model-experience/settlement-notice:
   en: f7cec22ba9d3fb4f
   zh: 67b1d40f9b136f71
@@ -99,14 +111,14 @@
   en: dc8544657916e194
   zh: b0feff0764b5d903
 /deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/what-the-model-sees:
-  en: 92db374bf2a6ef86
-  zh: 7b36788c16ee7f9a
+  en: 2f05131f8f8d875a
+  zh: 5771ed52b0e28120
 /deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/what-the-model-sees/the-delegation-scope-statement:
   en: 960e4abc8393bcd1
   zh: e125aa2bab1570d0
 /deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/token-effect:
-  en: c2743ba27edbb9ad
-  zh: f5bf886852d5d93a
+  en: 4e0b922b186dc2a9
+  zh: 7453563417c5b9a2
 /deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/kv-cache-effect:
   en: 59e848fca82a46fb
   zh: fcd6a8a2bb58609f

@@ -112,6 +112,35 @@ describe('TuiApp user shell lines', () => {
     expect(test.terminal.text()).toContain('secret')
   })
 
+  it('runs ! and !! lines in the directory the session has moved to', async () => {
+    let requests: ShellExecRequest[] = []
+    const test = await bench({
+      before(ctx) {
+        requests = provideShell(ctx, runResult({ stdout: 'hi\n' }))
+        ctx.provide('workingDirectory', { get: () => '/moved' } as never)
+      },
+    })
+    typeLine(test.terminal, '!echo hi')
+    await test.settle()
+    typeLine(test.terminal, '!!echo secret')
+    await test.settle()
+    expect(requests.map(request => request.workdir)).toEqual(['/moved', '/moved'])
+    expect(requests[0]).toMatchObject({ sandboxPolicy: { mode: 'danger-full-access', workspaceRoot: '/moved' } })
+  })
+
+  it('runs ! in the start directory while a composed working-directory service reports no move', async () => {
+    let requests: ShellExecRequest[] = []
+    const test = await bench({
+      before(ctx) {
+        requests = provideShell(ctx, runResult({ stdout: 'hi\n' }))
+        ctx.provide('workingDirectory', { get: () => '/work' } as never)
+      },
+    })
+    typeLine(test.terminal, '!echo hi')
+    await test.settle()
+    expect(requests[0]).toMatchObject({ workdir: '/work', sandboxPolicy: { workspaceRoot: '/work' } })
+  })
+
   it('sends a lone ! as an ordinary prompt', async () => {
     const test = await bench({
       before(ctx) {

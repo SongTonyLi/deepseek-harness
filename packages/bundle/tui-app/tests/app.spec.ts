@@ -108,6 +108,15 @@ describe('TuiApp', () => {
     expect(test.terminal.text().split('❯ hello there')).toHaveLength(2)
   })
 
+  it('shows the directory the session has moved to in the footer workspace segment', async () => {
+    const test = await bench({
+      before(ctx) { ctx.provide('workingDirectory', { get: () => '/moved' } as never) },
+    })
+    await test.settle()
+    expect(test.terminal.text()).toContain('/moved')
+    expect(test.terminal.title).toBe('dsh · /work')
+  })
+
   it('ignores blank input, queues Enter for the next turn while running, and steers on Ctrl+S', async () => {
     const test = await bench()
     test.terminal.type(KEY.enter)

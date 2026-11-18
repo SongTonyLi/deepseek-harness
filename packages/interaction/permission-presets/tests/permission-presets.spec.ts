@@ -3,7 +3,7 @@ import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@deep
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, {
   Session,
-  type SessionId,
+  SessionId,
 } from '@deepseek-ai/dsh-session'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
@@ -326,6 +326,23 @@ describe('Auto and the sandbox backend', () => {
     ])
     expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('workspace-write')
     expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
+  })
+
+  it('the set Remote writes workspace-write for Auto while the backend confines reads', async () => {
+    const ctx = await mounted({ reads: true })
+    await mountAuto(ctx)
+    const session = ctx.sessions.create(brandString<SessionId>('set-remote-auto-confined'))
+    // Start at full access: the shell default is already workspace-write, so Auto would otherwise log no sandbox/mode.
+    ctx.permissionPresets.set(session, 'danger-full-access')
+    const baseline = session.snapshotEvents().length
+
+    expect(ctx.permissionPresets.setPreset({ sessionId: session.id, preset: AUTO_PRESET })).toEqual({ currentValue: AUTO_PRESET })
+    expect(written(session, baseline)).toEqual([
+      ['permission/preset', { preset: AUTO_PRESET }],
+      ['sandbox/mode', { mode: 'workspace-write' }],
+      ['approval/policy', { policy: 'ask' }],
+    ])
+    expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('workspace-write')
   })
 
   it('writes full access when the backend confines no reads', async () => {
@@ -664,5 +681,54 @@ describe('new-session default', () => {
     expect(() => ctx.permissionPresets.defaultPreset).toThrow(/unknown default preset/)
     await configurations.get(ctx)!.update({ defaultPreset: 'workspace-write' })
     expect(ctx.permissionPresets.defaultPreset).toBe('workspace-write')
+  })
+})
+
+describe('PermissionPresetService.setPreset', () => {
+  it('switches a live Session and reports the selection it reads back', async () => {
+    const ctx = await mountedStore()
+    const session = (await ctx.agents.create({ sessionId: brandString<SessionId>('set-preset-live') })).agent.session
+    expect(ctx.permissionPresets.current(session)).toBe('workspace-write')
+
+    expect(ctx.permissionPresets.setPreset({ sessionId: session.id, preset: 'danger-full-access' }))
+      .toEqual({ currentValue: 'danger-full-access' })
+    expect(ctx.permissionPresets.current(session)).toBe('danger-full-access')
+    expect(session.snapshotEvents().at(-1)).toMatchObject({ type: 'approval/policy', data: { policy: 'never' } })
+  })
+
+  it('selecting the preset already in effect writes nothing', async () => {
+    const ctx = await mountedStore()
+    const session = (await ctx.agents.create({ sessionId: brandString<SessionId>('set-preset-same') })).agent.session
+    const before = session.snapshotEvents().length
+
+    expect(ctx.permissionPresets.setPreset({ sessionId: session.id, preset: 'workspace-write' }))
+      .toEqual({ currentValue: 'workspace-write' })
+    expect(session.snapshotEvents()).toHaveLength(before)
+  })
+
+  it('refuses an unknown preset with a bad-request Remote error and writes nothing', async () => {
+    const ctx = await mountedStore()
+    const session = (await ctx.agents.create({ sessionId: brandString<SessionId>('set-preset-unknown') })).agent.session
+    const before = session.snapshotEvents().length
+
+    expect(() => ctx.permissionPresets.setPreset({ sessionId: session.id, preset: 'plan' }))
+      .toThrow(expect.objectContaining({ code: 'gateway/bad-request' }))
+    expect(session.snapshotEvents()).toHaveLength(before)
+  })
+
+  it('refuses a Session this process does not hold live', async () => {
+    const ctx = await mountedStore()
+    expect(() => ctx.permissionPresets.setPreset({ sessionId: brandString<SessionId>('set-preset-absent'), preset: 'workspace-write' }))
+      .toThrow(expect.objectContaining({ code: 'gateway/bad-request' }))
+  })
+
+  it('a wire call names only the Session, so no Agent notice is queued', async () => {
+    const ctx = await mountedStore()
+    const { agent } = await ctx.agents.create({ sessionId: brandString<SessionId>('set-preset-wire') })
+
+    ctx.permissionPresets.setPreset({ sessionId: agent.session.id, preset: 'danger-full-access' })
+    expect(ctx.permissionPresets.current(agent.session)).toBe('danger-full-access')
+    expect(agent.session.snapshotEvents().some(event =>
+      JSON.stringify(event).includes('changed the approval policy'))).toBe(false)
   })
 })

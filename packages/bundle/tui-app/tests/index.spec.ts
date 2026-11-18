@@ -56,6 +56,10 @@ async function bench(
     failCreate?: boolean
     noPersistence?: boolean
     observed?: SessionEvent[]
+    /** The stored prefix length a cold read of `observed` reports; a live observation omits it. */
+    persistedEventCount?: number
+    /** The directory the composed working-directory service reports for every session; none is mounted when omitted. */
+    workingDirectory?: string
     resumeHeader?: EpochHeader
     /** Jobs the registry stub lists for every session; no registry is composed when omitted. */
     jobs?: readonly object[]
@@ -101,10 +105,11 @@ async function bench(
         inbox.splice(event.data.target, event.data.start, event.data.removedCount ?? 0, [...event.data.inserted])
       }
     }
-    const resolvedOptions = {
-      provider: agentOptions?.provider ?? 'test-provider',
-      model: agentOptions?.model ?? 'test-model',
-      ...agentOptions?.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
+    // A child created without a route has none, so its model falls back to the launch default.
+    const resolvedOptions = agentOptions === undefined ? {} : {
+      provider: agentOptions.provider ?? 'test-provider',
+      model: agentOptions.model ?? 'test-model',
+      ...agentOptions.reasoningEffort === undefined ? {} : { reasoningEffort: agentOptions.reasoningEffort },
     }
     const agent: Agent = {
       id: session.id,
@@ -172,12 +177,19 @@ async function bench(
         const events = String(id) === 'session-old'
           ? (options.history ?? [])
           : (options.observed ?? [])
-        return Promise.resolve({ events, [Symbol.dispose]: () => { observed.order.push('release-observation') } })
+        const stored = options.persistedEventCount === undefined
+          ? {}
+          : { persistedEventCount: SessionLogOffset(options.persistedEventCount) }
+        return Promise.resolve({ events, ...stored, [Symbol.dispose]: () => { observed.order.push('release-observation') } })
       },
       listSessions: () => Promise.resolve([{ header: { id: 'session-old', createdAt: 1 } }]),
     } as never)
   }
   ctx.on('session/flush', () => { observed.order.push('flush') })
+  if (options.workingDirectory !== undefined) {
+    const directory = options.workingDirectory
+    ctx.provide('workingDirectory', { get: () => directory } as never)
+  }
   if (options.jobs !== undefined) {
     const jobs = options.jobs
     ctx.provide('jobs', { list: () => jobs, events: { subscribe: () => () => {} } } as never)
@@ -499,6 +511,7 @@ describe('tui runner', () => {
     const fork = observed.created[1]
     expect(fork?.seed).toEqual(events.slice(0, 3))
     expect(fork?.inheritedEventCount).toBe(3)
+    expect(fork?.parentSource).toEqual({ sessionId: first, endSeq: 3 })
     expect(fork?.meta).toEqual({ cwd: process.cwd(), parentSession: first, isSeeded: true })
     expect(observed.terminal.text()).toContain('forked: session session-')
     typeLine(observed.terminal, '/new')
@@ -515,6 +528,26 @@ describe('tui runner', () => {
     await settled()
     expect(observed.err).toContain('session session-old saved')
     expect(observed.exits).toEqual([0])
+  })
+
+  it('shares a fork only with the stored prefix of its parent, copying the rest into the child', async () => {
+    const at = (type: string, seq: number, data: unknown): SessionEvent => ({ type, seq, time: 1, data }) as never
+    const events = [
+      at('turn/start', 0, { turn: 1 }),
+      at('turn/end', 1, { turn: 1, reason: { kind: 'completed' } }),
+      at('session/title', 2, { title: 'T', messageSeqs: [], source: { kind: 'user' } }),
+      at('turn/start', 3, { turn: 2 }),
+    ]
+    const { ctx, observed } = await bench({ observed: events, persistedEventCount: 2 })
+    apply(ctx, config())
+    await settled()
+    const first = observed.created[0]?.sessionId
+    typeLine(observed.terminal, '/fork')
+    await settled()
+    const fork = observed.created[1]
+    expect(fork?.seed).toEqual(events.slice(0, 3))
+    expect(fork?.inheritedEventCount).toBe(3)
+    expect(fork?.parentSource).toEqual({ sessionId: first, endSeq: 2 })
   })
 
   it('clears into a fresh session on the active model and reasoning effort', async () => {
@@ -693,6 +726,7 @@ describe('tui runner', () => {
     expect(side?.seed?.slice(0, 3).map(event => event.type)).toEqual(['turn/start', 'request/header', 'step/start'])
     expect(side?.seed?.slice(3).map(event => event.type)).toEqual(['session/end-seed', 'step/end', 'turn/end'])
     expect(side?.inheritedEventCount).toBe(3)
+    expect(side?.parentSource).toEqual({ sessionId: root, endSeq: 3 })
     expect(side?.meta).toEqual({ cwd: process.cwd(), parentSession: root, isSeeded: true, origin: 'subagent' })
     expect(side?.agentOptions).toEqual({ provider: 'logged', model: 'logged-model', reasoningEffort: 'high' })
     const sideAgent = side === undefined ? undefined : ctx.agents.get(side.sessionId)
@@ -730,6 +764,55 @@ describe('tui runner', () => {
     expect(sideAgent?.inbox.nextStep).toEqual([])
   })
 
+  it('shares a /btw side agent only with the stored prefix of a cold parent', async () => {
+    const logged: SessionEvent[] = []
+    const { ctx, observed } = await bench({ observed: logged, persistedEventCount: 1 })
+    apply(ctx, config())
+    await settled()
+    const root = observed.created[0]?.sessionId
+    const agent = root === undefined ? undefined : ctx.agents.get(root)
+    if (agent === undefined) throw new Error('the runner published no agent')
+    agent.session.append('turn/start', { turn: 1 })
+    agent.session.append('request/header', { header: { config: { provider: 'logged', model: 'logged-model' } }, reason: 'initial' } as never)
+    agent.session.append('step/start', { turn: 1, step: 1 })
+    logged.push(...agent.session.ownEvents())
+    typeLine(observed.terminal, '/btw what now')
+    await settled()
+    const side = observed.created[1]
+    expect(side?.inheritedEventCount).toBe(3)
+    expect(side?.parentSource).toEqual({ sessionId: root, endSeq: 1 })
+  })
+
+  it('starts a /btw side agent in the directory the working session has moved to', async () => {
+    const logged: SessionEvent[] = []
+    const { ctx, observed } = await bench({ observed: logged, workingDirectory: '/moved' })
+    apply(ctx, config())
+    await settled()
+    const root = observed.created[0]?.sessionId
+    const agent = root === undefined ? undefined : ctx.agents.get(root)
+    if (agent === undefined) throw new Error('the runner published no agent')
+    agent.session.append('turn/start', { turn: 1 })
+    logged.push(...agent.session.ownEvents())
+    typeLine(observed.terminal, '/btw what now')
+    await settled()
+    expect(observed.created[1]?.meta).toEqual({ cwd: '/moved', parentSession: root, isSeeded: true, origin: 'subagent' })
+  })
+
+  it('starts a /btw side agent in the start directory while a composed working-directory service reports no move', async () => {
+    const logged: SessionEvent[] = []
+    const { ctx, observed } = await bench({ observed: logged, workingDirectory: process.cwd() })
+    apply(ctx, config())
+    await settled()
+    const root = observed.created[0]?.sessionId
+    const agent = root === undefined ? undefined : ctx.agents.get(root)
+    if (agent === undefined) throw new Error('the runner published no agent')
+    agent.session.append('turn/start', { turn: 1 })
+    logged.push(...agent.session.ownEvents())
+    typeLine(observed.terminal, '/btw what now')
+    await settled()
+    expect(observed.created[1]?.meta).toEqual({ cwd: process.cwd(), parentSession: root, isSeeded: true, origin: 'subagent' })
+  })
+
   it('reports a /btw side agent that has no query engine to read the session from', async () => {
     const { ctx, observed } = await bench()
     apply(ctx, config())
@@ -752,6 +835,22 @@ describe('tui runner', () => {
     expect(side?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
   })
 
+  it('opens a /btw side agent over an empty session as an unseeded child that shares no prefix', async () => {
+    const { ctx, observed } = await bench({ observed: [] })
+    apply(ctx, config())
+    await settled()
+    const root = observed.created[0]?.sessionId
+    typeLine(observed.terminal, '/btw')
+    await settled()
+    expect(observed.terminal.text()).not.toContain('opening btw failed')
+    expect(observed.terminal.text()).toContain('btw side agent')
+    const side = observed.created[1]
+    expect(side?.meta).toEqual({ cwd: process.cwd(), parentSession: root, isSeeded: false, origin: 'subagent' })
+    expect(side?.parentSource).toBeUndefined()
+    const sideAgent = side === undefined ? undefined : ctx.agents.get(side.sessionId)
+    expect(sideAgent?.session.header.isSeeded).toBe(false)
+  })
+
   it('opens a /btw side agent over a subagent view on the default model', async () => {
     const { ctx, observed } = await bench({ observed: [] })
     ctx.provide('subagents', {
@@ -760,6 +859,7 @@ describe('tui runner', () => {
     apply(ctx, config())
     await settled()
     await ctx.agents.create({ sessionId: 'session-kid' as SessionId, meta: { cwd: '/kid' } })
+    expect(ctx.agents.get('session-kid' as SessionId)?.model.current()).toBeUndefined()
     typeLine(observed.terminal, '/subagents')
     await settled()
     observed.terminal.type(KEY.enter)
@@ -767,8 +867,32 @@ describe('tui runner', () => {
     typeLine(observed.terminal, '/btw why')
     await settled()
     const side = observed.created.at(-1)
-    expect(side?.meta).toEqual({ cwd: '/kid', parentSession: 'session-kid', isSeeded: true, origin: 'subagent' })
+    expect(side?.meta).toEqual({ cwd: '/kid', parentSession: 'session-kid', isSeeded: false, origin: 'subagent' })
     expect(side?.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model' })
+    expect(side === undefined ? undefined : ctx.agents.get(side.sessionId)).toBeDefined()
+  })
+
+  it('starts a /btw side agent in the launch directory when the viewed session records no directory', async () => {
+    const { ctx, observed } = await bench({ observed: [] })
+    ctx.provide('subagents', {
+      listDescendants: () => Promise.resolve([{ kind: 'child', id: 'session-kid', activity: 'running', mode: 'one-shot', hasChildren: false, parentId: 'root', depth: 1 }]),
+    } as never)
+    apply(ctx, config())
+    await settled()
+    await ctx.agents.create({
+      sessionId: 'session-kid' as SessionId,
+      meta: {},
+      agentOptions: { provider: 'kid-provider', model: 'kid-model' },
+    })
+    typeLine(observed.terminal, '/subagents')
+    await settled()
+    observed.terminal.type(KEY.enter)
+    await settled()
+    typeLine(observed.terminal, '/btw why')
+    await settled()
+    const side = observed.created.at(-1)
+    expect(side?.meta).toEqual({ cwd: process.cwd(), parentSession: 'session-kid', isSeeded: false, origin: 'subagent' })
+    expect(side?.agentOptions).toEqual({ provider: 'kid-provider', model: 'kid-model' })
   })
 
   it('refuses to fork without a query engine or a completed turn', async () => {

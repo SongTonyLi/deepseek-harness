@@ -4,9 +4,9 @@
  * @module @deepseek-ai/dsh-llm-cursor/token
  */
 
-import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
+import { INVALID_CREDENTIAL_CODE, LlmError } from '@deepseek-ai/dsh-llm'
 import type { CredentialRef, CredentialKey, CredentialRecord, ResolvedCredential } from '@deepseek-ai/dsh-credentials'
-import { credentialKey } from '@deepseek-ai/dsh-credentials'
+import { credentialKey, normalizeApiKey } from '@deepseek-ai/dsh-credentials'
 import type { LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { cursorGrantRecord, parseCursorGrant } from './grant.ts'
 import type { CursorOauthGrant } from './grant.ts'
@@ -66,7 +66,7 @@ export async function resolveCursorAccessToken(context: CursorTokenContext): Pro
     refresh: refresh => context.refresh(refresh, context.signal),
     now,
   })
-  if (harvested !== undefined) return assertUsableApiKey(harvested, 'llm-cursor', 'harvested Cursor login')
+  if (harvested !== undefined) return usableAccessToken(harvested, 'the harvested Cursor login')
 
   throw new LlmError(
     `llm-cursor: no access token for provider route "${PROVIDER}"; sign in through Settings → Models`
@@ -80,12 +80,12 @@ async function resolveEnvToken(context: CursorTokenContext): Promise<string | un
   const ref = context.apiKeyEnv
   if (context.credentials !== undefined) {
     const hit = await context.credentials.resolve(ref)
-    if (hit !== undefined) return assertUsableApiKey(hit.value, 'llm-cursor', ref)
+    if (hit !== undefined) return usableAccessToken(hit.value, ref)
     return undefined
   }
   const ambient = context.environment.get(ref)
   if (ambient !== undefined && ambient.value.length > 0) {
-    return assertUsableApiKey(ambient.value, 'llm-cursor', ref)
+    return usableAccessToken(ambient.value, ref)
   }
   return undefined
 }
@@ -102,7 +102,7 @@ async function resolveStoredGrant(context: CursorTokenContext, now: () => number
     )
   }
   if (grant === undefined) return undefined
-  if (now() < grant.expires) return assertUsableApiKey(grant.access, 'llm-cursor', CURSOR_RECORD_KEY)
+  if (now() < grant.expires) return usableAccessToken(grant.access, `the stored grant at ${CURSOR_RECORD_KEY}`)
   const updated = await credentials.modifyRecord(CURSOR_RECORD_KEY, async (record) => {
     const existing = parseCursorGrant(grantPayload(record))
     if (existing === undefined) return undefined
@@ -117,9 +117,28 @@ async function resolveStoredGrant(context: CursorTokenContext, now: () => number
       'INVALID_CREDENTIAL',
     )
   }
-  return assertUsableApiKey(next.access, 'llm-cursor', CURSOR_RECORD_KEY)
+  return usableAccessToken(next.access, `the stored grant at ${CURSOR_RECORD_KEY}`)
 }
 
 function grantPayload(record: CredentialRecord | undefined): unknown {
   return record?.kind === 'grant' ? record.payload : undefined
+}
+
+/**
+ * Trim a token read from `source` and reject one an Authorization header cannot carry.
+ * @param raw - the token exactly as read.
+ * @param source - where the token was read; the diagnostic names it and never echoes the token.
+ * @returns the trimmed token.
+ */
+function usableAccessToken(raw: string, source: string): string {
+  const checked = normalizeApiKey(raw)
+  if (checked.ok) return checked.value
+  const remedy = `sign in through Settings → Models or /login ${NS}/${PROVIDER}`
+  throw new LlmError(
+    checked.reason === 'empty'
+      ? `llm-cursor: the access token from ${source} is blank; supply the raw token or ${remedy}`
+      : `llm-cursor: the access token from ${source} contains characters an Authorization header cannot carry;`
+        + ` supply the raw token alone or ${remedy}`,
+    INVALID_CREDENTIAL_CODE,
+  )
 }

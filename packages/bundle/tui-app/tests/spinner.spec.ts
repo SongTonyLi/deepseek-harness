@@ -30,13 +30,16 @@ const ALL_SPINNERS: ReadonlyArray<readonly [string, SpinnerFrames]> = [
 ]
 
 /** Flower glyphs used by the tool-family animations. */
-const FLOWERS = new Set(['✾', '✿', '❀', '❁', '⚘', '⁕', '❦', '❧', '❅', '❆'])
+const FLOWERS = new Set(['✾', '✿', '❀', '❁', '⚘', '⁕', '❦', '❧', '❅', '❆', '⌘'])
 
 /** Bloom glyphs: teardrop, pinwheel, and asterisk forms. */
-const BLOOMS = new Set(['✢', '✽', '❋', '✤', '✲', '✱', '❃', '✣', '❊', '❉', '✥', '✼', '✻', '❈', '✺'])
+const BLOOMS = new Set(['✢', '✽', '❋', '✤', '✲', '✱', '❃', '✣', '❊', '❉', '✥', '✼', '✻', '❈', '✺', '⎈', '⧆'])
 
 /** Star glyphs used by the tool-family animations. */
-const STARS = new Set(['✧', '✸', '✹', '✩', '✭', '✮', '❂', '⋆', '✵', '✶', '✷', '✦', '✪', '✫', '☆', '✬', '★', '✰', '∗', '⁎', '⚝', '⚹', '✯'])
+const STARS = new Set(['✧', '✸', '✹', '✩', '✭', '✮', '❂', '⋆', '✵', '✶', '✷', '✦', '✪', '✫', '☆', '✬', '★', '✰', '∗', '⁎', '⚝', '⚹', '✯', '⭑', '⁑', '⭒'])
+
+/** Worktree frames that are neither flowers, blooms, nor stars: Miscellaneous Technical symbols chosen for font coverage. */
+const TECHNICAL = new Set(['⌠', '⌂'])
 
 /**
  * The instants of one cycle at which two indicators of `frames` draw the same glyph.
@@ -93,11 +96,22 @@ describe('spinner frames', () => {
         if (FLOWERS.has(frame)) kinds.flower += 1
         else if (BLOOMS.has(frame)) kinds.bloom += 1
         else if (STARS.has(frame)) kinds.star += 1
+        else if (name === 'worktree' && TECHNICAL.has(frame)) continue
         else expect(frame, `${name} has a frame outside the flower, bloom, and star glyphs`).toBe('')
       }
       expect(kinds.flower, name).toBeGreaterThan(0)
       expect(kinds.bloom, name).toBeGreaterThan(0)
       expect(kinds.star, name).toBeGreaterThan(0)
+    }
+  })
+
+  it('keeps every worktree frame one UTF-16 unit wide, and its technical frames in the Miscellaneous Technical block', () => {
+    for (const frame of TOOL_SPINNERS.worktree) expect(frame.length, frame).toBe(1)
+    for (const frame of TECHNICAL) {
+      const code = frame.codePointAt(0) ?? 0
+      expect(TOOL_SPINNERS.worktree, frame).toContain(frame)
+      expect(code, frame).toBeGreaterThanOrEqual(0x2300)
+      expect(code, frame).toBeLessThanOrEqual(0x23ff)
     }
   })
 
@@ -178,7 +192,10 @@ describe('spinner mapping', () => {
       ['load_workspace_dependencies', 'search'],
       ['list_subagent_models', 'search'],
       ['session_search', 'search'],
+      ['cordis_inspect', 'search'],
+      ['cordis_inspect_list', 'search'],
       ['cordis_inspect_query', 'search'],
+      ['cordis_inspect_self', 'search'],
       ['list_mcp_resources', 'search'],
       ['read_mcp_resource', 'search'],
       ['subagent', 'subagent'],
@@ -196,6 +213,8 @@ describe('spinner mapping', () => {
       ['get_goal', 'todo'],
       ['update_goal', 'todo'],
       ['schedule_create', 'todo'],
+      ['enter_worktree', 'worktree'],
+      ['exit_worktree', 'worktree'],
       ['ask_user_question', 'other'],
       ['exit_plan_mode', 'other'],
       ['plugin_manager', 'other'],

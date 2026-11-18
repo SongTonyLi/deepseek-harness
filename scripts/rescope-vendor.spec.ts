@@ -136,6 +136,17 @@ describe('product identifiers', () => {
     expect(rescopeText(scoped, file, true)).toEqual({ text, lines: 2 })
   })
 
+  it.each([
+    'apps/web/tests/creator-persona.e2e.ts',
+    'docs/upgrade-guide/v0.2.2-rc.1/subagent-interrupt-default/guide.md',
+    'docs/upgrade-guide/v0.2.2-rc.1/subagent-interrupt-default/guide.zh.md',
+  ])('still rewrites package imports in %s', (file) => {
+    const source = "const preset = 'cordis'\nimport { Context } from 'cordis'\n"
+    const text = file.endsWith('.md') ? `The \`cordis\` preset.\n\`\`\`ts\n${source}\`\`\`\n` : source
+    const scoped = text.replace("from 'cordis'", "from '@deepseek-ai/cordis'")
+    expectRoundTrip(file, text, scoped, 1)
+  })
+
   it('keeps unlisted package references subject to residue detection', () => {
     const file = 'packages/example/src/index.ts'
     const text = "import { Context } from 'cordis'\nimport type Schema from 'schemastery'\n"

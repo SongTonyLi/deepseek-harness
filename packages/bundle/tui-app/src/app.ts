@@ -676,7 +676,11 @@ export interface TuiAppDeps {
    * @returns the disposer that stops this tick.
    */
   tick(callback: () => void, delayMs: number): () => void
-  /** The workspace root shown in the footer and used for relative attachment and export paths. */
+  /**
+   * The launch directory: the base of relative attachment and export paths,
+   * and the workspace root of a session whose header records none. The footer
+   * and `!` lines use the bound session's live directory.
+   */
   cwd: string
   /** Hand an authorization page to the local default browser; absent when automatic handoff is disabled. */
   openUrl?: (url: string) => Promise<void>
@@ -2026,6 +2030,18 @@ export class TuiApp {
     this.updateSpinTicker()
   }
 
+  /**
+   * The directory the session works in now, as `ctx.workingDirectory` reports
+   * it. Without that service the session's recorded directory stands, and the
+   * launch directory stands in when the header records none.
+   * @param session - the bound Session.
+   * @returns the absolute workspace root.
+   */
+  private liveDirectory(session: Session): string {
+    /* v8 ignore next -- TUI sessions record cwd on create; process cwd is the fallback when a header omitted it */
+    return this.deps.ctx.get('workingDirectory')?.get(session) ?? session.header.cwd ?? this.deps.cwd
+  }
+
   private refreshFooter(): void {
     const permission = this.deps.ctx.get('permissionPresets')?.current(this.agent.session)
     const started = this.turnStartedAt
@@ -2044,7 +2060,7 @@ export class TuiApp {
       },
       usage: formatUsage(withLiveUsage(this.usage, this.liveUsage)),
       facts: this.statusFacts(),
-      cwd: this.deps.cwd,
+      cwd: this.liveDirectory(this.agent.session),
       home: this.home,
       attachments: this.pending.map(attachment => ({ name: attachment.name, kind: attachment.block.type })),
     })
@@ -4364,8 +4380,7 @@ export class TuiApp {
       this.notice(SHELL_MISSING, 'error')
       return
     }
-    /* v8 ignore next -- TUI sessions record cwd on create; process cwd is the fallback when a header omitted it */
-    const workdir = this.agent.session.header.cwd ?? this.deps.cwd
+    const workdir = this.liveDirectory(this.agent.session)
     const controller = new AbortController()
     this.shellAbort = controller
     try {
