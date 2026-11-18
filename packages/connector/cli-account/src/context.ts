@@ -36,9 +36,10 @@ export function cliPathContextText(cli: CliPathContext, platform: NodeJS.Platfor
     }
     return lines.join('\n')
   }
-  const lines = [`${product} CLI: run \`${program}\` by its absolute path ${JSON.stringify(executable)}; the bare name may resolve to another installation or to none.`]
+  const lines = [`${product} CLI: run \`${program}\` by its absolute path ${posixLiteral(executable)}; the bare name may resolve to another installation or to none.`]
   if (cli.scripts === true) {
-    lines.push(`Scripts in the ${product} skill call \`${program}\` by name; prefix only the commands that run them with PATH=${JSON.stringify(`${posix.dirname(executable)}:$PATH`)}, and never export PATH or run \`${program}\` by name yourself.`)
+    // Only the directory is literal; the shell expands "$PATH" when the model runs the command.
+    lines.push(`Scripts in the ${product} skill call \`${program}\` by name; prefix only the commands that run them with PATH=${posixLiteral(`${posix.dirname(executable)}:`)}"$PATH", and never export PATH or run \`${program}\` by name yourself.`)
   }
   return lines.join('\n')
 }
@@ -46,6 +47,11 @@ export function cliPathContextText(cli: CliPathContext, platform: NodeJS.Platfor
 /** A PowerShell single-quoted string, which expands nothing; an embedded quote is doubled. */
 function pwshLiteral(text: string): string {
   return `'${text.replaceAll("'", "''")}'`
+}
+
+/** A POSIX single-quoted word, which expands nothing; an embedded quote closes, escapes, and reopens the word. */
+function posixLiteral(text: string): string {
+  return `'${text.replaceAll("'", "'\\''")}'`
 }
 
 /**

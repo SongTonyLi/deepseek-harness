@@ -4,7 +4,9 @@ import { describe, expect, it, onTestFinished } from 'vitest'
 import { cliPathContextText, registerCliPathContext, type CliPathContext } from '../src/context.ts'
 
 const CLI = { product: 'Fixture', program: 'fixture-cli', executable: '/opt/fixture/bin/fixture-cli' }
-const RUN = 'Fixture CLI: run `fixture-cli` by its absolute path "/opt/fixture/bin/fixture-cli"; the bare name may resolve to another installation or to none.'
+const RUN = "Fixture CLI: run `fixture-cli` by its absolute path '/opt/fixture/bin/fixture-cli'; the bare name may resolve to another installation or to none."
+const HOSTILE = { ...CLI, executable: "/opt/$HOME/`tool`/O'Brien/fixture-cli" }
+const HOSTILE_RUN = "Fixture CLI: run `fixture-cli` by its absolute path '/opt/$HOME/`tool`/O'\\''Brien/fixture-cli'; the bare name may resolve to another installation or to none."
 const WINDOWS_CLI = { ...CLI, executable: 'C:\\Users\\O\'Brien\\.dsh\\fixture\\fixture-cli.exe' }
 const WINDOWS_RUN = 'Fixture CLI: run `fixture-cli` by its absolute path with the call operator, & \'C:\\Users\\O\'\'Brien\\.dsh\\fixture\\fixture-cli.exe\'; the bare name may resolve to another installation or to none.'
 
@@ -26,13 +28,23 @@ async function rendered(ctx: Context) {
 }
 
 describe('cliPathContextText', () => {
-  it('names the executable by its absolute path as a JSON string for a POSIX shell', () => {
+  it('names the executable by its absolute path as a single-quoted POSIX word', () => {
     expect(cliPathContextText(CLI, 'darwin')).toBe(RUN)
   })
 
   it('gives the commands that run the skill scripts the executable directory first on PATH for a POSIX shell', () => {
     expect(cliPathContextText({ ...CLI, scripts: true }, 'linux')).toBe(
-      `${RUN}\nScripts in the Fixture skill call \`fixture-cli\` by name; prefix only the commands that run them with PATH="/opt/fixture/bin:$PATH", and never export PATH or run \`fixture-cli\` by name yourself.`,
+      `${RUN}\nScripts in the Fixture skill call \`fixture-cli\` by name; prefix only the commands that run them with PATH='/opt/fixture/bin:'"$PATH", and never export PATH or run \`fixture-cli\` by name yourself.`,
+    )
+  })
+
+  it('single-quotes a POSIX path with $, a backtick, and a single quote so the shell expands none of them', () => {
+    expect(cliPathContextText(HOSTILE, 'darwin')).toBe(HOSTILE_RUN)
+  })
+
+  it('single-quotes the script PATH directory with the same escaping and still expands $PATH', () => {
+    expect(cliPathContextText({ ...HOSTILE, scripts: true }, 'linux')).toBe(
+      `${HOSTILE_RUN}\nScripts in the Fixture skill call \`fixture-cli\` by name; prefix only the commands that run them with PATH='/opt/$HOME/\`tool\`/O'\\''Brien:'"$PATH", and never export PATH or run \`fixture-cli\` by name yourself.`,
     )
   })
 

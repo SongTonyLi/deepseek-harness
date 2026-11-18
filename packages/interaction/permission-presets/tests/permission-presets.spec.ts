@@ -328,6 +328,23 @@ describe('Auto and the sandbox backend', () => {
     expect(ctx.permissionPresets.current(session)).toBe(AUTO_PRESET)
   })
 
+  it('the set Remote writes workspace-write for Auto while the backend confines reads', async () => {
+    const ctx = await mounted({ reads: true })
+    await mountAuto(ctx)
+    const session = ctx.sessions.create(brandString<SessionId>('set-remote-auto-confined'))
+    // Start at full access: the shell default is already workspace-write, so Auto would otherwise log no sandbox/mode.
+    ctx.permissionPresets.set(session, 'danger-full-access')
+    const baseline = session.snapshotEvents().length
+
+    expect(ctx.permissionPresets.setPreset({ sessionId: session.id, preset: AUTO_PRESET })).toEqual({ currentValue: AUTO_PRESET })
+    expect(written(session, baseline)).toEqual([
+      ['permission/preset', { preset: AUTO_PRESET }],
+      ['sandbox/mode', { mode: 'workspace-write' }],
+      ['approval/policy', { policy: 'ask' }],
+    ])
+    expect(ctx.sandboxPolicy.resolve({ session }).mode).toBe('workspace-write')
+  })
+
   it('writes full access when the backend confines no reads', async () => {
     const ctx = await mounted({ reads: false })
     await mountAuto(ctx)

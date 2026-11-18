@@ -102,7 +102,7 @@ The returned handle serves the plugin outside an operation: `snapshot()` returns
 
 ### Runtime context
 
-`register` adds one required runtime-context entry, named `<name>:cli`, that tells the model to run `cli.program` by `cli.executable`, the path the operations' commands run. With `cli.scripts`, it also tells the model to put the executable's directory first on PATH only in the commands that run the skill's scripts, and never to run `cli.program` by name. The text follows the shell that shipped compositions give the model on the Host platform. Outside Windows it uses POSIX shell syntax: the prefix is `PATH="<executable directory>:$PATH"`, which changes PATH for that command only, and the text also forbids exporting PATH. On Windows, where the model runs PowerShell, it names the executable with the call operator, `& '<executable>'`, and gives the prefix as `$env:PATH = '<executable directory>;' + $env:PATH`, which lasts only for that call because each PowerShell call runs in a fresh process. With `cli.ready`, the entry contributes nothing while `ready()` returns false. The text is never interpolated. [Model Experience](#model-experience) shows the text.
+`register` adds one required runtime-context entry, named `<name>:cli`, that tells the model to run `cli.program` by `cli.executable`, the path the operations' commands run. With `cli.scripts`, it also tells the model to put the executable's directory first on PATH only in the commands that run the skill's scripts, and never to run `cli.program` by name. The text follows the shell that shipped compositions give the model on the Host platform. Outside Windows it uses POSIX shell syntax: the executable path and the prefix directory are single-quoted literals, so `$`, backticks, and quotes in them stay literal; the prefix is `PATH='<executable directory>:'"$PATH"`, which changes PATH for that command only, and the text also forbids exporting PATH. On Windows, where the model runs PowerShell, it names the executable with the call operator, `& '<executable>'`, and gives the prefix as `$env:PATH = '<executable directory>;' + $env:PATH`, which lasts only for that call because each PowerShell call runs in a fresh process. With `cli.ready`, the entry contributes nothing while `ready()` returns false. The text is never interpolated. [Model Experience](#model-experience) shows the text.
 
 ### Commands, links, and failures
 
@@ -153,13 +153,13 @@ The Service owns each registration's lifetime and the plugin owns the meaning of
 
 #### What the model sees
 
-One required runtime-context entry, at context order 220, for each plugin registered with `ctx.cliAccounts` whose `cli.ready` is absent or returns true; it stays when optional runtime context is off. The second line appears only with `cli.scripts`. The placeholders come from the registration's `cli`. Outside Windows the quoted values are JSON strings; on Windows they are PowerShell single-quoted strings, in which a single quote is doubled. While no plugin is registered, the Service adds nothing to a model request.
+One required runtime-context entry, at context order 220, for each plugin registered with `ctx.cliAccounts` whose `cli.ready` is absent or returns true; it stays when optional runtime context is off. The second line appears only with `cli.scripts`. The placeholders come from the registration's `cli`. Outside Windows the quoted values are POSIX single-quoted words, in which a single quote is written as `'\''`; on Windows they are PowerShell single-quoted strings, in which a single quote is doubled. While no plugin is registered, the Service adds nothing to a model request.
 
 ##### Runtime-context entry
 
 ```markdown
-<Product> CLI: run `<program>` by its absolute path "<executable>"; the bare name may resolve to another installation or to none.
-Scripts in the <Product> skill call `<program>` by name; prefix only the commands that run them with PATH="<executable directory>:$PATH", and never export PATH or run `<program>` by name yourself.
+<Product> CLI: run `<program>` by its absolute path '<executable>'; the bare name may resolve to another installation or to none.
+Scripts in the <Product> skill call `<program>` by name; prefix only the commands that run them with PATH='<executable directory>:'"$PATH", and never export PATH or run `<program>` by name yourself.
 ```
 
 ##### Runtime-context entry on Windows

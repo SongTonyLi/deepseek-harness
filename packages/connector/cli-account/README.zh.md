@@ -102,7 +102,7 @@ export function apply(ctx: Context): void {
 
 ### 运行时上下文
 
-`register` 添加一条必需的运行时上下文条目，名为 `<name>:cli`，让模型按 `cli.executable` 运行 `cli.program`，这正是账号操作的命令运行的路径。设置 `cli.scripts` 时，它还让模型只在运行 skill 脚本的命令中把可执行文件所在目录放到 PATH 最前面，并且不要按名称运行 `cli.program`。文本采用内置组合在 Host 平台上提供给模型的 shell 写法。在 Windows 以外的平台上使用 POSIX shell 语法：前缀是 `PATH="<可执行文件所在目录>:$PATH"`，只改变这一条命令的 PATH，文本还要求不要导出 PATH。在 Windows 上模型使用 PowerShell，文本用调用运算符写出可执行文件 `& '<可执行文件>'`，前缀写作 `$env:PATH = '<可执行文件所在目录>;' + $env:PATH`；PowerShell 每次调用都在新进程中运行，所以这个修改只在本次调用内有效。设置 `cli.ready` 时，`ready()` 返回 false 期间这条上下文不贡献任何内容。文本从不做变量插值。文本见[模型体验](#model-experience)。
+`register` 添加一条必需的运行时上下文条目，名为 `<name>:cli`，让模型按 `cli.executable` 运行 `cli.program`，这正是账号操作的命令运行的路径。设置 `cli.scripts` 时，它还让模型只在运行 skill 脚本的命令中把可执行文件所在目录放到 PATH 最前面，并且不要按名称运行 `cli.program`。文本采用内置组合在 Host 平台上提供给模型的 shell 写法。在 Windows 以外的平台上使用 POSIX shell 语法：可执行文件路径和前缀目录都是单引号字面量，其中的 `$`、反引号和引号保持字面含义；前缀是 `PATH='<可执行文件所在目录>:'"$PATH"`，只改变这一条命令的 PATH，文本还要求不要导出 PATH。在 Windows 上模型使用 PowerShell，文本用调用运算符写出可执行文件 `& '<可执行文件>'`，前缀写作 `$env:PATH = '<可执行文件所在目录>;' + $env:PATH`；PowerShell 每次调用都在新进程中运行，所以这个修改只在本次调用内有效。设置 `cli.ready` 时，`ready()` 返回 false 期间这条上下文不贡献任何内容。文本从不做变量插值。文本见[模型体验](#model-experience)。
 
 ### 命令、链接与失败
 
@@ -153,13 +153,13 @@ Service 负责每个注册的生命周期，插件负责每条命令的含义。
 
 #### 模型看到什么
 
-每个通过 `ctx.cliAccounts` 注册、且 `cli.ready` 未设置或返回 true 的插件，在上下文顺序 220 处有一条必需的运行时上下文条目；关闭可选运行时上下文时它仍然保留。第二行只在设置 `cli.scripts` 时出现。占位符取自注册的 `cli`。在 Windows 以外的平台上，引号内的值是 JSON 字符串；在 Windows 上是 PowerShell 单引号字符串，其中的单引号写成两个。没有插件注册时，Service 不向模型请求添加任何内容。
+每个通过 `ctx.cliAccounts` 注册、且 `cli.ready` 未设置或返回 true 的插件，在上下文顺序 220 处有一条必需的运行时上下文条目；关闭可选运行时上下文时它仍然保留。第二行只在设置 `cli.scripts` 时出现。占位符取自注册的 `cli`。在 Windows 以外的平台上，引号内的值是 POSIX 单引号字符串，其中的单引号写成 `'\''`；在 Windows 上是 PowerShell 单引号字符串，其中的单引号写成两个。没有插件注册时，Service 不向模型请求添加任何内容。
 
 ##### 运行时上下文条目
 
 ```markdown
-<Product> CLI: run `<program>` by its absolute path "<executable>"; the bare name may resolve to another installation or to none.
-Scripts in the <Product> skill call `<program>` by name; prefix only the commands that run them with PATH="<executable directory>:$PATH", and never export PATH or run `<program>` by name yourself.
+<Product> CLI: run `<program>` by its absolute path '<executable>'; the bare name may resolve to another installation or to none.
+Scripts in the <Product> skill call `<program>` by name; prefix only the commands that run them with PATH='<executable directory>:'"$PATH", and never export PATH or run `<program>` by name yourself.
 ```
 
 ##### Windows 上的运行时上下文条目
