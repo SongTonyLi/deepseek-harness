@@ -2,7 +2,7 @@
 
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -55,7 +55,7 @@ beforeEach(async () => {
   await writeFile(join(outside, 'secret.txt'), 'needle outside\n')
   current = ws
   ctx = new Context()
-  ctx.provide('workingDirectory', { ensure: () => Promise.resolve(current) })
+  ctx.provide('workingDirectory', { get: () => current, ensure: () => Promise.resolve(current) })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(LocalSubprocessRuntime)
@@ -103,16 +103,20 @@ describe('search read fence', () => {
   it('fences the directory the search runs in, not the workspace the session started in', async () => {
     await ctx.plugin(WorkspaceReadSandbox)
     const agent = agentIn(ws)
-    current = outside
-    for (const [name, args] of [['grep', { pattern: 'needle' }], ['glob', { pattern: '*' }]] as const) {
+    await mkdir(join(ws, 'sub'))
+    await writeFile(join(ws, 'sub', 'b.txt'), 'needle in the subdirectory\n')
+    await writeFile(join(ws, 'sub', '.env'), 'needle=sk-test\n')
+    current = join(ws, 'sub')
+    const toOutside = relative(current, outside)
+    for (const [name, args] of [['grep', { pattern: 'needle', path: toOutside }], ['glob', { pattern: '*', path: toOutside }]] as const) {
       const refused = await call(name, args, agent)
       expect(refused.error).toMatchObject({ info: { code: 'SEARCH_SANDBOX_DENIED' } })
       expect(text(refused)).not.toContain('secret.txt')
     }
-    await mkdir(join(ws, 'sub'))
-    current = join(ws, 'sub')
-    const found = text(await call('grep', { pattern: 'needle', path: '..' }, agent))
-    expect(found).toContain('a.txt')
+    const upward = await call('grep', { pattern: 'needle', path: '..' }, agent)
+    expect(upward.error).toMatchObject({ info: { code: 'SEARCH_SANDBOX_DENIED' } })
+    const found = text(await call('grep', { pattern: 'needle' }, agent))
+    expect(found).toContain('b.txt')
     expect(found).not.toContain('sk-test')
   })
 

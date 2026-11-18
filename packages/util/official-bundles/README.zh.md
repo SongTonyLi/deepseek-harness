@@ -28,11 +28,11 @@ kind: "package-library"
 
 ### Profile 模板
 
-`PROFILE_TEMPLATES` 把每个随附 profile 名称（`web`、`headless`、`acp`、`sdk`、`sdk-minimal`）映射到其有序的组合包层列表。App-boot 用模板初始化缺失的随附 profile，`dsh --profile <name> --from-default-profile <template>` 把某个模板复制为自定义 profile。`DEFAULT_PROFILE_BUNDLES` 是 `dsh plugin` 对没有模板的 profile 名称使用的列表。`INSTALLATION_OWNED_PROFILE_TUPLES` 列出早期版本写入随附 profile 的组合包列表；app-boot 把与之完全一致的列表替换为当前模板。
+`PROFILE_TEMPLATES` 把每个随附 profile 名称（`web`、`headless`、`acp`、`sdk`、`sdk-minimal`、`tui`）映射到其有序的组合包层列表。App-boot 用模板初始化缺失的随附 profile，`dsh --profile <name> --from-default-profile <template>` 把某个模板复制为自定义 profile。`DEFAULT_PROFILE_BUNDLES` 是 `dsh plugin` 对没有模板的 profile 名称使用的列表。`INSTALLATION_OWNED_PROFILE_TUPLES` 列出早期版本写入随附 profile 的组合包列表；app-boot 把与之完全一致的列表替换为当前模板。
 
 ### 可选与已退役组合包
 
-`OPTIONAL_BUNDLES` 列出安装随附、供用户开启的组合包。每一项都必须是 `dsh` 应用的运行时依赖，并声明 `dsh.bundle.patch`、图标和 `./locale/*.json` 显示元信息，且不能被任何模板选中；[`verify-default-product-isolation`](../../../scripts/verify-default-product-isolation.ts) 检查这些规则。[插件管理器](../../boot/plugin-manager/README.zh.md#use-this-package)把这些组合包报告为 `optional`。`RETIRED_BUNDLES` 列出安装不再携带的组合包；app-boot 在加载 profile 时将它们从该 profile 的组合包列表中移除。
+`OPTIONAL_BUNDLES` 列出安装随附、供用户开启的组合包。每一项都必须是 `dsh` 应用的运行时依赖，并声明 `dsh.bundle.patch`、图标和 `./locale/*.json` 显示元信息，且只有随附的 TUI 模板可以选中其中一个（目前为 Auto review），其他随附模板保持关闭；[`verify-default-product-isolation`](../../../scripts/verify-default-product-isolation.ts) 检查这些规则。[插件管理器](../../boot/plugin-manager/README.zh.md#use-this-package)把这些组合包报告为 `optional`。`RETIRED_BUNDLES` 列出安装不再携带的组合包；app-boot 在加载 profile 时将它们从该 profile 的组合包列表中移除。
 
 <a id="plugin-manager-lists"></a>
 ### 插件管理器列表

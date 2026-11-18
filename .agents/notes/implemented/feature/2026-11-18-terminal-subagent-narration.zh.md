@@ -34,7 +34,7 @@ Status: implemented
 
 ## 影响
 
-- Web、headless 与 SDK 子级不进行叙述。[升级指南](../../../../docs/upgrade-guide/v0.2.2-rc.4/child-progress-narration/guide.zh.md)说明了读取子级最新句子作为进度的宿主如何迁移。
+- Web、headless 与 SDK 子级不进行叙述。[升级指南](../../../../docs/upgrade-guide/v0.2.2-rc.5/child-progress-narration/guide.zh.md)说明了读取子级最新句子作为进度的宿主如何迁移。
 - 终端看板保留每个运行中子级的一行。跳过该句子的子级只显示标签。
 - 由终端 profile 启动的每个子级，其第一份运行时上下文快照多约 30 个 token，只写一次且前缀稳定；父级的请求不变。
 - 子级的结果仍是它最后一条非空 assistant 消息，因此只有当叙述句子是最后的文字时，它才会成为结果。

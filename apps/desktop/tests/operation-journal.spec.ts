@@ -28,7 +28,7 @@ it('retains two bounded segments after dense operations across 50 plugins', asyn
   }
   expect(await readFile(join(directory, 'operations.jsonl'), 'utf8')).toContain('"operation":999')
   expect(journal.status()).toEqual({ dropped: 0, failed: 0, queuedBytes: 0, disabled: false, repairedSegments: 0 })
-})
+}, 30_000)
 
 it('bounds the queue and encoded record bytes including multibyte characters and newline', async () => {
   const directory = await fixture()

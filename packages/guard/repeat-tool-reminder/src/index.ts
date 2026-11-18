@@ -236,17 +236,15 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /**
-   * Advance the calling agent's chain for one attempt and return the reminder
-   * to deliver, if this attempt's run length hits a configured threshold.
+   * Advance the calling agent's chain for one model-direct attempt and return
+   * the reminder at a configured threshold. Nested executions neither count nor reset.
    * Counting happens here — in post-execute — because denied calls also flow
    * through this waterfall (`ToolRuntime.execute` routes a deny through the
    * same pipeline), and a model hammering a denied call is exactly the loop
    * worth breaking.
    */
   function observe(exec: ToolExecution): UserMessage | undefined {
-    // A direct `ctx.tools.execute()` caller has no model to remind and no id
-    // to key on; only agent-loop calls participate.
-    if (!exec.agent) return undefined
+    if (!exec.agent || exec.parent !== undefined) return undefined
     if (!tracked(exec.name)) return undefined
     const canonical = canonicalize(exec.arguments)
     const key = identityKey(exec.name, exec.arguments)
@@ -266,10 +264,10 @@ export function apply(ctx: Context, config: Config): void {
   /**
    * Peek at the last tracked key+count without advancing. Post-execute still
    * increments, including after this deny, so a reminder threshold can fire
-   * on the same attempt.
+   * on the same attempt. Nested executions are never denied, matching `observe`.
    */
   function wouldBlock(exec: ToolExecution): boolean {
-    if (blockThreshold === undefined || !exec.agent || !tracked(exec.name)) return false
+    if (blockThreshold === undefined || !exec.agent || exec.parent !== undefined || !tracked(exec.name)) return false
     const provider = exec.agent.session.requestHeader()?.config.provider ?? exec.agent.options.provider
     if (provider === undefined || !blockProviders.includes(provider)) return false
     const chain = chains.get(exec.agent)

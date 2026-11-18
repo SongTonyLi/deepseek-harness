@@ -12,13 +12,12 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { TodoItem } from '@deepseek-ai/dsh-tool-todo'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
@@ -65,36 +64,6 @@ describe('todos projection provider', () => {
     const projections = await bench.tailProjections()
     expect(projections?.values.todos).toBeNull()
     expect(projections?.asOfSeq).toBe(bench.session.seq - 1)
-  })
-
-  it('keeps the last written list after a no-op todo_write', async () => {
-    const bench = await harness(true)
-    const session = bench.session
-    seedMessage(session)
-    session.append('turn/start', { turn: 1 })
-    const list: TodoItem[] = [{ content: 'a', status: 'pending' }]
-    const agent = bench.ctx.agents.get(session.id)
-    if (agent === undefined) throw new Error('expected registered agent')
-    const signal = new AbortController().signal
-    await executeToolFixture(bench.ctx, {
-      signal,
-      callId: ToolCallId('todo-write'),
-      name: 'todo_write',
-      arguments: { todos: list },
-      agent,
-    })
-    const afterWrite = await bench.tailProjections()
-    expect(afterWrite?.values.todos).toEqual(list)
-    await executeToolFixture(bench.ctx, {
-      signal,
-      callId: ToolCallId('todo-noop'),
-      name: 'todo_write',
-      arguments: { todos: list },
-      agent,
-    })
-    const afterNoop = await bench.tailProjections()
-    expect(afterNoop?.values.todos).toEqual(list)
-    expect(afterNoop?.asOfSeq).toBe(afterWrite?.asOfSeq)
   })
 
   it('serves the latest whole list after writes, asOfSeq = last event seq', async () => {

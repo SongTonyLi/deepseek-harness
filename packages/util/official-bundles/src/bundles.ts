@@ -62,9 +62,8 @@ export const DEFAULT_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-bas
  * The bundles the dsh installation ships for a person to switch on: each a
  * runtime dependency of the installation that declares `dsh.bundle.patch`,
  * an `icon`, and `./locale/*.json` display metadata, and offered switched off
- * by the plugin manager except persistent terminals, which have no page switch.
- * The shipped TUI template selects Auto review and Agent Teams; no other
- * template does
+ * by the plugin manager when listed. The shipped TUI template selects Auto
+ * review; no other template does
  * ([rationale](../../../../.agents/notes/implemented/process/2026-09-15-shipped-optional-bundles.md),
  * [admission](../../../../.agents/notes/implemented/architecture/2026-09-21-experimental-capabilities-as-optional-bundles.md)).
  */
