@@ -502,6 +502,28 @@ The user moved this call to the background. It keeps running as job <id>. You ar
 
 旁路 agent 使用工作会话最后记录的 provider 与模型，但它的工具目录是只读子集，因此把工具声明缓存在历史之前的 provider 会在第一次旁路请求时重新计算继承的历史；之后的旁路请求追加在该前缀之后。工作 agent 的请求前缀不变。
 
+<a id="subagent-progress-narration"></a>
+
+### 子 agent 进度叙述
+
+#### 模型看到什么
+
+这个终端创建或恢复的每个进程内子 agent，都会在 `subagent:delegation` 声明之后携带一条运行时上下文条目。顶层 agent 与 `/btw` 旁路 agent 都不携带。
+
+##### 进度说明句
+
+```markdown
+Before each tool call, say in one short sentence what you are doing and why it serves the task, so your progress can be followed.
+```
+
+#### Token 影响
+
+每个子 agent 的运行时上下文快照中有一句固定文本，每次该快照被再次记录时都会重新计入。父 agent 与旁路 agent 的快照都不携带它。
+
+#### KV Cache 影响
+
+在保留历史之后只做追加式增长：快照在那里首次出现时记录，之后仅在内容变化或压缩移除它时再次记录。这句话在子 agent 的生命周期内从不变化，因此不会改变更早的请求前缀。父 agent 与旁路 agent 不受影响。
+
 ## 已知限制与延期工作
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -521,7 +543,8 @@ The user moved this call to the background. It keeps running as job <id>. You ar
 - **阅读器开着时不绘制对话记录**——对话记录的屏幕被挡在终端之外，因此期间跑完的轮次、落地的工具结果与打印的通知，都在阅读器关闭时的同一帧里绘出。阅读器自身仍会随它们到达而显示，因为它在每一次绘制时都重新读取对话记录。
 - **阅读器显示的是源文本**——assistant 回复读到的是模型写下的 Markdown，而不是对话记录绘制出的渲染结果，因此表格与标题以源码形式呈现；只有列表项开头的 `-`、`*` 或 `+` 画成 `•`。
 - **首次读取大型轮次仍需测量**——在绘制该轮次视口前，阅读器会统计每个小节以得出完整滚动范围；后续绘制会复用缓存的行数并只绘制可见小节，但内容变化或尚未测量过的宽度仍需重新测量。
-- **沉默的子 agent 只画出标签**——板上的一行显示子会话在 assistant 消息里最后说的话，因此只调用工具而不说话的子会话只显示标签与旋转指示，也绝不会拿模型的推理来顶替。每个子会话的委派上下文要求它在每次工具调用前说一句话，但模型仍可能跳过。
+- **沉默的子 agent 只画出标签**——板上的一行显示子会话在 assistant 消息里最后说的话，因此只调用工具而不说话的子会话只显示标签与旋转指示，也绝不会拿模型的推理来顶替。每个子会话的运行时上下文要求它在每次工具调用前说一句话，但模型仍可能跳过。
+- **叙述条目排在半个顺序位上**——它位于 `SUBAGENT_DELEGATION` + 0.5，因为实验性 timeline 的 `timeline:maintenance` 上下文占据了其后的整数位；`dsh-system-prompt` 中的一个具名运行时上下文位置可以取代这半个顺序位。
 - **面板列出的是本地常驻，而不是整棵树**——子会话在其会话记录常驻于本进程期间加入面板，因此没有本地会话的外部任务永远不会出现；`/subagents` 将该持久任务记录列为不可打开，并与每一个本地后代一同列出。
 - **`continuable` 子会话视图直接向其 Agent 提示**——在 `continuable` 子 agent 视图中输入的提示词会像在任何会话中一样送给该子会话的 Agent，未常驻的子会话由该视图恢复；Web 客户端则经由 subagent 运行时的提示路由发送提示词。
 - **常驻不等于正在工作**——列表的 `activity: 'running'` 表示该子会话的记录常驻，这正是行内 `resident` 所报告的内容；子会话是否在工作则是它旁边单独的 `running` / `idle`，读自本进程中该子会话的 Agent。

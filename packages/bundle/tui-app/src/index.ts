@@ -15,6 +15,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentOptions, AgentSetup, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { BTW_SANDBOXED_TOOLS, BTW_TOOLS, btwSeed, restrictBtwAgent } from './btw.ts'
+import { installSubagentNarration } from './subagent-narration.ts'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { SessionLogOffset, type SessionEvent, type SessionId } from '@deepseek-ai/dsh-session'
@@ -560,5 +561,6 @@ export function apply(ctx: Context, config: Config): void {
     swallowStreamErrors: internals.swallowStreamErrors,
     exit,
   }
+  installSubagentNarration(ctx)
   void run(ctx, config, host).catch((error: unknown) => { fail(host, error) })
 }

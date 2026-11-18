@@ -108,11 +108,26 @@
   en: 71d22c1a8c9f5c95
   zh: 53b5f823c817e09f
 /deepseek-ai-dsh-tui-app/model-experience/side-agent/kv-cache-effect:
-  en: 1dadc4a2f1560eaa
-  zh: dc4697c269bc16b9
+  en: 13af2ce21349a3de
+  zh: 4dcb25c5c63f5652
+/deepseek-ai-dsh-tui-app/model-experience/subagent-progress-narration:
+  en: 474a4ff1032bfa6c
+  zh: ce724b20121492e7
+/deepseek-ai-dsh-tui-app/model-experience/subagent-progress-narration/what-the-model-sees:
+  en: d10efa6eaf371022
+  zh: e111235697b236c6
+/deepseek-ai-dsh-tui-app/model-experience/subagent-progress-narration/what-the-model-sees/progress-sentence:
+  en: f3bf1dda414df6d3
+  zh: 8231cd08c2eae4ae
+/deepseek-ai-dsh-tui-app/model-experience/subagent-progress-narration/token-effect:
+  en: 57dfb3f52e4e1b2f
+  zh: 31f154da16ffbf79
+/deepseek-ai-dsh-tui-app/model-experience/subagent-progress-narration/kv-cache-effect:
+  en: 8823553309f5da70
+  zh: a498204f604579e5
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work:
-  en: cd95496a40deafce
-  zh: 2e3a55909a160325
+  en: 2058959cf3fafb1b
+  zh: adfd3b4b6d5f14c3
 /deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work/dev-note:
   en: 5629c6159cec997f
   zh: 17f2d7e1f96da7f1

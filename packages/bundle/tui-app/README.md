@@ -502,6 +502,28 @@ Each side agent request carries the inherited history plus the notice and the si
 
 The side agent uses the working session's last logged provider and model, but its tool catalog is the read-only subset, so a provider that caches the tool declarations ahead of the history recomputes the inherited history on the first side request; later side requests append to that prefix. The working agent's request prefix is unchanged.
 
+<a id="subagent-progress-narration"></a>
+
+### Subagent progress narration
+
+#### What the model sees
+
+Each in-process child agent that this terminal creates or resumes carries one runtime-context entry after its `subagent:delegation` statement. Top-level agents and `/btw` side agents carry none.
+
+##### Progress sentence
+
+```markdown
+Before each tool call, say in one short sentence what you are doing and why it serves the task, so your progress can be followed.
+```
+
+#### Token effect
+
+One fixed sentence in each child's runtime-context snapshot, counted again each time that snapshot is logged again. The parent's and the side agent's snapshots carry none.
+
+#### KV Cache effect
+
+Append-only growth after the retained history: the snapshot is logged there when it first appears and again only when it changes or compaction removes it. The sentence never changes during a child's lifetime, so it adds no change to an earlier request prefix. The parent and the side agent are unaffected.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -521,7 +543,8 @@ These limits describe the terminal surface as shipped; they are not a general CL
 - **The conversation is not drawn while the reader is up** — its screen is held off the terminal, so a turn that runs, a tool result that lands, and a notice that is printed are all drawn in one frame when the reader closes. The reader itself shows them as they arrive, because it re-reads the conversation on every drawing.
 - **The reader shows source text** — an assistant reply reads as the Markdown the model wrote, not the rendering the transcript draws, so tables and headings read as their source; only a list item's leading `-`, `*`, or `+` is drawn as `•`.
 - **A cold large turn needs a measurement pass** — before it can draw that turn's viewport, the reader counts every section to find the full scroll range; later paints reuse cached row counts and draw only visible sections, while changed content or a width it has not measured requires fresh measurements.
-- **A silent subagent draws its label alone** — a board row shows what the child last said in an assistant message, so a child that calls tools without saying anything shows its label and spinner only, and the model's reasoning is never shown in its place. Each child's delegation context asks for one sentence before every tool call, which a model can still skip.
+- **A silent subagent draws its label alone** — a board row shows what the child last said in an assistant message, so a child that calls tools without saying anything shows its label and spinner only, and the model's reasoning is never shown in its place. Each child's runtime context asks for one sentence before every tool call, which a model can still skip.
+- **The narration entry sorts at a half step** — it sits at `SUBAGENT_DELEGATION` + 0.5 because the experimental timeline's `timeline:maintenance` context holds the integer after it; a named runtime-context placement in `dsh-system-prompt` would replace the half step.
 - **The panel lists local residency, not the tree** — a child joins it while its session record is resident in this process, so an external task with no local session never appears; `/subagents` lists that durable task record as non-openable, alongside every local descendant.
 - **A continuable child view prompts its Agent directly** — a prompt typed in a continuable subagent view goes to that child's Agent as in any session, and a child that is not resident is resumed by the view; the Web client sends the prompt through the subagent runtime's prompt route instead.
 - **Residency is not work** — the listing's `activity: 'running'` says the child's record is resident, which is what the row's `resident` reports; whether the child is working is the separate `running` / `idle` word beside it, read from that child's Agent in this process.
