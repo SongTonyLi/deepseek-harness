@@ -17,6 +17,7 @@ import {
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek-api-key'
+import DeepSeekAuth from '@deepseek-ai/dsh-deepseek-auth'
 import PermissionPresetService, { AUTO_PRESET } from '@deepseek-ai/dsh-permission-presets'
 import SandboxProvider, { type ConfinedArgv, type SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import AppleContainerSandboxProvider from '@deepseek-ai/dsh-sandbox-apple-container'
@@ -152,6 +153,7 @@ async function mount(ctx: Context, workspace: string, dshHome: string, container
     systemPrompt: {}, tools: { mode: 'native' },
   })
   // No reasoning or output-budget override: use each shipped model's defaults.
+  await ctx.plugin(DeepSeekAuth)
   await ctx.plugin(LlmDeepSeek, { retryPolicy: { mode: 'normal', maxRetries: 0 } })
   await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace })
   if (container === undefined) await ctx.plugin(UnusedSandbox)

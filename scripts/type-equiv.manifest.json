@@ -2666,6 +2666,16 @@
     },
     {
       "doc": "docs/subsystems/worktrees.md",
+      "symbol": "EnterWorktreeRequest",
+      "source": "packages/experimental/worktree/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/worktrees.md",
+      "symbol": "EnteredWorktree",
+      "source": "packages/experimental/worktree/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/worktrees.md",
       "symbol": "RestoreWorktreeRequest",
       "source": "packages/experimental/worktree/src/types.ts"
     },
@@ -2781,7 +2791,17 @@
     },
     {
       "doc": "docs/subsystems/forge.md",
-      "symbol": "ForgeBranches",
+      "symbol": "ForgeWorktreeBases",
+      "source": "packages/experimental/client-ui-forge/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/forge.md",
+      "symbol": "ForgeRemoteDefault",
+      "source": "packages/experimental/client-ui-forge/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/forge.md",
+      "symbol": "ForgeRemoteBranches",
       "source": "packages/experimental/client-ui-forge/src/types.ts"
     },
     {
