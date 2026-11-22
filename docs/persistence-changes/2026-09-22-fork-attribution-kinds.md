@@ -9,7 +9,7 @@ English | [中文](2026-09-22-fork-attribution-kinds.zh.md)
 
 ## Summary
 
-Record the terminal, continuation, reminder, and work-state notice attribution kinds alongside the retry message source. This transition builds on the Timeline priority notice record, which is its predecessor for each root both records change.
+Record the terminal, continuation, reminder, and work-state notice attribution kinds alongside the retry message source. This transition builds on the sdk-user message source record, which is its predecessor for each root both records change.
 
 ## Table of Contents
 
@@ -27,20 +27,20 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "6a741cea1919b7178b2e30d38ef1814da4af9e979bc70c093f54380a5c60ab5f"
+    previous: "2026-11-19-cua-input-notices"
+    after: "2ecd066011ceee26a6e3ea9834328615aac76689668fbbdbc7a44991c557c671"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "94ed843642dbeb1b02c6a35e0d5bb96c071a48283a9de74b30fa2d6cb5d669d5"
+    previous: "2026-11-19-cua-input-notices"
+    after: "c9310f6d8131040e838c44d889942f30bd119f653b815e3779f41a1b651f936e"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "b5de2f0370e8ccce85c00e24cfa966aba660ecf6f403a28241a2f1b5637c950b"
+    previous: "2026-11-19-cua-input-notices"
+    after: "8b71dae5f77cf8f2b541ee92ebed2448aa180ad1178c7f12ef2060ea175fdbdd"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "f80605cc21b9b582b68e2e816b20f0d8390425665971840b4881e4d00aef0b0a"
+    previous: "2026-11-19-cua-input-notices"
+    after: "1c6578c0e2377ed3b717310f7d8a50f722da22145ed022813bc29386c7deab60"
     decision: same-version
 ```
 
@@ -52,7 +52,7 @@ Existing `retry` and earlier message records remain readable, and the Session he
 <a id="verification"></a>
 ## Verification
 
-Package suites for the eight packages that carry the `@persistenceAttribution` marker passed on the merged tree: no-progress-reminder, goal-round-driver, compaction-basic, tmux-context, action-cards, user-questions, working-directory, and tui-app. 1976 tests passed across 111 files, with one pre-existing skip.
+Package suites for the eight packages that carry the `@persistenceAttribution` marker passed on the merged tree: no-progress-reminder, goal-round-driver, compaction-basic, tmux-context, action-cards, user-questions, working-directory, and tui-app. 1995 tests passed across 113 files, with one pre-existing skip.
 
 <a id="dev-note"></a>
 ## Dev Note

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Agents can discover and load skills during a session. When the `skill` tool is visible, model-invocable skills or incomplete discovery produce a durable catalog before the first request. The tool loads full instructions; users can invoke user-invocable skills with `/name`. Entry, visibility, and completeness changes append a replacement catalog. Incomplete discovery publishes confirmed skills with a warning, including when none are confirmed. Configure `catalogDescriptionMaxLength` to cap descriptions.
+Agents can discover and load skills during a session. When the `skill` tool is visible, model-invocable skills or incomplete discovery produce a durable catalog before the first request. The tool loads full instructions; users can invoke user-invocable skills with `/name`. Entry, visibility, and completeness changes append a replacement catalog. Incomplete discovery publishes confirmed skills with a warning, including when none are confirmed. Configure `catalogDescriptionMaxLength` to cap descriptions and `excludedSkills` to omit named skills.
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@ Agents can discover and load skills during a session. When the `skill` tool is v
 
 Skill discovery, catalog updates, and explicit skill invocation use the Session's current working directory.
 
-Mount the plugin alongside the skill registry to give agents a session skill catalog and the `skill` loader tool. It requires `ctx.agents`, `ctx.tools`, and `ctx.skills`.
+Mount the plugin alongside the skill registry to give agents a session skill catalog and the `skill` loader tool. It requires `ctx.agents`, `ctx.tools`, `ctx.skills`, and `ctx.workingDirectory`.
 
 ### When to choose it
 
@@ -35,7 +35,7 @@ Use it when agents should discover and load skills during a session. Skip it whe
 
 ### Mount and configure
 
-Load the plugin together with the skill registry and at least one provider. Configuration caps the catalog description length and names the provider routes that receive the unknown-skill hard-stop.
+Load the plugin together with the skill registry and at least one provider. Configuration caps the catalog description length, names the provider routes that receive the unknown-skill hard-stop, and lists skill names excluded from the catalog, named loads, and `/name` invocations.
 
 ```yaml
 - name: '@deepseek-ai/dsh-skill'
@@ -47,19 +47,20 @@ Load the plugin together with the skill registry and at least one provider. Conf
 |---|---|---|
 | `catalogDescriptionMaxLength` | `500` | Maximum normalized description length rendered in the session catalog; minimum 3 |
 | `closedCatalogProviders` | `['cursor']` | Provider routes that receive the per-turn unknown-skill hard-stop; empty disables the stop. Suggestions still run for every provider. |
+| `excludedSkills` | `[]` | Exact skill names this tool omits from the session catalog, named loads and user `/name` invocations; an invalid name fails at load |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-skill) is the exhaustive source for every accepted field.
 
 ### What the model gets
 
-- **A session catalog.** When the `skill` tool is visible and either model-invocable skills exist or discovery is incomplete, the agent receives a durable user-role message before its first request, listing each confirmed skill's name and a capped description; a non-empty catalog tells the model to load a skill with the tool before acting on it, and never to infer instructions from the summary alone.
+- **A session catalog.** When the `skill` tool is visible and either model-invocable skills exist or discovery is incomplete, the agent receives a durable user-role message before its first request, listing each confirmed skill outside `excludedSkills` by name and a capped description; a non-empty catalog tells the model to load a skill with the tool before acting on it, and never to infer instructions from the summary alone.
 - **A loader tool.** The model calls `skill` with the exact skill name and receives the full instruction body plus resource guidance in a canonical `<skill_content>` block; the result is retained as ordinary tool history.
-- **Explicit user invocation.** A `/name` token in direct user input that names a user-invocable skill injects that skill's instructions into the step, without the model having to load it.
+- **Explicit user invocation.** A `/name` token in direct user input that names a user-invocable skill outside `excludedSkills` injects that skill's instructions into the step, without the model having to load it.
 - **Live catalog updates.** Later membership, description, visibility, or completeness changes append a replacement catalog; removing every skill appends an empty catalog that retires older names.
 
 ### Observable success and failures
 
-Loading a listed skill returns its full instructions; the model sees one canonical shape whether the load came from the tool or from a user's explicit invocation. An invalid name reports `Error: invalid arguments: invalid skill name "<name>"`, an unknown or vanished name reports `Error: skill "<name>" is unknown or no longer available` plus closest catalog names, a capped list of model-invocable names, and the closed-catalog rule, and a skill disabled for model invocation reports it is not available for model invocation. After three consecutive unknown loads on the same live agent in the same turn, further `skill` calls in that turn — including valid names — report that the catalog is closed this turn and the next action must be a task tool when the agent's current or selected provider is in `closedCatalogProviders` (default the Cursor subscription route `cursor`); an invalid name, a model-disabled skill, a successful load, a new turn, a provider outside that list, or direct execution without an agent never applies it. The catalog is omitted entirely when no catalog was ever published and either discovery is complete with no model-invocable skills or the `skill` tool is hidden or shadowed; after a catalog has been published, either visibility loss — the `skill` tool hidden or shadowed by a same-name scoped tool — or removal of every skill instead appends an empty catalog that retires older names.
+Loading a listed skill returns its full instructions; the model sees one canonical shape whether the load came from the tool or from a user's explicit invocation. An invalid name reports `Error: invalid arguments: invalid skill name "<name>"`, an unknown, vanished, or excluded name reports `Error: skill "<name>" is unknown or no longer available` plus closest catalog names, a capped list of model-invocable names, and the closed-catalog rule, and a skill disabled for model invocation reports it is not available for model invocation. After three consecutive unknown loads on the same live agent in the same turn, further `skill` calls in that turn — including valid names — report that the catalog is closed this turn and the next action must be a task tool when the agent's current or selected provider is in `closedCatalogProviders` (default the Cursor subscription route `cursor`); an unknown, vanished, or excluded name counts toward that streak, an invalid name or a model-disabled skill does not, a successful load or a new turn resets it, and a provider outside that list or direct execution without an agent never starts it. The catalog is omitted entirely when no catalog was ever published and either discovery is complete with no model-invocable skills or the `skill` tool is hidden or shadowed; after a catalog has been published, either visibility loss — the `skill` tool hidden or shadowed by a same-name scoped tool — or removal of every skill instead appends an empty catalog that retires older names.
 
 -----
 
@@ -85,11 +86,11 @@ The package is built on two ideas. First, the catalog is a durable projection, d
 
 ### Catalog lifecycle
 
-At each eligible `agent/pre-step`, the plugin snapshots the calling session's skill catalog, applies exact `skill` tool visibility, filters to model-invocable skills, and compares a digest of the entries and completeness against the newest visible `skill-catalog` message in the session log. When the digest changed, it hands the `enter` decision a durable user-role message containing the replacement catalog; an empty replacement explicitly retires earlier names. An incomplete snapshot publishes its readable entries with a discovery warning and durable `incomplete: true` source metadata, including when no entries remain. Completeness participates in the digest, so recovery clears the warning even when the entries stay the same; incomplete observations are retried rather than cached. The visibility check compares against the exact tool definition this plugin registered, so a scoped same-name shadow removes both the schema and its guidance; the plugin works mounted globally or inside one agent's composition.
+At each eligible `agent/pre-step`, the plugin snapshots the calling session's skill catalog, applies exact `skill` tool visibility, filters to model-invocable skills outside `excludedSkills`, and compares a digest of the entries and completeness against the newest visible `skill-catalog` message in the session log. When the digest changed, it hands the `enter` decision a durable user-role message containing the replacement catalog; an empty replacement explicitly retires earlier names. An incomplete snapshot publishes its readable entries with a discovery warning and durable `incomplete: true` source metadata, including when no entries remain. Completeness participates in the digest, so recovery clears the warning even when the entries stay the same; incomplete observations are retried rather than cached. The visibility check compares against the exact tool definition this plugin registered, so a scoped same-name shadow removes both the schema and its guidance; the plugin works mounted globally or inside one agent's composition.
 
 ### Invocation boundary
 
-The `/name` gesture listener scans only claimed user messages: a whitespace-bounded token naming a user-invocable skill in the workspace catalog injects the same `<skill_content>` rendering as a `user`-role instructions context appended after every other injection. Unknown names and user-disabled skills stay ordinary prose. This is the only entry point for `disable-model-invocation` skills, which the catalog and the `skill` tool never expose.
+The `/name` gesture listener scans only claimed user messages: a whitespace-bounded token naming a user-invocable skill in the workspace catalog injects the same `<skill_content>` rendering as a `user`-role instructions context appended after every other injection. Unknown names, names in `excludedSkills`, and user-disabled skills stay ordinary prose. This is the only entry point for `disable-model-invocation` skills, which the catalog and the `skill` tool never expose.
 
 </details>
 
@@ -232,7 +233,7 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 #### What the model sees
 
-Invalid names return `Error: invalid arguments: invalid skill name "<name>"` as `ToolArgsError` with `INVALID_ARGS`. A skill disabled for model invocation returns `Error: skill "<name>" is not available for model invocation` as `SkillError` with `SKILL_NOT_MODEL_INVOCABLE`. An unknown or vanished name keeps the first line `Error: skill "<name>" is unknown or no longer available` as `SkillError` with `SKILL_NOT_FOUND`, and appends closest catalog names, the model-invocable name list, and the closed-catalog rule. When no catalog name is close enough, the second line is `No close catalog name matches.` When the catalog is empty, the third line is `The skill catalog is empty.` instead of a `Valid skill names:` list. A list longer than 40 names ends with `(+N more)`. After three consecutive unknown loads on the same live agent in the same turn, further `skill` calls in that turn — including valid names — return the closed-catalog refusal. Provider-thrown lookup text is data-dependent and receives the same `Error: <message>` wrapper. An invalid name or a model-disabled skill does not count toward the per-turn stop. Direct `skill` execution without an agent never applies that stop.
+Invalid names return `Error: invalid arguments: invalid skill name "<name>"` as `ToolArgsError` with `INVALID_ARGS`. A skill disabled for model invocation returns `Error: skill "<name>" is not available for model invocation` as `SkillError` with `SKILL_NOT_MODEL_INVOCABLE`. An unknown, vanished, or excluded name keeps the first line `Error: skill "<name>" is unknown or no longer available` as `SkillError` with `SKILL_NOT_FOUND`, and appends closest catalog names and the model-invocable name list (both omitting `excludedSkills`), and the closed-catalog rule. When no catalog name is close enough, the second line is `No close catalog name matches.` When the catalog is empty, the third line is `The skill catalog is empty.` instead of a `Valid skill names:` list. A list longer than 40 names ends with `(+N more)`. After three consecutive unknown loads on the same live agent in the same turn, further `skill` calls in that turn — including valid names — return the closed-catalog refusal. Provider-thrown lookup text is data-dependent and receives the same `Error: <message>` wrapper. An unknown, vanished, or excluded name counts toward the per-turn stop; an invalid name or a model-disabled skill does not. Direct `skill` execution without an agent never applies that stop.
 
 ##### Unknown skill error
 
@@ -261,7 +262,7 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 #### What the model sees
 
-A whitespace-bounded `/name` token anywhere in a claimed user message, naming a user-invocable skill in the workspace catalog, injects that skill's full `<skill_content>` rendering (the exact result-template shape above) as a `user`-role instructions context appended after every other injection of that step — background first, the material to act on last. Only direct user input is scanned, the check runs on the loaded definition, and unknown or user-disabled names stay ordinary prose. This is the sole entry point for `disable-model-invocation` skills, which the catalog and the `skill` tool never expose; the catalog's closing sentence tells the model to follow the injected block instead of re-loading it.
+A whitespace-bounded `/name` token anywhere in a claimed user message, naming a user-invocable skill in the workspace catalog and not listed in `excludedSkills`, injects that skill's full `<skill_content>` rendering (the exact result-template shape above) as a `user`-role instructions context appended after every other injection of that step — background first, the material to act on last. Only direct user input is scanned, the check runs on the loaded definition, and unknown, excluded, or user-disabled names stay ordinary prose. This is the sole entry point for `disable-model-invocation` skills, which the catalog and the `skill` tool never expose; the catalog's closing sentence tells the model to follow the injected block instead of re-loading it.
 
 #### Token effect
 

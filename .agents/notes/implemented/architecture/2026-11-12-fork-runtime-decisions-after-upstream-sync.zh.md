@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-本 fork 跟踪发布 `dsh-v0.2.2-rc.5` 之后的上游 master，并在四项决策上与之不同：本地沙箱中的读取围栏拒绝、放在静态 Client 工具包中的凭据匹配器、`interrupt_agent` 工具（终端 profile 启用它，上游的内置配置却将其关闭，PR #7986），以及一个 e2e 测试文件中 `schemastery` 路径段的 fork 独有 rescope 豁免。上游现在也豁免点名 `cordis` 智能体预设 id 的四个文件，因此上面的 `schemastery` 豁免是唯一的 fork 独有 rescope 豁免。代码显示每项决策做了什么，却没有说明它为何不同于上游；本笔记记录这些原因。
+本 fork 跟踪发布 `dsh-v0.2.3-alpha.2` 之后的上游 master，并在四项决策上与之不同：本地沙箱中的读取围栏拒绝、放在静态 Client 工具包中的凭据匹配器、`interrupt_agent` 工具（终端 profile 启用它，上游的内置配置却将其关闭，PR #7986），以及两个 e2e 测试文件中 `schemastery` 路径段的 fork 独有 rescope 豁免。上游现在也豁免点名 `cordis` 智能体预设 id 的四个文件，因此上面这些 `schemastery` 豁免是唯一的 fork 独有 rescope 豁免。代码显示每项决策做了什么，却没有说明它为何不同于上游；本笔记记录这些原因。
 
 ## 决策
 
@@ -38,7 +38,7 @@ Status: implemented
 
 上游的 `GENERIC_SKIPS`（位于 [rescope-vendor.ts](../../../../scripts/rescope-vendor.ts)）对裸 `cordis` 名共有四个条目：[creator-persona.e2e.ts](../../../../apps/web/tests/creator-persona.e2e.ts)、[agent-scopes.spec.ts](../../../../packages/experimental/cua/tests/agent-scopes.spec.ts)，以及 subagent-interrupt-default 指南的中文版（[guide.zh.md](../../../../docs/upgrade-guide/v0.2.2-rc.1/subagent-interrupt-default/guide.zh.md)）。英文版 `guide.md` 是第四个条目。产品标识符表 [rescope-vendor.spec.ts](../../../../scripts/rescope-vendor.spec.ts) 列出全部四个文件，并断言 rescope 不会改动其中任何一个。
 
-fork 在此列表中唯一的新增项是 [client-config-sync.e2e.ts](../../../../apps/web/tests/client-config-sync.e2e.ts) 中针对 `schemastery` 的 fork 独有豁免：`@deepseek-ai` 下的 `schemastery` 路径段是带作用域的包目录，而非上游包名。
+fork 在此列表中仅有的新增项是 [client-config-sync.e2e.ts](../../../../apps/web/tests/client-config-sync.e2e.ts) 与 [input-plugin-extensions.e2e.ts](../../../../apps/web/tests/input-plugin-extensions.e2e.ts) 中针对 `schemastery` 的 fork 独有豁免：`@deepseek-ai` 下的 `schemastery` 路径段是带作用域的包目录，而非上游包名。
 
 rescope 门禁会把裸 `cordis` 名改写为 `@deepseek-ai/cordis`，改写范围包括带分隔符的名称标记、YAML 的 `name:` 标量，以及 TypeScript 与 JavaScript 的模块说明符。在这四个文件中，裸名属于产品数据，即 `cordis` 智能体预设 id：creator-persona 将其选为默认预设并断言会话的预设 id，agent-scopes 将其列在预设之中，subagent-interrupt 指南在变更与迁移步骤中点名它。上游的 rescope 列表对这四个文件各有一个条目。
 
@@ -65,4 +65,4 @@ rescope 门禁会把裸 `cordis` 名改写为 `@deepseek-ai/cordis`，改写范�
 - **读取围栏拒绝：** 识别该拒绝的调用方匹配错误码字符串，因为该类既未从 `sandbox-local` 的入口重新导出，也未从 `dsh-sandbox` 重新导出。改动该字符串需要同时更新 `errors.ts`、点名它的 JSDoc、断言它的两份规格，以及记录它的各份 README。
 - **凭据匹配器：** Web 的 `secret` 规则与终端界面共享同一个工具包，因此扫描器的改动会同时影响两个界面。新增静态 Client 库需要同时编辑 `PLATFORM_MODULES` 与 `seed.ts`。`getStaticModules()` 中的 `satisfies Record<PlatformModule, unknown>` 子句即是对这一对的编译期检查，其注释写明：在 `PLATFORM_MODULES` 中新增却没有静态导入的词，或相反的情况，都会导致编译失败。
 - **interrupt 工具：** 终端的工具集包含 `interrupt_agent`，而 base 与 Web 预设省略了它。终端行显式设置该值，因此修改 base 行不会改变终端。
-- **rescope 豁免：** 这四个文件保留其产品值。上游列表对裸名共有 79 个条目，其中包括这四个文件；本 fork 唯一的新增项是 `client-config-sync.e2e.ts` 中的 `schemastery` 豁免。其他符合改写条件、且引用裸名的文件，除非列表点名，否则会被门禁改写。
+- **rescope 豁免：** 这四个文件保留其产品值。上游列表对裸名共有 79 个条目，其中包括这四个文件；本 fork 的新增项是 `client-config-sync.e2e.ts` 与 `input-plugin-extensions.e2e.ts` 中的 `schemastery` 豁免。其他符合改写条件、且引用裸名的文件，除非列表点名，否则会被门禁改写。

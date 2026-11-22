@@ -9,7 +9,7 @@ kind: persistence-change
 
 ## 概述
 
-记录终端、续接、提醒与工作状态通知的归因类型，并与 retry 消息来源一同记录。本次转换以 Timeline 优先级通知记录为基础，该记录是两份记录都变更的每个根的前一版本。
+记录终端、续接、提醒与工作状态通知的归因类型，并与 retry 消息来源一同记录。本次转换以 sdk-user 消息来源记录为基础，该记录是两份记录都变更的每个根的前一版本。
 
 ## 目录
 
@@ -27,20 +27,20 @@ id: 2026-09-22-fork-attribution-kinds
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "6a741cea1919b7178b2e30d38ef1814da4af9e979bc70c093f54380a5c60ab5f"
+    previous: "2026-11-19-cua-input-notices"
+    after: "2ecd066011ceee26a6e3ea9834328615aac76689668fbbdbc7a44991c557c671"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "94ed843642dbeb1b02c6a35e0d5bb96c071a48283a9de74b30fa2d6cb5d669d5"
+    previous: "2026-11-19-cua-input-notices"
+    after: "c9310f6d8131040e838c44d889942f30bd119f653b815e3779f41a1b651f936e"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "b5de2f0370e8ccce85c00e24cfa966aba660ecf6f403a28241a2f1b5637c950b"
+    previous: "2026-11-19-cua-input-notices"
+    after: "8b71dae5f77cf8f2b541ee92ebed2448aa180ad1178c7f12ef2060ea175fdbdd"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-11-05-timeline-priority-notice"
-    after: "f80605cc21b9b582b68e2e816b20f0d8390425665971840b4881e4d00aef0b0a"
+    previous: "2026-11-19-cua-input-notices"
+    after: "1c6578c0e2377ed3b717310f7d8a50f722da22145ed022813bc29386c7deab60"
     decision: same-version
 ```
 
@@ -52,7 +52,7 @@ changes:
 <a id="verification"></a>
 ## 验证
 
-合并后的树上，携带 `@persistenceAttribution` 标记的八个包的测试套件全部通过：no-progress-reminder、goal-round-driver、compaction-basic、tmux-context、action-cards、user-questions、working-directory 与 tui-app。共 111 个文件、1976 项测试通过，另有一项既有的跳过。
+合并后的树上，携带 `@persistenceAttribution` 标记的八个包的测试套件全部通过：no-progress-reminder、goal-round-driver、compaction-basic、tmux-context、action-cards、user-questions、working-directory 与 tui-app。共 113 个文件、1995 项测试通过，另有一项既有的跳过。
 
 <a id="dev-note"></a>
 ## 开发备注
