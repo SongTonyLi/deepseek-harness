@@ -81,12 +81,15 @@ export interface Config {
    * Suggestions still run for every provider. An empty list disables the stop.
    */
   closedCatalogProviders?: string[]
+  /** Exact skill names omitted from this tool's catalog, named loads and user invocations. */
+  excludedSkills?: string[]
 }
 
 /** Validate and default the model-facing skill catalog configuration. */
 export const Config: z<Config> = z.object({
   catalogDescriptionMaxLength: z.number().default(DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH),
   closedCatalogProviders: z.array(z.string()).default(DEFAULT_CLOSED_CATALOG_PROVIDERS),
+  excludedSkills: z.array(z.string()).default([]),
 })
 
 /**
@@ -109,6 +112,11 @@ export function apply(ctx: Context, config: Config = {}): void {
     const streak = unknownStreaks.get(session)
     if (streak !== undefined) streak.consecutiveUnknown = 0
   })
+
+  const excludedSkills = new Set(config.excludedSkills)
+  for (const name of excludedSkills) {
+    if (!isSkillName(name)) throw new RangeError(`invalid excluded skill name "${name}"`)
+  }
 
   const skillTool = defineTool({
     name: 'skill',
@@ -167,7 +175,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       // The agent is its own scope key, so the lookup resolves the layered
       // registry exactly as this agent's composition sees it.
       const cwd = exec.agent === undefined ? undefined : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
-      return await loadModelInvocableSkill(ctx, args.name, { cwd, signal: exec.signal, scope: exec.agent }, streak)
+      return await loadModelInvocableSkill(ctx, args.name, { cwd, signal: exec.signal, scope: exec.agent }, streak, excludedSkills)
     },
     presentCall(args) {
       return { card: 'generic', title: `Load skill ${args.name}`, kind: 'read', rawInput: args.name }
@@ -195,7 +203,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   ): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject') return decision
-    const names = invokedSkillNames(messages)
+    const names = invokedSkillNames(messages).filter(name => !excludedSkills.has(name))
     if (names.length === 0) return decision
     signal.throwIfAborted()
     const lookup = { cwd: await ctx.workingDirectory.ensure(agent, signal), signal, scope: agent }
@@ -237,7 +245,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       ? await ctx.skills.snapshot({ cwd: await ctx.workingDirectory.ensure(agent, signal), signal, scope: agent })
       : { skills: [], complete: true }
     signal.throwIfAborted()
-    const skills = snapshot.skills.filter(isModelInvocable)
+    const skills = snapshot.skills.filter(skill => isModelInvocable(skill) && !excludedSkills.has(skill.name))
     const entries = catalogSourceEntries(skills, catalogDescriptionMaxLength)
     const incomplete = !snapshot.complete
     const digest = digestCatalogEntries(entries, incomplete)
@@ -329,8 +337,9 @@ async function loadModelInvocableSkill(
   name: string,
   lookup: SkillViewOptions,
   streak: UnknownSkillStreak | undefined,
+  excludedSkills: ReadonlySet<string>,
 ): Promise<Pick<SkillDefinition, 'name' | 'provider' | 'resourceBase' | 'content'>> {
-  const summaries = await ctx.skills.list(lookup)
+  const summaries = (await ctx.skills.list(lookup)).filter(skill => !excludedSkills.has(skill.name))
   const catalogNames = summaries.filter(isModelInvocable).map(skill => skill.name)
   const summary = summaries.find(skill => skill.name === name)
   if (summary === undefined) throwUnknownSkill(name, catalogNames, streak)

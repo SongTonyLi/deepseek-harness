@@ -1,8 +1,8 @@
 - group "模型与推理等级":
   - searchbox "搜索模型…"
   - menu "模型":
-    - group "DeepSeek":
-      - text: DeepSeek
+    - group "DeepSeek API":
+      - text: DeepSeek API
       - menuitemradio "Messages Flash" [checked]
       - menuitemradio "DeepSeek-V4-Pro"
     - group "Cursor":

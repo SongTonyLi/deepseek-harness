@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-agent 可以在会话期间发现并加载 skill。当 `skill` 工具可见时，只要存在模型可调用的 skill 或发现不完整，就会在首次请求前生成持久目录。工具加载完整指令；用户可以用 `/name` 调用用户可调用的 skill。条目、可见性和完整性变化会追加替换目录。发现不完整时会发布已确认的 skill 并附带警告，即使没有确认任何 skill。可配置 `catalogDescriptionMaxLength` 来限制描述长度。
+agent 可以在会话期间发现并加载 skill。当 `skill` 工具可见时，只要存在模型可调用的 skill 或发现不完整，就会在首次请求前生成持久目录。工具加载完整指令；用户可以用 `/name` 调用用户可调用的 skill。条目、可见性和完整性变化会追加替换目录。发现不完整时会发布已确认的 skill 并附带警告，即使没有确认任何 skill。可配置 `catalogDescriptionMaxLength` 来限制描述长度，并配置 `excludedSkills` 来省略指定的 skill。
 
 ## 目录
 
@@ -27,7 +27,7 @@ agent 可以在会话期间发现并加载 skill。当 `skill` 工具可见时�
 
 技能发现、目录更新与显式技能调用均使用 Session 的当前工作目录。
 
-与 skill 注册表一起挂载该插件，即可让 agent 拥有会话 skill 目录和 `skill` 加载工具。它需要 `ctx.agents`、`ctx.tools` 与 `ctx.skills`。
+与 skill 注册表一起挂载该插件，即可让 agent 拥有会话 skill 目录和 `skill` 加载工具。它需要 `ctx.agents`、`ctx.tools`、`ctx.skills` 与 `ctx.workingDirectory`。
 
 ### 何时选择
 
@@ -35,7 +35,7 @@ agent 可以在会话期间发现并加载 skill。当 `skill` 工具可见时�
 
 ### 挂载与配置
 
-与 skill 注册表和至少一个提供方一起加载该插件。配置项限制目录描述长度，并指定会收到未知 skill 硬停止的提供方路由。
+与 skill 注册表和至少一个提供方一起加载该插件。配置项限制目录描述长度，指定会收到未知 skill 硬停止的提供方路由，并列出从目录、按名加载和 `/name` 调用中排除的 skill 名称。
 
 ```yaml
 - name: '@deepseek-ai/dsh-skill'
@@ -47,19 +47,20 @@ agent 可以在会话期间发现并加载 skill。当 `skill` 工具可见时�
 |---|---|---|
 | `catalogDescriptionMaxLength` | `500` | 会话目录中渲染的规范化描述最大长度；最小为 3 |
 | `closedCatalogProviders` | `['cursor']` | 会收到每轮未知 skill 硬停止的提供方路由；空列表禁用该停止。建议仍对每个提供方生效。 |
+| `excludedSkills` | `[]` | 此工具按确切名称排除的 skill，对会话目录、按名加载和用户的 `/name` 调用均生效；无效名称会在加载时失败 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tool-skill)是每个受支持字段的穷尽式真源。
 
 ### 模型得到什么
 
-- **会话目录。** 当 `skill` 工具可见，且存在模型可调用 skill 或发现不完整时，agent 会在首次请求前收到一条持久的用户角色消息，列出每个已确认 skill 的名称与有长度上限的描述；非空目录告诉模型在着手任务前先用工具加载 skill，且绝不能仅凭摘要推断指令。
+- **会话目录。** 当 `skill` 工具可见，且存在模型可调用 skill 或发现不完整时，agent 会在首次请求前收到一条持久的用户角色消息，列出每个未被 `excludedSkills` 排除的已确认 skill 的名称与有长度上限的描述；非空目录告诉模型在着手任务前先用工具加载 skill，且绝不能仅凭摘要推断指令。
 - **加载工具。** 模型以精确的 skill 名称调用 `skill`，并收到完整指令正文以及规范的 `<skill_content>` 块中的资源指引；该结果作为普通工具历史保留。
-- **用户显式调用。** 直接用户输入中的 `/name` token 若指名某个用户可调用 skill，会把该 skill 的指令注入该步骤，而无需模型自行加载。
+- **用户显式调用。** 直接用户输入中的 `/name` token 若指名某个未被 `excludedSkills` 排除的用户可调用 skill，会把该 skill 的指令注入该步骤，而无需模型自行加载。
 - **实时目录更新。** 后续成员关系、描述、可见性或完整性变化会追加替换目录；删除全部 skill 时会追加空目录，停用较早的名称。
 
 ### 可观察的成功与失败
 
-加载列出的 skill 会返回其完整指令；无论加载来自工具还是用户的显式调用，模型看到的都是同一种规范形态。无效名称会报告 `Error: invalid arguments: invalid skill name "<name>"`，未知或已消失的名称会报告 `Error: skill "<name>" is unknown or no longer available`，并附上最接近的目录名称、有上限的模型可调用名称列表以及目录已封闭规则，被禁用模型调用的 skill 会报告其不可用于模型调用。同一存活 agent 在同一轮次连续三次未知加载之后，该轮后续 `skill` 调用——包括有效名称——会在该 agent 当前或已选提供方属于 `closedCatalogProviders`（默认是 Cursor 订阅路由 `cursor`）时报告本轮目录已封闭，下一步必须是任务工具；无效名称、模型禁用的 skill、一次成功加载、新的一轮、该列表之外的提供方，或没有 agent 的直接执行，都不会应用该停止。如果从未发布过目录，并且发现完整且不存在模型可调用 skill，或 `skill` 工具被隐藏或遮蔽，则会整体省略目录；目录发布后，无论可见性丧失——`skill` 工具被隐藏或被同名作用域工具遮蔽——还是删除全部 skill，都会改为追加空目录来停用旧名称。
+加载列出的 skill 会返回其完整指令；无论加载来自工具还是用户的显式调用，模型看到的都是同一种规范形态。无效名称会报告 `Error: invalid arguments: invalid skill name "<name>"`，未知、已消失或被排除的名称会报告 `Error: skill "<name>" is unknown or no longer available`，并附上最接近的目录名称、有上限的模型可调用名称列表以及目录已封闭规则，被禁用模型调用的 skill 会报告其不可用于模型调用。同一存活 agent 在同一轮次连续三次未知加载之后，该轮后续 `skill` 调用——包括有效名称——会在该 agent 当前或已选提供方属于 `closedCatalogProviders`（默认是 Cursor 订阅路由 `cursor`）时报告本轮目录已封闭，下一步必须是任务工具；未知、已消失或被排除的名称计入该连续计数；无效名称与模型禁用的 skill 不计入，一次成功加载或新的一轮会重置计数，而该列表之外的提供方或没有 agent 的直接执行则从不开始计数。如果从未发布过目录，并且发现完整且不存在模型可调用 skill，或 `skill` 工具被隐藏或遮蔽，则会整体省略目录；目录发布后，无论可见性丧失——`skill` 工具被隐藏或被同名作用域工具遮蔽——还是删除全部 skill，都会改为追加空目录来停用旧名称。
 
 -----
 
@@ -85,11 +86,11 @@ agent 可以在会话期间发现并加载 skill。当 `skill` 工具可见时�
 
 ### 目录生命周期
 
-在每次符合条件的 `agent/pre-step`，插件都会快照调用会话的 skill 目录，应用 `skill` 工具的精确可见性，过滤出模型可调用的 skill，并把条目与完整性的 digest 同会话日志中最新可见的 `skill-catalog` 消息做比较。digest 变化时，它把包含替换目录的持久用户角色消息交给 `enter` 决策；空替换会显式停用较早的名称。快照不完整时仍会发布可读条目，并附带发现警告和持久化的 `incomplete: true` 来源元数据，即使已无可用条目。完整性也参与 digest，因此恢复后即使条目相同也会清除警告；不完整观测会重试而非缓存。可见性检查针对本插件所注册的精确工具定义，因此作用域内同名的遮蔽项会同时移除 schema 及其指引；该插件既可全局挂载，也可挂在单个 agent 的组合内。
+在每次符合条件的 `agent/pre-step`，插件都会快照调用会话的 skill 目录，应用 `skill` 工具的精确可见性，过滤出模型可调用且未被 `excludedSkills` 排除的 skill，并把条目与完整性的 digest 同会话日志中最新可见的 `skill-catalog` 消息做比较。digest 变化时，它把包含替换目录的持久用户角色消息交给 `enter` 决策；空替换会显式停用较早的名称。快照不完整时仍会发布可读条目，并附带发现警告和持久化的 `incomplete: true` 来源元数据，即使已无可用条目。完整性也参与 digest，因此恢复后即使条目相同也会清除警告；不完整观测会重试而非缓存。可见性检查针对本插件所注册的精确工具定义，因此作用域内同名的遮蔽项会同时移除 schema 及其指引；该插件既可全局挂载，也可挂在单个 agent 的组合内。
 
 ### 调用边界
 
-`/name` 手势监听器只扫描已认领的用户消息：若某个以空白为界、指名工作区目录中用户可调用 skill 的 token 出现，则把同一份 `<skill_content>` 渲染作为 `user` 角色的指令上下文注入，追加在该步骤所有其他注入之后。未知名称与用户不可调用的名称保持为普通行文。这是 `disable-model-invocation` skill 唯一的入口，目录与 `skill` 工具永不暴露这类 skill。
+`/name` 手势监听器只扫描已认领的用户消息：若某个以空白为界、指名工作区目录中用户可调用 skill 的 token 出现，则把同一份 `<skill_content>` 渲染作为 `user` 角色的指令上下文注入，追加在该步骤所有其他注入之后。未知名称、`excludedSkills` 中的名称与用户不可调用的名称保持为普通行文。这是 `disable-model-invocation` skill 唯一的入口，目录与 `skill` 工具永不暴露这类 skill。
 
 </details>
 
@@ -232,7 +233,7 @@ Load referenced resources only as needed.
 
 #### 模型看到什么
 
-无效名称会返回 `Error: invalid arguments: invalid skill name "<name>"`，对应带 `INVALID_ARGS` 的 `ToolArgsError`。被禁用模型调用的 skill 会返回 `Error: skill "<name>" is not available for model invocation`，对应带 `SKILL_NOT_MODEL_INVOCABLE` 的 `SkillError`。未知或已消失的名称会保留首行 `Error: skill "<name>" is unknown or no longer available`，对应带 `SKILL_NOT_FOUND` 的 `SkillError`，并追加最接近的目录名称、模型可调用名称列表以及目录已封闭规则。当没有足够接近的目录名称时，第二行是 `No close catalog name matches.`。目录为空时，第三行是 `The skill catalog is empty.`，而不是 `Valid skill names:` 列表。超过 40 个名称的列表以 `(+N more)` 结尾。同一存活 agent 在同一轮次连续三次未知加载之后，该轮后续 `skill` 调用——包括有效名称——会返回关闭目录的拒绝。提供方抛出的查找文本取决于数据，并套用同一个 `Error: <message>` 包装层。无效名称或模型禁用的 skill 不计入该轮停止次数。没有 agent 的直接 `skill` 执行从不应用该停止。
+无效名称会返回 `Error: invalid arguments: invalid skill name "<name>"`，对应带 `INVALID_ARGS` 的 `ToolArgsError`。被禁用模型调用的 skill 会返回 `Error: skill "<name>" is not available for model invocation`，对应带 `SKILL_NOT_MODEL_INVOCABLE` 的 `SkillError`。未知、已消失或被排除的名称会保留首行 `Error: skill "<name>" is unknown or no longer available`，对应带 `SKILL_NOT_FOUND` 的 `SkillError`，并追加最接近的目录名称与模型可调用名称列表（两者均不含 `excludedSkills`），以及目录已封闭规则。当没有足够接近的目录名称时，第二行是 `No close catalog name matches.`。目录为空时，第三行是 `The skill catalog is empty.`，而不是 `Valid skill names:` 列表。超过 40 个名称的列表以 `(+N more)` 结尾。同一存活 agent 在同一轮次连续三次未知加载之后，该轮后续 `skill` 调用——包括有效名称——会返回关闭目录的拒绝。提供方抛出的查找文本取决于数据，并套用同一个 `Error: <message>` 包装层。未知、已消失或被排除的名称计入该轮停止次数；无效名称或模型禁用的 skill 不计入。没有 agent 的直接 `skill` 执行从不应用该停止。
 
 ##### 未知 skill 错误
 
@@ -261,7 +262,7 @@ Error: The skill catalog is closed this turn. The next action must be a task too
 
 #### 模型看到什么
 
-已认领用户消息中任意位置、以空白为界、指名工作区目录中某个用户可调用 skill 的 `/name` token，会把该 skill 的完整 `<skill_content>` 渲染（与上文结果模板完全相同的形态）作为 `user` 角色的指令上下文注入，追加在该步骤所有其他注入之后——背景在前，模型要着手处理的材料在最后。只扫描直接的用户输入，检查在已加载定义上进行，未知名称和用户不可调用的名称保持为普通行文。这是 `disable-model-invocation` skill 唯一的入口，目录和 `skill` 工具永不暴露这类 skill；目录的结尾一句会告诉模型遵循注入块，而不是重新加载它。
+已认领用户消息中任意位置、以空白为界、指名工作区目录中某个用户可调用且未被 `excludedSkills` 排除的 skill 的 `/name` token，会把该 skill 的完整 `<skill_content>` 渲染（与上文结果模板完全相同的形态）作为 `user` 角色的指令上下文注入，追加在该步骤所有其他注入之后——背景在前，模型要着手处理的材料在最后。只扫描直接的用户输入，检查在已加载定义上进行，未知名称、`excludedSkills` 中的名称和用户不可调用的名称保持为普通行文。这是 `disable-model-invocation` skill 唯一的入口，目录和 `skill` 工具永不暴露这类 skill；目录的结尾一句会告诉模型遵循注入块，而不是重新加载它。
 
 #### Token 影响
 

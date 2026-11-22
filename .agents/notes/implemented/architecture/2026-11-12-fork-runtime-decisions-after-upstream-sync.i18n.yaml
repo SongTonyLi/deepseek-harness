@@ -6,8 +6,8 @@
   en: 839f9ded9d302901
   zh: 6bb331b3d700b8b5
 /agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/problem:
-  en: 5610f42c05842f85
-  zh: 954d985ee7b26c1e
+  en: 98267c0e89a11562
+  zh: 7e7b07b804f3e4be
 /agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/decision:
   en: 0d2e1fa8d040654b
   zh: fd36089a9ed4d91b
@@ -21,11 +21,11 @@
   en: ce61c69456d371fa
   zh: ce01a6ab40408e22
 /agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/decision/four-files-keep-the-cordis-preset-id-under-the-rescope-gate:
-  en: 4f9dafa351a0328d
-  zh: 24682467c5f7c350
+  en: a29f85d4988fddde
+  zh: 0c2ac2635b216f71
 /agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/alternatives-considered:
   en: 9fa228c85b212a3d
   zh: 0b7d82432f3bed54
 /agent-note-fork-decisions-that-differ-from-upstream-after-the-sync/consequences:
-  en: a4a16c9aaefa9e83
-  zh: 6f659d49015b6d5a
+  en: ad1aeb52b7209935
+  zh: f5224781b5cf8ac3

@@ -174,7 +174,7 @@ async function mount(ctx: Context, workspace: string, dshHome: string, container
   })
   await ctx.plugin(ToolFs)
   await ctx.plugin(ToolBash)
-  await ctx.plugin(NodePtcRuntime, {})
+  await ctx.plugin(NodePtcRuntime, { executionMode: 'per-call' })
   await ctx.plugin(AutoReview, { temperature: AutoReview.Config().temperature, maxJsonRetries: 0 })
   await ctx.plugin(AgentLoop, { agents: [] })
 }
@@ -225,7 +225,7 @@ function orchestrate(ctx: Context, real: boolean) {
       const callId = `certification-${String(before)}`
       script = [
         callChunks(callId, offeredTool, path === 'native' ? args : {
-          code: `return await tools.${name}(${JSON.stringify(args)});`,
+          code: `await tools.${name}(${JSON.stringify(args)});`,
           description: 'Execute one tool action.',
         }),
         textChunks('The action has settled.'),
@@ -438,6 +438,7 @@ it('keeps the container under Auto and lets the reviewer approve a one-shot esca
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-auto-review-container-'))
   const ctx = new Context()
+  provideWorkingDirectoryFixture(ctx)
   const fake = fakeContainer()
   fake.answer('inspect', { code: 1 })
   try {
