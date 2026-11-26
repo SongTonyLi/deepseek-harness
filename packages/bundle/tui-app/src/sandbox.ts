@@ -52,7 +52,8 @@ export class SandboxPrompt extends PickPrompt {
     const writes = mode === 'read-only'
       ? 'BLOCKED · file modifications'
       : mode === 'workspace-write'
-        ? 'ALLOWED · workspace writes except provider-protected paths; temporary areas may be writable'
+        ? container ? 'ALLOWED · workspace writes except protected paths and read-only mounts'
+          : 'ALLOWED · workspace, temporary areas and additional writable roots'
         : 'UNRESTRICTED · host file modifications'
     const preview = [
       this.palette.bold(`Access preview · ${selected.label.replace(' ✓', '')}`),
@@ -63,16 +64,18 @@ export class SandboxPrompt extends PickPrompt {
       `${mode === 'read-only' ? '−' : '+'} ${writes}`,
       ...container && !unrestricted ? [
         '+ READ · workspace and configured read-only mounts',
-        '− HOST ACCESS · other host paths and configured secret-file patterns hidden',
+        '− HOST ACCESS · Guest masks matching workspace files found at startup.',
+        '  Host-bound workers use Seatbelt and can read some additional host paths.',
         '  Guest files outside shared mounts are not visible to host file tools.',
       ] : [
         '+ READ · host paths (subject to OS permissions)',
-        ...unrestricted ? [] : ['− WRITE · outside permitted paths; provider-protected paths remain blocked'],
+        ...unrestricted ? [] : ['− WRITE · outside permitted paths'],
       ],
       narrowed
         ? 'Auto confines itself to the container from its next call; approval settings do not change.'
         : 'Backend changes do not change file policy or approval settings: use /permission.',
-      'Wider access requires approved one-shot escalation when approvals are enabled.',
+      ...unrestricted ? ['Full access also removes file-tool read restrictions.']
+        : ['Wider access requires approved one-shot escalation when approvals are enabled.'],
     ]
     const inner = Math.max(1, width - 2)
     return [...lines, '', ...preview.flatMap(line => wrapTextWithAnsi(line, inner).map(part => `  ${part}`))]

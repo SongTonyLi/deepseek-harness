@@ -281,6 +281,15 @@ export abstract class SandboxProvider extends Service {
   }
 
   /**
+   * Host paths where file mutations must be refused even inside a writable root.
+   * @param _policy - resolved mode, workspace and session for this operation.
+   * @returns absolute protected paths, including their descendants.
+   */
+  protectedWriteRoots(_policy: SandboxExecutionPolicy): readonly string[] {
+    return []
+  }
+
+  /**
    * What a process wrapped by {@link confine} under `policy` can read on the host, or
    * `undefined` when this backend does not confine reads. Model-facing tools
    * that read the host for the same session must refuse paths outside the

@@ -16566,6 +16566,9 @@ importers:
       '@deepseek-ai/dsh-commands':
         specifier: workspace:*
         version: link:../../interaction/commands
+      '@deepseek-ai/dsh-fs-sandbox':
+        specifier: workspace:*
+        version: link:../../fs/fs-sandbox
       '@deepseek-ai/dsh-llm':
         specifier: workspace:*
         version: link:../../llm/llm

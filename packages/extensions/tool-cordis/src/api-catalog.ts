@@ -3309,6 +3309,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the argv to spawn instead, plus the enforcement completeness the selected backend achieves for it.',
       },
       {
+        signature: 'protectedWriteRoots(_policy: SandboxExecutionPolicy): readonly string[]',
+        description: 'Host paths where file mutations must be refused even inside a writable root.',
+        parameters: [{ name: '_policy', description: 'resolved mode, workspace and session for this operation.' }],
+        returns: 'absolute protected paths, including their descendants.',
+      },
+      {
         signature: 'readScope(_policy: SandboxExecutionPolicy): SandboxReadScope | undefined',
         description: 'What a process wrapped by confine under `policy` can read on the host, or `undefined` when this backend does not confine reads. Model-facing tools that read the host for the same session must refuse paths outside the scope, so their view never exceeds the confined processes\'. The base implementation confines no reads.',
         parameters: [{ name: '_policy', description: 'the file-effect policy of the calling session.' }],

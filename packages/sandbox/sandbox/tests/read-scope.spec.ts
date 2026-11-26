@@ -64,6 +64,7 @@ describe('SandboxProvider.readScope', () => {
     const ctx = new Context()
     await ctx.plugin(Passthrough)
     expect(ctx.sandbox.readScope({ mode: 'read-only', workspaceRoot: '/ws' })).toBeUndefined()
+    expect(ctx.sandbox.protectedWriteRoots({ mode: 'workspace-write', workspaceRoot: '/ws' })).toEqual([])
     expect(ctx.sandbox.escalationNote({ mode: 'read-only', workspaceRoot: '/ws' }, 'danger-full-access')).toBeUndefined()
     await ctx.fiber.dispose()
   })

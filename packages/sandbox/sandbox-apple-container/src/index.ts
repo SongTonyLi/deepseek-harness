@@ -151,6 +151,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   private readonly executable: string
   private readonly image: string
   private readonly envDenylist: readonly string[]
+  private readonly protectedPaths: readonly string[]
   private readonly readOnlyMounts: readonly string[]
   private readonly hiddenFiles: readonly string[]
   private readonly hostBoundUnreadableRoots: readonly string[]
@@ -187,8 +188,8 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
     if (this.readOnlyMounts.some(path => !isAbsolute(path) || path.includes(','))) {
       throw new Error('sandbox-apple-container: readOnlyMounts entries must be absolute paths without a comma')
     }
-    const protectedPaths = config.protectedPaths as string[]
-    if (protectedPaths.some(path => path === '' || isAbsolute(path) || path.includes(',') || path.split(/[\\/]/u).includes('..'))) {
+    this.protectedPaths = config.protectedPaths as string[]
+    if (this.protectedPaths.some(path => path === '' || isAbsolute(path) || path.includes(',') || path.split(/[\\/]/u).includes('..'))) {
       throw new Error('sandbox-apple-container: protectedPaths entries must be workspace-relative paths without `..` or a comma')
     }
     this.hiddenFiles = config.hiddenFiles as string[]
@@ -208,7 +209,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
       pid: process.pid,
       recheckMs: config.recheckMs as number,
       now: Date.now,
-      protectedPaths,
+      protectedPaths: this.protectedPaths,
       readOnlyMounts: this.readOnlyMounts,
       hidden: { names: this.hiddenFiles, maxDepth: config.hiddenFilesMaxDepth as number, skipDirs: config.hiddenFilesSkipDirs as string[] },
       runRoot: join(canonicalPath(tmpdir()), 'dsh-container-run'),
@@ -240,11 +241,11 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
           const policy = scope.sandboxPolicy.resolve({ session })
           if (policy.mode === 'danger-full-access') return ''
           return `Commands confined by the DSH file sandbox run inside a Linux container from image ${JSON.stringify(this.image)}. `
-            + `Only the session workspace ${JSON.stringify(policy.workspaceRoot)} is shared with the host; `
+            + `The session workspace ${JSON.stringify(policy.workspaceRoot)} and configured read-only mounts are shared with the guest; `
             + 'files written elsewhere stay inside the container and are not visible to file tools. '
             + 'Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; '
             + 'when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. '
-            + 'File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.'
+            + 'File tools refuse configured hidden names and request approval for reads outside the shared roots. The guest masks matching workspace files found at startup. Host-bound workers use Seatbelt and can read additional host paths.'
         },
       })
     })
@@ -329,6 +330,7 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
     if (this.policyBackend(policy) === 'local') return super.confine(argv, policy, signal)
     const readable = [...this.containerReadRoots(policy), ...writableRoots(policy), ...execution.runtimePaths]
     return this.confineWithReadFence(argv, policy, {
+      protectedWriteRoots: this.protectedWriteRoots(policy),
       deniedRoots: this.hostBoundUnreadableRoots,
       readableRoots: [...new Set(readable.map(canonicalPath))],
       hiddenNames: this.hiddenFiles,
@@ -359,6 +361,12 @@ export class AppleContainerSandboxProvider extends LocalSandboxProvider {
   override readScope(policy: SandboxExecutionPolicy): SandboxReadScope | undefined {
     if (policy.mode === 'danger-full-access' || this.policyBackend(policy) === 'local') return undefined
     return { roots: this.containerReadRoots(policy), hiddenNames: this.hiddenFiles }
+  }
+
+  override protectedWriteRoots(policy: SandboxExecutionPolicy): readonly string[] {
+    if (policy.mode !== 'workspace-write' || this.policyBackend(policy) === 'local') return []
+    const workspace = canonicalPath(policy.workspaceRoot)
+    return [...this.protectedPaths.map(path => join(workspace, path)), ...this.readOnlyMounts].map(canonicalPath)
   }
 
   /** The host directories a container session's guest can read: the workspace as spelled and canonical, and the extra mounts. */

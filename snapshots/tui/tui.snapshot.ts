@@ -61,6 +61,7 @@ describe('TUI recorded-session replay', () => {
       expect(run.stdout).toContain('Container unavailable:')
       expect(run.stdout).toContain('Access preview · Local')
       expect(run.stdout).toContain('Sandbox bypassed: commands run on the host, regardless of backend choice.')
+      expect(run.stdout).toContain('Full access also removes file-tool read restrictions.')
       expect(await readFile(join(cwd, '.auto-review-requests'), 'utf8')).toBe(malformedJson ? 'reviewed\nreviewed\n' : 'reviewed\n')
       const storage = join(cwd, '.sessions')
       const paths = latestPersistedSessionPaths(await readdir(storage, { recursive: true }))

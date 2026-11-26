@@ -16,6 +16,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
@@ -53,6 +54,7 @@ describe.skipIf(!runtimeUp)('sandbox-apple-container: real container confinement
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: workspace })
     await ctx.plugin(AppleContainerSandboxProvider, {})
+    await ctx.plugin(SandboxedFileSystem, { cwd: workspace })
     await ctx.plugin(LocalSubprocessRuntime)
     await ctx.plugin(SandboxBashExecutor, { cwd: workspace, timeoutMs: 300_000 })
     bash = ctx.shell as SandboxBashExecutor
@@ -86,6 +88,23 @@ describe.skipIf(!runtimeUp)('sandbox-apple-container: real container confinement
     expect(result.stderr.text.toLowerCase()).toContain('read-only file system')
     expect(existsSync(join(workspace, '.git', 'hooks', 'pre-commit'))).toBe(false)
   }, 600_000)
+
+  it('protects repository metadata across host file mutations in a container session', async () => {
+    const policy = { mode: 'workspace-write' as const, workspaceRoot: workspace }
+    const metadata = await ctx.fs.resolve(join(workspace, '.git', 'description'))
+    const ordinary = await ctx.fs.resolve(join(workspace, 'description'))
+    await writeFile(metadata.displayPath, 'original')
+    await ctx.fs.writeText(ordinary, 'workspace', undefined, undefined, policy)
+    const denied = { code: 'FS_SANDBOX_DENIED' }
+    await expect(ctx.fs.writeText(metadata, 'new', undefined, undefined, policy)).rejects.toMatchObject(denied)
+    await expect(ctx.fs.editText(metadata, { oldString: 'original', newString: 'new', replaceAll: false }, undefined, undefined, policy)).rejects.toMatchObject(denied)
+    await expect(ctx.fs.patchText(metadata, [], undefined, undefined, policy)).rejects.toMatchObject(denied)
+    await expect(ctx.fs.deleteFile(metadata, undefined, undefined, policy)).rejects.toMatchObject(denied)
+    await expect(ctx.fs.moveFile(metadata, ordinary, {}, undefined, policy)).rejects.toMatchObject(denied)
+    await expect(ctx.fs.moveFile(ordinary, metadata, {}, undefined, policy)).rejects.toMatchObject(denied)
+    expect(readFileSync(metadata.displayPath, 'utf8')).toBe('original')
+    expect(readFileSync(ordinary.displayPath, 'utf8')).toBe('workspace')
+  })
 
   it('denies workspace writes under read-only and classifies the denial', async () => {
     const result = await run('echo no > denied.txt', 'read-only')
