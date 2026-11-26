@@ -111,6 +111,7 @@ export type OpenCursorStream = (input: {
   accessToken: string
   rpcPath: string
   signal?: AbortSignal
+  allowedTools?: readonly string[]
 }) => CursorConnectStream
 
 /**
@@ -757,7 +758,7 @@ export async function* streamCursorRun(
     }
   }
   const payload = buildCursorRun(options)
-  const run = new CursorRun(openStream({ accessToken, rpcPath: CURSOR_RUN_PATH }), payload)
+  const run = new CursorRun(openStream({ accessToken, rpcPath: CURSOR_RUN_PATH, allowedTools: payload.allowedTools }), payload)
   run.stream.write(payload.requestBytes)
   yield* stepOnRun(run, options, payload.inputTokenEstimate, timing, { chunks: false }, sessionId, registry)
 }
