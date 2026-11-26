@@ -184,6 +184,18 @@ const request = {
 }
 
 describe('streamCursorRun', () => {
+  it('opens each new Run with the allowed-tools list its payload computed', async () => {
+    const inputs: Parameters<OpenCursorStream>[0][] = []
+    const recording: OpenCursorStream = (input) => {
+      inputs.push(input)
+      return scripted(textThenEnd)(input)
+    }
+    const tools = [{ name: 'read', description: 'read', parameters: { type: 'object' } }]
+    await collect(streamCursorRun({ ...request, tools }, 'tok', TIMING, recording))
+    await collect(streamCursorRun(request, 'tok', TIMING, recording))
+    expect(inputs.map(input => input.allowedTools)).toEqual([['mcp_tool_call', 'get_mcp_tools_tool_call'], []])
+  })
+
   it('emits text, thinking, usage, and stop', async () => {
     const chunks = await collect(streamCursorRun(request, 'tok', TIMING, scripted([
       serverMessage({

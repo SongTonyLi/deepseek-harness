@@ -27,11 +27,11 @@
   en: fcbbad190e87edf0
   zh: 4ccdfdcbdbd568df
 /deepseek-ai-dsh-llm-cursor/understand-the-implementation:
-  en: 41348b42ce26d343
-  zh: abb0112c8c7b3270
+  en: ec59e82d4ac49e21
+  zh: 26e6939f5009d488
 /deepseek-ai-dsh-llm-cursor/further-exploration:
-  en: 86cfc3c8b643ad03
-  zh: b0762ac35601eae9
+  en: 3fd952396649054f
+  zh: a6c19d1ed5725909
 /deepseek-ai-dsh-llm-cursor/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -39,8 +39,8 @@
   en: 368826465c77d0fd
   zh: 96e59c9e4aecb765
 /deepseek-ai-dsh-llm-cursor/model-experience/cursor-run-request/what-the-model-sees:
-  en: 53493e0eedb88a45
-  zh: 3460af53249e4345
+  en: ede9045429bab9ed
+  zh: 26f90bb8703de7ff
 /deepseek-ai-dsh-llm-cursor/model-experience/cursor-run-request/token-effect:
   en: e683dec8c3fa0d44
   zh: ed0f7c97f1c9eed9
@@ -60,8 +60,8 @@
   en: e67424f14f51cc08
   zh: 291f84030ca04d8d
 /deepseek-ai-dsh-llm-cursor/known-limitations-and-deferred-work:
-  en: 52069cb3a7f37206
-  zh: 0ece8025a0bfed87
+  en: 3191af763baaaf67
+  zh: a083ddf2dec7a892
 /deepseek-ai-dsh-llm-cursor/known-limitations-and-deferred-work/dev-note:
   en: 6501f6a2bda8f5b1
   zh: 813e64f16dbecaad

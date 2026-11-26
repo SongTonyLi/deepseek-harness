@@ -127,6 +127,7 @@ describe('unary HTTP/2', () => {
     expect(headers[0]!['user-agent']).toContain('deepseek-harness')
     expect(headers[0]!['authorization']).toBe('Bearer tok')
     expect(headers[0]!['x-ghost-mode']).toBe('true')
+    expect(headers[0]).not.toHaveProperty('x-cursor-agent-allowed-tools')
   })
 
   it('wraps a non-Error connect throw', async () => {
@@ -236,6 +237,29 @@ describe('unary HTTP/2', () => {
 })
 
 describe('streaming HTTP/2', () => {
+  it('sends the allowed-tools header only when the stream request names allowed tools', () => {
+    const emitter = new EventEmitter() as CursorHttp2Stream & EventEmitter
+    emitter.write = () => {}
+    emitter.end = () => {}
+    emitter.destroy = () => {}
+    const headers: Record<string, unknown>[] = []
+    const session: CursorHttp2Session = {
+      request: (h) => {
+        headers.push(h)
+        return emitter
+      },
+      close: () => {},
+      destroy: () => {},
+      on: () => {},
+    }
+    openConnectStream({ accessToken: 't', rpcPath: '/run', allowedTools: ['mcp_tool_call', 'get_mcp_tools_tool_call'] }, () => session).destroy()
+    openConnectStream({ accessToken: 't', rpcPath: '/run', allowedTools: [] }, () => session).destroy()
+    openConnectStream({ accessToken: 't', rpcPath: '/run' }, () => session).destroy()
+    expect(headers[0]!['x-cursor-agent-allowed-tools']).toBe('mcp_tool_call,get_mcp_tools_tool_call')
+    expect(headers[1]!['x-cursor-agent-allowed-tools']).toBe('')
+    expect(headers[2]).not.toHaveProperty('x-cursor-agent-allowed-tools')
+  })
+
   it('parses incoming frames and fails a non-2xx status', async () => {
     const emitter = new EventEmitter() as CursorHttp2Stream & EventEmitter
     emitter.write = () => {}

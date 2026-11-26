@@ -41,4 +41,4 @@ The adapter rule now names the calling convention: harness tools are MCP tools i
 
 ## Related decisions
 
-[Cursor subscription sign-in and native adapter](../feature/2026-09-18-cursor-subscription-signin-and-adapter.md) owns the adapter family and its prompt replay; this note replaces its one-Run-per-step streaming. [Keep unofficial Cursor Runs alive across CLI Pi and control execs](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.md) owns exec replies inside a Run.
+[Cursor subscription sign-in and native adapter](../feature/2026-09-18-cursor-subscription-signin-and-adapter.md) owns the adapter family and its prompt replay; this note replaces its one-Run-per-step streaming. [Keep unofficial Cursor Runs alive across CLI Pi and control execs](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.md) owns exec replies inside a Run. [Remove Cursor's built-in tools from Runs with the allowed-tools header](2026-11-25-cursor-allowed-tools-header.md) stops offering the built-in tools whose execs this note refuses.

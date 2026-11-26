@@ -11,7 +11,7 @@ import {
   buildPromptMessages,
   conversationFromOptions,
   decodeMcpArgsMap,
-  nativeToolsRule,
+  harnessToolsRule,
   TOOL_RESULT_CONTINUATION_TEXT,
 } from '../src/request.ts'
 import type { CursorRunPayload } from '../src/request.ts'
@@ -353,11 +353,24 @@ describe('buildCursorRun', () => {
       tools: ['read', 'bash'].map(name => ({ name, description: name, parameters: { type: 'object' } })),
     })
     expect(payload.rules.map(rule => ({ fullPath: rule.fullPath, content: rule.content, type: rule.type?.type.case }))).toEqual([
-      { fullPath: 'dsh/cursor-adapter', content: nativeToolsRule(['read', 'bash']), type: 'global' },
+      { fullPath: 'dsh/cursor-adapter', content: harnessToolsRule(['read', 'bash']), type: 'global' },
     ])
-    expect(nativeToolsRule(['read', 'bash'])).toContain('CallDynamicTool using namespace "dsh"')
-    expect(nativeToolsRule(['read', 'bash'])).toContain('Tools in namespace "dsh": read, bash.')
-    expect(nativeToolsRule([])).not.toContain('Tools in namespace')
+    expect(harnessToolsRule(['read', 'bash'])).toContain('CallDynamicTool using namespace "dsh"')
+    expect(harnessToolsRule(['read', 'bash'])).toContain('Tools in namespace "dsh": read, bash.')
+    expect(harnessToolsRule([])).not.toContain('Tools in namespace')
+    expect(harnessToolsRule(['read', 'bash'])).not.toContain('built-in')
+  })
+
+  it('allows only the Cursor MCP proto tools when harness tools are advertised, and no tools otherwise', () => {
+    const base = {
+      provider: 'cursor' as const,
+      model: 'composer-2',
+      system: 'sys',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
+    }
+    const withTools = buildCursorRun({ ...base, tools: [{ name: 'read', description: 'read', parameters: { type: 'object' } }] })
+    expect(withTools.allowedTools).toEqual(['mcp_tool_call', 'get_mcp_tools_tool_call'])
+    expect(buildCursorRun(base).allowedTools).toEqual([])
   })
 
   it('estimates prompt tokens from rules, replayed history, the action text, and tool definitions', () => {

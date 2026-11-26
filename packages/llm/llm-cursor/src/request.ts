@@ -47,7 +47,7 @@ import {
   type CursorRule,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
-import { DYNAMIC_TOOL_CALL, DYNAMIC_TOOL_LOOKUP, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
+import { CURSOR_MCP_PROTO_TOOLS, DYNAMIC_TOOL_CALL, DYNAMIC_TOOL_LOOKUP, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
 
 /** Upstream `ConversationStateStructure.client_name = 22`; the vendored subset omits the typed field. */
 const CONVERSATION_CLIENT_NAME_FIELD = 22
@@ -122,24 +122,21 @@ export const TOOL_RESULT_CONTINUATION_TEXT = 'The results of your tool calls are
   + 'write only new information.'
 
 /**
- * Rule that tells the model Cursor's built-in tools answer with a rejection
- * here and how Cursor exposes the harness tools: as MCP tools in namespace
- * `dsh`, reached only through {@link DYNAMIC_TOOL_CALL}.
+ * Rule that tells the model how Cursor exposes the harness tools: as MCP
+ * tools in namespace `dsh`, reached only through {@link DYNAMIC_TOOL_CALL}.
  * @param toolNames - harness tool names advertised on the Run.
  * @returns the rule text.
  */
-export function nativeToolsRule(toolNames: readonly string[]): string {
+export function harnessToolsRule(toolNames: readonly string[]): string {
   const catalog = toolNames.length === 0 ? '' : ` Tools in namespace "${MCP_PROVIDER_IDENTIFIER}": ${toolNames.join(', ')}.`
   return 'DeepSeek Harness runs this session. '
-    + 'Cursor\'s built-in tools (Read, Write, StrReplace, Delete, LS, Glob, Grep, Shell, fetch, diagnostics, and the rest) are not available: '
-    + 'calling one returns a rejection and does nothing. '
     + `The session's tools are MCP tools in namespace "${MCP_PROVIDER_IDENTIFIER}". `
     + `Call one with ${DYNAMIC_TOOL_CALL} using namespace "${MCP_PROVIDER_IDENTIFIER}", its toolName, and its arguments. `
     + `Before a tool's first call, get its argument schema with ${DYNAMIC_TOOL_LOOKUP} using namespace "${MCP_PROVIDER_IDENTIFIER}" and its toolName.`
     + catalog
 }
 
-/** Rule path Cursor shows beside {@link nativeToolsRule}. */
+/** Rule path Cursor shows beside {@link harnessToolsRule}. */
 const ADAPTER_RULE_PATH = 'dsh/cursor-adapter'
 
 /** Built Run payload plus the blob store Cursor may ask back for. */
@@ -150,7 +147,12 @@ export interface CursorRunPayload {
   blobStore: Map<string, Uint8Array>
   /** MCP tool definitions sent on the Run. */
   mcpTools: McpToolDefinition[]
-  /** Rules answered on `requestContextArgs`: {@link nativeToolsRule} as one global rule. */
+  /**
+   * Agent proto tool names for `x-cursor-agent-allowed-tools`: the MCP tools
+   * when harness tools are advertised, otherwise none.
+   */
+  allowedTools: readonly string[]
+  /** Rules answered on `requestContextArgs`: {@link harnessToolsRule} as one global rule. */
   rules: CursorRule[]
   /**
    * Prompt-side token estimate at one token per four characters of rules,
@@ -400,7 +402,7 @@ export function conversationFromOptions(options: GenerateOptions): CursorConvers
 
 /**
  * Rules Cursor renders inside its own system prompt when the Run asks for the
- * request context. Only {@link nativeToolsRule} travels here: a rule carrying
+ * request context. Only {@link harnessToolsRule} travels here: a rule carrying
  * the harness system prompt lost its always-apply instructions once replayed
  * history was present, while the `<rules>` user prompt message kept them.
  * @param mcpTools - MCP tool definitions advertised on the Run.
@@ -409,7 +411,7 @@ export function conversationFromOptions(options: GenerateOptions): CursorConvers
 export function buildRules(mcpTools: readonly McpToolDefinition[]): CursorRule[] {
   return [create(CursorRuleSchema, {
     fullPath: ADAPTER_RULE_PATH,
-    content: nativeToolsRule(mcpTools.map(tool => tool.toolName)),
+    content: harnessToolsRule(mcpTools.map(tool => tool.toolName)),
     source: 0,
     type: create(CursorRuleTypeSchema, { type: { case: 'global', value: create(CursorRuleTypeGlobalSchema, {}) } }),
   })]
@@ -589,6 +591,7 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
     requestBytes: toBinary(AgentClientMessageSchema, clientMessage),
     blobStore,
     mcpTools,
+    allowedTools: mcpTools.length === 0 ? [] : CURSOR_MCP_PROTO_TOOLS,
     rules,
     inputTokenEstimate: estimateInputTokens(rules, promptMessages, text, mcpTools),
   }

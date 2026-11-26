@@ -41,4 +41,4 @@ DSH 中的 Cursor 模型会重复自己。一次使用 `grok-4.7-xhigh-fast` 的
 
 ## Related decisions
 
-[Cursor 订阅登录与原生适配器](../feature/2026-09-18-cursor-subscription-signin-and-adapter.zh.md) 拥有该适配器族及其提示重放；本记录取代其每步一个 Run 的流式方式。[让非官方 Cursor Run 在 CLI Pi 与控制 exec 下保持存活](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.zh.md) 拥有 Run 内的 exec 应答。
+[Cursor 订阅登录与原生适配器](../feature/2026-09-18-cursor-subscription-signin-and-adapter.zh.md) 拥有该适配器族及其提示重放；本记录取代其每步一个 Run 的流式方式。[让非官方 Cursor Run 在 CLI Pi 与控制 exec 下保持存活](../bug-fix/2026-09-22-cursor-cli-pi-exec-continue.zh.md) 拥有 Run 内的 exec 应答。[用 allowed-tools 请求头从 Run 中移除 Cursor 内建工具](2026-11-25-cursor-allowed-tools-header.zh.md) 不再提供本记录所拒绝其 exec 的内建工具。

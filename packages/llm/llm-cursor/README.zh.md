@@ -70,7 +70,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 
 请求时令牌顺序为：启动环境中的 `CURSOR_ACCESS_TOKEN`，然后是已存储的 OAuth 授权（临近过期时在 `modifyRecord` 内刷新），然后在 `reuseInstalledCursorLogin` 为 true 时可选读取钥匙串 / `state.vscdb`。已存储的 DSH 登录优先于采集。
 
-新的 Run 由 harness 历史、系统提示和 MCP 工具定义重建（`providerIdentifier: dsh`，`clientName: dsh`）。Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示，从不把 `conversation_state.turns` 渲染进去，并且会丢弃其中的 `{"role":"system"}` 条目而使用自己的提示。因此适配器把系统提示作为 `<rules>` user 提示消息发布，并把每个先前轮次重放为 `user`、`assistant` 和 `tool` 提示消息，把每个历史 harness 工具调用写成 Cursor 为 MCP 工具记录的 `CallDynamicTool` 调用；轮次结构一同发送，供服务端记账。Cursor CLI 的 Run 只通过 `GetDynamicTools` 和 `CallDynamicTool` 向模型暴露 MCP 工具，因此请求上下文的应答额外带一条全局 Cursor 规则，告知模型 Cursor 内建工具在这里会返回拒绝、harness 工具以命名空间 `dsh` 中的 `CallDynamicTool` 调用，以及有哪些工具名。
+新的 Run 由 harness 历史、系统提示和 MCP 工具定义重建（`providerIdentifier: dsh`，`clientName: dsh`）。Cursor 服务端只从 `root_prompt_messages_json` 构建模型提示，从不把 `conversation_state.turns` 渲染进去，并且会丢弃其中的 `{"role":"system"}` 条目而使用自己的提示。因此适配器把系统提示作为 `<rules>` user 提示消息发布，并把每个先前轮次重放为 `user`、`assistant` 和 `tool` 提示消息，把每个历史 harness 工具调用写成 Cursor 为 MCP 工具记录的 `CallDynamicTool` 调用；轮次结构一同发送，供服务端记账。Cursor CLI 的 Run 只通过 `GetDynamicTools` 和 `CallDynamicTool` 向模型暴露 MCP 工具，因此请求上下文的应答额外带一条全局 Cursor 规则，告知模型 harness 工具以命名空间 `dsh` 中的 `CallDynamicTool` 调用，以及有哪些工具名。每个新的 Run 都发送取自 `@cursor/sdk` 的 `x-cursor-agent-allowed-tools` 请求头：通告了 harness 工具时，Cursor 只提供 `CallDynamicTool` 与 `GetDynamicTools` 背后的 agent proto 工具 `mcp_tool_call` 和 `get_mcp_tools_tool_call`，否则不提供任何工具。下文的原生 exec 与批准应答保留给 Cursor 忽略该请求头的 Run。
 
 文本、thinking、用量与 MCP 工具调用变成 `StreamChunk`。当 Cursor 发出模型最后一个并行调用之后的检查点，或 `toolCallSettleMs` 内没有新帧时，MCP 工具调用结束该步。若请求带有 Session 且不是压缩或标题请求，该 Run 随后挂起：适配器每五秒发送一次 `clientHeartbeat` 保持流开启。该 Session 的下一次请求在以下条件成立时恢复它：最后一条 assistant 消息之前的历史不变，且该消息之后只有待处理调用的结果以及 harness 注入的 user 角色上下文；适配器在同一条流上以 `mcpResult` 应答每个调用，把这类上下文追加到最后一个结果之后，并继续读取。任何其他请求、挂起期间死亡的 Run，或超过 `parkedRunTimeoutMs` 的 Run，都回退为新的 Run：它重放该进行中的轮次及其结果，并把一条固定的继续提示作为 Run 必需的用户消息发送；不使用 `resumeAction`，因为服务端会从该轮的用户消息重新开始而不是继续。Cursor 原生或 CLI Pi 工作区 exec（`read`、`shell`、`piRead` 及同类）以其类型化的拒绝应答，并指出应通过 `CallDynamicTool` 调用的 harness 工具，因此 Run 继续进行，模型把该拒绝当作工具结果读取；被拒绝的 exec 之后的文本开启新的文本块。Cursor 原生提问会收到类型化的拒绝：若 harness 提供 `ask_user_question` MCP 工具，拒绝会引导模型调用该工具；否则会引导模型在回复中提问。Run 随后继续。网页搜索的批准查询会被批准，因为该搜索由 Cursor 在自己那一侧执行；网页抓取的批准查询会被拒绝，并带上 `fetch` exec 所携带的原因，因为获批的抓取会作为那个被拒绝的 exec 回到这里。CLI 钩子以空的匹配响应应答。MCP-state exec 返回已通告的 `dsh` 工具。本构建无法类型化的其他 exec 以 ExecClientThrow 应答，以便 Run 继续。没有 payload 的 exec 仍使该步失败。Cursor 上的 Kimi 模型有时把其原生工具调用标记（`<|open|>toolscall tool="CallDynamicTool" …<|close|>tools<|sep|>`）作为文本写出，Cursor 服务端不解析它，于是该轮在没有 exec 的情况下结束。适配器从第一个 `<|open|>tools` 起暂扣文本，直到其文本块结束。若该轮结束时暂扣的尾部能完整解析为命名空间 `dsh` 中、指向已通告 harness 工具的 `CallDynamicTool` 调用，该尾部就变成工具调用块并以 `tool-calls` 结束该步，下一步打开一个由历史重建的新 Run；其他暂扣文本原样流出。
 
@@ -83,6 +83,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 - [LLM 流式子系统](../../../docs/subsystems/llm-streaming.zh.md) — `StreamChunk` 与适配器约定。
 - [Cursor 订阅登录与原生适配器](../../../.agents/notes/implemented/feature/2026-09-18-cursor-subscription-signin-and-adapter.zh.md) — 为何这是第三套适配器族，而不是 pi-ai 目录项。
 - [跨工具调用挂起 Cursor Run，并通过 CallDynamicTool 路由 harness 工具](../../../.agents/notes/implemented/architecture/2026-09-23-cursor-parked-runs-and-dynamic-tools.zh.md) — 为何一个轮次停留在一个 Run 上，以及模型如何到达 harness 工具。
+- [用 allowed-tools 请求头从 Run 中移除 Cursor 内建工具](../../../.agents/notes/implemented/architecture/2026-11-25-cursor-allowed-tools-header.zh.md) — 为何 Run 只提供 MCP proto 工具，以及该请求头的代价。
 
 <a id="model-experience"></a>
 ## 模型体验
@@ -91,7 +92,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 
 #### 模型看见什么
 
-一次新的 Cursor `AgentRunRequest`，其 `root_prompt_messages_json` 承载模型可见的历史：系统提示作为 `<rules>` user 消息，然后每个先前人类轮次作为 `<user_query>` user 消息，harness 注入的目录、快照和通知作为不被 `<user_query>` 包裹的独立 user 消息，assistant 消息承载文本和写成命名空间 `dsh` 中 `CallDynamicTool` 调用的 `tool-call` 部分，以及承载结果的 `tool` 消息；thinking 不重放。当前用户动作只有人类提示——一次 Run 只有一个 `userMessageAction`，因此 skill 目录和运行时快照走根提示，而不并入该动作。恢复的 Run 不发送新请求：模型把每个工具结果当作自己待处理调用的结果读取，结果之后的 harness 上下文追加到最后一个结果之后。本地执行工具调用之后若 Run 无法恢复，进行中的轮次连同其结果被重放，用户动作是固定提示 `The results of your tool calls are in the tool messages above. This is not a new request: continue the current task from the last tool result. The user has already seen your earlier messages, so do not repeat or rephrase them or restate your plan; write only new information.`。请求上下文带一条全局规则，声明 Cursor 内建工具会返回拒绝、harness 工具以命名空间 `dsh` 中的 `CallDynamicTool` 调用，随后列出 harness 工具名。由于该路由声明只接受文本输入，图片以 harness 的纯文本占位符到达模型；不发送图片字节。Cursor 仍在 harness MCP 工具之外提供自己的内建工具。
+一次新的 Cursor `AgentRunRequest`，其 `root_prompt_messages_json` 承载模型可见的历史：系统提示作为 `<rules>` user 消息，然后每个先前人类轮次作为 `<user_query>` user 消息，harness 注入的目录、快照和通知作为不被 `<user_query>` 包裹的独立 user 消息，assistant 消息承载文本和写成命名空间 `dsh` 中 `CallDynamicTool` 调用的 `tool-call` 部分，以及承载结果的 `tool` 消息；thinking 不重放。当前用户动作只有人类提示——一次 Run 只有一个 `userMessageAction`，因此 skill 目录和运行时快照走根提示，而不并入该动作。恢复的 Run 不发送新请求：模型把每个工具结果当作自己待处理调用的结果读取，结果之后的 harness 上下文追加到最后一个结果之后。本地执行工具调用之后若 Run 无法恢复，进行中的轮次连同其结果被重放，用户动作是固定提示 `The results of your tool calls are in the tool messages above. This is not a new request: continue the current task from the last tool result. The user has already seen your earlier messages, so do not repeat or rephrase them or restate your plan; write only new information.`。请求上下文带一条全局规则，声明 harness 工具以命名空间 `dsh` 中的 `CallDynamicTool` 调用，随后列出 harness 工具名。由于该路由声明只接受文本输入，图片以 harness 的纯文本占位符到达模型；不发送图片字节。Cursor 不提供自己的任何内建工具：通告了 harness 工具时，`x-cursor-agent-allowed-tools` 请求头把 Run 限制为 `mcp_tool_call` 与 `get_mcp_tools_tool_call`，否则不提供任何工具。
 
 #### Token 影响
 
@@ -122,7 +123,7 @@ TUI：`/login llm-cursor/cursor`。无头不会打开浏览器；导出 `CURSOR_
 这些限制划定适配器的停止点。它们是当前的包约束，不是与 Cursor 产品的对比。
 
 - **该集成是非官方的** — 认证 URL、头、客户端版本和 `agent.v1` 可能不预先通知就变更并弄坏本适配器。
-- **不执行原生 Cursor 工作区 exec** — `read`、`shell`、CLI Pi 工具（`piRead`、`piBash` 及同类）以及同一家族收到指出 harness 工具的类型化拒绝，因此选中它们的模型会在调用 `CallDynamicTool` 之前多花一个往返。
+- **移除 Cursor 内建工具依赖一个未公开的请求头** — `x-cursor-agent-allowed-tools` 只在 `@cursor/sdk` 内部有说明，没有面向 CLI 客户端的文档。若 Cursor 不再遵守它，Cursor 会重新提供内建工具，而它们的 exec 不会被执行：`read`、`shell`、CLI Pi 工具（`piRead`、`piBash` 及同类）以及同一家族收到指出 harness 工具的类型化拒绝，因此选中它们的模型会在调用 `CallDynamicTool` 之前多花一个往返。
 - **CLI 控制 exec 不运行 Cursor 钩子** — 钩子帧得到空的匹配响应，MCP-state 帧列出已通告的 `dsh` 工具，其他未命名 exec 以 ExecClientThrow 应答以使 Run 继续；它们都不执行工作区工作。
 - **挂起的 Run 只存在于一个进程中** — 它没有 journal，因此进程重启、工具结果之后的人类消息或任何历史变化都会回退为由历史重建的新 Run。
 - **回退的 Run 以重放的提示消息加一条固定继续提示交付工具结果** — 该提示是适配器自有的文本，人类从未输入过；恢复的 Run 把注入上下文放在最后一个工具结果内部交付，而不是作为独立消息。

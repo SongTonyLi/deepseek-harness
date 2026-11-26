@@ -27,6 +27,16 @@ export const DYNAMIC_TOOL_CALL = 'CallDynamicTool'
 /** Cursor CLI tool that searches MCP tools (`{ pattern }`) or returns one schema (`{ namespace, toolName }`). */
 export const DYNAMIC_TOOL_LOOKUP = 'GetDynamicTools'
 
+/**
+ * Request header that limits a Run's Cursor tools to the listed agent proto
+ * tool names, comma-separated; an empty value offers no tools. `@cursor/sdk`
+ * sends it for its `tools` option.
+ */
+export const CURSOR_ALLOWED_TOOLS_HEADER = 'x-cursor-agent-allowed-tools'
+
+/** Agent proto tools behind {@link DYNAMIC_TOOL_CALL} and {@link DYNAMIC_TOOL_LOOKUP}. */
+export const CURSOR_MCP_PROTO_TOOLS: readonly string[] = ['mcp_tool_call', 'get_mcp_tools_tool_call']
+
 /** Interval of the `clientHeartbeat` the Cursor CLI sends on an open Run. */
 export const CLIENT_HEARTBEAT_INTERVAL_MS = 5_000
 

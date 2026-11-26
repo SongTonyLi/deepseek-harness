@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-25-cursor-allowed-tools-header.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-25-cursor-allowed-tools-header.md
+/agent-note-remove-cursor-s-built-in-tools-from-runs-with-the-allowed-tools-header:
+  en: 0aa237d5efabefaf
+  zh: caa1d354546393a0
+/agent-note-remove-cursor-s-built-in-tools-from-runs-with-the-allowed-tools-header/problem:
+  en: eb94689703727ef0
+  zh: 07cfa066e0e22063
+/agent-note-remove-cursor-s-built-in-tools-from-runs-with-the-allowed-tools-header/decision:
+  en: 557e2676e77d2614
+  zh: dd6da46596074db7
+/agent-note-remove-cursor-s-built-in-tools-from-runs-with-the-allowed-tools-header/alternatives-considered:
+  en: 0791b42bd7a4dda0
+  zh: ab217fd666966bf0
+/agent-note-remove-cursor-s-built-in-tools-from-runs-with-the-allowed-tools-header/consequences:
+  en: 4e3db0609b65ad6f
+  zh: ecc8c6eca944edae
+/agent-note-remove-cursor-s-built-in-tools-from-runs-with-the-allowed-tools-header/related-decisions:
+  en: 789170fb9e44b3fd
+  zh: 8381ff4574e11fbd
