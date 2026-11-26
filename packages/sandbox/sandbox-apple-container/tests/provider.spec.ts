@@ -199,11 +199,11 @@ describe('AppleContainerSandboxProvider', () => {
     const agent = await agentFor(h.ctx, session)
     expect(await backendContext(h.ctx, agent)).toBe(
       'Commands confined by the DSH file sandbox run inside a Linux container from image "node:22-bookworm". '
-      + `Only the session workspace ${JSON.stringify(h.root)} is shared with the host; `
+      + `The session workspace ${JSON.stringify(h.root)} and configured read-only mounts are shared with the guest; `
       + 'files written elsewhere stay inside the container and are not visible to file tools. '
       + 'Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; '
       + 'when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. '
-      + 'File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.',
+      + 'File tools refuse configured hidden names and request approval for reads outside the shared roots. The guest masks matching workspace files found at startup. Host-bound workers use Seatbelt and can read additional host paths.',
     )
     setSandboxMode(session, 'danger-full-access')
     expect(await backendContext(h.ctx, agent)).toBe('')
@@ -333,6 +333,20 @@ describe('AppleContainerSandboxProvider', () => {
     expect(h.sandbox.escalationNote(policy, 'workspace-write')).toBeUndefined()
     setSandboxBackend(session, 'local')
     expect(h.sandbox.escalationNote(policy, 'danger-full-access')).toBeUndefined()
+  })
+
+  it('protects configured directories and read-only mounts on the host for the selected session', async () => {
+    const skills = tempDir('dsh-protected-skills-')
+    const h = await mounted({ config: { protectedPaths: ['metadata'], readOnlyMounts: [skills] } })
+    const session = h.session('protected-host')
+    const policy = { mode: 'workspace-write' as const, workspaceRoot: h.root, sessionId: session.id }
+    const roots = [join(h.root, 'metadata'), skills]
+    expect(h.sandbox.protectedWriteRoots(policy)).toEqual(roots)
+    const bound = await h.sandbox.confineHostBound(['node'], policy, { runtimePaths: [] })
+    for (const root of roots) expect(bound.argv[2]).toContain(`(deny file-write* (subpath "${root}"))`)
+    expect(h.sandbox.protectedWriteRoots({ ...policy, mode: 'danger-full-access' })).toEqual([])
+    setSandboxBackend(session, 'local')
+    expect(h.sandbox.protectedWriteRoots(policy)).toEqual([])
   })
 
   it('mounts extra read-only directories and masks hidden files in new containers', async () => {

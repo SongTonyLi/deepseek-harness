@@ -48,6 +48,8 @@ function sbplString(text: string): string {
  * Paths must be canonical, because Seatbelt matches resolved paths.
  */
 export interface SeatbeltReadFence {
+  /** Canonical paths that remain read-only inside a write grant. */
+  readonly protectedWriteRoots?: readonly string[]
   /** Canonical directories whose file contents are unreadable. */
   readonly deniedRoots: readonly string[]
   /** Canonical files or directories readable inside the denied roots. */
@@ -111,6 +113,9 @@ export function seatbeltProfileArgs(policy: SandboxPolicy, fence?: SeatbeltReadF
   if (roots.length > 0) {
     forms.push(`(allow file-write* ${roots.map(root => `(subpath ${sbplString(root)})`).join(' ')})`)
   }
-  if (fence !== undefined) forms.push(...readFenceForms(fence))
+  if (fence !== undefined) {
+    for (const root of fence.protectedWriteRoots ?? []) forms.push(`(deny file-write* (subpath ${sbplString(root)}))`)
+    forms.push(...readFenceForms(fence))
+  }
   return ['-p', forms.join(' ')]
 }

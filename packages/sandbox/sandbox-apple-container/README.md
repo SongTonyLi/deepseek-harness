@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to confine bash and terminal commands in an [Apple `container`](https://github.com/apple/container) Linux VM on macOS with Apple silicon and CLI 1.5.0 or newer. The VM mounts only the session workspace, limits model file tools to the same read scope, masks `.env` files, excludes credential-shaped environment variables, and makes `.git` read-only. Host-bound processes, such as the Node code-execution worker that runs workflows, stay on the host under Seatbelt with a matching read fence. Other hosts and sessions switched with `/sandbox local` use the inherited local sandbox chain.
+Use this package to confine bash and terminal commands in an [Apple `container`](https://github.com/apple/container) Linux VM on macOS with Apple silicon and CLI 1.5.0 or newer (verified on 1.7.1). The VM mounts the session workspace and configured read-only directories, limits model file tools to the same read scope, masks matching workspace files found at startup, excludes credential-shaped environment variables, and makes `.git` read-only. Host-bound processes, such as the Node code-execution worker that runs workflows, stay on the host under Seatbelt with a matching read fence. Other hosts and sessions switched with `/sandbox local` use the inherited local sandbox chain.
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ The fields of `@deepseek-ai/dsh-sandbox-local` also apply to the `local` backend
 |---|---|
 | A command reads host files outside the workspace | The path does not exist in the guest |
 | A file tool reads outside the workspace | `read` and `read_image` ask the user once per call before any host file access; `edit`, `write`, `str_replace_editor`, `grep`, and `glob` refuse it through the read scope |
-| A command or tool reads a secret file in the workspace | Masked to `/dev/null` in the guest; refused by file tools; excluded from `grep` |
+| A command or tool reads a secret file in the workspace | Masked to `/dev/null` in the guest if found by the workspace scan at startup; refused by file tools; excluded from `grep` |
 | A credential reaches the guest environment | Denied names and URLs carrying `user:password@` are never forwarded |
 | A command plants a Git hook or config the host later runs | `.git` is read-only under `workspace-write`; writes fail with `Read-only file system` and use the normal escalation |
 | A command writes outside the workspace | The write lands in the container's own disk and never reaches the host, except under `/run/dsh`, the container's private run directory for start sentinels, which is deleted with the container |
@@ -137,7 +137,7 @@ One `sandbox:backend` contribution in the runtime-context snapshot when the sess
 ##### Container backend
 
 ```markdown
-Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
+Commands confined by the DSH file sandbox run inside a Linux container from image <image>. The session workspace <workspace root> and configured read-only mounts are shared with the guest; files written elsewhere stay inside the container and are not visible to file tools. Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. File tools refuse configured hidden names and request approval for reads outside the shared roots. The guest masks matching workspace files found at startup. Host-bound workers use Seatbelt and can read additional host paths.
 ```
 
 #### Token effect

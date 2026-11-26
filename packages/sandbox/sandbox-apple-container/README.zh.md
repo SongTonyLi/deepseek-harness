@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可在搭载 Apple 芯片、运行 Apple `container` CLI 1.5.0 或更高版本的 macOS 上，将 bash 和终端命令限制在 [Apple `container`](https://github.com/apple/container) Linux 虚拟机中。虚拟机只挂载会话工作区，模型文件工具也受相同读取范围限制；`.env` 文件会被遮蔽，类似凭据的环境变量不会传入客户机，`.git` 保持只读。宿主机绑定进程（例如运行工作流的 Node 代码执行 worker）留在宿主机上，在 Seatbelt 下受与之对应的读取围栏限制。其他主机和通过 `/sandbox local` 切换的会话使用继承的本地沙箱链。
+使用本包可在搭载 Apple 芯片、运行 Apple `container` CLI 1.5.0 或更高版本（已验证 1.7.1）的 macOS 上，将 bash 和终端命令限制在 [Apple `container`](https://github.com/apple/container) Linux 虚拟机中。虚拟机挂载会话工作区和配置的只读目录，模型文件工具也受相同读取范围限制；启动时扫描到的匹配文件会被遮蔽，类似凭据的环境变量不会传入客户机，`.git` 保持只读。宿主机绑定进程（例如运行工作流的 Node 代码执行 worker）留在宿主机上，在 Seatbelt 下受与之对应的读取围栏限制。其他主机和通过 `/sandbox local` 切换的会话使用继承的本地沙箱链。
 
 ## 目录
 
@@ -69,7 +69,7 @@ kind: "package-reference"
 |---|---|
 | 命令读取工作区之外的宿主机文件 | 该路径在客户机中不存在 |
 | 文件工具读取工作区之外的内容 | `read` 与 `read_image` 在访问任何宿主机文件之前，每次调用都会先征求用户同意；`edit`、`write`、`str_replace_editor`、`grep` 与 `glob` 通过读取范围拒绝 |
-| 命令或工具读取工作区中的密钥文件 | 在客户机中被遮蔽为 `/dev/null`；被文件工具拒绝；从 `grep` 中排除 |
+| 命令或工具读取工作区中的密钥文件 | 启动时在工作区扫描到的文件在客户机中被遮蔽为 `/dev/null`；被文件工具拒绝；从 `grep` 中排除 |
 | 凭据进入客户机环境 | 被拒绝的名称以及带有 `user:password@` 的 URL 永不转发 |
 | 命令植入宿主机之后会执行的 Git hook 或配置 | 在 `workspace-write` 下 `.git` 为只读；写入以 `Read-only file system` 失败，并走常规提权流程 |
 | 命令写入工作区之外 | 写入落在容器自己的磁盘上，不会到达宿主机；唯一例外是 `/run/dsh`，即容器存放启动哨兵的私有运行目录，它随容器一起删除 |
@@ -137,7 +137,7 @@ CLI 缺失、已停止且无法启动的 API 服务器，或 `container run` 失
 ##### container 后端
 
 ```markdown
-Commands confined by the DSH file sandbox run inside a Linux container from image <image>. Only the session workspace <workspace root> is shared with the host; files written elsewhere stay inside the container and are not visible to file tools. Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. File tools ask the user before reading a host path outside the workspace; secret files such as `.env` and private keys stay hidden from commands and file tools.
+Commands confined by the DSH file sandbox run inside a Linux container from image <image>. The session workspace <workspace root> and configured read-only mounts are shared with the guest; files written elsewhere stay inside the container and are not visible to file tools. Host-installed programs (macOS apps, Homebrew tools, browsers) and the host home directory are absent, and HOME is /root; when a skill or command needs them, rerun it with `sandbox_permissions` escalation to run on the host, or ask the user to run `/sandbox local`. File tools refuse configured hidden names and request approval for reads outside the shared roots. The guest masks matching workspace files found at startup. Host-bound workers use Seatbelt and can read additional host paths.
 ```
 
 #### Token 影响

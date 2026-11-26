@@ -164,6 +164,11 @@ export class SandboxedFileSystem extends LocalFileSystem {
     // symlink ancestor swapped since the tool resolved this target), and the
     // mutation delegates with THIS fresh target — never the stale one.
     const fresh = await this.resolve(target.displayPath)
+    for (const root of this.ctx.get('sandbox')?.protectedWriteRoots(policy) ?? []) {
+      if (await isPathUnder(fresh.targetKey, root)) {
+        throw new FsError(`cannot write "${target.displayPath}": protected by the sandbox`, 'FS_SANDBOX_DENIED')
+      }
+    }
     let contained = false
     for (const root of writableRoots(policy)) {
       if (await isPathUnder(fresh.targetKey, root)) {
