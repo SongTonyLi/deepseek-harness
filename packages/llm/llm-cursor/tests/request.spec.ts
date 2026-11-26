@@ -360,6 +360,18 @@ describe('buildCursorRun', () => {
     expect(nativeToolsRule([])).not.toContain('Tools in namespace')
   })
 
+  it('allows only the Cursor MCP proto tools when harness tools are advertised, and no tools otherwise', () => {
+    const base = {
+      provider: 'cursor' as const,
+      model: 'composer-2',
+      system: 'sys',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
+    }
+    const withTools = buildCursorRun({ ...base, tools: [{ name: 'read', description: 'read', parameters: { type: 'object' } }] })
+    expect(withTools.allowedTools).toEqual(['mcp_tool_call', 'get_mcp_tools_tool_call'])
+    expect(buildCursorRun(base).allowedTools).toEqual([])
+  })
+
   it('estimates prompt tokens from rules, replayed history, the action text, and tool definitions', () => {
     const short = buildCursorRun({
       provider: 'cursor',

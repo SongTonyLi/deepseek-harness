@@ -47,7 +47,7 @@ import {
   type CursorRule,
   type McpToolDefinition,
 } from './native/agent_pb.ts'
-import { DYNAMIC_TOOL_CALL, DYNAMIC_TOOL_LOOKUP, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
+import { CURSOR_MCP_PROTO_TOOLS, DYNAMIC_TOOL_CALL, DYNAMIC_TOOL_LOOKUP, MCP_PROVIDER_IDENTIFIER } from './protocol.ts'
 
 /** Upstream `ConversationStateStructure.client_name = 22`; the vendored subset omits the typed field. */
 const CONVERSATION_CLIENT_NAME_FIELD = 22
@@ -150,6 +150,11 @@ export interface CursorRunPayload {
   blobStore: Map<string, Uint8Array>
   /** MCP tool definitions sent on the Run. */
   mcpTools: McpToolDefinition[]
+  /**
+   * Agent proto tool names for `x-cursor-agent-allowed-tools`: the MCP tools
+   * when harness tools are advertised, otherwise none.
+   */
+  allowedTools: readonly string[]
   /** Rules answered on `requestContextArgs`: {@link nativeToolsRule} as one global rule. */
   rules: CursorRule[]
   /**
@@ -589,6 +594,7 @@ export function buildCursorRun(options: GenerateOptions): CursorRunPayload {
     requestBytes: toBinary(AgentClientMessageSchema, clientMessage),
     blobStore,
     mcpTools,
+    allowedTools: mcpTools.length === 0 ? [] : CURSOR_MCP_PROTO_TOOLS,
     rules,
     inputTokenEstimate: estimateInputTokens(rules, promptMessages, text, mcpTools),
   }
