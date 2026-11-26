@@ -7,7 +7,7 @@
 import http2 from 'node:http2'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { attributionHeaders, LlmError } from '@deepseek-ai/dsh-llm'
-import { CONNECT_END_STREAM, CURSOR_AGENT_URL, CURSOR_CLIENT_VERSION, MAX_CONNECT_MESSAGE_BYTES } from './protocol.ts'
+import { CONNECT_END_STREAM, CURSOR_AGENT_URL, CURSOR_ALLOWED_TOOLS_HEADER, CURSOR_CLIENT_VERSION, MAX_CONNECT_MESSAGE_BYTES } from './protocol.ts'
 
 /** Maximum unary response this client will buffer. */
 export const MAX_UNARY_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -157,6 +157,8 @@ export interface CursorRpcRequest {
   origin?: string
   /** Caller abort. */
   signal?: AbortSignal
+  /** Cursor tools a Run may offer, sent as `x-cursor-agent-allowed-tools`; omitted keeps Cursor's default toolset. */
+  allowedTools?: readonly string[]
 }
 
 /** A live bidirectional Connect stream. */
@@ -175,6 +177,7 @@ function cursorHeaders(
   rpcPath: string,
   accessToken: string,
   contentType: string,
+  allowedTools?: readonly string[],
 ): http2.OutgoingHttpHeaders {
   return {
     ':method': 'POST',
@@ -187,6 +190,7 @@ function cursorHeaders(
     'x-cursor-client-version': CURSOR_CLIENT_VERSION,
     'x-cursor-client-type': 'cli',
     'x-request-id': randomUUID(),
+    ...allowedTools === undefined ? {} : { [CURSOR_ALLOWED_TOOLS_HEADER]: allowedTools.join(',') },
     ...attributionHeaders(),
   }
 }
@@ -286,7 +290,7 @@ export function openConnectStream(
 ): CursorConnectStream {
   const origin = request.origin ?? CURSOR_AGENT_URL
   const session = connect(origin)
-  const stream = session.request(cursorHeaders(request.rpcPath, request.accessToken, 'application/connect+proto'))
+  const stream = session.request(cursorHeaders(request.rpcPath, request.accessToken, 'application/connect+proto', request.allowedTools))
   const pending: ConnectFrame[] = []
   const waiters: Array<(frame: IteratorResult<ConnectFrame>) => void> = []
   let done = false
