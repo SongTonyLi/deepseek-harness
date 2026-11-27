@@ -1309,7 +1309,8 @@ describe('TuiApp', () => {
     test.terminal.type(KEY.enter)
     await expect(again).resolves.toBe('allowed-once')
     await test.settle()
-    expect(test.terminal.text()).toContain('bash: allowed once')
+    // The outcome line is drawn from the approval service's `approval/decided` record, not by the prompt.
+    expect(test.terminal.text()).not.toContain('bash: allowed once')
 
     const second = ask()
     await test.settle()

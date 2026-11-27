@@ -400,11 +400,27 @@ const CONTEXT_GLYPH = '⬡'
 
 /** A dim one-line notice about the session (a stopped turn, a command result, a model switch). */
 export class NoticeBlock implements Component {
-  private readonly text: Text
+  private text: Text
 
-  constructor(theme: BlockTheme, text: string, tone: 'dim' | 'error' | 'success' = 'dim') {
-    const palette = theme.palette
-    this.text = new Text(paintKeys(palette, `· ${text}`, palette[tone], 'prose'), 0, 0)
+  constructor(
+    private readonly theme: BlockTheme,
+    text: string,
+    private readonly tone: 'dim' | 'error' | 'success' = 'dim',
+  ) {
+    this.text = this.paint(text)
+  }
+
+  /**
+   * Replace the words of a notice that counts something, such as one prune pass.
+   * @param text - the new notice text.
+   */
+  setText(text: string): void {
+    this.text = this.paint(text)
+  }
+
+  private paint(text: string): Text {
+    const palette = this.theme.palette
+    return new Text(paintKeys(palette, `· ${text}`, palette[this.tone], 'prose'), 0, 0)
   }
 
   invalidate(): void {

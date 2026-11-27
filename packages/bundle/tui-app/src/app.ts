@@ -238,7 +238,7 @@ import { ReaderPane, type ReaderExit } from './reader-screen.ts'
 import { SyntaxHighlighter, resolveColorDepth } from './highlight.ts'
 import { GuardedMainScreen, pageContentWidth, repaintFloor } from './screen.ts'
 import { describeSession, listSessionChoices, type SessionChoice } from './sessions.ts'
-import { readStatusFacts, retryMessage, statusReport } from './status.ts'
+import { readStatusFacts, retryMessage, retryNotice, statusReport } from './status.ts'
 import {
   COMPACTION_ACCOUNT_PARTS,
   CompactionLedger,
@@ -269,6 +269,8 @@ import { editorTheme, paintDiffRows, type Palette, type Style } from './style.ts
 import {
   EMPTY_USAGE,
   addUsage,
+  approvalNotice,
+  assistantBlockText,
   contentText,
   describeFailure,
   estimateTokens,
@@ -277,10 +279,12 @@ import {
   formatUsage,
   isSubagentTool,
   parseArguments,
+  pruneNotice,
   subagentRowFacts,
   toolCallText,
   toolResultBody,
   turnEndNotice,
+  withFailureReason,
   withLiveUsage,
   type UsageTotals,
 } from './transcript.ts'
@@ -939,6 +943,15 @@ export class TuiApp {
   /** Cards mounted from the live stream that no logged `tool/call` has confirmed yet. */
   private readonly unconfirmedTools = new Map<ToolCallId, ToolBlock>()
   private readonly submittedIds = new Set<string>()
+  /** Approval questions no logged decision has closed yet, by request id. */
+  private readonly approvalAsks = new Map<string, { readonly toolName: string; readonly reason: string | undefined }>()
+  /** The estimated tokens of the result the pruner is about to replace, from its shadow-price event. */
+  private pendingPruneTokens = 0
+  /** The notice the open prune pass counts into, valid while it is still the newest line. */
+  private pruneRun: { readonly block: NoticeBlock; count: number; tokens: number } | undefined
+  /** The stream block of each kind the live message last drew; a later block starts a new paragraph. */
+  private streamTextIndex: number | undefined
+  private streamReasoningIndex: number | undefined
   private readonly disposers: (() => void)[] = []
   /** Turn facts of the bound session's todo lines, keyed by content. */
   private todoTurns = new Map<string, TodoHistory>()
@@ -1518,6 +1531,9 @@ export class TuiApp {
     this.unconfirmedTools.clear()
     this.pendingToolNames.clear()
     this.submittedIds.clear()
+    this.approvalAsks.clear()
+    this.pendingPruneTokens = 0
+    this.pruneRun = undefined
     this.todoTurns.clear()
     this.turn = 0
     this.turnStepped = false
@@ -5635,10 +5651,8 @@ export class TuiApp {
     // The logged call, when the request names one, shows what the tool is about to do.
     const args = callId === undefined ? undefined : this.toolArguments.get(callId)
     const detail = args === undefined ? [] : toolCallText(JSON.stringify(args), this.presentCall(toolName, args), toolName).lines
-    const outcome = await this.showModal(new ApprovalPrompt(this.deps.palette, toolName, reason, detail), signal)
-    const tone: Tone = outcome === 'allowed-once' ? 'success' : 'dim'
-    this.notice(`${toolName}: ${outcome === 'allowed-once' ? 'allowed once' : outcome}`, tone)
-    return outcome
+    // The approval service logs the question and its outcome, and the log draws the outcome line.
+    return this.showModal(new ApprovalPrompt(this.deps.palette, toolName, reason, detail), signal)
   }
 
   private async askQuestions(
@@ -5698,6 +5712,21 @@ export class TuiApp {
     this.streaming?.setReasoningSpinner(undefined)
     this.updateSpinTicker()
     if (released || spinning) this.tui.requestRender()
+  }
+
+  /**
+   * The paragraph break a delta owes when it opens a later block of its kind
+   * in the message that is streaming, so consecutive blocks do not run
+   * together while they stream and read as the committed message does.
+   * @param kind - whether the delta is visible text or reasoning.
+   * @param index - the stream block index the delta belongs to.
+   * @returns a blank-line break, or `''` for the first block and for its own later deltas.
+   */
+  private blockBreak(kind: 'text' | 'reasoning', index: number): string {
+    const last = kind === 'text' ? this.streamTextIndex : this.streamReasoningIndex
+    if (kind === 'text') this.streamTextIndex = index
+    else this.streamReasoningIndex = index
+    return last === undefined || last === index ? '' : '\n\n'
   }
 
   /**
@@ -6111,6 +6140,8 @@ export class TuiApp {
         this.streaming?.setReasoningSpinner(undefined)
         this.updateSpinTicker()
         this.streaming = undefined
+        this.streamTextIndex = undefined
+        this.streamReasoningIndex = undefined
         this.endFade()
         this.beginLiveUsage()
         if (this.dropUnconfirmedTools()) this.tui.requestRender()
@@ -6122,7 +6153,7 @@ export class TuiApp {
             if (chunk.text !== '') {
               this.finishReasoningPace()
               this.setStreamActivity('writing')
-              this.pace('text', chunk.text, (text) => {
+              this.pace('text', this.blockBreak('text', chunk.index) + chunk.text, (text) => {
                 this.appendStreamedText(text)
               })
               this.noteStreamedChars(chunk.text.length)
@@ -6131,7 +6162,7 @@ export class TuiApp {
           case 'reasoning-delta':
             if (chunk.text !== '') {
               this.setStreamActivity('thinking')
-              this.pace('reasoning', chunk.text, (text) => {
+              this.pace('reasoning', this.blockBreak('reasoning', chunk.index) + chunk.text, (text) => {
                 this.appendStreamedReasoning(text)
               })
               this.noteStreamedChars(chunk.text.length)
@@ -6249,9 +6280,7 @@ export class TuiApp {
       case 'assistant/attempt': {
         const content = assembleAssistantStream(event.data.stream).interruptedBlocks()
         if (content.length > 0) {
-          const text = content.filter(block => block.type === 'text').map(block => block.text).join('')
-          const reasoning = content.filter(block => block.type === 'reasoning').map(block => block.text).join('')
-          this.streamingBlock().commit(text, reasoning, false)
+          this.streamingBlock().commit(assistantBlockText(content, 'text'), assistantBlockText(content, 'reasoning'), false)
         } else if (this.streaming !== undefined) {
           this.chat.removeChild(this.streaming)
         }
@@ -6264,9 +6293,7 @@ export class TuiApp {
       }
       case 'assistant/message': {
         const { message, usage, interrupted } = event.data
-        const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('')
-        const reasoning = message.content.filter(block => block.type === 'reasoning').map(block => block.text).join('')
-        this.streamingBlock().commit(text, reasoning, interrupted === true)
+        this.streamingBlock().commit(assistantBlockText(message.content, 'text'), assistantBlockText(message.content, 'reasoning'), interrupted === true)
         this.turnStepped = true
         this.streaming = undefined
         this.endFade()
@@ -6286,6 +6313,12 @@ export class TuiApp {
       }
       case 'tool/result': {
         const result = event.data.message
+        if (typeof event.surfaceOp === 'object') {
+          // A replacement changes what the model reads, never what the tool returned:
+          // the card keeps the output the user saw and the pass notice says what was cut.
+          this.notePruned()
+          break
+        }
         this.noteWorkflowJob(result.toolCallId, result.content, result.isError === true)
         const block = this.toolBlocks.get(result.toolCallId)
         if (block === undefined) break
@@ -6296,7 +6329,7 @@ export class TuiApp {
           const patch = block.name === 'apply_patch'
           const meta = event.data.meta
           const stopped = patch && typeof meta === 'object' && meta !== null && !Array.isArray(meta) && meta.stopped === true
-          const body = toolResultBody(view, result.content, patch)
+          const body = withFailureReason(toolResultBody(view, result.content, patch), isError ? event.data.error?.reason : undefined)
           block.setResult(body.lines, isError || stopped, body.code, body.diff, body)
         } else {
           block.setBackground([`${BACKGROUND_GLYPH} moved to the background as ${moved} · /jobs lists it`])
@@ -6356,7 +6389,22 @@ export class TuiApp {
       }
       case 'llm/retry':
         this.setLoaderActivity(retryMessage(event.data))
+        this.notice(retryNotice(event.data))
         break
+      case 'compaction/prune':
+        // Its replacement result follows at once and carries the notice.
+        this.pendingPruneTokens = event.data.shadowedTokenCount
+        return
+      case 'approval/asked':
+        this.approvalAsks.set(event.data.id, { toolName: event.data.toolName, reason: event.data.reason })
+        return
+      case 'approval/decided': {
+        const ask = this.approvalAsks.get(event.data.id)
+        if (ask === undefined) return
+        this.approvalAsks.delete(event.data.id)
+        this.notice(approvalNotice(ask.toolName, event.data.outcome, ask.reason), event.data.outcome === 'allowed-once' ? 'success' : 'dim')
+        break
+      }
       default:
         return
     }
@@ -6631,6 +6679,26 @@ export class TuiApp {
     const block = new ContextBlock(this.theme, title, parts, turn)
     block.setExpanded(this.toolsExpanded)
     this.chat.addChild(block)
+  }
+
+  /**
+   * Count one pruned tool result into its pass notice. Results pruned back to
+   * back share one notice that grows in place; anything drawn in between
+   * opens a new one, so a notice never rewrites a line above the newest.
+   */
+  private notePruned(): void {
+    const tokens = this.pendingPruneTokens
+    this.pendingPruneTokens = 0
+    const run = this.pruneRun
+    if (run !== undefined && this.chat.children.at(-1) === run.block) {
+      run.count += 1
+      run.tokens += tokens
+      run.block.setText(pruneNotice(run.count, run.tokens))
+      return
+    }
+    const block = new NoticeBlock(this.theme, pruneNotice(1, tokens))
+    this.chat.addChild(block)
+    this.pruneRun = { block, count: 1, tokens }
   }
 
   /**
