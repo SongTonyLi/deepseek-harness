@@ -8,6 +8,7 @@
 import type { ContentBlock, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
+import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { diffLines, hunks, type DiffLine, type DiffMark } from './diff.ts'
 import { jsonTreeText, type JsonRowStyle } from './json-tree.ts'
@@ -28,6 +29,72 @@ export function contentText(blocks: readonly ContentBlock[]): string {
     if (block.type === 'reasoning') return ''
     return `[${block.type}]`
   }).filter(part => part !== '').join('\n')
+}
+
+/**
+ * Join the blocks of one kind in an assistant message, one blank line apart,
+ * so consecutive blocks read as paragraphs instead of one run of words.
+ * @param blocks - the message's content blocks, in model order.
+ * @param type - which kind of block to collect.
+ * @returns the joined text; empty when the message holds none of that kind.
+ */
+export function assistantBlockText(blocks: readonly ContentBlock[], type: 'text' | 'reasoning'): string {
+  return blocks
+    .flatMap(block => (block.type === 'text' || block.type === 'reasoning') && block.type === type && block.text !== '' ? [block.text] : [])
+    .join('\n\n')
+}
+
+/**
+ * Add the failure reason a tool recorded outside its model-facing content as
+ * the last row of a failed card's body.
+ * @param body - the card body rows and their parallel presentation arrays.
+ * @param reason - the durable `error.reason`, when the tool recorded one.
+ * @returns `body` unchanged when the reason is absent or blank, otherwise a
+ * copy ending on a `reason:` row, with every parallel array kept as long as the rows.
+ */
+export function withFailureReason(body: ToolBody, reason: string | undefined): ToolBody {
+  const line = reason?.replace(/\s+/gu, ' ').trim()
+  if (line === undefined || line === '') return body
+  const rows = body.lines.length
+  const extend = <T>(parallel: readonly (T | undefined)[] | undefined): (T | undefined)[] | undefined => {
+    if (parallel === undefined) return undefined
+    return [...parallel, ...Array.from({ length: rows + 1 - parallel.length }, () => undefined)]
+  }
+  const code = extend(body.code)
+  const json = extend(body.json)
+  const diff = extend(body.diff)
+  return {
+    ...body,
+    lines: [...body.lines, `reason: ${line}`],
+    ...code === undefined ? {} : { code },
+    ...json === undefined ? {} : { json },
+    ...diff === undefined ? {} : { diff },
+  }
+}
+
+/**
+ * The notice one prune pass earns: the pruner shortens old tool results in
+ * the model's context while each card keeps the output the user saw.
+ * @param count - how many results the pass pruned.
+ * @param tokens - the estimated tokens those results held before pruning.
+ * @returns the notice text.
+ */
+export function pruneNotice(count: number, tokens: number): string {
+  const noun = count === 1 ? 'tool result' : 'tool results'
+  return `pruned ${String(count)} ${noun} to head and tail in the model's context (~${formatTokens(tokens)} tokens before) · cards keep the full output`
+}
+
+/**
+ * The notice one answered approval request earns.
+ * @param toolName - the tool the question was about.
+ * @param outcome - how the answerer chain settled it.
+ * @param reason - the asker's explanation, when it gave one.
+ * @returns e.g. `bash: allowed once · writes outside the workspace`.
+ */
+export function approvalNotice(toolName: string, outcome: ApprovalOutcome, reason: string | undefined): string {
+  const label = outcome === 'allowed-once' ? 'allowed once' : outcome
+  const why = reason?.replace(/\s+/gu, ' ').trim()
+  return why === undefined || why === '' ? `${toolName}: ${label}` : `${toolName}: ${label} · ${why}`
 }
 
 /**

@@ -13,6 +13,7 @@ import {
   formatDuration,
   readStatusFacts,
   retryMessage,
+  retryNotice,
   statusReport,
   todoSummary,
   type StatusFacts,
@@ -261,5 +262,7 @@ describe('notices', () => {
     const always: LlmRetryEventData = { ...base, mode: 'always' }
     expect(retryMessage(normal)).toBe('retrying (2/5) in 4s · RATE_LIMIT: provider busy')
     expect(retryMessage(always)).toBe('retrying (2) in 4s · RATE_LIMIT: provider busy')
+    expect(retryNotice(normal)).toBe('model request failed · retrying (2/5) in 4s · RATE_LIMIT: provider busy')
+    expect(retryNotice(always)).toBe('model request failed · retrying (2) in 4s · RATE_LIMIT: provider busy')
   })
 })

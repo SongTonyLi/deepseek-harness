@@ -328,6 +328,16 @@ export function retryMessage(data: LlmRetryEventData): string {
   return `retrying (${attempt}) in ${formatDuration(data.delayMs)} · ${data.failure.code}: ${data.failure.message}`
 }
 
+/**
+ * The transcript notice one scheduled retry leaves behind after the spinner's
+ * {@link retryMessage} label has moved on.
+ * @param data - the `llm/retry` event data.
+ * @returns e.g. `model request failed · retrying (2/5) in 4s · RATE_LIMIT: provider busy`.
+ */
+export function retryNotice(data: LlmRetryEventData): string {
+  return `model request failed · ${retryMessage(data)}`
+}
+
 function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`
 }

@@ -6,6 +6,8 @@ import { jsonTreeText } from '../src/json-tree.ts'
 import {
   EMPTY_USAGE,
   addUsage,
+  approvalNotice,
+  assistantBlockText,
   cardHeadline,
   contentText,
   describeFailure,
@@ -21,11 +23,13 @@ import {
   paintCodeRows,
   isSubagentTool,
   parseArguments,
+  pruneNotice,
   subagentRowFacts,
   toolCallText,
   toolResultBody,
   toolResultLines,
   turnEndNotice,
+  withFailureReason,
 } from '../src/transcript.ts'
 
 describe('diff', () => {
@@ -420,5 +424,66 @@ describe('transcript', () => {
       .toEqual({ description: 'Rank endpoints', meta: [] })
     expect(subagentRowFacts(undefined)).toEqual({ description: '', meta: [] })
     expect(subagentRowFacts({ description: 7 })).toEqual({ description: '', meta: [] })
+  })
+})
+
+describe('assistant block text', () => {
+  const blocks = [
+    { type: 'reasoning', text: 'think one' },
+    { type: 'text', text: 'first' },
+    { type: 'text', text: '' },
+    { type: 'reasoning', text: 'think two' },
+    { type: 'text', text: 'second' },
+    { type: 'tool-call', id: 'call-1' as never, name: 'bash', arguments: '{}' },
+  ] as const
+
+  it('joins the blocks of one kind with a blank line and skips empty ones', () => {
+    expect(assistantBlockText(blocks, 'text')).toBe('first\n\nsecond')
+    expect(assistantBlockText(blocks, 'reasoning')).toBe('think one\n\nthink two')
+  })
+
+  it('leaves a single block and a message without that kind unchanged', () => {
+    expect(assistantBlockText([{ type: 'text', text: 'only' }], 'text')).toBe('only')
+    expect(assistantBlockText([{ type: 'text', text: 'only' }], 'reasoning')).toBe('')
+    expect(assistantBlockText([], 'text')).toBe('')
+  })
+})
+
+describe('failure reason row', () => {
+  it('appends the reason on one line and keeps every parallel array aligned with the rows', () => {
+    const body = withFailureReason({
+      lines: ['denied'],
+      code: [undefined],
+      json: [{ keys: [] } as never],
+      diff: [],
+      shellOutput: true,
+    }, '  sends credentials\n off-host  ')
+    expect(body.lines).toEqual(['denied', 'reason: sends credentials off-host'])
+    expect(body.code).toHaveLength(2)
+    expect(body.json).toHaveLength(2)
+    expect(body.diff).toHaveLength(2)
+    expect(body.json?.[1]).toBeUndefined()
+    expect(body.shellOutput).toBe(true)
+  })
+
+  it('returns the body itself when there is no reason to show', () => {
+    const body = { lines: ['denied'] }
+    expect(withFailureReason(body, undefined)).toBe(body)
+    expect(withFailureReason(body, ' \n ')).toBe(body)
+    expect(withFailureReason(body, '')).toBe(body)
+  })
+})
+
+describe('prune and approval notices', () => {
+  it('counts the pruned results and the tokens they held', () => {
+    expect(pruneNotice(1, 900)).toBe('pruned 1 tool result to head and tail in the model\'s context (~900 tokens before) · cards keep the full output')
+    expect(pruneNotice(3, 12_340)).toBe('pruned 3 tool results to head and tail in the model\'s context (~12.3k tokens before) · cards keep the full output')
+  })
+
+  it('names the tool, the outcome, and the asker\'s reason on one line', () => {
+    expect(approvalNotice('bash', 'allowed-once', undefined)).toBe('bash: allowed once')
+    expect(approvalNotice('bash', 'rejected', 'writes outside\nthe workspace')).toBe('bash: rejected · writes outside the workspace')
+    expect(approvalNotice('edit', 'cancelled', ' ')).toBe('edit: cancelled')
+    expect(approvalNotice('edit', 'unavailable', 'no answerer')).toBe('edit: unavailable · no answerer')
   })
 })
